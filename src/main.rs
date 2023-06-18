@@ -1,35 +1,76 @@
-#![warn(clippy::all, rust_2018_idioms)]
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+use eframe::egui;
+//use egui::Visuals;
 
-// When compiling natively:
-#[cfg(not(target_arch = "wasm32"))]
-fn main() -> eframe::Result<()> {
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-
+fn main() {
     let native_options = eframe::NativeOptions::default();
-    eframe::run_native(
-        "eframe template",
-        native_options,
-        Box::new(|cc| Box::new(eframe_template::TemplateApp::new(cc))),
-    )
+    eframe::run_native("Mastertech", native_options, Box::new(|_| Box::new(MastertechApp::default())));
 }
 
-// When compiling to web using trunk:
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    // Redirect `log` message to `console.log` and friends:
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+#[derive(Default)]
+struct MastertechApp {
+    so_number: String,
+    customer_name: String,
+    phone1: String,
+    phone2: String,
+    active_tab: usize,
+}
 
-    let web_options = eframe::WebOptions::default();
+impl MastertechApp {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Get current context style
+        let style = (cc.egui_ctx.style()).clone();
+        //let colors = egui::Color32::from_rgb(0,0,0);
+        
+        
+        //ctx.set_visuals(egui::Visuals::dark()); 
+        // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_visuals.
+        // Restore app state using cc.storage (requires the "persistence" feature).
+        // Use the cc.gl (a glow::Context) to create graphics shaders and buffers that you can use
+        // for e.g. egui::PaintCallback.
+        Self::default()
+    }
+}
 
-    wasm_bindgen_futures::spawn_local(async {
-        eframe::WebRunner::new()
-            .start(
-                "the_canvas_id", // hardcode it
-                web_options,
-                Box::new(|cc| Box::new(eframe_template::TemplateApp::new(cc))),
-            )
-            .await
-            .expect("failed to start eframe");
-    });
+impl eframe::App for MastertechApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.visuals_mut().override_text_color = Some(egui::Color32::from_rgb(144, 238, 144));
+            ui.horizontal(|ui| {
+                // Add tabs
+                if ui.selectable_label(self.active_tab == 0, "Main").clicked() {
+                    self.active_tab = 0;
+                }else if ui.selectable_label(self.active_tab == 1, "Scripts").clicked() {
+                    self.active_tab = 1;
+                }
+                // Add more tabs as needed
+            });
+
+            if self.active_tab == 0 {
+                // Add text fields
+                ui.with_layout(Layout::left_to_right, Align::left_top)(|ui| {
+                    ui.columns(2, |cols| {
+                        cols[0].add(egui::TextEdit::singleline(&mut self.so_number).hint_text("SO#"));
+                        cols[1].add(egui::TextEdit::singleline(&mut self.customer_name).hint_text("Customer Name"));
+                    });
+                    ui.columns(2, |cols| {
+                        cols[0].add(egui::TextEdit::singleline(&mut self.phone1).hint_text("Phone Number 1"));
+                        cols[1].add(egui::TextEdit::singleline(&mut self.phone2).hint_text("Phone Number 2"));
+                    });
+                });
+            }else if self.active_tab == 1 {
+                // Add text fields
+                ui.vertical_centered(|ui| {
+                    ui.columns(2, |cols| {
+                        cols[0].add(egui::TextEdit::singleline(&mut self.so_number).hint_text("SO#"));
+                        cols[1].add(egui::TextEdit::singleline(&mut self.customer_name).hint_text("Customer Name"));
+                    });
+                    ui.columns(2, |cols| {
+                        cols[0].add(egui::TextEdit::singleline(&mut self.phone1).hint_text("Phone Number 1"));
+                        cols[1].add(egui::TextEdit::singleline(&mut self.phone2).hint_text("Phone Number 2"));
+                    });
+                });
+            }
+            // Add more tab contents as needed
+        });
+    }
 }
