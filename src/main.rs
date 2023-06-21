@@ -19,7 +19,7 @@ struct MastertechApp {
 impl MastertechApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // Get current context style
-        //let mut style = (cc.egui_ctx.style()).clone(); //let mut style: egui::Style = (*ctx.style()).clone();
+        let mut style = (cc.egui_ctx.style()).clone(); //let mut style: egui::Style = (*ctx.style()).clone();
         //cc.egui_ctx.set_style(egui::Style::)
         //style.spacing.item_spacing = egui::vec2(10.0, 20.0);
         //ctx.set_style(style);
@@ -60,61 +60,44 @@ impl eframe::App for MastertechApp {
 
 
             if self.active_tab == 0 {
-                ui.vertical(|ui| {
-                    StripBuilder::new(ui)
-                        .size(Size::remainder()) // top cell
-                        .size(Size::remainder())
-                        .vertical(|mut strip| {
-
-
-
-
-                            strip.cell(|ui| {
-
-                                ui.painter().rect_filled(
-                                    ui.available_rect_before_wrap(),
-                                    0.0,
-                                    egui::Color32::from_rgba_premultiplied(23, 194, 145, 1)
-                                );
-
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.so_number).hint_text("SO#").char_limit(8)
-                                    .vertical_align(egui::Align::Center)
-                                    .desired_width(130.0));
-
-                                    ui.add(egui::TextEdit::singleline(&mut self.customer_name).hint_text("Customer Name")
-                                    .desired_width(130.0));
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::TextEdit::singleline(&mut self.phone1).hint_text("Phone Number 1")
-                                    .desired_width(130.0));
-                                
-                                    ui.add(egui::TextEdit::singleline(&mut self.phone2).hint_text("Phone Number 2")
-                                    .desired_width(130.0));      
-                                });
-                            });
-
-
-
-
-
-                            strip.strip(|builder|{
-                                builder.sizes(Size::remainder(), 3)
-                                .vertical(|mut strip| {
-
-                                    strip.cell(|ui|{
-                                        ui.painter().rect_stroke(
-                                            ui.available_rect_before_wrap(),
-                                            0.0,
-                                            egui::Stroke {width: 5.0, color: egui::Color32::RED}
-                                        );
-
+                StripBuilder::new(ui)
+                    .size(Size::relative(0.5))// top cell
+                    .size(Size::relative(0.25))
+                    .vertical(|mut strip| {
+                        strip.strip(|builder| {
+                            builder.sizes(Size::remainder(), 2).horizontal(|mut strip| {
+                                strip.cell(|ui| {
+                                    ui.painter().rect_filled(
+                                        ui.available_rect_before_wrap(),
+                                        0.0,
+                                        egui::Color32::GREEN,
+                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::TextEdit::singleline(&mut self.so_number).hint_text("SO#").char_limit(8)
+                                        .vertical_align(egui::Align::Center)
+                                        .desired_width(130.0));
+        
+                                        ui.add(egui::TextEdit::singleline(&mut self.customer_name).hint_text("Customer Name")
+                                        .desired_width(130.0));
                                     });
-                                    strip.cell(|ui| {
-                                        ui.vertical_centered(|ui| {
-                                            ui.add(egui::TextEdit::singleline(&mut self.phone2).hint_text("TEST")
-                                            .desired_width(130.0));     
+        
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::TextEdit::singleline(&mut self.phone1).hint_text("Phone Number 1")
+                                        .desired_width(130.0));
+                                    
+                                        ui.add(egui::TextEdit::singleline(&mut self.phone2).hint_text("Phone Number 2")
+                                        .desired_width(130.0));      
+                                    });
+                                });
+                                strip.strip(|builder| {
+                                    builder.sizes(Size::remainder(), 1).horizontal(|mut strip| {
+                                        strip.cell(|ui| {
+                                            ui.painter().rect_filled(
+                                                ui.available_rect_before_wrap(),
+                                                0.0,
+                                                egui::Color32::BLUE,
+                                            );
+                                            ui.label("width: 50%\nheight: 1/3 of the red region");
                                         });
                                     });
                                 });
