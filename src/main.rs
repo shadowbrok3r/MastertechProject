@@ -4,6 +4,7 @@ use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree, ButtonsStyle, SeparatorStyle, TabBarStyle, TabStyle};
 use egui_extras::Column;
+mod submit_tur;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -41,6 +42,7 @@ struct MastertechContext {
     salesman_cbox: Salesman,
     techs_cbox: Techs,
     checkin_notes: String,
+    output: String,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -130,6 +132,7 @@ impl Default for MasterTechApp {
             salesman_cbox: Salesman::Jake,
             techs_cbox: Techs::Logan,
             checkin_notes: "".to_string(),
+            output: "".to_string(),
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -174,6 +177,9 @@ impl MastertechContext {
         ui.columns(2,|column|{
 
             column[0].vertical(|ui|{
+                //ui.painter().text(Pos2::default(),Align2::CENTER_CENTER, "text", FontId::monospace(12.0), Color32::RED);
+                ui.vertical_centered(|ui|{ui.heading("Ticket Information");});
+                
                 ui.horizontal(|ui|{
                     ui.add_space(15.0);
                     ui.add(TextEdit::singleline(&mut self.so_number)
@@ -222,6 +228,9 @@ impl MastertechContext {
                 ui.horizontal(|ui|{
                     ui.add_space(15.0);
                     ui.button("Submit");
+                    if ui.button("Submit").clicked(){
+                        //return Action
+                    }
                 });
                 ui.end_row();
             });
@@ -241,8 +250,13 @@ impl MastertechContext {
 
     }
 
-    fn output_console(&mut self, ui: &mut Ui) {
-        ui.heading("Console");
+    fn output_console(&mut self, ui: &mut Ui) { 
+        ui.add_sized(ui.available_size(),
+            TextEdit::multiline(&mut self.output).hint_text("Output")
+            
+        );
+
+        //ui.;
 
     }
 }
@@ -292,7 +306,7 @@ impl eframe::App for MasterTechApp {
                 style.tabs.rounding.ne = 15.0;
                 style.tabs.text_color_active_focused = Color32::from_rgba_premultiplied(0, 254, 158, 255);
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
-
+                
                 //style.tabs.outline_color
                 //style.tabs.bg_fill
                 DockArea::new(&mut self.tree)
