@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{collections::HashSet, borrow::BorrowMut};
+use std::{collections::HashSet};
 use eframe::egui;
 use egui::*;
-use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree, ButtonsStyle, SeparatorStyle, TabBarStyle, TabStyle};
+use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use egui_extras::*;//Column;//{Column, datepicker};
+use sysinfo::{System, SystemExt, RefreshKind};
+use reqwest::*;
+use serde::{Serialize, Deserialize};
 
 mod submit_tur;
 
@@ -42,6 +45,8 @@ enum HardwareTest{
     ssd_fail,
     ssd_not_tested,
 }
+
+
 struct MastertechContext {
 
     //////////////////////////////////////////
@@ -99,6 +104,8 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
+            "Scripts" => self.scripts(ui),
+            "System Information" => self.system_information(ui),
             _ => {
                 ui.label(tab.as_str());
             }
@@ -132,6 +139,7 @@ impl Default for MasterTechApp {
             0.7,
             vec!["Console".to_owned()],
         );
+
         let [_, _] = tree.split_below(b, 0.5, vec!["Empty1".to_owned()]);
 
         let mut open_tabs = HashSet::new();
@@ -217,8 +225,8 @@ impl MastertechContext {
             
             //Grid::new("tur_sheet_heading_grid").num_columns(1)
             //.show(ui, |ui| {ui.vertical_centered(|ui|{ui.heading("Ticket Information")});});
-            ui.vertical_centered(|ui|{
-
+            ui.horizontal(|ui|{
+                ui.add_space(80.0);
                 if ui.add(Button::new("Get Ticket").stroke(self.border_stroke_color)
                 .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
                     //get_ticket_information();
@@ -268,7 +276,7 @@ impl MastertechContext {
             .show(ui, |ui| {
                 ui.add_space(16.0);
                 ui.add(TextEdit::multiline(&mut self.checkin_notes)
-                .hint_text("Checkin Notes").desired_rows(15).desired_width(self.widget_size * 2.0 + 5.0));
+                .hint_text("Checkin Notes").desired_rows(15).desired_width(self.widget_size * 2.0 + 3.0));
             });
             ui.vertical(|ui| {ui.add_space(3.0);});
             Grid::new("tur_sheet_grid3_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
@@ -321,7 +329,7 @@ impl MastertechContext {
             Grid::new("tur_sheet_grid1_col2").spacing(vec2(5.0, 5.0)).num_columns(2)
             .show(ui, |ui|{
                 /*     ROW 3     */
-                ui.add_space(15.0);
+                ui.add_space(8.0);
                 ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 2.0)
                 .selected_text(format!("{:?}", self.ssd_test_cbox))
                 .show_ui(ui, |ui| {
@@ -342,7 +350,7 @@ impl MastertechContext {
             });
             Grid::new("tur_sheet_grid2_col2").spacing(vec2(5.0, 5.0)).num_columns(1)
             .show(ui, |ui|{
-                ui.add_space(13.0);
+                ui.add_space(80.0);
                 ComboBox::from_id_source("ram_cbox").width(self.widget_size - 2.0)
                 .selected_text(format!("{:?}", self.ram_test_cbox))
                 .show_ui(ui, |ui| {
@@ -382,10 +390,49 @@ impl MastertechContext {
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::LIGHT_GREEN));
         ui.add_sized(ui.available_size(),
             TextEdit::multiline(&mut self.output).hint_text("Output")
-            
         );
+    }
 
-        //ui.;
+    fn system_information(&mut self, ui: &mut Ui){
+        ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
+        ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
+        ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
+
+        //let mut sys = System::new_with_specifics(RefreshKind::withd);// Create `System` struct.
+        //sys.refresh_all(); // First we update all information of our `System` struct.
+        Grid::new("tur_sheet_grid1_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
+        .show(ui, |ui| {
+
+            ui.label(format!("{}", serde_json::to_string(&sys).unwrap()));
+            /*     ROW 1     
+            ui.label("=> Disks:");
+            for disk in sys.disks() { // We display all disks' information:
+                ui.add_space(15.0);
+                ui.label(format!("{:#?}", disk));
+                ui.end_row();
+            }
+
+            ui.label("=> system:");
+            // RAM and swap information:
+            ui.label(format!("total memory: {} bytes", sys.total_memory()));
+            ui.end_row();
+
+            // Display system information:
+            ui.label(format!("System name:             {:?}", sys.name()));
+            ui.label(format!("System OS version:       {:?}", sys.os_version()));
+            ui.end_row();
+            ui.label(format!("System host name:        {:?}", sys.host_name()));
+
+            // Number of CPUs:
+            ui.label(format!("NB CPUs: {}", sys.cpus().len()));
+            ui.end_row();
+            */
+
+        });
+
+    }
+
+    fn scripts(&mut self, ui: &mut Ui){
 
     }
 }
@@ -418,13 +465,11 @@ impl eframe::App for MasterTechApp {
             })
         });
 
-        CentralPanel::default()
-            // When displaying a DockArea in another UI, it looks better
-            // to set inner margins to 0.
-            .frame(Frame::central_panel(&ctx.style()).inner_margin(0.))
+        CentralPanel::default()// When displaying a DockArea in another UI, it looks better
+            .frame(Frame::central_panel(&ctx.style()).inner_margin(0.))// to set inner margins to 0.
             .show(ctx, |ui| {
                 let mut style = self.context.style.get_or_insert(Style::from_egui(ui.style())).clone();
-                style.tabs.bg_fill = Color32::from_rgb(29,28,30);
+                style.tabs.bg_fill = Color32::from_rgb(35,35,35);
                 style.selection_color = Color32::from_rgb(92,0,87);
                 style.separator.extra_interact_width = 20.0;
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
@@ -434,6 +479,8 @@ impl eframe::App for MasterTechApp {
                 style.tabs.rounding.nw = 15.0;
                 style.tabs.rounding.ne = 15.0;
                 style.tabs.text_color_active_focused = Color32::from_rgba_premultiplied(0, 254, 158, 255);
+                style.tabs.text_color_active_unfocused = Color32::from_rgba_premultiplied(0, 255, 255, 255);
+                style.tabs.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
                 
                 //style.tabs.outline_color
