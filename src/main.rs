@@ -3,7 +3,8 @@ use std::{collections::HashSet, borrow::BorrowMut};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree, ButtonsStyle, SeparatorStyle, TabBarStyle, TabStyle};
-use egui_extras::Column;
+use egui_extras::*;//Column;//{Column, datepicker};
+
 mod submit_tur;
 
 fn main() -> eframe::Result<()> {
@@ -29,7 +30,18 @@ enum Techs{
     Bread,
     Taco
 }
-
+#[derive(Debug, PartialEq)]
+enum HardwareTest{
+    ram_pass,
+    ram_fail,
+    ram_not_tested,
+    hdd_pass,
+    hdd_fail,
+    hdd_not_tested,
+    ssd_pass,
+    ssd_fail,
+    ssd_not_tested,
+}
 struct MastertechContext {
 
     //////////////////////////////////////////
@@ -41,7 +53,13 @@ struct MastertechContext {
     phone2: String,
     salesman_cbox: Salesman,
     techs_cbox: Techs,
+    ram_test_cbox: HardwareTest,
+    hdd_test_cbox: HardwareTest,
+    ssd_test_cbox: HardwareTest,
     checkin_notes: String,
+    webroot_key: String,
+    superanti_key: String,
+    recommendations: String,
     output: String,
 
     //////////////////////////////////////////
@@ -53,6 +71,12 @@ struct MastertechContext {
     show_add_buttons: bool,
     draggable_tabs: bool,
     show_tab_name_on_hover: bool,
+    tur_sheet_tab: String,
+    output_console_tab: String,
+    system_info_tab: String,
+    scripts_tab: String,
+    date: Option<chrono::NaiveDate>,
+    send_specs: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -131,7 +155,14 @@ impl Default for MasterTechApp {
             phone2: "".to_string(),
             salesman_cbox: Salesman::Jake,
             techs_cbox: Techs::Logan,
+            ram_test_cbox: HardwareTest::ram_not_tested,
+            hdd_test_cbox: HardwareTest::ram_not_tested,
+            ssd_test_cbox: HardwareTest::ssd_not_tested,
             checkin_notes: "".to_string(),
+            webroot_key: "".to_string(),
+            superanti_key: "".to_string(),
+            recommendations: "".to_string(),
+            send_specs: false,
             output: "".to_string(),
 
             //////////////////////////////////////////
@@ -144,14 +175,19 @@ impl Default for MasterTechApp {
             show_add_buttons: true,
             draggable_tabs: true,
             show_tab_name_on_hover: false,
+            tur_sheet_tab: "TUR Sheet".to_string(),
+            output_console_tab: "Console".to_string(),
+            system_info_tab: "System Information".to_string(),
+            scripts_tab: "Scripts".to_string(),
+            date: None,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
             //////////////////////////////////////////
             style: None,
-            text_color: Color32::from_rgb(200,200,200),
+            text_color: Color32::from_rgb(128, 242, 192),//(200,200,200),
             bg_color: Color32::from_rgb(28,30,36),
-            border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(67,251,162))
+            border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124))
         };
 
         Self { context, tree }
@@ -167,90 +203,183 @@ impl MastertechContext {
     }
 
     fn tur_sheet(&mut self, ui: &mut Ui) {
+
         ui.visuals_mut().override_text_color = Some(self.text_color);
+        ui.style_mut().spacing.button_padding = (5.0, 3.0).into();
+        ui.style_mut().spacing.window_margin.left = 15.0;
+        ui.style_mut().spacing.window_margin.right = 15.0;
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
-        
-        //Grid::new("tur_sheet").num_columns(2).min_col_width(16.0).spacing([16.0, 8.0])
-        //.show(ui, |ui| {
-        ui.columns(2,|column|{
 
-            column[0].vertical(|ui|{
-                //ui.painter().text(Pos2::default(),Align2::CENTER_CENTER, "text", FontId::monospace(12.0), Color32::RED);
-                ui.vertical_centered(|ui|{ui.heading("Ticket Information");});
+        ui.columns(2,|column|{
+        column[0].vertical(|ui|{
+            
+            //Grid::new("tur_sheet_heading_grid").num_columns(1)
+            //.show(ui, |ui| {ui.vertical_centered(|ui|{ui.heading("Ticket Information")});});
+            ui.vertical_centered(|ui|{
+
+                if ui.add(Button::new("Get Ticket").stroke(self.border_stroke_color)
+                .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                    //get_ticket_information();
+                }
+            });
+
+            Grid::new("tur_sheet_grid1_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
+            .show(ui, |ui| {
+
+                /*     ROW 1     */
+                ui.add_space(15.0);
+                ui.add(TextEdit::singleline(&mut self.so_number)
+                .hint_text("SO#").char_limit(8).desired_width(self.widget_size));
                 
-                ui.horizontal(|ui|{
-                    ui.add_space(15.0);
-                    ui.add(TextEdit::singleline(&mut self.so_number)
-                    .hint_text("SO#").char_limit(8).desired_width(self.widget_size));
-                    
-                    ui.add(TextEdit::singleline(&mut self.customer_name)
-                    .hint_text("Customer Name").desired_width(self.widget_size));
-                });
+                ui.add(TextEdit::singleline(&mut self.customer_name)
+                .hint_text("Customer Name").desired_width(self.widget_size));
                 ui.end_row();
-                ui.horizontal(|ui| {
-                    ui.add_space(15.0);
-        
-                    ui.add(TextEdit::singleline(&mut self.phone1)
-                    .hint_text("Phone Number 1").desired_width(self.widget_size));
                 
-                    ui.add(TextEdit::singleline(&mut self.phone2)
-                    .hint_text("Phone Number 2").desired_width(self.widget_size));      
-                });
+                /*     ROW 2     */
+                ui.add_space(15.0);
+                ui.add(TextEdit::singleline(&mut self.phone1)
+                .hint_text("Phone Number 1").desired_width(self.widget_size));
+                ui.add(TextEdit::singleline(&mut self.phone2)
+                .hint_text("Phone Number 2").desired_width(self.widget_size));      
                 ui.end_row();
-                // Salesman and Tech ComboBoxes
-                ui.horizontal(|ui|{
-                    ui.add_space(15.0);
-        
-                    ComboBox::from_id_source("salesman_cbox").width(self.widget_size)
-                    .selected_text(format!("{:?}", self.salesman_cbox))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.salesman_cbox, Salesman::Jake, "Jake");
-                        ui.selectable_value(&mut self.salesman_cbox, Salesman::Danny, "Danny");
-                    });
-        
-                    ComboBox::from_id_source("techs_cbox").width(self.widget_size)
-                    .selected_text(format!("{:?}", self.techs_cbox))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.techs_cbox, Techs::Logan, "Logan");
-                        ui.selectable_value(&mut self.techs_cbox, Techs::Bread, "Bread");
-                        ui.selectable_value(&mut self.techs_cbox, Techs::Taco, "Taco");
-                    });
+            
+                /*     ROW 3     */
+                ui.add_space(15.0);
+                ComboBox::from_id_source("salesman_cbox").width(self.widget_size - 2.0)
+                .selected_text(format!("{:?}", self.salesman_cbox))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.salesman_cbox, Salesman::Jake, "Jake");
+                    ui.selectable_value(&mut self.salesman_cbox, Salesman::Danny, "Danny");
                 });
-                ui.end_row();
-                ui.horizontal(|ui|{
-                    ui.add_space(15.0);
-                    ui.add(TextEdit::multiline(&mut self.checkin_notes)
-                    .hint_text("Checkin Notes").desired_rows(15).desired_width(self.widget_size * 2.0+8.0));
-                });
-                ui.end_row();
-                ui.horizontal(|ui|{
-                    ui.add_space(15.0);
-                    ui.button("Submit");
-                    if ui.button("Submit").clicked(){
-                        //return Action
-                    }
-                });
+    
+                ComboBox::from_id_source("techs_cbox").width(self.widget_size - 2.0)
+                .selected_text(format!("{:?}", self.techs_cbox))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.techs_cbox, Techs::Logan, "Logan");
+                    ui.selectable_value(&mut self.techs_cbox, Techs::Bread, "Bread");
+                    ui.selectable_value(&mut self.techs_cbox, Techs::Taco, "Taco");
+                });          
+            });
+
+            ui.vertical(|ui| {ui.add_space(3.0);});
+            Grid::new("tur_sheet_grid2_col1").spacing(vec2(5.0, 5.0)).num_columns(1)
+            .show(ui, |ui| {
+                ui.add_space(16.0);
+                ui.add(TextEdit::multiline(&mut self.checkin_notes)
+                .hint_text("Checkin Notes").desired_rows(15).desired_width(self.widget_size * 2.0 + 5.0));
+            });
+            ui.vertical(|ui| {ui.add_space(3.0);});
+            Grid::new("tur_sheet_grid3_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
+            .show(ui, |ui| {
+                ui.add_space(15.0);
+                if ui.add(Button::new("Get Keys").stroke(self.border_stroke_color)
+                .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                    //get_cps_keys
+                }
+                
+                if ui.add(Button::new("Check SEB").stroke(self.border_stroke_color)
+                .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                    //check_seb_info
+                }
                 ui.end_row();
             });
-            column[1].vertical(|ui|{
-                ui.horizontal(|ui|{
-                    ui.add_space(15.0);
-                    ui.add(TextEdit::multiline(&mut self.checkin_notes)
-                    .hint_text("stuffs").desired_rows(15).desired_width(self.widget_size * 2.0+8.0));
-                });
+            ui.vertical(|ui| {ui.add_space(3.0);});
+
+            Grid::new("tur_sheet_grid4_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
+            .show(ui, |ui| {
+
+                /*     ROW 1     */
+                ui.add_space(15.0);
+                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(0, 224, 90));
+                if ui.add(Button::new("Webroot").stroke(Stroke::new(1.5, Color32::from_rgb(0, 224, 90)))
+                .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                    //SABB-TAOG-ECC9-9C8C-CFD2
+                    //copy_webroot_key
+                }
+                ui.add(TextEdit::singleline(&mut self.webroot_key).desired_width(self.widget_size)
+                .hint_text("<-- Copy Key").char_limit(24));
+                ui.end_row();
+
+                /*     ROW 2     */
+                ui.add_space(15.0);
+                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(240, 98, 98));
+                if ui.add(Button::new("SuperAntiSpyware").stroke(Stroke::new(1.5, Color32::from_rgb(240, 98, 98)))
+                .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                    //1C2J-JTPD-CFG3R
+                    //copy_superanti_key
+                }
+                ui.add(TextEdit::singleline(&mut self.superanti_key).desired_width(self.widget_size)
+                .hint_text("<-- Copy Key").char_limit(13));
                 ui.end_row();
             });
         });
-        //});
 
 
-        
+        column[1].vertical(|ui|{
+            Grid::new("tur_sheet_grid1_col2").spacing(vec2(5.0, 5.0)).num_columns(2)
+            .show(ui, |ui|{
+                /*     ROW 3     */
+                ui.add_space(15.0);
+                ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 2.0)
+                .selected_text(format!("{:?}", self.ssd_test_cbox))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_fail, "SSD Fail");
+                    ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_pass, "SSD Pass");
+                    ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_not_tested, "SSD Not Tested");
+                });
+    
+                ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 2.0)
+                .selected_text(format!("{:?}", self.hdd_test_cbox))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_fail, "HDD Fail");
+                    ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_pass, "HDD Pass");
+                    ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_not_tested, "HDD Not Tested");
+                });
+                ui.end_row();
 
+            });
+            Grid::new("tur_sheet_grid2_col2").spacing(vec2(5.0, 5.0)).num_columns(1)
+            .show(ui, |ui|{
+                ui.add_space(13.0);
+                ComboBox::from_id_source("ram_cbox").width(self.widget_size - 2.0)
+                .selected_text(format!("{:?}", self.ram_test_cbox))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_fail, "RAM Fail");
+                    ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_pass, "RAM Pass");
+                    ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_not_tested, "RAM Not Tested");
+                });
+            });
+
+            /*     ROW 1     */
+            ui.add_space(15.0);
+            ui.add(TextEdit::multiline(&mut self.recommendations)
+            .hint_text("Recommendations").desired_rows(15).desired_width(self.widget_size * 2.0+8.0));
+
+            Grid::new("tur_sheet_grid3_col2").spacing(vec2(5.0, 5.0)).num_columns(2)
+            .show(ui, |ui| {
+                ui.checkbox(&mut self.send_specs, "Send System Info");
+                ui.end_row();
+            });
+            //#[cfg(feature = "chrono")]
+            let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
+            //ui.add(egui_extras::DatePickerButton::new(date));
+            ui.end_row();
+            
+            ui.add_space(15.0);
+            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(170, 33, 191));
+            if ui.add(Button::new("Submit TUR Sheet").stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+            .fill(Color32::from_rgb(38, 38, 38)).min_size(vec2(self.widget_size * 2.0+8.0, 8.0))).clicked(){ 
+
+            }
+
+        });
+        });
     }
 
     fn output_console(&mut self, ui: &mut Ui) { 
+        ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::LIGHT_GREEN));
         ui.add_sized(ui.available_size(),
             TextEdit::multiline(&mut self.output).hint_text("Output")
             
@@ -270,7 +399,7 @@ impl eframe::App for MasterTechApp {
                 ui.menu_button("View", |ui| {
 
                     // allow certain tabs to be toggled
-                    for tab in &["Tur Sheet", "Scripts", "Console", "System Information"] {
+                    for tab in &[&self.context.tur_sheet_tab, &self.context.scripts_tab, &self.context.output_console_tab, &self.context.system_info_tab] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)
                             .clicked()
