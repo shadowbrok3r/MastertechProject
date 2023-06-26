@@ -211,7 +211,7 @@ impl MastertechContext {
         });
     }
 
-    fn tur_sheet(&mut self, ui: &mut Ui) {
+    async fn tur_sheet(&mut self, ui: &mut Ui) {
 
         ui.visuals_mut().override_text_color = Some(self.text_color);
         ui.style_mut().spacing.button_padding = (5.0, 3.0).into();
