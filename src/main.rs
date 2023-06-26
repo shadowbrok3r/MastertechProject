@@ -1,14 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{collections::HashSet};
+use std::{collections::{HashSet, HashMap}};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use egui_extras::*;//Column;//{Column, datepicker};
 use sysinfo::{System, SystemExt, RefreshKind};
 use reqwest::*;
-use serde::{Serialize, Deserialize};
 
-mod submit_tur;
+mod tur;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -65,7 +64,7 @@ struct MastertechContext {
     webroot_key: String,
     superanti_key: String,
     recommendations: String,
-    output: String,
+    output_text: String,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -82,6 +81,7 @@ struct MastertechContext {
     scripts_tab: String,
     date: Option<chrono::NaiveDate>,
     send_specs: bool,
+    animate_progress_bar: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -171,7 +171,7 @@ impl Default for MasterTechApp {
             superanti_key: "".to_string(),
             recommendations: "".to_string(),
             send_specs: false,
-            output: "".to_string(),
+            output_text: "".to_string(),
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -188,6 +188,7 @@ impl Default for MasterTechApp {
             system_info_tab: "System Information".to_string(),
             scripts_tab: "Scripts".to_string(),
             date: None,
+            animate_progress_bar: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -225,11 +226,18 @@ impl MastertechContext {
             
             //Grid::new("tur_sheet_heading_grid").num_columns(1)
             //.show(ui, |ui| {ui.vertical_centered(|ui|{ui.heading("Ticket Information")});});
+
+            
+
             ui.horizontal(|ui|{
                 ui.add_space(80.0);
                 if ui.add(Button::new("Get Ticket").stroke(self.border_stroke_color)
                 .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
-                    //get_ticket_information();
+
+                    //let mut update_output_text = &self.output_text.clone();
+                    tur::request_ticket_info(ui, &mut self.output_text,
+                        &mut self.so_number);
+                    
                 }
             });
 
@@ -371,7 +379,7 @@ impl MastertechContext {
                 ui.end_row();
             });
             //#[cfg(feature = "chrono")]
-            let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
+            //let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
             //ui.add(egui_extras::DatePickerButton::new(date));
             ui.end_row();
             
@@ -387,10 +395,10 @@ impl MastertechContext {
     }
 
     fn output_console(&mut self, ui: &mut Ui) { 
+
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::LIGHT_GREEN));
-        ui.add_sized(ui.available_size(),
-            TextEdit::multiline(&mut self.output).hint_text("Output")
-        );
+        ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text).hint_text("Output"));
+
     }
 
     fn system_information(&mut self, ui: &mut Ui){
@@ -432,9 +440,7 @@ impl MastertechContext {
 
     }
 
-    fn scripts(&mut self, ui: &mut Ui){
-
-    }
+    fn scripts(&mut self, ui: &mut Ui){ }
 }
 
 
