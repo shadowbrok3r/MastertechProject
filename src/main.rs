@@ -403,7 +403,7 @@ impl MastertechContext {
         Grid::new("tur_sheet_grid1_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
         .show(ui, |ui| {
 
-            ui.label(format!("{}", serde_json::to_string(&sys).unwrap()));
+            //ui.label(format!("{}", serde_json::to_string(&sys).unwrap()));
             /*     ROW 1     
             ui.label("=> Disks:");
             for disk in sys.disks() { // We display all disks' information:
