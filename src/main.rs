@@ -1,11 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{collections::{HashSet, HashMap}};
+use std::{collections::{HashSet, HashMap}, os::windows::thread};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use egui_extras::*;//Column;//{Column, datepicker};
 use sysinfo::{System, SystemExt, RefreshKind};
 use reqwest::*;
+use tokio::spawn;
 
 mod tur;
 
@@ -211,7 +212,7 @@ impl MastertechContext {
         });
     }
 
-    async fn tur_sheet(&mut self, ui: &mut Ui) {
+    fn tur_sheet(&mut self, ui: &mut Ui) {
 
         ui.visuals_mut().override_text_color = Some(self.text_color);
         ui.style_mut().spacing.button_padding = (5.0, 3.0).into();
@@ -223,21 +224,16 @@ impl MastertechContext {
 
         ui.columns(2,|column|{
         column[0].vertical(|ui|{
-            
-            //Grid::new("tur_sheet_heading_grid").num_columns(1)
-            //.show(ui, |ui| {ui.vertical_centered(|ui|{ui.heading("Ticket Information")});});
-
-            
-
             ui.horizontal(|ui|{
                 ui.add_space(80.0);
                 if ui.add(Button::new("Get Ticket").stroke(self.border_stroke_color)
                 .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
-
-                    //let mut update_output_text = &self.output_text.clone();
-                    tur::request_ticket_info(ui, &mut self.output_text,
-                        &mut self.so_number);
-                    
+                    //reqwest:: //spawn(move || {
+                        //let mut update_output_text = &self.output_text.clone();
+                    //let mut response: String = "".to_string();
+                    //tur::request_ticket_info(ui, &mut response,&mut self.so_number);
+                    tur::request_ticket_info(ui);
+                    //});              
                 }
             });
 
@@ -387,7 +383,7 @@ impl MastertechContext {
             ui.visuals_mut().override_text_color = Some(Color32::from_rgb(170, 33, 191));
             if ui.add(Button::new("Submit TUR Sheet").stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
             .fill(Color32::from_rgb(38, 38, 38)).min_size(vec2(self.widget_size * 2.0+8.0, 8.0))).clicked(){ 
-
+                // TODO
             }
 
         });
@@ -409,7 +405,7 @@ impl MastertechContext {
         //let mut sys = System::new_with_specifics(RefreshKind::withd);// Create `System` struct.
         //sys.refresh_all(); // First we update all information of our `System` struct.
         Grid::new("tur_sheet_grid1_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
-        .show(ui, |ui| {
+        .show(ui, |ui| { // TODO
 
             //ui.label(format!("{}", serde_json::to_string(&sys).unwrap()));
             /*     ROW 1     
