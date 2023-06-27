@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#serde = { version = "1.0.164", features = ["derive"] }
 chrono = "0.4.26"
 eframe = "0.22.0"
 egui = "0.22.0"
@@ -14,6 +13,9 @@ egui_dock = "0.6.3"
 egui_extras = "0.22.0"
 reqwest = {version = "0.11.18", features = ["json", "stream"] }
 sysinfo = "0.29.2"
-tokio = "1.28.2"
-openssl = { version = "0.10", features = ["vendored"] }
-#serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+
+#openssl = { version = "0.10", features = ["vendored"] } #Only on linux
+
+serde = { version = "1.0.164", features = ["derive"] }
+serde_json = "1.0"
