@@ -7,7 +7,7 @@ use egui_extras::*;//Column;//{Column, datepicker};
 use sysinfo::{System, SystemExt, RefreshKind};
 use reqwest::*;
 use tokio::spawn;
-
+use pollster::*;
 mod tur;
 
 fn main() -> eframe::Result<()> {
@@ -66,6 +66,8 @@ struct MastertechContext {
     superanti_key: String,
     recommendations: String,
     output_text: String,
+    tx: std::sync::mpsc::Sender<u32>,
+    rx: std::sync::mpsc::Receiver<u32>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -133,6 +135,7 @@ impl TabViewer for MastertechContext {
 
 impl Default for MasterTechApp {
     fn default() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "Empty".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Scripts".to_owned(), "System Information".to_owned()]);
         let [_, _] = tree.split_below(
@@ -173,6 +176,8 @@ impl Default for MasterTechApp {
             recommendations: "".to_string(),
             send_specs: false,
             output_text: "".to_string(),
+            tx,
+            rx,
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -232,7 +237,12 @@ impl MastertechContext {
                         //let mut update_output_text = &self.output_text.clone();
                     //let mut response: String = "".to_string();
                     //tur::request_ticket_info(ui, &mut response,&mut self.so_number);
-                    tur::request_ticket_info(ui);
+                    //let ctx = super::context.clone();
+                    let my_fut = async{
+                        tur::request_ticket_info(self.tx).await;
+                    };
+                    let result = my_fut.block_on();
+                    
                     //});              
                 }
             });

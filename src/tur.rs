@@ -47,7 +47,7 @@ struct post_request{
 /// Then i could request_ticket_info() and store the ctx.clone from the main loop and then use that inside the request_ticket_info() 
 /// to update the ui with the ticket info
 /// 
-pub async fn request_ticket_info(tx: std::sync::mpsc::Sender<u32>, ctx: egui::Context) //, output_console_text: &mut String, service_order_num: &mut String) -> Result<(), reqwest::Error> {
+pub async fn request_ticket_info(tx: std::sync::mpsc::Sender<u32>) //, output_console_text: &mut String, service_order_num: &mut String) -> Result<(), reqwest::Error> {
     -> Result<(), reqwest::Error> {
 
     let params = [
@@ -78,7 +78,7 @@ pub async fn request_ticket_info(tx: std::sync::mpsc::Sender<u32>, ctx: egui::Co
                 let resp_body = response.text().await?;
                 //resp_body.find("path").unwrap();
                 println!("resp_body: {}", resp_body);
-                ui.label(&resp_body);
+                //ui.label(&resp_body);
                 //output_console_text.push_str(&resp_body);
             },
             reqwest::StatusCode::UNAUTHORIZED => {
@@ -88,8 +88,9 @@ pub async fn request_ticket_info(tx: std::sync::mpsc::Sender<u32>, ctx: egui::Co
                 panic!("Uh oh! Something unexpected happened.");
             },
         };
+        let _ = tx.send(response.json());
 
-        ctx.request_repaint();
+        //ctx.request_repaint();
          //update_output_text(&mut ui, &resp_body);
     //let progress_bar = egui::ProgressBar::new(100.0).show_percentage().desired_width(30.0).fill(egui::Color32::LIGHT_GREEN);
     //ui.add(progress_bar);
