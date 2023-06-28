@@ -1,16 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
 use std::{collections::{HashSet, HashMap}}; //, os::windows::thread};
+use core::result;
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use egui_extras::*;
-use sysinfo::{System, SystemExt, RefreshKind};
-use reqwest::*;
 use tokio::sync::watch;
+use reqwest::*;
 use pollster::*;
-use pollster::FutureExt as _;
-
+//use sysinfo::{System, SystemExt, RefreshKind};
 mod tur;
+
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -22,6 +22,19 @@ async fn main() -> eframe::Result<()> {
         options,
         Box::new(|_cc| Box::<MasterTechApp>::default()),
     )
+}
+
+pub struct SendRequest {
+    tx: tokio::sync::watch::Sender<Option<core::result::Result<String, reqwest::Error>>>,
+    rx: tokio::sync::watch::Receiver<Option<core::result::Result<String, reqwest::Error>>>,
+}
+
+impl Default for SendRequest { 
+    fn default() -> Self {
+        let (tx, mut rx) = watch::channel("");
+        let (tx, rx) = watch::channel(None);
+        Self { tx, rx }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -47,20 +60,6 @@ enum HardwareTest{
     ssd_fail,
     ssd_not_tested,
 }
-struct SendRequest {
-    tx: Option<watch::Sender<Option<Result<String>>>>,
-    rx: Option<watch::Receiver<Option<Result<String>>>>,
-}
-
-impl SendRequest {
-    fn new() -> Self {
-        let (tx, mut rx) = watch::channel("hello");
-        Self {
-            tx: None,
-            rx: None,
-        }
-    }
-}
 
 struct MastertechContext {
 
@@ -81,8 +80,6 @@ struct MastertechContext {
     superanti_key: String,
     recommendations: String,
     output_text: String,
-    //tx: tokio::sync::watch::Sender<Option<Result<String>>>,
-    //rx: tokio::sync::watch::Receiver<Option<Result<String>>>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -485,34 +482,32 @@ impl eframe::App for MasterTechApp {
         //tur::request_ticket_info(ui, &mut response,&mut self.so_number);
         let text_from_ticket: String = "".to_string();
         if self.context.get_ticket_button_pressed == true {
-            let x = SendRequest::new();
-            if x.tx.is_none() && x.rx.is_none() {
-                let (tx, rx) = watch::channel(None);
-                // Save tx and rx to your struct
-                x.tx = Some(tx);
-                x.rx = Some(rx);
 
-                // Spawn the async task.
-                // Make sure the function now uses the sender from your struct
-                if let Some(tx) = &x.tx {
-                    tokio::spawn(tur::request_ticket_info( x.tx, text_from_ticket));
-                }
-            }
+            // Create a watch channel with an initial value of None.
+            let mut send_request = SendRequest::default();
+
+            // Spawn the async task.
+            tokio::spawn(tur::request_ticket_info(send_request.tx, "52888517".to_string()));
             
-            if let Some(rx) = &x.rx {
+            let new_string = "Hello".to_string();
+            
+            pollster::block_on(async{
                 // Wait for a value to be sent.
-                if rx.has_changed().unwrap() {
+                while send_request.rx.changed().await.is_ok() {
                     // Get the received value.
-                    let result = rx.borrow();
-                
+                    let new_string = send_request.rx.borrow();
+        
                     // Handle the received value.
-                    match &*result {
+                    match &*new_string {
                         Some(Ok(response)) => println!("{}", response),
                         Some(Err(e)) => println!("Error: {}", e),
                         None => println!("No response received"),
                     }
                 }
-            }
+            });
+
+    
+            
         }
 
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
