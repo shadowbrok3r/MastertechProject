@@ -1,13 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{collections::{HashSet, HashMap}, os::windows::thread};
+use std::{collections::{HashSet, HashMap}}; //, os::windows::thread};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
-use egui_extras::*;//Column;//{Column, datepicker};
+use egui_extras::*;
 use sysinfo::{System, SystemExt, RefreshKind};
 use reqwest::*;
-use tokio::spawn;
+use tokio::{spawn, sync::mpsc::Sender, sync::mpsc::Receiver};
 use pollster::*;
+
 mod tur;
 
 fn main() -> eframe::Result<()> {
@@ -66,8 +67,8 @@ struct MastertechContext {
     superanti_key: String,
     recommendations: String,
     output_text: String,
-    tx: std::sync::mpsc::Sender<u32>,
-    rx: std::sync::mpsc::Receiver<u32>,
+    tx: tokio::sync::mpsc::Sender<u32>,
+    rx: tokio::sync::mpsc::Receiver<u32>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -85,6 +86,7 @@ struct MastertechContext {
     date: Option<chrono::NaiveDate>,
     send_specs: bool,
     animate_progress_bar: bool,
+    get_ticket_button_pressed: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -135,7 +137,7 @@ impl TabViewer for MastertechContext {
 
 impl Default for MasterTechApp {
     fn default() -> Self {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "Empty".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Scripts".to_owned(), "System Information".to_owned()]);
         let [_, _] = tree.split_below(
@@ -195,6 +197,7 @@ impl Default for MasterTechApp {
             scripts_tab: "Scripts".to_string(),
             date: None,
             animate_progress_bar: false,
+            get_ticket_button_pressed: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -233,17 +236,7 @@ impl MastertechContext {
                 ui.add_space(80.0);
                 if ui.add(Button::new("Get Ticket").stroke(self.border_stroke_color)
                 .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
-                    //reqwest:: //spawn(move || {
-                        //let mut update_output_text = &self.output_text.clone();
-                    //let mut response: String = "".to_string();
-                    //tur::request_ticket_info(ui, &mut response,&mut self.so_number);
-                    //let ctx = super::context.clone();
-                    let my_fut = async{
-                        tur::request_ticket_info(self.tx).await;
-                    };
-                    let result = my_fut.block_on();
-                    
-                    //});              
+                    self.get_ticket_button_pressed = true; // Sets bool to true so the main loop runs the get_ticket function
                 }
             });
 
@@ -476,10 +469,22 @@ impl eframe::App for MasterTechApp {
                 });
             })
         });
+        //let update_output_text = &self.context.output_text;
+        //let mut response: String = "".to_string();
+        //tur::request_ticket_info(ui, &mut response,&mut self.so_number);
+    let text_from_ticket: String = "".to_string();
+        if self.context.get_ticket_button_pressed == true{
+            //let tx = self.context.tx.clone();
+            let response = tur::request_ticket_info( text_from_ticket);
+            //println!("Text: {:?}", response);
+            ctx.request_repaint(); //do this once we verify the data came back..
+          
+        }
 
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
             .frame(Frame::central_panel(&ctx.style()).inner_margin(0.))// to set inner margins to 0.
             .show(ctx, |ui| {
+
                 let mut style = self.context.style.get_or_insert(Style::from_egui(ui.style())).clone();
                 style.tabs.bg_fill = Color32::from_rgb(35,35,35);
                 style.selection_color = Color32::from_rgb(92,0,87);
@@ -495,8 +500,6 @@ impl eframe::App for MasterTechApp {
                 style.tabs.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
                 
-                //style.tabs.outline_color
-                //style.tabs.bg_fill
                 DockArea::new(&mut self.tree)
                     .style(style)
                     .show_close_buttons(self.context.show_close_buttons)
