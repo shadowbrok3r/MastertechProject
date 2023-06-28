@@ -6,12 +6,13 @@ use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use egui_extras::*;
 use sysinfo::{System, SystemExt, RefreshKind};
 use reqwest::*;
-use tokio::{spawn, sync::mpsc::Sender, sync::mpsc::Receiver};
+use tokio::sync::watch;
 use pollster::*;
+use pollster::FutureExt as _;
 
 mod tur;
-
-fn main() -> eframe::Result<()> {
+#[tokio::main]
+async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(900.0, 700.0)),
         ..Default::default()
@@ -46,7 +47,20 @@ enum HardwareTest{
     ssd_fail,
     ssd_not_tested,
 }
+struct SendRequest {
+    tx: Option<watch::Sender<Option<Result<String>>>>,
+    rx: Option<watch::Receiver<Option<Result<String>>>>,
+}
 
+impl SendRequest {
+    fn new() -> Self {
+        let (tx, mut rx) = watch::channel("hello");
+        Self {
+            tx: None,
+            rx: None,
+        }
+    }
+}
 
 struct MastertechContext {
 
@@ -67,8 +81,8 @@ struct MastertechContext {
     superanti_key: String,
     recommendations: String,
     output_text: String,
-    tx: tokio::sync::mpsc::Sender<u32>,
-    rx: tokio::sync::mpsc::Receiver<u32>,
+    //tx: tokio::sync::watch::Sender<Option<Result<String>>>,
+    //rx: tokio::sync::watch::Receiver<Option<Result<String>>>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -100,6 +114,7 @@ struct MastertechContext {
 struct MasterTechApp {
     context: MastertechContext,
     tree: Tree<String>,
+
 }
 
 impl TabViewer for MastertechContext {
@@ -137,7 +152,7 @@ impl TabViewer for MastertechContext {
 
 impl Default for MasterTechApp {
     fn default() -> Self {
-        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "Empty".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Scripts".to_owned(), "System Information".to_owned()]);
         let [_, _] = tree.split_below(
@@ -178,8 +193,6 @@ impl Default for MasterTechApp {
             recommendations: "".to_string(),
             send_specs: false,
             output_text: "".to_string(),
-            tx,
-            rx,
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -469,16 +482,37 @@ impl eframe::App for MasterTechApp {
                 });
             })
         });
-        //let update_output_text = &self.context.output_text;
-        //let mut response: String = "".to_string();
         //tur::request_ticket_info(ui, &mut response,&mut self.so_number);
-    let text_from_ticket: String = "".to_string();
-        if self.context.get_ticket_button_pressed == true{
-            //let tx = self.context.tx.clone();
-            let response = tur::request_ticket_info( text_from_ticket);
-            //println!("Text: {:?}", response);
-            ctx.request_repaint(); //do this once we verify the data came back..
-          
+        let text_from_ticket: String = "".to_string();
+        if self.context.get_ticket_button_pressed == true {
+            let x = SendRequest::new();
+            if x.tx.is_none() && x.rx.is_none() {
+                let (tx, rx) = watch::channel(None);
+                // Save tx and rx to your struct
+                x.tx = Some(tx);
+                x.rx = Some(rx);
+
+                // Spawn the async task.
+                // Make sure the function now uses the sender from your struct
+                if let Some(tx) = &x.tx {
+                    tokio::spawn(tur::request_ticket_info( x.tx, text_from_ticket));
+                }
+            }
+            
+            if let Some(rx) = &x.rx {
+                // Wait for a value to be sent.
+                if rx.has_changed().unwrap() {
+                    // Get the received value.
+                    let result = rx.borrow();
+                
+                    // Handle the received value.
+                    match &*result {
+                        Some(Ok(response)) => println!("{}", response),
+                        Some(Err(e)) => println!("Error: {}", e),
+                        None => println!("No response received"),
+                    }
+                }
+            }
         }
 
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
