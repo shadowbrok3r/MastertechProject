@@ -37,68 +37,47 @@ struct post_request{
         
     }
 }*/
-//#[tokio::main]
-pub async fn request_ticket_info(mut text_to_update: String) -> Result<(), reqwest::Error> {//, output_console_text: &mut String, service_order_num: &mut String) -> Result<(), reqwest::Error> {
+
+pub async fn request_ticket_info(tx: tokio::sync::watch::Sender<Option<Result<String, reqwest::Error>>>,
+    mut text_to_update: String) {//, output_console_text: &mut String, service_order_num: &mut String) -> Result<(), reqwest::Error> {
     let params = [
-            ("user_email", "logan.lees@pclaptops.com"), 
-            ("user_password", "Poolparty1"),
-            ("call", "getOrder"),
-            ("action", "everest_call"),
-            ("application", "everest"),
+            //("user_email", "logan.lees@pclaptops.com"), 
+            //("user_password", "Poolparty1"),
+            //("call", "getOrder"),
+            //("action", "everest_call"),
+            //("application", "everest"),
             ("arg1", "52886482"),
             ("arg2", "false"),
             ("company", "pcl")
         ];
 
-   
+  
+        let client = reqwest::Client::new();
 
-        //resp_body.find("path").unwrap();
-        //println!("resp_body: {:?}", resp_body);
+        let resp = client.post("https://api.spotify.com/v1/search")//("https://scaffold.pclaptops.com/api/index")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .json(&params).send().await;
+    
 
-        tokio::spawn(async move {
-            let client = reqwest::Client::new();
-            //let my_fut = async{
-                let response = client.post("https://scaffold.pclaptops.com/api/index")
-                    .header(CONTENT_TYPE, "application/json")
-                    .header(ACCEPT, "application/json")
-                    .json(&params).send().await;
-        
-        
-                let resp_body = response.expect("failure?");
-                text_to_update.push_str(&resp_body.text().await.unwrap());
-            //response.await;
-             //tx.send(response).await.unwrap();
-            
-        });
-       //};
-        //response.json();
-        //let result = my_fut.block_on();
-        
-        /*match response.status() {
-            reqwest::StatusCode::OK => {
-                println!("Success!");
-                let resp_body = response.text().await;
-                //resp_body.find("path").unwrap();
-                println!("resp_body: {:?}", resp_body);
-                //ui.label(&resp_body);
-                //output_console_text.push_str(&resp_body);
-            },
-            reqwest::StatusCode::UNAUTHORIZED => {
-                println!("Need to grab a new token");
-            },
-            _ => {
-                panic!("Uh oh! Something unexpected happened.");
-            },
-        };*/
+        // Convert the response to a string and send the result through the channel.
+    let resp_string = match resp {
+        Ok(mut response) => Some(Ok(response.text().await.unwrap_or_else(|_| String::from("Failed to read response text")))),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            None
+        }
+    };
 
+    match tx.send(resp_string) {
+        Ok(_) => (),
+        Err(e) => eprintln!("Error while sending the response: {}", e),
+    };
+    
 
-        //let _ = tx.send(response.json());
-
-        
         //update_output_text(&mut ui, &resp_body);
         //let progress_bar = egui::ProgressBar::new(100.0).show_percentage().desired_width(30.0).fill(egui::Color32::LIGHT_GREEN);
         //ui.add(progress_bar);
-    Ok(())
 }
 
 
