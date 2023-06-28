@@ -40,7 +40,7 @@ pub async fn request_ticket_info(tx: watch::Sender<Option<Result<String, reqwest
     ];
 
     let client = reqwest::Client::new();
-    let resp = client.post("https://api.spotify.com/v1/search")//("https://scaffold.pclaptops.com/api/index")")
+    let resp = client.post("https://scaffold.pclaptops.com/api/index")
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .json(&params).send().await;

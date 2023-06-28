@@ -479,15 +479,17 @@ impl eframe::App for MasterTechApp {
                 });
             })
         });
-        //tur::request_ticket_info(ui, &mut response,&mut self.so_number);
         let text_from_ticket: String = "".to_string();
         if self.context.get_ticket_button_pressed == true {
+            // Change the state of the button back to false so it only 
+            // enters the loop ONE time instead of looping constantly
+            self.context.get_ticket_button_pressed = false;
 
             // Create a watch channel with an initial value of None.
             let mut send_request = SendRequest::default();
 
             // Spawn the async task.
-            tokio::spawn(tur::request_ticket_info(send_request.tx, "52888517".to_string()));
+            tokio::spawn(tur::request_ticket_info(send_request.tx, self.context.so_number.to_string()));
             
             let new_string = "Hello".to_string();
             
