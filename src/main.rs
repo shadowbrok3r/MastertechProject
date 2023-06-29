@@ -4,11 +4,12 @@ use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use egui_extras::*;
-use tokio::{sync::watch, task};
+use tokio::{sync::watch, task, runtime::Handle};
 use reqwest::*;
 //use sysinfo::{System, SystemExt, RefreshKind};
 mod tur;
 use core::result;
+
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -25,7 +26,6 @@ async fn main() -> eframe::Result<()> {
 pub struct SendRequest {
     tx: tokio::sync::watch::Sender<Option<core::result::Result<String, reqwest::Error>>>,
     rx: tokio::sync::watch::Receiver<Option<core::result::Result<String, reqwest::Error>>>,
-    text1: String
 }
 
 impl Default for SendRequest { 
@@ -33,22 +33,43 @@ impl Default for SendRequest {
         //let (tx, mut rx) = watch::channel("");
         let (tx, _rx) = watch::channel(None);
         let rx = tx.subscribe();
-        Self { tx, rx, text1: "".to_string()}
+        Self { tx, rx}
     }
 }
 
 impl SendRequest{
-   fn create_channel(text: String) -> core::result::Result<(), Box<dyn Error>> {
+   fn create_channel(so_number: String, output_txt: String){
         println!("Creating channel");
-        let mut send_request = SendRequest::default();
-        //send_request.rx.to_owned();
+        //let mut send_request = SendRequest::default();
+        //let (tx,rx) = watch::channel("init");
 
-        task::spawn(async{tur::request_ticket_info(send_request.tx, "52883815".to_string()).await;});
-         
-        if send_request.rx.has_changed().is_ok() {
+        //send_request.rx.to_owned();
+        let handle = Handle::current();
+        let service_num = so_number.clone();
+        std::thread::spawn(move||{
+            handle.block_on(async{
+                let response = tur::request_ticket_info(service_num).await;
+
+                match response.unwrap().error_for_status(){
+                    Ok(response) => println!("response: {:?}", response),
+                    Err(err) => {
+                        // asserting a 400 as an example
+                        // it could be any status between 400...599
+                        assert_eq!(
+                            err.status(),
+                            Some(reqwest::StatusCode::BAD_REQUEST)
+                        );
+                    }
+                };
+                println!("Result: {:?}", response);
+                println!("Result: {:?}", response.unwrap());
+            });
+        });
+        /* 
+        if rx.has_changed().is_ok() {
             // Get the received value.
             let new_string = send_request.rx.borrow_and_update();
-
+            //output_txt = new_string.unwrap().is_ok().to_string();
             // Handle the received value.
             match &*new_string {
                 Some(Ok(response)) => println!("{}", response),
@@ -56,9 +77,9 @@ impl SendRequest{
                 None => println!("No response received"),
             }
             
-        }
+        }*/
         /////////self.context.update_receiver = true;
-        Ok(())
+        //Ok(())
     }
 /*Bounded channel: If you need a bounded channel, you should use a bounded Tokio mpsc channel for both directions of communication. 
 Instead of calling the async send or recv methods, in synchronous code you will need to use the blocking_send or blocking_recv methods.
@@ -446,6 +467,7 @@ impl MastertechContext {
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::LIGHT_GREEN));
         ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text).hint_text("Output"));
 
+
     }
 
     fn system_information(&mut self, ui: &mut Ui){
@@ -519,11 +541,14 @@ impl eframe::App for MasterTechApp {
         });
 
         if self.context.get_ticket_button_pressed == true {
+            println!("button pressed!!");
             self.context.get_ticket_button_pressed = false;
             //let x = SendRequest::default();
+            let service_num = self.context.so_number.clone();
+            let output_txt = self.context.output_text.clone();
+            SendRequest::create_channel(service_num, output_txt);
             
-            SendRequest::create_channel("x.text1".to_string());
-            println!("button pressed!!");
+            
             //self.context.output_text = x.text1;
             
         /*

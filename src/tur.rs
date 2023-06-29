@@ -23,44 +23,45 @@ use tokio::sync::watch;
         
     }
 }*/
-
-pub async fn request_ticket_info(tx: watch::Sender<Option<Result<String, reqwest::Error>>>, so_number: String) {
+//tx: watch::Sender<Option<Result<String, reqwest::Error>>>
+pub async fn request_ticket_info(so_number: String)  -> core::result::Result<(), reqwest::Error> {
     let params = serde_json::json!({
-        //"user_email": "logan.lees@pclaptops.com",
-        //"user_password": "Poolparty1", 
-        //"call": "getOrder", 
-        //"action": "everest_call",
-        //"application": "everest", 
-        //"arg1": so_number, 
+        "user_email": "logan.lees@pclaptops.com",
+        "user_password": "Poolparty1", 
+        "call": "getOrder", 
+        "action": "everest_call",
+        "application": "everest", 
+        "arg1": so_number, 
         "arg2": "false", 
-        //"company": "pcl"
+        "company": "pcl"
 });
-
-    let client = reqwest::Client::new();
-    let resp = client.post("https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io") //("https://scaffold.pclaptops.com/api/index")
+    
+    
+let resp = reqwest::Client::new().post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
-        .json(&params).send().await;
+        .json(&params)
+        .send()
+        .await; //need to find a way for this to return the response not the result
 
-    // Convert the response to a string and send the result through the channel.
-    let resp_string = match resp {
+    /* 
+        // Convert the response to a string and send the result through the channel.
+        println!("{:?}", resp);
+        resp.unwrap().text();
         //Ok(response) => Some(Ok(response.text().await { //.unwrap_or_else(|_| String::from("Failed to read response text")))),
         Ok(response) => match response.text().await {
             Ok(text) => Some(Ok(text)),
             Err(e) => Some(Err(e)),
         }
-
         Err(e) => {
             eprintln!("Error: {}", e);
             None
         }
-    };
-    
     match tx.send(resp_string) {
         Ok(_) => println!("Response sent successfully!"),
         Err(e) => eprintln!("Failed to send the response: {}", e),
-    }
-    
+    }*/
+    Ok(())
 }
 
 
