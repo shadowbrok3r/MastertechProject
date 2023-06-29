@@ -1,15 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{collections::{HashSet, HashMap}, borrow::Borrow}; //, os::windows::thread};
+use std::{collections::{HashSet, HashMap}, borrow::Borrow, error::Error}; //, os::windows::thread};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use egui_extras::*;
 use tokio::{sync::watch, task};
 use reqwest::*;
-
 //use sysinfo::{System, SystemExt, RefreshKind};
 mod tur;
-
+use core::result;
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -39,17 +38,14 @@ impl Default for SendRequest {
 }
 
 impl SendRequest{
-    async fn create_channel(mut text: String){
+   fn create_channel(text: String) -> core::result::Result<(), Box<dyn Error>> {
+        println!("Creating channel");
         let mut send_request = SendRequest::default();
-        task::spawn_blocking(move ||{
-            
-        
-            tur::request_ticket_info(send_request.tx, "52883815".to_string());         
-            
+        //send_request.rx.to_owned();
 
-        });
-        // Wait for a value to be sent.
-        if send_request.rx.has_changed().unwrap() {
+        task::spawn(async{tur::request_ticket_info(send_request.tx, "52883815".to_string()).await;});
+         
+        if send_request.rx.has_changed().is_ok() {
             // Get the received value.
             let new_string = send_request.rx.borrow_and_update();
 
@@ -59,11 +55,21 @@ impl SendRequest{
                 Some(Err(e)) => println!("Error: {}", e),
                 None => println!("No response received"),
             }
-            println!("{}", send_request.text1);
-        }    
+            
+        }
         /////////self.context.update_receiver = true;
+        Ok(())
     }
-    
+/*Bounded channel: If you need a bounded channel, you should use a bounded Tokio mpsc channel for both directions of communication. 
+Instead of calling the async send or recv methods, in synchronous code you will need to use the blocking_send or blocking_recv methods.
+
+Unbounded channel: You should use the kind of channel that matches where the receiver is. So for sending a message from async to sync, 
+you should use the standard library unbounded channel or crossbeam. Similarly, for sending a message from sync to async, you should use an unbounded Tokio mpsc channel.
+
+Please be aware that the above remarks were written with the mpsc channel in mind, but they can also be generalized to other kinds of channels. 
+In general, any channel method that isn’t marked async can be called anywhere, including outside of the runtime. For example, sending a message on a 
+oneshot channel from outside the runtime is perfectly fine. */
+
 }
 
 
@@ -514,9 +520,10 @@ impl eframe::App for MasterTechApp {
 
         if self.context.get_ticket_button_pressed == true {
             self.context.get_ticket_button_pressed = false;
-            let x = SendRequest::default();
+            //let x = SendRequest::default();
             
-            SendRequest::create_channel(x.text1);
+            SendRequest::create_channel("x.text1".to_string());
+            println!("button pressed!!");
             //self.context.output_text = x.text1;
             
         /*
