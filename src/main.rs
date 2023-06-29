@@ -1,13 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{collections::{HashSet, HashMap}}; //, os::windows::thread};
-use core::result;
+use std::{collections::{HashSet, HashMap}, borrow::Borrow}; //, os::windows::thread};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use egui_extras::*;
-use tokio::sync::watch;
+use tokio::{sync::watch, task};
 use reqwest::*;
-use pollster::*;
+
 //use sysinfo::{System, SystemExt, RefreshKind};
 mod tur;
 
@@ -27,15 +26,46 @@ async fn main() -> eframe::Result<()> {
 pub struct SendRequest {
     tx: tokio::sync::watch::Sender<Option<core::result::Result<String, reqwest::Error>>>,
     rx: tokio::sync::watch::Receiver<Option<core::result::Result<String, reqwest::Error>>>,
+    text1: String
 }
 
 impl Default for SendRequest { 
     fn default() -> Self {
-        let (tx, mut rx) = watch::channel("");
-        let (tx, rx) = watch::channel(None);
-        Self { tx, rx }
+        //let (tx, mut rx) = watch::channel("");
+        let (tx, _rx) = watch::channel(None);
+        let rx = tx.subscribe();
+        Self { tx, rx, text1: "".to_string()}
     }
 }
+
+impl SendRequest{
+    async fn create_channel(mut text: String){
+        let mut send_request = SendRequest::default();
+        task::spawn_blocking(move ||{
+            
+        
+            tur::request_ticket_info(send_request.tx, "52883815".to_string());         
+            
+
+        });
+        // Wait for a value to be sent.
+        if send_request.rx.has_changed().unwrap() {
+            // Get the received value.
+            let new_string = send_request.rx.borrow_and_update();
+
+            // Handle the received value.
+            match &*new_string {
+                Some(Ok(response)) => println!("{}", response),
+                Some(Err(e)) => println!("Error: {}", e),
+                None => println!("No response received"),
+            }
+            println!("{}", send_request.text1);
+        }    
+        /////////self.context.update_receiver = true;
+    }
+    
+}
+
 
 #[derive(Debug, PartialEq)]
 enum Salesman {
@@ -98,6 +128,7 @@ struct MastertechContext {
     send_specs: bool,
     animate_progress_bar: bool,
     get_ticket_button_pressed: bool,
+    update_receiver: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -208,6 +239,7 @@ impl Default for MasterTechApp {
             date: None,
             animate_progress_bar: false,
             get_ticket_button_pressed: false,
+            update_receiver: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -479,38 +511,44 @@ impl eframe::App for MasterTechApp {
                 });
             })
         });
-        let text_from_ticket: String = "".to_string();
+
         if self.context.get_ticket_button_pressed == true {
+            self.context.get_ticket_button_pressed = false;
+            let x = SendRequest::default();
+            
+            SendRequest::create_channel(x.text1);
+            //self.context.output_text = x.text1;
+            
+        /*
             // Change the state of the button back to false so it only 
             // enters the loop ONE time instead of looping constantly
             self.context.get_ticket_button_pressed = false;
+
+            self.context.update_receiver = true;
 
             // Create a watch channel with an initial value of None.
             let mut send_request = SendRequest::default();
 
             // Spawn the async task.
-            tokio::spawn(tur::request_ticket_info(send_request.tx, self.context.so_number.to_string()));
+            tokio::spawn(tur::request_ticket_info(send_request.tx, self.context.so_number.to_string()));         
             
-            let new_string = "Hello".to_string();
-            
-            pollster::block_on(async{
-                // Wait for a value to be sent.
-                while send_request.rx.changed().await.is_ok() {
-                    // Get the received value.
-                    let new_string = send_request.rx.borrow();
-        
-                    // Handle the received value.
-                    match &*new_string {
-                        Some(Ok(response)) => println!("{}", response),
-                        Some(Err(e)) => println!("Error: {}", e),
-                        None => println!("No response received"),
-                    }
-                }
-            });
-
+            // Wait for a value to be sent.
+            if send_request.rx.has_changed().unwrap() {
+                // Get the received value.
+                let new_string = send_request.rx.borrow_and_update();
     
-            
-        }
+                // Handle the received value.
+                match &*new_string {
+                    Some(Ok(response)) => println!("{}", response),
+                    Some(Err(e)) => println!("Error: {}", e),
+                    None => println!("No response received"),
+                }
+            }  
+         */
+        }//else if self.context.update_receiver == true {}
+        
+
+
 
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
             .frame(Frame::central_panel(&ctx.style()).inner_margin(0.))// to set inner margins to 0.
