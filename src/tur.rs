@@ -26,18 +26,18 @@ use tokio::sync::watch;
 
 pub async fn request_ticket_info(tx: watch::Sender<Option<Result<String, reqwest::Error>>>, so_number: String) {
     let params = serde_json::json!({
-        "user_email": "logan.lees@pclaptops.com",
-        "user_password": "Poolparty1", 
-        "call": "getOrder", 
-        "action": "everest_call",
-        "application": "everest", 
-        "arg1": so_number, 
+        //"user_email": "logan.lees@pclaptops.com",
+        //"user_password": "Poolparty1", 
+        //"call": "getOrder", 
+        //"action": "everest_call",
+        //"application": "everest", 
+        //"arg1": so_number, 
         "arg2": "false", 
-        "company": "pcl"
+        //"company": "pcl"
 });
 
     let client = reqwest::Client::new();
-    let resp = client.post("https://scaffold.pclaptops.com/api/index")
+    let resp = client.post("https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io") //("https://scaffold.pclaptops.com/api/index")
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .json(&params).send().await;
