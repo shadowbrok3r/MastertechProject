@@ -65,6 +65,7 @@ impl SendRequest{
         std::thread::spawn(move||{
             handle.block_on(async{
                 let response = request::request_ticket_info(service_num).await;
+                
                 //let x: request::ApiResponse::
                 //output_txt = response.unwrap();
             });
