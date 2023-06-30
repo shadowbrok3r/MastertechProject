@@ -1,11 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{collections::HashSet}; //, os::windows::thread};
+//use sysinfo::{System, SystemExt, RefreshKind};
+use std::{collections::HashSet, borrow::BorrowMut}; //, os::windows::thread};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use tokio::{sync::watch, task, runtime::Handle};
 use egui_extras::*;
-//use sysinfo::{System, SystemExt, RefreshKind};
+use std::sync::{Arc, Mutex};
+
 mod request;
 mod data_transfer;
 
@@ -46,31 +48,105 @@ enum HardwareTest{
     ssd_not_tested,
 }
 pub struct SendRequest {
-
 }
+
 impl Default for SendRequest { 
     fn default() -> Self {
         Self { }
     }
 }
 
-impl SendRequest{
-   fn create_channel(so_number: String, output_txt: String){
-        //let mut send_request = SendRequest::default();
-        //let (tx,rx) = watch::channel("init");
+struct TicketInformation{
+    cust_code: String,
+    user_id: String,
+    terms: String, // "TERMS": "CC",
+    doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
+    department: String, // "DEP": "LTN"
+    jurisdiction: String, //"JURISCODE": "LTN",
+    invoice_amnt: String,
 
-        //send_request.rx.to_owned();
+
+    customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",
+    //customer_address: String,
+    last_invoice_number: String, //"LI_DOC": "53745333",
+    //last_invoice_date: String,  //"LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
+    //last_tuneup_date: String, // <-- HERE
+    last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
+    total_invoice_count: String,
+
+
+    //pub item_objects: Vec<ItemObjects>,
+}
+
+
+impl SendRequest{
+   fn get_ticket(so_number: String, mastertech_app: &mut MasterTechApp){
         let handle = Handle::current();
         let service_num = so_number.clone();
+       
+        let mut context = &mut mastertech_app.context;
+        let mut locked_text = context.lock_text.clone();
+        
+
+        let output_text_clone = Arc::clone(&context.output_text);
+ 
         std::thread::spawn(move||{
             handle.block_on(async{
                 let response = request::request_ticket_info(service_num).await;
                 
-                //let x: request::ApiResponse::
-                //output_txt = response.unwrap();
+
+
+                match response { // Successfully received GetTicketResponse
+                    Ok(get_ticket_response) => {
+                        // You can now use fields of get_ticket_response
+                        //let main_json = &get_ticket_response.main_json;
+                        let header = &get_ticket_response.header;
+                        let customer = &get_ticket_response.customer;
+
+                        //let transactions = &get_ticket_response.transactions;
+                        //let addresses = &get_ticket_response.addresses;
+                        
+
+                        //let items = get_ticket_response.items;
+                        // for addr_arr in &main_json.addresses{
+                        //     println!("info: {:?}", addr_arr);
+                        // }
+        
+                        let ticket_information = TicketInformation{
+                            cust_code: header.CUST_CODE.clone(),
+                            user_id: header.USER_ID.clone(),
+                            terms: header.TERMS.clone(),
+                            doc_alias: header.DOC_ALIAS.clone(),
+                            department: header.DEP.clone(),
+                            jurisdiction: header.JURISCODE.clone(),
+                            invoice_amnt: header.INV_AMOUNT.clone(),
+                            customer_name: customer.NAME.clone(),
+                            //customer_address: customer.CUSTOMER_ADDRESS.clone(),
+                            last_invoice_number: customer.LI_DOC.clone(),
+                            //last_invoice_date: customer.LAST_INVOICE_DATE.clone(),
+                            //last_tuneup_date: customer.LAST_TUNEUP_DATE.clone(),
+                            last_checkin_date: customer.LI_AMT.clone(),
+                            total_invoice_count: customer.NUM_INV.clone(),
+                        };
+
+                        let mut output_text = output_text_clone.lock().unwrap();
+                        *output_text = format!("Output: {}", ticket_information.cust_code.as_str());
+                        
+                        drop(output_text);
+                        locked_text = false;
+                    },
+
+                    Err(e) => {
+                        // There was an error while making the request
+                        //response_output = &e.
+                        let mut output_text = output_text_clone.lock().unwrap();
+                        *output_text = format!("Error: {}",e);
+                        drop(output_text);
+                        locked_text = false;
+                    },
+                }
             });
         }); 
-        
     }
 }
 
@@ -92,7 +168,7 @@ struct MastertechContext {
     webroot_key: String,
     superanti_key: String,
     recommendations: String,
-    output_text: String,
+    output_text: Arc<Mutex<String>>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -111,7 +187,7 @@ struct MastertechContext {
     send_specs: bool,
     animate_progress_bar: bool,
     get_ticket_button_pressed: bool,
-    update_receiver: bool,
+    lock_text: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -204,7 +280,7 @@ impl Default for MasterTechApp {
             superanti_key: "".to_string(),
             recommendations: "".to_string(),
             send_specs: false,
-            output_text: "".to_string(),
+            output_text: Arc::new(Mutex::new(String::new())),
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -223,7 +299,7 @@ impl Default for MasterTechApp {
             date: None,
             animate_progress_bar: false,
             get_ticket_button_pressed: false,
-            update_receiver: false,
+            lock_text: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -252,8 +328,10 @@ impl MastertechContext {
         ui.style_mut().spacing.button_padding = (5.0, 3.0).into();
         ui.style_mut().spacing.window_margin.left = 15.0;
         ui.style_mut().spacing.window_margin.right = 15.0;
+        // ui.style_mut().visuals.button_frame
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
+        
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
         ui.columns(2,|column|{
@@ -261,7 +339,7 @@ impl MastertechContext {
             ui.horizontal(|ui|{
                 ui.add_space(80.0);
                 if ui.add(Button::new("Get Ticket").stroke(self.border_stroke_color)
-                .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
                     self.get_ticket_button_pressed = true; // Sets bool to true so the main loop runs the get_ticket function
                 }
             });
@@ -316,12 +394,12 @@ impl MastertechContext {
             .show(ui, |ui| {
                 ui.add_space(15.0);
                 if ui.add(Button::new("Get Keys").stroke(self.border_stroke_color)
-                .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
                     //get_cps_keys
                 }
                 
                 if ui.add(Button::new("Check SEB").stroke(self.border_stroke_color)
-                .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
                     //check_seb_info
                 }
                 ui.end_row();
@@ -335,7 +413,7 @@ impl MastertechContext {
                 ui.add_space(15.0);
                 ui.visuals_mut().override_text_color = Some(Color32::from_rgb(0, 224, 90));
                 if ui.add(Button::new("Webroot").stroke(Stroke::new(1.5, Color32::from_rgb(0, 224, 90)))
-                .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
                     //SABB-TAOG-ECC9-9C8C-CFD2
                     //copy_webroot_key
                 }
@@ -347,7 +425,7 @@ impl MastertechContext {
                 ui.add_space(15.0);
                 ui.visuals_mut().override_text_color = Some(Color32::from_rgb(240, 98, 98));
                 if ui.add(Button::new("SuperAntiSpyware").stroke(Stroke::new(1.5, Color32::from_rgb(240, 98, 98)))
-                .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0))).clicked(){ 
+                .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
                     //1C2J-JTPD-CFG3R
                     //copy_superanti_key
                 }
@@ -411,7 +489,7 @@ impl MastertechContext {
             ui.add_space(15.0);
             ui.visuals_mut().override_text_color = Some(Color32::from_rgb(170, 33, 191));
             if ui.add(Button::new("Submit TUR Sheet").stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
-            .fill(Color32::from_rgb(38, 38, 38)).min_size(vec2(self.widget_size * 2.0+8.0, 8.0))).clicked(){ 
+            .fill(Color32::from_rgb(38, 38, 38)).min_size(vec2(self.widget_size * 2.0+8.0, 8.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
                 // TODO
             }
 
@@ -420,13 +498,26 @@ impl MastertechContext {
     }
 
     fn output_console(&mut self, ui: &mut Ui) { 
-
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::LIGHT_GREEN));
-        ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text).hint_text("Output"));
+        match self.lock_text{
+            true => {
+                let mut txt = "empty".to_string();
+                ui.add_sized(ui.available_size(), TextEdit::multiline(&mut txt).hint_text("Output"));   
+            }
+            false => {
+                let text = self.output_text.lock().unwrap(); //actually, i should init the TicketInfoStruct right here
+                let mut out = format!("Output: {}", *text);
+                ui.add_sized(ui.available_size(), TextEdit::multiline(&mut out).hint_text("Output"));
+            }
+        }
+        
 
+            // if self.lock_text == true{
 
-    }
-
+            // }else{
+            //     let mut text = "";
+            // }
+        }
     fn system_information(&mut self, ui: &mut Ui){
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
@@ -501,8 +592,10 @@ impl eframe::App for MasterTechApp {
             self.context.get_ticket_button_pressed = false;
 
             let service_num = self.context.so_number.clone();
-            let output_txt = self.context.output_text.clone();
-            SendRequest::create_channel(service_num, output_txt);
+            
+            //let output_txt = self.context.output_text.clone();
+            SendRequest::get_ticket(service_num, &mut MasterTechApp::default());
+            
             
         }
 
@@ -528,7 +621,7 @@ impl eframe::App for MasterTechApp {
                 style.tabs.text_color_active_unfocused = Color32::from_rgba_premultiplied(0, 255, 255, 255);
                 style.tabs.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
-                
+
                 DockArea::new(&mut self.tree)
                     .style(style)
                     .show_close_buttons(self.context.show_close_buttons)
