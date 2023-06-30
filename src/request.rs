@@ -23,58 +23,49 @@ use std::error::Error;
 }*/
 
 #[derive(Debug, Deserialize)]
-pub struct ApiResponse {
-    main_json: MainJson,
-    header: Header,
-    customer: Customer,
-    transactions: TransacObjectOne,
-    addresses: Addresses,
-    items: ItemObjects,
+pub struct GetTicketResponse {
+    pub header: Header,
+    pub customer: Customer,
+    //pub transactions: Transactions,
+    //pub addresses: Vec<Addresses>,
+    //pub items: Vec<ItemsArray>,
 }
 
 #[derive(Deserialize, Debug)]
-struct MainJson {
-    header: Header,
-    customer: Customer,
-    transactions: Transactions,
-    addresses: Vec<Addresses>,
-    items_array: Vec<ItemsArray>,
+pub struct Header {
+    //#[serde(alias = "CUST_CODE")]
+    pub CUST_CODE: String,
+    pub USER_ID: String,
+    pub TERMS: String, // "TERMS": "CC",
+    pub DOC_ALIAS: String, // "DOC_ALIAS": "SERVICE ORDER",
+    pub DEP: String, // "DEP": "LTN"
+    pub JURISCODE: String, //"JURISCODE": "LTN",
+    pub INV_AMOUNT: String, // "INV_AMOUNT": "53.6100",
 }
 
 #[derive(Deserialize, Debug)]
-struct Header {
-    cust_code: String,
-    user_id: String,
-    terms: String, // "TERMS": "CC",
-    doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
-    department: String, // "DEP": "LTN"
-    jurisdiction: String, //"JURISCODE": "LTN",
-    invoice_amnt: String, // "INV_AMOUNT": "53.6100",
-}
-
-#[derive(Deserialize, Debug)]
-struct Customer {
-    name: String, // "NAME": "Timber Ridge Fireplace LLC",
-    address: String,
-    last_invoice_number: String, //"LI_DOC": "53745333",
-    
-    last_invoice_date: String,  //"LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
-    last_tuneup_date: String, // <-- HERE
-    last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
-    total_invoice_count: String, // "NUM_INV": "21",
+pub struct Customer {
+    pub NAME: String, // "NAME": "Timber Ridge Fireplace LLC",
+    //pub CUSTOMER_ADDRESS: String,
+    pub LI_DOC: String, //"LI_DOC": "53745333",
+    pub LI_AMT: String,  //"LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
+    //pub LAST_TUNEUP_DATE: String, // <-- HERE
+    pub DW_UPDATE_DATE: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
+    pub NUM_INV: String, // "NUM_INV": "21",
 /*		"LP_AMT": "-53.6100",
 		"LP_DOC": "52883815",
 		"LP_DOC_TYP": "8",
 		"LP_DATE": "2023-05-04 00:00:00.000", */
+
 }
 
 #[derive(Deserialize, Debug)]
-struct Transactions{
-    transac_obj_one: TransacObjectOne,
+pub struct Transactions{
+    pub TRANSAC_OBJ_ONE: TransacObjectOne,
 }
 
 #[derive(Deserialize, Debug)]
-struct TransacObjectOne{
+pub struct TransacObjectOne{
 /*
 
 "TRANHIST_DATE": "2023-05-04 14:25:36.000",
@@ -86,7 +77,7 @@ struct TransacObjectOne{
 }
 
 #[derive(Deserialize, Debug)]
-struct Addresses {
+pub struct Addresses {
 /*
 "ACCT_NAME": "Timber Ridge Fireplace LLC",
 "NAME": "Timber Ridge Fireplace LLC",
@@ -101,13 +92,13 @@ struct Addresses {
 }
 
 #[derive(Deserialize, Debug)]
-struct ItemsArray{ // Okay, so the number of items is the number of item codes you have on an order....  
+pub struct ItemsArray{ // Okay, so the number of items is the number of item codes you have on an order....  
     //so i may need to iterate through them to get all line items. especially if i check for a new build
-   item_objects: Vec<ItemObjects>,
+   pub ITEM_OBJECTS: Vec<ItemObjects>,
 }
 
 #[derive(Deserialize, Debug)]
-struct ItemObjects{
+pub struct ItemObjects{
     //object_one: Option<String>,// Item_code //I should pull the ITEM_CODE here too ("brand/pcl"), this could also get srvc/etc
     //object_two: String, // NOTE (which is likely null i guess)
 /*
@@ -155,14 +146,14 @@ struct ItemObjects{
 
 
 #[derive(Deserialize, Debug)]
-struct ItemsObjectTwo{
+pub struct ItemsObjectTwo{
     checkin_notes: String, // NOTE <-- Bingo
     object_one: Option<String>, 
     object_two: String, 
 }
 
 #[derive(Deserialize, Debug)]
-struct ItemsObjectThree{
+pub struct ItemsObjectThree{
     checkin_notes: String,
     object_one: Option<String>,// Item_code //I should pull the ITEM_CODE here too ("brand/pcl"), this could also get srvc/etc
     object_two: String, // NOTE
@@ -172,7 +163,7 @@ struct ItemsObjectThree{
 
 
 //tx: watch::Sender<Option<Result<String, reqwest::Error>>>
-pub async fn request_ticket_info(so_number: String)  -> core::result::Result<ApiResponse, Box<dyn Error>> {
+pub async fn request_ticket_info(so_number: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
     let params = serde_json::json!({
         "user_email": "logan.lees@pclaptops.com",
         "user_password": "Poolparty1", 
@@ -193,41 +184,29 @@ let response = reqwest::Client::new().post("https://scaffold.pclaptops.com/api/i
 
         match response {
             Ok(res) => {
-                //let api_response = res.text().await?;
-                //let api_response: ApiResponse = res.json().await?;
-                    // Lets do all of the unwrapping of the different objects
-                    //example of us just pulling one string at a time VV
-                //let cust_code = api_response.main_json.header.cust_code; 
-
-                let api_response: ApiResponse = res.json().await?;
-
-
-                let main_json = api_response.main_json; //iterate through this? for loop in for loop
-
-                let header = api_response.header;
-                let customer = api_response.customer;
-                let transactions = api_response.transactions;
-                let addresses = api_response.addresses;
-                //let items = api_response.items;
-
-
-                for addr_arr in main_json.addresses{
-                    println!("info: {:?}", addr_arr);
-                }
-
-
-
-
-
-
-                //let header: Header = serde_json::from_str(&api_response.header);
-
-                Ok(api_response)
+                //let raw_response = res.text().await?; //before parsing the data
+                let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
+                //println!("heres the stuff: {:?}", json_response);
+                Ok(json_response)
             },
             Err(e) => Err(Box::new(e)),
         }
+
+
     //Ok(())
 }
+
+// pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
+
+// pub async fn request_keys(so_number: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
+
+// pub async fn get_computer_purchases(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
+
+
+
+
+
+
 /*Bounded channel: If you need a bounded channel, you should use a bounded Tokio mpsc channel for both directions of communication. 
 Instead of calling the async send or recv methods, in synchronous code you will need to use the blocking_send or blocking_recv methods.
 
