@@ -27,19 +27,19 @@ pub struct GetTicketResponse {
     pub header: Header,
     pub customer: Customer,
     //pub transactions: Transactions,
-    //pub addresses: Vec<Addresses>,
-    //pub items: Vec<ItemsArray>,
+    pub addresses: Addresses,
+    pub items: Vec<ItemsArray>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Header {
-    //#[serde(alias = "CUST_CODE")]
     pub CUST_CODE: String,
-    pub USER_ID: String,
+    pub USER_ID: String, // "USER_ID": "BP3", //checkin rep
     pub TERMS: String, // "TERMS": "CC",
     pub DOC_ALIAS: String, // "DOC_ALIAS": "SERVICE ORDER",
     pub DEP: String, // "DEP": "LTN"
     pub JURISCODE: String, //"JURISCODE": "LTN",
+    pub COG: String, // "COG": "7.1000", //Cost of goods?
     pub INV_AMOUNT: String, // "INV_AMOUNT": "53.6100",
 }
 
@@ -67,100 +67,155 @@ pub struct Transactions{
 #[derive(Deserialize, Debug)]
 pub struct TransacObjectOne{
 /*
-
-"TRANHIST_DATE": "2023-05-04 14:25:36.000",
-"USER_ID": "KMJ",
-"AMOUNT": "53.6100",
-"PAY_TYPE": "LTNVM",
-"DESCRIPT": "PAYMENT RECEIVED ON SALES ORDER",
+    "TRANHIST_DATE": "2023-05-04 14:25:36.000",
+    "USER_ID": "KMJ",
+    "AMOUNT": "53.6100",
+    "PAY_TYPE": "LTNVM",
+    "DESCRIPT": "PAYMENT RECEIVED ON SALES ORDER",
  */
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Addresses {
+    pub address_object: AddressObject,
 /*
-"ACCT_NAME": "Timber Ridge Fireplace LLC",
-"NAME": "Timber Ridge Fireplace LLC",
-"LAST_NAME": "Hale",
-"FIRST_NAME": "Lisa",
-"TEL1": "8018376254",
-"TEL2": "",
-"EMAIL": "sales@trfireplace.com",
-"MOBILE_PHONE": "8013501447",
-"ADDRESS_LINE1": "3080 N Fairfield Rd Suite #1",
+    "ACCT_NAME": "Timber Ridge Fireplace LLC",
+    "NAME": "Timber Ridge Fireplace LLC",
+    "LAST_NAME": "Hale",
+    "FIRST_NAME": "Lisa",
+    "MOBILE_PHONE": "8013501447",
+    "ADDRESS_LINE1": "3080 N Fairfield Rd Suite #1",
  */
 }
 
 #[derive(Deserialize, Debug)]
+pub struct AddressObject{
+    pub TEL1: String, // "TEL1": "8018376254",
+    pub TEL2: String, // "TEL2": "",
+    pub EMAIL: String,
+}
+#[derive(Deserialize, Debug)]
 pub struct ItemsArray{ // Okay, so the number of items is the number of item codes you have on an order....  
     //so i may need to iterate through them to get all line items. especially if i check for a new build
-   pub ITEM_OBJECTS: Vec<ItemObjects>,
-}
+    
+    // object_one: Option<String>, // Item_code // I should pull the ITEM_CODE here too ("brand/pcl"),
+    // this could also get srvc/etc
+   pub item_objects: Vec<Value>,
+   /*
 
-#[derive(Deserialize, Debug)]
-pub struct ItemObjects{
-    //object_one: Option<String>,// Item_code //I should pull the ITEM_CODE here too ("brand/pcl"), this could also get srvc/etc
-    //object_two: String, // NOTE (which is likely null i guess)
-/*
-   
 ////////////////////////////////////    ARRAY ONE
+
 "ITEM_CODE": "BRAND-PCL",
+
 "X_INVOICE_ID": "16994221",
+
 "ITEM_QTY": "1.000000",
+
 "QTY_SHIP": "1.000000",
+
 "ITEM_PRICE": ".000000",
+
 "serials": [] //each of these in the 'Items' array of objects store all serials attached
+
 }, {
 
+
+
 ////////////////////////////////////    ARRAY TWO
+
 "NOTE": "This service,
+
+
+
 
 
 ////////////////////////////////////    ARRAY THREE
 
+
+
 "ITEM_CODE": "SRVC/TUNEUP/PCL",
+
 "DESC_TYPE": "1",
+
 "ITEM_QTY": "1.000000",
+
 "QTY_SHIP": "1.000000",
+
 "ITEM_PRICE": "159.990000",
+
 "DISCOUNT_V": "159.990000",
+
 "SALES_REP": "KMJ",
-		"STK_ITEM_QTY": "1.000000",
-		"STK_QTY_SHIP": "1.000000",
+
+    "STK_ITEM_QTY": "1.000000",
+
+    "STK_QTY_SHIP": "1.000000",
+
+
 
 ////////////////////////////////////    ARRAY FOUR
 
 
+
+
+
 "ITEM_CODE": "SW/PCLCPS/O",
+
 "DESC_TYPE": "1",
+
 "ITEM_QTY": "1.000000",
+
 "QTY_SHIP": "1.000000",
 
+
+
 "COST": "7.100000",
+
 "MISC_COST": "1.420000", 
+
 "C_COST": "7.100000", //I CAN SEE COST
+
 "ITEM_PRICE": "49.990000", // VS WHAT WE CHARGED
+
 "FACTORED_COST_PER": "20.000000", // ????
 
 
 
 
+
+
+
+
+
 #[derive(Deserialize, Debug)]
+
 pub struct ItemsObjectTwo{
+
     checkin_notes: String, // NOTE <-- Bingo
+
     object_one: Option<String>, 
+
     object_two: String, 
+
 }
+
+
 
 #[derive(Deserialize, Debug)]
+
 pub struct ItemsObjectThree{
+
     checkin_notes: String,
+
     object_one: Option<String>,// Item_code //I should pull the ITEM_CODE here too ("brand/pcl"), this could also get srvc/etc
+
     object_two: String, // NOTE
-}
- */
+
 }
 
+*/
+
+}
 
 //tx: watch::Sender<Option<Result<String, reqwest::Error>>>
 pub async fn request_ticket_info(so_number: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {

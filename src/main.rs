@@ -47,80 +47,88 @@ enum HardwareTest{
     ssd_fail,
     ssd_not_tested,
 }
+
+enum SendReceiveMessage{
+    TicketInfo(TicketInformation),
+    Error(String)
+}
 pub struct SendRequest {
+    tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>,
 }
 
-impl Default for SendRequest { 
-    fn default() -> Self {
-        Self { }
-    }
-}
+// impl Default for SendRequest { 
+//     fn default() -> Self {
+//         tx: Some(tx),
+//         Self { tx }
+//     }
+// }
 
 struct TicketInformation{
     cust_code: String,
-    user_id: String,
+    user_id: String, // "USER_ID": "BP3", //checkin rep
     terms: String, // "TERMS": "CC",
     doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
     department: String, // "DEP": "LTN"
     jurisdiction: String, //"JURISCODE": "LTN",
     invoice_amnt: String,
 
-
     customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",
-    //customer_address: String,
-    last_invoice_number: String, //"LI_DOC": "53745333",
-    //last_invoice_date: String,  //"LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
+    customer_phone_1: String,
+    customer_phone_2: String,
+    customer_email: String,
+    last_invoice_number: String, // "LI_DOC": "53745333",
+    last_invoice_amount: String,  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
     //last_tuneup_date: String, // <-- HERE
     last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
     total_invoice_count: String,
 
-
+    checkin_notes: String,
     //pub item_objects: Vec<ItemObjects>,
 }
 
 
 impl SendRequest{
-   fn get_ticket(so_number: String, mastertech_app: &mut MasterTechApp){
+   fn get_ticket(so_number: String, tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>){
         let handle = Handle::current();
         let service_num = so_number.clone();
-       
-        let mut context = &mut mastertech_app.context;
-        let mut locked_text = context.lock_text.clone();
+        //let x = MasterTechApp::default();
         
-
-        let output_text_clone = Arc::clone(&context.output_text);
- 
         std::thread::spawn(move||{
             handle.block_on(async{
                 let response = request::request_ticket_info(service_num).await;
                 
-
-
                 match response { // Successfully received GetTicketResponse
                     Ok(get_ticket_response) => {
                         // You can now use fields of get_ticket_response
-                        //let main_json = &get_ticket_response.main_json;
                         let header = &get_ticket_response.header;
                         let customer = &get_ticket_response.customer;
-
+                        let addresses = &get_ticket_response.addresses.address_object;
+                        let items_array = get_ticket_response.items;
                         //let transactions = &get_ticket_response.transactions;
-                        //let addresses = &get_ticket_response.addresses;
-                        
 
-                        //let items = get_ticket_response.items;
-                        // for addr_arr in &main_json.addresses{
-                        //     println!("info: {:?}", addr_arr);
-                        // }
-        
+                        
+                        
+                        for objects in items_array{
+                            for strings in objects.item_objects {
+                                //if strings.as_str().
+                                println!("strings: {:?}", strings);
+                            }
+                        }
+
                         let ticket_information = TicketInformation{
                             cust_code: header.CUST_CODE.clone(),
                             user_id: header.USER_ID.clone(),
+                            customer_phone_1: addresses.TEL1.clone(),
+                            customer_phone_2: addresses.TEL2.clone(),
+                            customer_email: addresses.EMAIL.clone(),
+                            last_invoice_amount: customer.LI_AMT.clone(),
                             terms: header.TERMS.clone(),
                             doc_alias: header.DOC_ALIAS.clone(),
                             department: header.DEP.clone(),
                             jurisdiction: header.JURISCODE.clone(),
                             invoice_amnt: header.INV_AMOUNT.clone(),
                             customer_name: customer.NAME.clone(),
+                            checkin_notes: "".to_string(),
                             //customer_address: customer.CUSTOMER_ADDRESS.clone(),
                             last_invoice_number: customer.LI_DOC.clone(),
                             //last_invoice_date: customer.LAST_INVOICE_DATE.clone(),
@@ -129,20 +137,40 @@ impl SendRequest{
                             total_invoice_count: customer.NUM_INV.clone(),
                         };
 
-                        let mut output_text = output_text_clone.lock().unwrap();
-                        *output_text = format!("Output: {}", ticket_information.cust_code.as_str());
+                        match tx{
+                            Some(tx) => {
+                                if let Err(e) = tx.send(SendReceiveMessage::TicketInfo(ticket_information)) {
+                                    tx.send(SendReceiveMessage::Error(e.to_string()));
+                                }
+                            }
+                            None => {
+                                eprintln!("Tried to send an update, but the sender is None");
+                            }
+                        }
+                       
+                            //let _ = tx.send(format!("Output: {}", ticket_information.cust_code.as_str()));
+                            // We use let _ = to ignore the result because send() returns a Result that we don't care about in this case
+                    
+
                         
-                        drop(output_text);
-                        locked_text = false;
                     },
 
                     Err(e) => {
                         // There was an error while making the request
-                        //response_output = &e.
-                        let mut output_text = output_text_clone.lock().unwrap();
-                        *output_text = format!("Error: {}",e);
-                        drop(output_text);
-                        locked_text = false;
+                        match tx{
+                            Some(tx) => {
+                                if let Err(e) = tx.send(SendReceiveMessage::Error(e.to_string())) {
+                                    
+                                }
+                            }
+                            None => {
+                                eprintln!("Tried to send an update, but the sender is None");
+                            }
+                        }
+                        
+                        //let mut output_text = output_text_clone.lock().unwrap();
+                        //*output_text = format!("Error: {}",e);
+
                     },
                 }
             });
@@ -168,7 +196,8 @@ struct MastertechContext {
     webroot_key: String,
     superanti_key: String,
     recommendations: String,
-    output_text: Arc<Mutex<String>>,
+    output_text: String,
+    rx: Option<std::sync::mpsc::Receiver<SendReceiveMessage>>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -187,7 +216,6 @@ struct MastertechContext {
     send_specs: bool,
     animate_progress_bar: bool,
     get_ticket_button_pressed: bool,
-    lock_text: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -200,9 +228,8 @@ struct MastertechContext {
 
 struct MasterTechApp {
     context: MastertechContext,
-    //requestor: SendRequest,
     tree: Tree<String>,
-
+    send_request: SendRequest,
 }
 
 impl TabViewer for MastertechContext {
@@ -240,7 +267,9 @@ impl TabViewer for MastertechContext {
 
 impl Default for MasterTechApp {
     fn default() -> Self {
-        
+        // Create a watch channel with a default value
+        let (tx, rx) = std::sync::mpsc::channel::<SendReceiveMessage>();
+
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "Empty".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Scripts".to_owned(), "System Information".to_owned()]);
         let [_, _] = tree.split_below(
@@ -261,6 +290,9 @@ impl Default for MasterTechApp {
             }
         }
         
+        let send_request = SendRequest{
+            tx: Some(tx),
+        };
 
         let context = MastertechContext {
             //////////////////////////////////////////
@@ -280,7 +312,8 @@ impl Default for MasterTechApp {
             superanti_key: "".to_string(),
             recommendations: "".to_string(),
             send_specs: false,
-            output_text: Arc::new(Mutex::new(String::new())),
+            output_text: "".to_string(),
+            rx: Some(rx),
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -299,7 +332,6 @@ impl Default for MasterTechApp {
             date: None,
             animate_progress_bar: false,
             get_ticket_button_pressed: false,
-            lock_text: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -310,7 +342,7 @@ impl Default for MasterTechApp {
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124))
         };
 
-        Self { context, tree }
+        Self { context, tree, send_request }
     }
 }
 
@@ -328,7 +360,6 @@ impl MastertechContext {
         ui.style_mut().spacing.button_padding = (5.0, 3.0).into();
         ui.style_mut().spacing.window_margin.left = 15.0;
         ui.style_mut().spacing.window_margin.right = 15.0;
-        // ui.style_mut().visuals.button_frame
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         
@@ -499,24 +530,9 @@ impl MastertechContext {
 
     fn output_console(&mut self, ui: &mut Ui) { 
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::LIGHT_GREEN));
-        match self.lock_text{
-            true => {
-                let mut txt = "empty".to_string();
-                ui.add_sized(ui.available_size(), TextEdit::multiline(&mut txt).hint_text("Output"));   
-            }
-            false => {
-                let text = self.output_text.lock().unwrap(); //actually, i should init the TicketInfoStruct right here
-                let mut out = format!("Output: {}", *text);
-                ui.add_sized(ui.available_size(), TextEdit::multiline(&mut out).hint_text("Output"));
-            }
-        }
-        
 
-            // if self.lock_text == true{
 
-            // }else{
-            //     let mut text = "";
-            // }
+        ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text.to_string()).hint_text("Output"));
         }
     fn system_information(&mut self, ui: &mut Ui){
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
@@ -564,6 +580,32 @@ impl MastertechContext {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+        if self.context.get_ticket_button_pressed == true {
+            self.context.get_ticket_button_pressed = false;
+            let service_num = self.context.so_number.clone();
+            SendRequest::get_ticket(service_num, self.send_request.tx.clone()); 
+        }   
+
+        // On the receiving end:
+        while let Ok(message) = self.context.rx.as_ref().unwrap().try_recv() {
+            match message {
+                SendReceiveMessage::TicketInfo(info) => {
+                    // Handle TicketInformation
+                    self.context.customer_name = info.customer_name;
+                    self.context.phone1 = info.customer_phone_1;
+                    self.context.phone2 = info.customer_phone_2;
+                    self.context.checkin_notes = info.checkin_notes;
+                    self.context.output_text = info.cust_code;
+                }
+                SendReceiveMessage::Error(err) => {
+                    // Handle error
+                    self.context.output_text = err.to_string();
+                }
+            }
+        }
+        
+    
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
@@ -587,22 +629,6 @@ impl eframe::App for MasterTechApp {
                 });
             })
         });
-
-        if self.context.get_ticket_button_pressed == true {
-            self.context.get_ticket_button_pressed = false;
-
-            let service_num = self.context.so_number.clone();
-            
-            //let output_txt = self.context.output_text.clone();
-            SendRequest::get_ticket(service_num, &mut MasterTechApp::default());
-            
-            
-        }
-
-        
-
-
-
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
             .frame(Frame::central_panel(&ctx.style()).inner_margin(0.))// to set inner margins to 0.
             .show(ctx, |ui| {
