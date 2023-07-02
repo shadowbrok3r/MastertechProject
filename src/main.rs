@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 mod request;
 mod data_transfer;
+mod scaffold_builder;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -86,17 +87,27 @@ struct TicketInformation{
     item_codes: String,
 }
 
-
 impl SendRequest{
    fn get_ticket(so_number: String, tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>){
         let handle = Handle::current();
-        let service_num = so_number.clone();
-        //let x = MasterTechApp::default();
         
         std::thread::spawn(move||{
             handle.block_on(async{
-                let response = request::request_ticket_info(service_num).await;
-                
+                let args = vec![
+                    serde_json::json!(so_number),
+                    serde_json::json!("false"),
+                ];
+            
+                let scaffold_builder = scaffold_builder::ScaffoldRequestBuilder{
+                    app: scaffold_builder::ScaffoldApps::Everest,
+                    action: scaffold_builder::ScaffoldActions::EverestCall, 
+                    call: scaffold_builder::ScaffoldCalls::GetOrder, 
+                    arguments: Some(args.clone())
+            
+                };
+
+                let response = request::request_ticket_info(scaffold_builder).await;
+                println!("response: {:?}", response);
                 match response { // Successfully received GetTicketResponse
                     Ok(get_ticket_response) => {
                         // You can now use fields of get_ticket_response
@@ -168,7 +179,9 @@ impl SendRequest{
                     Err(e) => {// There was an error while making the request
                         match tx{
                             Some(tx) => {
-                                if let Err(e) = tx.send(SendReceiveMessage::Error(e.to_string())) {}
+                                if let Err(e) = tx.send(SendReceiveMessage::Error(e.to_string())) {
+                                    println!("ERROR: \n\n\n{:?}", e);
+                                }
                             }
                             None => { eprintln!("Tried to send an update, but the sender is None");}
                         }
@@ -181,8 +194,56 @@ impl SendRequest{
             });
         }); 
     }
-}
+    fn get_cps(so_number: String, tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>){
+        let handle = Handle::current();
+        
+        std::thread::spawn(move||{
+            handle.block_on(async{
+                let args = vec![
+                    serde_json::json!(so_number),
+                ];
+            
+                let scaffold_builder = scaffold_builder::ScaffoldRequestBuilder{
+                    app: scaffold_builder::ScaffoldApps::SoftwareLicenseFetch,
+                    action: scaffold_builder::ScaffoldActions::FetchKeys, 
+                    call: scaffold_builder::ScaffoldCalls::GetOrder, // I need to make this optional as well...
+                    arguments: Some(args.clone())
+                };
+                
+                let response = request::request_keys(scaffold_builder);
 
+                match response { // Successfully received GetTicketResponse
+                    Ok(get_ticket_response) => {
+                        
+
+                        match tx{
+                            Some(tx) => {
+                                if let Err(e) = tx.send(SendReceiveMessage::TicketInfo(ticket_information)) {
+                                    tx.send(SendReceiveMessage::Error(e.to_string()));
+                                }
+                            }
+                            None => {eprintln!("Tried to send an update, but the sender is None");}
+                        }
+                    },
+                    Err(e) => {// There was an error while making the request
+                        match tx{
+                            Some(tx) => {
+                                if let Err(e) = tx.send(SendReceiveMessage::Error(e.to_string())) {
+                                    println!("ERROR: \n\n\n{:?}", e);
+                                }
+                            }
+                            None => { eprintln!("Tried to send an update, but the sender is None");}
+                        }
+                        
+                        //let mut output_text = output_text_clone.lock().unwrap();
+                        //*output_text = format!("Error: {}",e);
+
+                    },
+                }
+            });
+        });
+    }
+}
 
 struct MastertechContext {
     //////////////////////////////////////////
@@ -221,6 +282,10 @@ struct MastertechContext {
     send_specs: bool,
     animate_progress_bar: bool,
     get_ticket_button_pressed: bool,
+    get_cps_button_pressed: bool,
+    copy_webroot_button_pressed: bool,
+    copy_sas_button_pressed: bool,
+    get_seb_button_pressed: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -337,6 +402,10 @@ impl Default for MasterTechApp {
             date: None,
             animate_progress_bar: false,
             get_ticket_button_pressed: false,
+            get_cps_button_pressed: false,
+            copy_webroot_button_pressed: false,
+            copy_sas_button_pressed: false,
+            get_seb_button_pressed: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -377,6 +446,7 @@ impl MastertechContext {
                 if ui.add(Button::new("Get Ticket").stroke(self.border_stroke_color)
                 .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
                     self.get_ticket_button_pressed = true; // Sets bool to true so the main loop runs the get_ticket function
+
                 }
             });
 
@@ -431,11 +501,13 @@ impl MastertechContext {
                 ui.add_space(15.0);
                 if ui.add(Button::new("Get Keys").stroke(self.border_stroke_color)
                 .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
+                    self.get_cps_button_pressed = true;
                     //get_cps_keys
                 }
                 
                 if ui.add(Button::new("Check SEB").stroke(self.border_stroke_color)
                 .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
+                    self.get_seb_button_pressed = true;
                     //check_seb_info
                 }
                 ui.end_row();
@@ -450,6 +522,7 @@ impl MastertechContext {
                 ui.visuals_mut().override_text_color = Some(Color32::from_rgb(0, 224, 90));
                 if ui.add(Button::new("Webroot").stroke(Stroke::new(1.5, Color32::from_rgb(0, 224, 90)))
                 .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
+                    self.copy_webroot_button_pressed = true;
                     //SABB-TAOG-ECC9-9C8C-CFD2
                     //copy_webroot_key
                 }
@@ -462,6 +535,7 @@ impl MastertechContext {
                 ui.visuals_mut().override_text_color = Some(Color32::from_rgb(240, 98, 98));
                 if ui.add(Button::new("SuperAntiSpyware").stroke(Stroke::new(1.5, Color32::from_rgb(240, 98, 98)))
                 .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
+                    self.copy_sas_button_pressed = true;
                     //1C2J-JTPD-CFG3R
                     //copy_superanti_key
                 }
@@ -609,7 +683,7 @@ Last Invoice Amount: {:?}
 Department: {:?}
 Jurisdiction: {:?}
 Type of Order: {:?}
-Item Codes: {:?}",
+Item Codes: {:?}\n",
                     &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
                     &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
 
