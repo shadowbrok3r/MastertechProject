@@ -79,11 +79,11 @@ struct TicketInformation{
     last_invoice_number: String, // "LI_DOC": "53745333",
     last_invoice_amount: String,  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
     //last_tuneup_date: String, // <-- HERE
-    last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
+    //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
     total_invoice_count: String,
 
     checkin_notes: String,
-    //pub item_objects: Vec<ItemObjects>,
+    item_codes: String,
 }
 
 
@@ -103,16 +103,36 @@ impl SendRequest{
                         let header = &get_ticket_response.header;
                         let customer = &get_ticket_response.customer;
                         let addresses = &get_ticket_response.addresses.address_object;
-                        let items_array = get_ticket_response.items;
+                        let items_objects = get_ticket_response.items;
                         //let transactions = &get_ticket_response.transactions;
 
-                        
-                        
-                        for objects in items_array{
-                            for strings in objects.item_objects {
-                                //if strings.as_str().
-                                println!("strings: {:?}", strings);
-                            }
+                        let mut checkin_note = "".to_string();
+                        let mut itemcodes = "".to_string();
+
+                        // DW_UPDATE_DATE is the exact time that the line item (AKA 'items') was added.
+                        // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
+                        for object in items_objects{
+
+                            // If i want to....
+                            // "COST": "7.100000", this is our cost
+                            // ITEM_PR_FEX is what we charge the customer, although AMOUNT is the same value
+                            object.get("NOTE")
+                            .and_then(|v| v.as_str())
+                            .map(|note| {
+                                if note != "null" && !note.is_empty() {
+                                    let parts: Vec<&str> = note.split("Symptoms (Details):").collect();
+                                    if parts.len() > 1{
+                                        let note = &parts[1].to_string();
+                                        checkin_note = note.to_string();
+                                    }
+                                }
+                            });
+
+                            object.get("ITEM_CODE")
+                            .and_then(|v| v.as_str())
+                            .map(|item_code| {
+                                itemcodes += item_code;
+                            });
                         }
 
                         let ticket_information = TicketInformation{
@@ -128,12 +148,11 @@ impl SendRequest{
                             jurisdiction: header.JURISCODE.clone(),
                             invoice_amnt: header.INV_AMOUNT.clone(),
                             customer_name: customer.NAME.clone(),
-                            checkin_notes: "".to_string(),
-                            //customer_address: customer.CUSTOMER_ADDRESS.clone(),
+                            checkin_notes: checkin_note.clone(),
                             last_invoice_number: customer.LI_DOC.clone(),
-                            //last_invoice_date: customer.LAST_INVOICE_DATE.clone(),
+                            item_codes: itemcodes.clone(),
                             //last_tuneup_date: customer.LAST_TUNEUP_DATE.clone(),
-                            last_checkin_date: customer.LI_AMT.clone(),
+                            //last_checkin_date: customer.LI_AMT.clone(),
                             total_invoice_count: customer.NUM_INV.clone(),
                         };
 
@@ -143,29 +162,15 @@ impl SendRequest{
                                     tx.send(SendReceiveMessage::Error(e.to_string()));
                                 }
                             }
-                            None => {
-                                eprintln!("Tried to send an update, but the sender is None");
-                            }
+                            None => {eprintln!("Tried to send an update, but the sender is None");}
                         }
-                       
-                            //let _ = tx.send(format!("Output: {}", ticket_information.cust_code.as_str()));
-                            // We use let _ = to ignore the result because send() returns a Result that we don't care about in this case
-                    
-
-                        
                     },
-
-                    Err(e) => {
-                        // There was an error while making the request
+                    Err(e) => {// There was an error while making the request
                         match tx{
                             Some(tx) => {
-                                if let Err(e) = tx.send(SendReceiveMessage::Error(e.to_string())) {
-                                    
-                                }
+                                if let Err(e) = tx.send(SendReceiveMessage::Error(e.to_string())) {}
                             }
-                            None => {
-                                eprintln!("Tried to send an update, but the sender is None");
-                            }
+                            None => { eprintln!("Tried to send an update, but the sender is None");}
                         }
                         
                         //let mut output_text = output_text_clone.lock().unwrap();
@@ -596,7 +601,18 @@ impl eframe::App for MasterTechApp {
                     self.context.phone1 = info.customer_phone_1;
                     self.context.phone2 = info.customer_phone_2;
                     self.context.checkin_notes = info.checkin_notes;
-                    self.context.output_text = info.cust_code;
+                    self.context.output_text += format!(
+                    "Customer Code: {:?}
+Customer Email: {:?}
+Last Invoice Number: {:?}
+Last Invoice Amount: {:?}
+Department: {:?}
+Jurisdiction: {:?}
+Type of Order: {:?}
+Item Codes: {:?}",
+                    &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
+                    &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
+
                 }
                 SendReceiveMessage::Error(err) => {
                     // Handle error
