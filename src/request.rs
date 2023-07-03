@@ -14,6 +14,7 @@ pub struct GetTicketResponse {
     pub items: Vec<Value>,
 }
 
+
 pub struct GetKeysResponse{
     pub webroot_key: String,
     pub superanti_key: String,
@@ -100,7 +101,7 @@ pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  
         .header(ACCEPT, "application/json")
         .json(&params)
         .send()
-        .await; //need to find a way for this to return the response not the result
+        .await;
 
         match response {
             Ok(res) => {
@@ -125,27 +126,30 @@ pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core
             .header(ACCEPT, "application/json")
             .json(&params)
             .send()
-            .await; //need to find a way for this to return the response not the result
+            .await;
     
             match response {
                 Ok(res) => {
                     let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
                     println!("response: {:?}", response_text);
-                    // Assume `response_text` is the string response you got
-                    let lines = response_text.split("\n");  // Split by line
+        
                     let mut webroot_key = "";
                     let mut superanti_key = "";
 
+                    let lines: Vec<&str> = response_text.split("\n").collect();
                     for line in lines {
-                        let parts: Vec<&str> = line.split(": ").collect();  // Split each line by ": "
-                        if parts.len() == 2 {
-                            match parts[0] {
-                                "WRAV" => webroot_key = parts[1].trim(), // .trim() to remove leading/trailing spaces
-                                "SAS" => superanti_key = parts[1].trim(), // .trim() to remove leading/trailing spaces
-                                _ => {}
+                        let parts: Vec<&str> = line.split(": ").collect();
+                        if parts.len() >= 2 {
+                            let prefix = parts[0].trim();
+                            let key = parts[1].trim();
+                            match prefix {
+                                "WRAV" => webroot_key = key,
+                                "SAS" => superanti_key = key,
+                                _ => (),
                             }
                         }
                     }
+                    
 
                     let response_keys = GetKeysResponse {
                         webroot_key: webroot_key.to_string(),
