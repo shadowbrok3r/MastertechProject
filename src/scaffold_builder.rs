@@ -228,107 +228,30 @@ impl ScaffoldRequestBuilder {
                     scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
                 },
                 (Some(arg1), None, None) => {
-                    if arg1 == "id_order"{
-                        scaffold_call.as_object_mut().unwrap().insert("id_order".to_string(), arg1.clone());
-                    }else{
-                        scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
+                    if let Some(call) = &self.call{
+                        match call.as_str().is_empty() {
+                            true => {
+                                scaffold_call.as_object_mut().unwrap().insert("id_order".to_string(), arg1.clone());
+                            }
+                            false => {
+                                let call_value = Value::String(call.as_str().to_string());
+                                scaffold_call.as_object_mut().unwrap().insert("call".to_string(), call_value);
+                                scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
+                            }
+                        }
                     }
-                    
                 },
                 _ => {},
             }
-        }
-        if let Some(call) = &self.call{
-            match call.as_str().is_empty() {
-            true => {
                 
-            }
-            false => {
-                let call_value = Value::String(call.as_str().to_string());
-                scaffold_call.as_object_mut().unwrap().insert("call".to_string(), call_value);
-            }
-
-            }
         }
-
-
         return scaffold_call;
     }
+       
 }
 
+
 /*
-__construct
-checkStock( $itemCode, $display )
-getOrderDetailSerials( $id_order, $id_item )
-getOrderDetails( $id_order )
-getOrderList( $limit, $pcl_only, $override )
-getOpenSerialsByPaging( $start, $limit )
-getQuantityOnOrderBySku( $sku )
-getActiveItems( $limit )
-itemCodeSearch( $itemCode, $detailed )
-displayStock( $data )
-displayAutocomplete( $data )
-getCog( $order_no )
-getCogDev( $order_no )
-getAgingLineItems
-getAgingLineItemsDev
-getItemCategory( $item_code )
-getDocAlias( $order_no )
-getCogMovementByDate( $date )
-getItemSellThroughByRepByDateRange( $item_code, $sales_rep, $date1, $date2 )
-getItemSellThroughByMonth( $item_code, $date )
-getItemSellThroughByDateRange( $item_code, $date1, $date2 )
-getMobileSalesByDateRange( $item_code, $date1, $date2 )
-getComputerServicesByDateRange( $date1, $date2 )
-getMobileServicesByDateRange( $date1, $date2 )
-getOpenServiceOrders
-getOpenServiceOrdersWithCallNotes( $date )
-getCorporateProfitTracking( $date1, $date2 )
-countInvoicePaymentMethodsByDateRange( $date1, $date2 )
-getAllServiceOrdersWithCallNotesByDateRange( $date1, $date2 )
-getOpenComputerServiceOrdersWithCallNotes
-getInvoicedComputerServiceOrdersWithCallNotesByDateRange( $date1, $date2 )
-getInvoicedOrdersWithCallNotesByDateRange( $date1, $date2 )
-getItemDetailBySerial( $serial )
-getItemDetailBySerialString( $str, $is_numeric )
-getEmployeeDetailsByName( $data )
-getSalesInvoicesForLocationByDateRange( $location, $date1, $date2 )
-getSalesOrdersWithSebAhsForLocationsByDateRange( $location, $date1, $date2 )
-getOutdatedOperatingSystemSales( $location, $date1, $date2 )
-getOutdatedOperatingSystemSalesDev( $location, $date1, $date2 )
-getCustomerNameByIdOrder( $id_order )
-getSerialNumbersByDocnum( $id_order )
-getDocnumBySerialNumber( $id_order )
-getSerialNumbersByReference( $id_order )
-getSerialNumbersByOrderID( $id_order )
-getOrderIdByXidaxIDOrder( $id_order )
-isOrderValid( $id_order )
-getNameByOrderId( $id_order )
-compareOrderCustomer( $id_order, $id_order_2 )
-getMonthlySales( $date1, $date2, $type )
-getCustomers( $start, $limit )
-getCustomer( $cust_code )
-getAddressByOrderId( $order_id )
-getTransactionHistory( $id_order )
-getAddressesByCustomerCode( $cust_code, $status )
-getXidaxOrders( $order_date )
-getPurchaseOrderList( $start, $limit, $status )
-getPurchaseOrder( $po_num )
-getPurchaseOrderByID( $po_id )
-getPurchaseOrderLines( $po_num )
-getPurchaseOrderSerialsByLineId( $po_id )
-getVendorByCode( $vend_code )
-getCustomerByPhone( $data )
-getOrdersByCustomerId( $data, $limit )
-getOrder( $id_order, $full )
-curl( $url )
-cacheResult( $query, $result )
-readCache( $query )
-list_functions
-get_request_counts( $type, $date_from, $date_to )
-__get( $key )
-
-
 Request Array(   <--  Use this method to search for a single key->term pair
     'user_email' => 'user@domain.com',
     'user_password' => 'S3cuRe!Pas5',

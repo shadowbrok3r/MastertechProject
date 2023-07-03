@@ -79,7 +79,7 @@ impl SendRequest{
                 };
 
                 let response = request::request_ticket_info(scaffold_builder).await;
-                println!("response: {:?}", response);
+                //println!("response: {:?}", response);
                 match response { // Successfully received GetTicketResponse
                     Ok(get_ticket_response) => {
                         // You can now use fields of get_ticket_response
@@ -143,6 +143,7 @@ impl SendRequest{
                             Some(tx) => {
                                 if let Err(e) = tx.send(SendReceiveMessage::TicketInfo(ticket_information)) {
                                     tx.send(SendReceiveMessage::Error(e.to_string()));
+                                    
                                 }
                             }
                             None => {eprintln!("Tried to send an update, but the sender is None");}
