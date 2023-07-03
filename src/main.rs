@@ -421,31 +421,34 @@ impl MastertechContext {
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         
-        ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
-
+        ui.vertical(|ui| {ui.add_space(5.0);}); // leave some margin above the textEdits
+        
         ui.columns(2,|column|{
-        column[0].vertical(|ui|{
-            ui.horizontal(|ui|{
+        column[0].vertical_centered_justified(|ui|{
+            ui.with_layout(Layout::top_down_justified(Align::Center),|ui|{
                 ui.add_space(80.0);
-                if ui.add(Button::new("Get Ticket").stroke(self.border_stroke_color)
-                .fill(Color32::from_rgb(50, 57, 71)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
+                if ui.add(Button::new("Get Ticket")
+                .fill(Color32::from_rgb(50, 57, 71))
+                )//.min_size(vec2(self.widget_size, 5.0)))
+                .clicked(){ 
                     self.get_ticket_button_pressed = true; // Sets bool to true so the main loop runs the get_ticket function
-
                 }
-            });
-
-            Grid::new("tur_sheet_grid1_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
-            .show(ui, |ui| {
+            
+            
+                Grid::new("tur_sheet_grid1_col1")
+                .spacing(vec2(8.0, 8.0))
+                .num_columns(2)
+                .show(ui, |ui| {
 
                 /*     ROW 1     */
                 ui.add_space(15.0);
                 ui.add(TextEdit::singleline(&mut self.so_number)
                 .hint_text("SO#").char_limit(8).desired_width(self.widget_size));
-                
+
                 ui.add(TextEdit::singleline(&mut self.customer_name)
                 .hint_text("Customer Name").desired_width(self.widget_size));
                 ui.end_row();
-                
+
                 /*     ROW 2     */
                 ui.add_space(15.0);
                 ui.add(TextEdit::singleline(&mut self.phone1)
@@ -453,7 +456,7 @@ impl MastertechContext {
                 ui.add(TextEdit::singleline(&mut self.phone2)
                 .hint_text("Phone Number 2").desired_width(self.widget_size));      
                 ui.end_row();
-            
+
                 /*     ROW 3     */
                 ui.add_space(15.0);
                 ComboBox::from_id_source("salesman_cbox").width(self.widget_size - 2.0)
@@ -462,7 +465,7 @@ impl MastertechContext {
                     ui.selectable_value(&mut self.salesman_cbox, Salesman::Jake, "Jake");
                     ui.selectable_value(&mut self.salesman_cbox, Salesman::Danny, "Danny");
                 });
-    
+
                 ComboBox::from_id_source("techs_cbox").width(self.widget_size - 2.0)
                 .selected_text(format!("{:?}", self.techs_cbox))
                 .show_ui(ui, |ui| {
@@ -470,124 +473,150 @@ impl MastertechContext {
                     ui.selectable_value(&mut self.techs_cbox, Techs::Bread, "Bread");
                     ui.selectable_value(&mut self.techs_cbox, Techs::Taco, "Taco");
                 });          
+                    
+                    
+                });
+
+                ui.vertical(|ui| {ui.add_space(3.0);});
+
+                Grid::new("tur_sheet_grid2_col1").spacing(vec2(5.0, 5.0)).num_columns(1)
+                .show(ui, |ui| {
+                    ui.add_space(16.0);
+                    ui.add(TextEdit::multiline(&mut self.checkin_notes)
+                    .hint_text("Checkin Notes").desired_rows(15)
+                );//.desired_width(self.widget_size * 2.0 + 3.0));
+                });
+
+                ui.vertical_centered_justified(|ui| {ui.add_space(3.0);});
+                Grid::new("tur_sheet_grid3_col1")
+                .spacing(vec2(5.0, 5.0))
+                .num_columns(2)
+                .show(ui, |ui| {
+
+                    ui.add_space(15.0);
+                    if ui.add(Button::new("Get Keys")
+                    .fill(Color32::from_rgb(50, 57, 71)))
+                    //.min_size(vec2(self.widget_size, 5.0)))
+                    .clicked(){ 
+                        self.get_cps_button_pressed = true;
+                    }
+                    
+                    if ui.add(Button::new("Check SEB")
+                    .fill(Color32::from_rgb(50, 57, 71)))
+                    //.min_size(vec2(self.widget_size, 5.0)))
+                    .clicked(){ 
+                        self.get_seb_button_pressed = true;
+                        //check_seb_info
+                    }
+                    ui.end_row();
+
+                });
+
+                //ui.vertical(|ui| {ui.add_space(3.0);});
+
+                Grid::new("tur_sheet_grid4_col1")
+                .spacing(vec2(5.0, 5.0))
+                .num_columns(2)
+                .show(ui, |ui| {
+
+                    /*     ROW 1     */
+                    //ui.add_space(15.0);
+                    ui.visuals_mut().override_text_color = Some(Color32::from_rgb(0, 224, 90));
+                    
+                    let webroot_key = "Webroot Key";
+
+                    if ui.add(Button::new(format!("{:?}", webroot_key.as_str()))
+                    .fill(Color32::from_rgb(50, 57, 71))) //.min_size(vec2(ui.available_width(), 10.0)))
+                    
+                    .on_hover_text("Click To Copy Webroot Key to Clipboard")
+                    .clicked(){ 
+                        self.copy_webroot_button_pressed = true;
+                    }
+
+                    /*     ROW 2     */
+                    //ui.add_space(15.0);
+                    ui.visuals_mut().override_text_color = Some(Color32::from_rgb(240, 98, 98));
+
+                    let sas_key = "SuperAnti Key";
+
+                    if ui.add(Button::new(format!("{:?}", sas_key))
+                    .fill(Color32::from_rgb(50, 57, 71))) //.min_size(vec2(self.widget_size - 10.0, 5.0)))
+                    .on_hover_text("Click To Copy SAS Key to Clipboard")
+                    .clicked(){ 
+                        self.copy_sas_button_pressed = true;
+                    }
+
+                    ui.end_row();
+
+                });
             });
 
-            ui.vertical(|ui| {ui.add_space(3.0);});
-            Grid::new("tur_sheet_grid2_col1").spacing(vec2(5.0, 5.0)).num_columns(1)
-            .show(ui, |ui| {
-                ui.add_space(16.0);
-                ui.add(TextEdit::multiline(&mut self.checkin_notes)
-                .hint_text("Checkin Notes").desired_rows(15).desired_width(self.widget_size * 2.0 + 3.0));
-            });
-            ui.vertical(|ui| {ui.add_space(3.0);});
-            Grid::new("tur_sheet_grid3_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
-            .show(ui, |ui| {
-                ui.add_space(15.0);
-                if ui.add(Button::new("Get Keys").stroke(self.border_stroke_color)
-                .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
-                    self.get_cps_button_pressed = true;
-                    //get_cps_keys
-                }
-                
-                if ui.add(Button::new("Check SEB").stroke(self.border_stroke_color)
-                .fill(Color32::from_rgb(25, 12, 48)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
-                    self.get_seb_button_pressed = true;
-                    //check_seb_info
-                }
-                ui.end_row();
-            });
-            ui.vertical(|ui| {ui.add_space(3.0);});
+        });
+        column[1].vertical_centered_justified(|ui|{
+            ui.with_layout(Layout::top_down_justified(Align::Center),|ui|{
+                Grid::new("tur_sheet_grid1_col2")
+                .spacing(vec2(5.0, 5.0))
+                .num_columns(2)
+                .show(ui, |ui|{
 
-            Grid::new("tur_sheet_grid4_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
-            .show(ui, |ui| {
+                    /*     ROW 3     */
+                    ui.add_space(8.0);
+                    ComboBox::from_id_source("ssd_cbox")//.width(self.widget_size - 2.0)
+                    .selected_text(format!("{:?}", self.ssd_test_cbox))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_fail, "SSD Fail");
+                        ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_pass, "SSD Pass");
+                        ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_not_tested, "SSD Not Tested");
+                    });
+        
+                    ComboBox::from_id_source("hdd_cbox")//.width(self.widget_size - 2.0)
+                    .selected_text(format!("{:?}", self.hdd_test_cbox))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_fail, "HDD Fail");
+                        ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_pass, "HDD Pass");
+                        ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_not_tested, "HDD Not Tested");
+                    });
+                    ui.end_row();
+
+                });
+
+                Grid::new("tur_sheet_grid2_col2").spacing(vec2(5.0, 5.0)).num_columns(1)
+                .show(ui, |ui|{
+                    ui.add_space(80.0);
+                    ComboBox::from_id_source("ram_cbox")//.width(self.widget_size - 2.0)
+                    .selected_text(format!("{:?}", self.ram_test_cbox))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_fail, "RAM Fail");
+                        ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_pass, "RAM Pass");
+                        ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_not_tested, "RAM Not Tested");
+                    });
+                });
 
                 /*     ROW 1     */
                 ui.add_space(15.0);
-                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(0, 224, 90));
-                if ui.add(Button::new("Webroot").stroke(Stroke::new(1.5, Color32::from_rgb(0, 224, 90)))
-                .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
-                    self.copy_webroot_button_pressed = true;
-                    //SABB-TAOG-ECC9-9C8C-CFD2
-                    //copy_webroot_key
-                }
-                ui.add(TextEdit::singleline(&mut self.webroot_key).desired_width(self.widget_size)
-                .hint_text("<-- Copy Key").char_limit(24));
-                ui.end_row();
+                ui.add(TextEdit::multiline(&mut self.recommendations)
+                .hint_text("Recommendations").desired_rows(15));
 
-                /*     ROW 2     */
+                Grid::new("tur_sheet_grid3_col2").spacing(vec2(5.0, 5.0)).num_columns(2)
+                .show(ui, |ui| {
+                    ui.checkbox(&mut self.send_specs, "Send System Info");
+                    ui.end_row();
+                });
+                //#[cfg(feature = "chrono")]
+                //let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
+                //ui.add(egui_extras::DatePickerButton::new(date));
+                ui.end_row();
+                
                 ui.add_space(15.0);
-                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(240, 98, 98));
-                if ui.add(Button::new("SuperAntiSpyware").stroke(Stroke::new(1.5, Color32::from_rgb(240, 98, 98)))
-                .fill(Color32::from_rgb(27, 27, 28)).min_size(vec2(self.widget_size, 5.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
-                    self.copy_sas_button_pressed = true;
-                    //1C2J-JTPD-CFG3R
-                    //copy_superanti_key
+                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(170, 33, 191));
+                if ui.add(Button::new("Submit TUR Sheet").stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+                .fill(Color32::from_rgb(38, 38, 38)))//.min_size(vec2(self.widget_size * 2.0+8.0, 8.0)))
+                .clicked(){ 
+                    // TODO
                 }
-                ui.add(TextEdit::singleline(&mut self.superanti_key).desired_width(self.widget_size)
-                .hint_text("<-- Copy Key").char_limit(13));
-                ui.end_row();
-            });
-        });
-
-
-        column[1].vertical(|ui|{
-            Grid::new("tur_sheet_grid1_col2").spacing(vec2(5.0, 5.0)).num_columns(2)
-            .show(ui, |ui|{
-                /*     ROW 3     */
-                ui.add_space(8.0);
-                ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 2.0)
-                .selected_text(format!("{:?}", self.ssd_test_cbox))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_fail, "SSD Fail");
-                    ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_pass, "SSD Pass");
-                    ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_not_tested, "SSD Not Tested");
-                });
-    
-                ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 2.0)
-                .selected_text(format!("{:?}", self.hdd_test_cbox))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_fail, "HDD Fail");
-                    ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_pass, "HDD Pass");
-                    ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_not_tested, "HDD Not Tested");
-                });
-                ui.end_row();
 
             });
-            Grid::new("tur_sheet_grid2_col2").spacing(vec2(5.0, 5.0)).num_columns(1)
-            .show(ui, |ui|{
-                ui.add_space(80.0);
-                ComboBox::from_id_source("ram_cbox").width(self.widget_size - 2.0)
-                .selected_text(format!("{:?}", self.ram_test_cbox))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_fail, "RAM Fail");
-                    ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_pass, "RAM Pass");
-                    ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_not_tested, "RAM Not Tested");
-                });
             });
-
-            /*     ROW 1     */
-            ui.add_space(15.0);
-            ui.add(TextEdit::multiline(&mut self.recommendations)
-            .hint_text("Recommendations").desired_rows(15).desired_width(self.widget_size * 2.0+8.0));
-
-            Grid::new("tur_sheet_grid3_col2").spacing(vec2(5.0, 5.0)).num_columns(2)
-            .show(ui, |ui| {
-                ui.checkbox(&mut self.send_specs, "Send System Info");
-                ui.end_row();
-            });
-            //#[cfg(feature = "chrono")]
-            //let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
-            //ui.add(egui_extras::DatePickerButton::new(date));
-            ui.end_row();
-            
-            ui.add_space(15.0);
-            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(170, 33, 191));
-            if ui.add(Button::new("Submit TUR Sheet").stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
-            .fill(Color32::from_rgb(38, 38, 38)).min_size(vec2(self.widget_size * 2.0+8.0, 8.0)).sense(Sense { click: true, drag: false, focusable: true })).clicked(){ 
-                // TODO
-            }
-
-        });
         });
     }
 
