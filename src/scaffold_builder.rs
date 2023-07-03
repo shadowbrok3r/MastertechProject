@@ -16,7 +16,7 @@ impl Default for ScaffoldAuth{
 }
 
 pub struct ScaffoldRequestBuilder{
-    pub call: ScaffoldCalls,
+    pub call: Option<ScaffoldCalls>,
     pub action: ScaffoldActions,
     pub app: ScaffoldApps,
     pub arguments: Option<Vec<Value>>,
@@ -67,6 +67,7 @@ impl ScaffoldActions {
 }
 
 pub enum ScaffoldCalls{
+    None,
     CheckStock,
     GetOrderDetailSerials,                                    // ( $id_order, $id_item )
     GetOrderDetails,                                          // ( $id_order )
@@ -119,6 +120,7 @@ pub enum ScaffoldCalls{
 impl ScaffoldCalls {
     fn as_str(&self) -> &'static str {
         match *self {
+            ScaffoldCalls::None => "",
             ScaffoldCalls::CheckStock => "check_stock",
             ScaffoldCalls::GetOrderDetailSerials => "get_order_detail_serials",
             ScaffoldCalls::GetOrderDetails => "get_order_details",
@@ -169,6 +171,33 @@ impl ScaffoldCalls {
         }
     }
 }
+pub struct TicketInformation{
+    pub cust_code: String,
+    pub user_id: String, // "USER_ID": "BP3", //checkin rep
+    pub terms: String, // "TERMS": "CC",
+    pub doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
+    pub department: String, // "DEP": "LTN"
+    pub jurisdiction: String, //"JURISCODE": "LTN",
+    pub invoice_amnt: String,
+
+    pub customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",
+    pub customer_phone_1: String,
+    pub customer_phone_2: String,
+    pub customer_email: String,
+    pub last_invoice_number: String, // "LI_DOC": "53745333",
+    pub last_invoice_amount: String,  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
+    //last_tuneup_date: String, // <-- HERE
+    //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
+    pub total_invoice_count: String,
+
+    pub checkin_notes: String,
+    pub item_codes: String,
+}
+
+pub struct PulledKeys{
+    pub webroot_key: String,
+    pub superanti_key: String,
+}
 
 impl ScaffoldRequestBuilder {
     pub fn build_scaffold_call(&mut self) -> Value {
@@ -182,7 +211,7 @@ impl ScaffoldRequestBuilder {
             "user_email": "logan.lees@pclaptops.com".to_string(),
             "user_password": "Poolparty1".to_string(),
             "action": self.action.as_str().to_string(),
-            "call": self.call.as_str().to_string(), 
+            //"call": self.call.as_str().to_string(), 
             "application": self.app.as_str().to_string(), 
             "company": company.to_string()
         });
@@ -209,6 +238,20 @@ impl ScaffoldRequestBuilder {
                 _ => {},
             }
         }
+        if let Some(call) = &self.call{
+            match call.as_str().is_empty() {
+            true => {
+                
+            }
+            false => {
+                let call_value = Value::String(call.as_str().to_string());
+                scaffold_call.as_object_mut().unwrap().insert("call".to_string(), call_value);
+            }
+
+            }
+        }
+
+
         return scaffold_call;
     }
 }

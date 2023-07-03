@@ -4,6 +4,7 @@ use std::{collections::HashSet, borrow::BorrowMut}; //, os::windows::thread};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
+use scaffold_builder::PulledKeys;
 use tokio::{sync::watch, task, runtime::Handle};
 use egui_extras::*;
 use std::sync::{Arc, Mutex};
@@ -50,41 +51,12 @@ enum HardwareTest{
 }
 
 enum SendReceiveMessage{
-    TicketInfo(TicketInformation),
+    TicketInfo(scaffold_builder::TicketInformation),
+    Cpskeys(PulledKeys),
     Error(String)
 }
 pub struct SendRequest {
     tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>,
-}
-
-// impl Default for SendRequest { 
-//     fn default() -> Self {
-//         tx: Some(tx),
-//         Self { tx }
-//     }
-// }
-
-struct TicketInformation{
-    cust_code: String,
-    user_id: String, // "USER_ID": "BP3", //checkin rep
-    terms: String, // "TERMS": "CC",
-    doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
-    department: String, // "DEP": "LTN"
-    jurisdiction: String, //"JURISCODE": "LTN",
-    invoice_amnt: String,
-
-    customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",
-    customer_phone_1: String,
-    customer_phone_2: String,
-    customer_email: String,
-    last_invoice_number: String, // "LI_DOC": "53745333",
-    last_invoice_amount: String,  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
-    //last_tuneup_date: String, // <-- HERE
-    //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
-    total_invoice_count: String,
-
-    checkin_notes: String,
-    item_codes: String,
 }
 
 impl SendRequest{
@@ -101,7 +73,7 @@ impl SendRequest{
                 let scaffold_builder = scaffold_builder::ScaffoldRequestBuilder{
                     app: scaffold_builder::ScaffoldApps::Everest,
                     action: scaffold_builder::ScaffoldActions::EverestCall, 
-                    call: scaffold_builder::ScaffoldCalls::GetOrder, 
+                    call: Some(scaffold_builder::ScaffoldCalls::GetOrder), 
                     arguments: Some(args.clone())
             
                 };
@@ -146,7 +118,7 @@ impl SendRequest{
                             });
                         }
 
-                        let ticket_information = TicketInformation{
+                        let ticket_information = scaffold_builder::TicketInformation{
                             cust_code: header.CUST_CODE.clone(),
                             user_id: header.USER_ID.clone(),
                             customer_phone_1: addresses.TEL1.clone(),
@@ -206,19 +178,30 @@ impl SendRequest{
                 let scaffold_builder = scaffold_builder::ScaffoldRequestBuilder{
                     app: scaffold_builder::ScaffoldApps::SoftwareLicenseFetch,
                     action: scaffold_builder::ScaffoldActions::FetchKeys, 
-                    call: scaffold_builder::ScaffoldCalls::GetOrder, // I need to make this optional as well...
+                    call: Some(scaffold_builder::ScaffoldCalls::None),
                     arguments: Some(args.clone())
                 };
                 
-                let response = request::request_keys(scaffold_builder);
+                let response = request::request_keys(scaffold_builder).await;
 
                 match response { // Successfully received GetTicketResponse
-                    Ok(get_ticket_response) => {
-                        
+                    Ok(get_keys_response) => {
+
+                        let webroot_key = &get_keys_response.webroot_key;
+                        let superanti_key = &get_keys_response.superanti_key;
+
+                
+
+                        let cps_keys = PulledKeys{
+                            webroot_key: webroot_key.to_string(),
+                            superanti_key: superanti_key.to_string()
+                        };
+
+
 
                         match tx{
                             Some(tx) => {
-                                if let Err(e) = tx.send(SendReceiveMessage::TicketInfo(ticket_information)) {
+                                if let Err(e) = tx.send(SendReceiveMessage::Cpskeys(cps_keys)) {
                                     tx.send(SendReceiveMessage::Error(e.to_string()));
                                 }
                             }
@@ -664,6 +647,11 @@ impl eframe::App for MasterTechApp {
             self.context.get_ticket_button_pressed = false;
             let service_num = self.context.so_number.clone();
             SendRequest::get_ticket(service_num, self.send_request.tx.clone()); 
+        }
+        if self.context.get_cps_button_pressed == true {
+            self.context.get_cps_button_pressed = false;
+            let service_num = self.context.so_number.clone();
+            SendRequest::get_cps(service_num, self.send_request.tx.clone());
         }   
 
         // On the receiving end:
@@ -687,6 +675,10 @@ Item Codes: {:?}\n",
                     &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
                     &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
 
+                }
+                SendReceiveMessage::Cpskeys(info) => {
+                    self.context.webroot_key = info.webroot_key;
+                    self.context.superanti_key = info.superanti_key;
                 }
                 SendReceiveMessage::Error(err) => {
                     // Handle error
