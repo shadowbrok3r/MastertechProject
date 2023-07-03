@@ -14,6 +14,11 @@ pub struct GetTicketResponse {
     pub items: Vec<Value>,
 }
 
+pub struct GetKeysResponse{
+    pub webroot_key: String,
+    pub superanti_key: String,
+}
+
 #[derive(Deserialize, Debug)]
 pub struct Header {
     pub CUST_CODE: String,
@@ -110,7 +115,7 @@ pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  
         }
 }
 
-pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
+pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
         // Now you can use the method on the instance of ScaffoldRequestBuilder
         let params: Value = scaffold_builder.build_scaffold_call();
 
@@ -124,16 +129,37 @@ pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core
     
             match response {
                 Ok(res) => {
-                    let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
-                    //let raw_response = res.text().await?;
-                    //println!("Server response: {}", raw_response);
-                    //let json_response: GetTicketResponse = serde_json::from_str(&raw_response)?;
-    
-                    Ok(json_response)
+                    let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
+                    println!("response: {:?}", response_text);
+                    // Assume `response_text` is the string response you got
+                    let lines = response_text.split("\n");  // Split by line
+                    let mut webroot_key = "";
+                    let mut superanti_key = "";
+
+                    for line in lines {
+                        let parts: Vec<&str> = line.split(": ").collect();  // Split each line by ": "
+                        if parts.len() == 2 {
+                            match parts[0] {
+                                "WRAV" => webroot_key = parts[1].trim(), // .trim() to remove leading/trailing spaces
+                                "SAS" => superanti_key = parts[1].trim(), // .trim() to remove leading/trailing spaces
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    let response_keys = GetKeysResponse {
+                        webroot_key: webroot_key.to_string(),
+                        superanti_key: superanti_key.to_string(),
+                    };
+
+                    
+                    Ok(response_keys)
                 },
                 Err(e) => Err(Box::new(e)),
             }
 }
+
+
 //pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
 
 //
