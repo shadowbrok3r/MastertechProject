@@ -1,6 +1,45 @@
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 
+#[derive(Debug, PartialEq)]
+pub enum Salesman {
+    Jake,
+    Danny
+}
+#[derive(Debug, PartialEq)]
+pub enum Techs{
+    Logan,
+    Bread,
+    Taco
+}
+#[derive(Debug, PartialEq)]
+pub enum HardwareTest{
+    RamPass,
+    RamFail,
+    RamNotTested,
+    HddPass,
+    HddFail,
+    HddNotTested,
+    SsdPass,
+    SsdFail,
+    SsdNotTested,
+}
+
+impl HardwareTest{
+    pub fn as_str(&self) -> &'static str {
+        match *self {
+            HardwareTest::RamPass => "RAM Pass",
+            HardwareTest::RamFail => "RAM Fail",
+            HardwareTest::HddPass => "HDD Pass",
+            HardwareTest::HddFail => "HDD Fail",
+            HardwareTest::SsdPass => "SSD Pass",
+            HardwareTest::SsdFail => "SSD Fail",
+            HardwareTest::RamNotTested => "RAM not tested",
+            HardwareTest::HddNotTested => "HDD not tested",
+            HardwareTest::SsdNotTested => "SSD not tested",
+        }
+    }
+}
 struct ScaffoldAuth{
     user: String,
     password: String
@@ -171,6 +210,8 @@ impl ScaffoldCalls {
         }
     }
 }
+
+#[derive(Serialize, Deserialize)]
 pub struct TicketInformation{
     pub cust_code: String,
     pub user_id: String, // "USER_ID": "BP3", //checkin rep
@@ -194,6 +235,7 @@ pub struct TicketInformation{
     pub item_codes: String,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct PulledKeys{
     pub webroot_key: String,
     pub superanti_key: String,
@@ -224,6 +266,12 @@ impl ScaffoldRequestBuilder {
                     scaffold_call.as_object_mut().unwrap().insert("arg3".to_string(), arg3.clone());
                 },
                 (Some(arg1), Some(arg2), None) => {
+                    if let Some(call) = &self.call{
+                        let call_value = Value::String(call.as_str().to_string());
+                        scaffold_call.as_object_mut().unwrap().insert("call".to_string(), call_value);
+                        scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
+                        scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
+                    }
                     scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
                     scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
                 },
