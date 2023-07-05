@@ -1,4 +1,5 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] use serde_json::{json, Value};
+// hide output_console window on Windows in release
 use sysinfo::*;
 use std::{collections::HashSet, borrow::BorrowMut}; //, os::windows::thread};
 use eframe::egui;
@@ -6,6 +7,7 @@ use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use scaffold_builder::PulledKeys;
 use tokio::runtime::Handle;
+use serde::{Deserialize, Serialize};
 use egui_extras::*;
 use catppuccin_egui::MOCHA;
 
@@ -26,69 +28,20 @@ async fn main() -> eframe::Result<()> {
     )
 }
 
-#[derive(Debug, PartialEq)]
-enum Salesman {
-    Jake,
-    Danny
-}
-#[derive(Debug, PartialEq)]
-enum Techs{
-    Logan,
-    Bread,
-    Taco
-}
-#[derive(Debug, PartialEq)]
-enum HardwareTest{
-    RamPass,
-    RamFail,
-    RamNotTested,
-    HddPass,
-    HddFail,
-    HddNotTested,
-    SsdPass,
-    SsdFail,
-    SsdNotTested,
+pub struct SendAsyncReq {
+    tx: std::sync::mpsc::Sender<String>,
 }
 
-impl HardwareTest{
-    fn as_str(&self) -> &'static str {
-        match *self {
-            HardwareTest::RamPass => "RAM Pass",
-            HardwareTest::RamFail => "RAM Fail",
-            HardwareTest::HddPass => "HDD Pass",
-            HardwareTest::HddFail => "HDD Fail",
-            HardwareTest::SsdPass => "SSD Pass",
-            HardwareTest::SsdFail => "SSD Fail",
-            HardwareTest::RamNotTested => "RAM not tested",
-            HardwareTest::HddNotTested => "HDD not tested",
-            HardwareTest::SsdNotTested => "SSD not tested",
-        }
-    }
-}
-
-enum SendReceiveMessage{
-    TicketInfo(scaffold_builder::TicketInformation),
-    Cpskeys(PulledKeys),
-    Error(String)
-}
-
-enum SendReceiveSystemInfo{
-    RetrieveSystemInfo(SystemInformation),
-    Error(String)
-}
+#[derive(Serialize, Deserialize)]
 pub struct SystemInformation{
     cpu_name: String,
     total_ram: String,
     system_name: String,
-    disks: Option<String>
-}
-pub struct SendAsyncReq {
-    tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>,
-    system_info_tx: Option<std::sync::mpsc::Sender<SendReceiveSystemInfo>>,
+    disks: Vec<Value>, //Option<String>
 }
 
 impl SendAsyncReq{
-    fn get_ticket(so_number: String, tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>){
+    fn get_ticket(so_number: String, tx: std::sync::mpsc::Sender<String>){
         let handle = Handle::current();
         
         std::thread::spawn(move||{
@@ -107,9 +60,11 @@ impl SendAsyncReq{
                 };
 
                 let response = request::request_ticket_info(scaffold_builder).await;
-                //println!("response: {:?}", response);
+                println!("ticket_response: {:?}", response);
+
                 match response { // Successfully received GetTicketResponse
                     Ok(get_ticket_response) => {
+                        
                         // You can now use fields of get_ticket_response
                         let header = &get_ticket_response.header;
                         let customer = &get_ticket_response.customer;
@@ -167,30 +122,37 @@ impl SendAsyncReq{
                             total_invoice_count: customer.NUM_INV.clone(),
                         };
 
-                        match tx{
-                            Some(tx) => {
-                                if let Err(e) = tx.send(SendReceiveMessage::TicketInfo(ticket_information)) {
-                                    tx.send(SendReceiveMessage::Error(e.to_string()));
-                                }
+                        let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();
+
+                        match tx.send(ticket_info_json) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                eprintln!("Error while sending ticket information: {}", e.to_string());
+                                drop(tx)
                             }
-                            None => {eprintln!("Tried to send an update, but the sender is None");}
                         }
+                        
                     },
-                    Err(e) => {// There was an error while making the request
-                        match tx{
-                            Some(tx) => {
-                                if let Err(e) = tx.send(SendReceiveMessage::Error(e.to_string())) {
-                                    println!("ERROR: \n\n\n{:?}", e);
-                                }
+                    Err(e) => { 
+                        match tx.send(e.to_string()) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                eprintln!("Error while sending error message: {}", e);
+                                drop(tx)
                             }
-                            None => { eprintln!("Tried to send an update, but the sender is None");}
                         }
-                    },
+                    }
+                    
                 }
             });
         }); 
     }
-    fn get_cps(so_number: String, tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>){
+    
+    fn get_cps(so_number: String, tx: std::sync::mpsc::Sender<String>){
         let handle = Handle::current();
         
         std::thread::spawn(move||{
@@ -221,37 +183,36 @@ impl SendAsyncReq{
                             superanti_key: superanti_key.to_string()
                         };
 
-
-
-                        match tx{
-                            Some(tx) => {
-                                if let Err(e) = tx.send(SendReceiveMessage::Cpskeys(cps_keys)) {
-                                    tx.send(SendReceiveMessage::Error(e.to_string()));
-                                }
+                        let cps_keys_json = serde_json::to_string(&cps_keys).unwrap();
+                        
+                        match tx.send(cps_keys_json) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                eprintln!("Error while sending ticket information: {}", e.to_string());
+                                drop(tx)
                             }
-                            None => {eprintln!("Tried to send an update, but the sender is None");}
-                        }
-                    },
-                    Err(e) => {// There was an error while making the request
-                        match tx{
-                            Some(tx) => {
-                                if let Err(e) = tx.send(SendReceiveMessage::Error(e.to_string())) {
-                                    println!("ERROR: \n\n\n{:?}", e);
-                                }
-                            }
-                            None => { eprintln!("Tried to send an update, but the sender is None");}
                         }
                         
-                        //let mut output_text = output_text_clone.lock().unwrap();
-                        //*output_text = format!("Error: {}",e);
-
                     },
+                    Err(e) => { 
+                        match tx.send(e.to_string()) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                eprintln!("Error while sending error message: {}", e);
+                                drop(tx)
+                            }
+                        }
+                    }                    
                 }
             });
         });
     }
 
-    fn get_system_specs(tx: Option<std::sync::mpsc::Sender<SendReceiveSystemInfo>>){
+    fn get_system_specs(tx: std::sync::mpsc::Sender<String>){
         let handle = Handle::current();
         
         std::thread::spawn(move||{
@@ -265,30 +226,58 @@ impl SendAsyncReq{
                 let disks_clone = disks.clone();
 
                 //let mount_point = Option<"">;
-                let available_disk_space = "";
-                let total_disk_space = "";
+                let mut available_disk_space = "".to_string();
+                let mut total_disk_space = "".to_string();
+
+                let mut disks_json = vec![];
 
                 for disk in disks_clone{
                     if !disk.is_removable(){
+                        let disk_json = json!({
+
+                            "letter": disk.mount_point().to_str(),
+                            "total space": (disk.total_space() / ( 1024 * 1024 * 1024)).to_string(),
+                            "available space": (disk.available_space() / ( 1024 * 1024 * 1024)).to_string(),
+                            
+                        });
+                        disks_json.push(disk_json);
+
                         let mount_point = disk.mount_point().to_str();
+                        mount_point.map(|string|{
+                            println!("Strings: {:?}", string);
+                        });
+                        //let avail_disk_space = ;
+                        //available_disk_space = avail_disk_space;
                         mount_point.map(|string|{
                             println!("Strings: {:?}", string);
                         });
                     }
                     
                 }
+                
 
-                // let system_info = SystemInformation{
-                //     cpu_name: cpu_brand,
-                //     total_ram: ram,
-                //     system_name: system,
-                //     disks:
-                // };
+                // String for each disk: [letter]:\\ [ Available space / Total space ]
+                let system_info = SystemInformation{
+                    cpu_name: cpu_brand,
+                    total_ram: ram,
+                    system_name: system,
+                    disks: disks_json
+                };
 
-                println!("CPU: {:#?}", cpu_brand);
-                println!("ram: {:#?}", ram);
-                println!("system: {:#?}", system);
-                println!("disks: {:#?}", disks);
+                let system_info_json = serde_json::to_string(&system_info).unwrap();
+
+                match tx.send(system_info_json) {
+                    Ok(_) => {
+                        drop(tx);
+                    },
+                    Err(e) => {
+                        eprintln!("Error while sending ticket information: {}", e.to_string());
+                        drop(tx);
+                    }
+                }
+                
+
+
             });
         });
     }
@@ -302,19 +291,25 @@ struct MastertechContext {
     customer_name: String,
     phone1: String,
     phone2: String,
-    salesman_cbox: Salesman,
-    techs_cbox: Techs,
-    ram_test_cbox: HardwareTest,
-    hdd_test_cbox: HardwareTest,
-    ssd_test_cbox: HardwareTest,
+    salesman_cbox: scaffold_builder::Salesman,
+    techs_cbox: scaffold_builder::Techs,
+    ram_test_cbox: scaffold_builder::HardwareTest,
+    hdd_test_cbox: scaffold_builder::HardwareTest,
+    ssd_test_cbox: scaffold_builder::HardwareTest,
     checkin_notes: String,
     webroot_key: String,
     superanti_key: String,
     recommendations: String,
     checkin_rep: String,
     output_text: String,
-    rx: Option<std::sync::mpsc::Receiver<SendReceiveMessage>>,
-    system_info_rx: Option<std::sync::mpsc::Receiver<SendReceiveSystemInfo>>,
+    last_invoice_num: String,
+    last_invoice_amnt: String,
+    jurisdiction: String,
+    cpu_name: String,
+    total_ram: String,
+    system_name: String,
+    disks: String,
+    rx: Option<std::sync::mpsc::Receiver<String>>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -400,17 +395,17 @@ impl TabViewer for MastertechContext {
 impl Default for MasterTechApp {
     fn default() -> Self {
         // Create a watch channel with a default value
-        let (tx, rx) = std::sync::mpsc::channel::<SendReceiveMessage>();
-        let (tx_system, rx_system) = std::sync::mpsc::channel::<SendReceiveSystemInfo>();
-        let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "Empty".to_owned()]);
-        let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Scripts".to_owned(), "System Information".to_owned()]);
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+
+        let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
+        let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Empty1".to_owned(), "Empty".to_owned()]);
         let [_, _] = tree.split_below(
             a,
             0.7,
             vec!["Console".to_owned()],
         );
 
-        let [_, _] = tree.split_below(b, 0.5, vec!["Empty1".to_owned()]);
+        let [_, _] = tree.split_below(b, 0.5, vec!["Scripts".to_owned()]);
 
         let mut open_tabs = HashSet::new();
 
@@ -423,8 +418,7 @@ impl Default for MasterTechApp {
         }
         
         let send_async_req = SendAsyncReq{
-            tx: Some(tx),
-            system_info_tx: Some(tx_system),
+            tx: tx,
         };
 
 
@@ -436,20 +430,26 @@ impl Default for MasterTechApp {
             customer_name: "".to_string(),
             phone1: "".to_string(),
             phone2: "".to_string(),
-            salesman_cbox: Salesman::Jake,
-            techs_cbox: Techs::Logan,
-            ram_test_cbox: HardwareTest::RamNotTested,
-            hdd_test_cbox: HardwareTest::HddNotTested,
-            ssd_test_cbox: HardwareTest::SsdNotTested,
+            salesman_cbox: scaffold_builder::Salesman::Jake,
+            techs_cbox: scaffold_builder::Techs::Logan,
+            ram_test_cbox: scaffold_builder::HardwareTest::RamNotTested,
+            hdd_test_cbox: scaffold_builder::HardwareTest::HddNotTested,
+            ssd_test_cbox: scaffold_builder::HardwareTest::SsdNotTested,
             checkin_notes: "".to_string(),
-            webroot_key: "".to_string(),
-            superanti_key: "".to_string(),
+            webroot_key: "Webroot Key".to_string(),
+            superanti_key: "SuperAnti Key".to_string(),
             recommendations: "".to_string(),
             send_specs: false,
             checkin_rep: "Checkin Rep: ".to_string(),
             output_text: "".to_string(),
+            last_invoice_num: "".to_string(),
+            last_invoice_amnt: "".to_string(),
+            jurisdiction: "".to_string(),
+            cpu_name: "".to_string(),
+            total_ram: "".to_string(),
+            system_name: "".to_string(),
+            disks: "".to_string(),
             rx: Some(rx),
-            system_info_rx: Some(rx_system),
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -565,8 +565,8 @@ impl MastertechContext {
                                             ComboBox::from_id_source("salesman_cbox").width(self.widget_size)
                                             .selected_text(format!("{:?}", self.salesman_cbox))
                                             .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.salesman_cbox, Salesman::Jake, "Jake");
-                                                ui.selectable_value(&mut self.salesman_cbox, Salesman::Danny, "Danny");
+                                                ui.selectable_value(&mut self.salesman_cbox, scaffold_builder::Salesman::Jake, "Jake");
+                                                ui.selectable_value(&mut self.salesman_cbox, scaffold_builder::Salesman::Danny, "Danny");
                                             });
 
 
@@ -574,9 +574,9 @@ impl MastertechContext {
                                             .selected_text(format!("{:?}", self.techs_cbox))
                                             .show_ui(ui, |ui| {
                                                 
-                                                ui.selectable_value(&mut self.techs_cbox, Techs::Logan, "Logan");
-                                                ui.selectable_value(&mut self.techs_cbox, Techs::Bread, "Bread");
-                                                ui.selectable_value(&mut self.techs_cbox, Techs::Taco, "Taco");
+                                                ui.selectable_value(&mut self.techs_cbox, scaffold_builder::Techs::Logan, "Logan");
+                                                ui.selectable_value(&mut self.techs_cbox, scaffold_builder::Techs::Bread, "Bread");
+                                                ui.selectable_value(&mut self.techs_cbox, scaffold_builder::Techs::Taco, "Taco");
                                             });    
                                             
                                             ui.end_row();
@@ -595,10 +595,7 @@ impl MastertechContext {
                                             ui.end_row();
                                             
                                                                 /*     ROW 5     */
-                                            
-                                            
-                                            let webroot_key = "Webroot Key"; // Color32::from_rgb(102, 255, 153)
-                                            if ui.add(Button::new(RichText::new(format!("{}", webroot_key))
+                                            if ui.add(Button::new(RichText::new(format!("{}", self.webroot_key)).small().strong()
                                             .color(Color32::from_rgb(102, 255, 153))
                                             .strong())
                                             .min_size(vec2(self.widget_size, 5.0)))
@@ -607,8 +604,7 @@ impl MastertechContext {
                                                 self.copy_webroot_button_pressed = true;
                                             }
                                                 
-                                            let sas_key = "SuperAnti Key";
-                                            if ui.add(Button::new(RichText::new(format!("{}", sas_key))
+                                            if ui.add(Button::new(RichText::new(format!("{}", self.superanti_key)).small().strong()
                                             .color(Color32::from_rgb(255, 61, 126)))
                                             .min_size(vec2(self.widget_size, 5.0)))
                                             .on_hover_text("Click To Copy SAS Key to Clipboard")
@@ -621,18 +617,15 @@ impl MastertechContext {
                                     });
                                 });
                                 
-                                strip.cell(|ui|{                
-                                    ui.add(TextEdit::multiline(&mut self.checkin_notes)
-                                    .hint_text(RichText::new("Checkin Notes").weak())
-                                    .desired_rows(14));
-
-                                    ui.vertical(|ui|{
-                                        ui.add_space(5.0);
-                                    });
-
-                                    ui.vertical_centered(|ui| {
-                                        ui.label(format!("{}", self.checkin_rep));
-                                    });  
+                                strip.cell(|ui|{              
+                                    ScrollArea::new([false, true])
+                                    .max_height(235.0)
+                                    .id_source("checkin_notes_scroll")
+                                    .show(ui, |ui|{
+                                        ui.add(TextEdit::multiline(&mut self.checkin_notes)
+                                        .hint_text(RichText::new("Checkin Notes").weak())
+                                        .desired_rows(16));
+                                    }) ;
                                     ui.shrink_height_to_current(); 
                                 });
                             });
@@ -660,9 +653,9 @@ impl MastertechContext {
                                             ComboBox::from_id_source("ram_cbox").width(self.widget_size - 5.0)
                                             .selected_text(format!("{}", self.ram_test_cbox.as_str()))
                                             .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::RamFail, "RAM Fail");
-                                                ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::RamPass, "RAM Pass");
-                                                ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::RamNotTested, "RAM Not Tested");
+                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold_builder::HardwareTest::RamFail, "RAM Fail");
+                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold_builder::HardwareTest::RamPass, "RAM Pass");
+                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold_builder::HardwareTest::RamNotTested, "RAM Not Tested");
                                             }); // Combo Box
                                         });
                                         
@@ -677,18 +670,18 @@ impl MastertechContext {
                                         ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 5.0)
                                         .selected_text(format!("{}", self.ssd_test_cbox.as_str()))
                                         .show_ui(ui, |ui| {
-                                            ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::SsdFail, "SSD Fail");
-                                            ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::SsdPass, "SSD Pass");
-                                            ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::SsdNotTested, "SSD Not Tested");
+                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold_builder::HardwareTest::SsdFail, "SSD Fail");
+                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold_builder::HardwareTest::SsdPass, "SSD Pass");
+                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold_builder::HardwareTest::SsdNotTested, "SSD Not Tested");
                                         }); // Combo Box
 
                                                             /*     ROW 2     */
                                         ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 5.0)
                                         .selected_text(format!("{}", self.hdd_test_cbox.as_str()))
                                         .show_ui(ui, |ui| {
-                                            ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::HddFail, "HDD Fail");
-                                            ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::HddPass, "HDD Pass");
-                                            ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::HddNotTested, "HDD Not Tested");
+                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold_builder::HardwareTest::HddFail, "HDD Fail");
+                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold_builder::HardwareTest::HddPass, "HDD Pass");
+                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold_builder::HardwareTest::HddNotTested, "HDD Not Tested");
                                         }); // Combo Box
                                         ui.end_row();
                                     }); // Grid   
@@ -716,11 +709,15 @@ impl MastertechContext {
                             
                             strip.cell(|ui|{
                                 ui.vertical(|ui| {ui.add_space(8.0);});   
-                                                           
-                                ui.add(TextEdit::multiline(&mut self.recommendations)
-                                .hint_text(RichText::new("Recommendations")
-                                .weak())
-                                .desired_rows(14));
+                                ScrollArea::new([false, true])
+                                .id_source("reccomendations_scroll")
+                                .max_height(235.0)
+                                .show(ui, |ui|{
+                                    ui.add(TextEdit::multiline(&mut self.recommendations)
+                                    .hint_text(RichText::new("Recommendations")
+                                    .weak())
+                                    .desired_rows(16));
+                                });
                                 ui.shrink_height_to_current(); 
 
                             }); //Strip Cell
@@ -740,97 +737,141 @@ impl MastertechContext {
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
-        Grid::new("sysinfo_grid").spacing(vec2(5.0, 5.0)).num_columns(2)
-        .show(ui, |ui| { // TODO
-
-            if self.first_run == true{
-                self.get_specs = true;
-            }
-            self.first_run = false;
-            
-            let mut table = TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(100.0).range(40.0..=300.0).clip(true))
-            .column(Column::remainder())
-            .min_scrolled_height(0.0);
-
-            while let Ok(message) = self.system_info_rx.as_ref().unwrap().try_recv() {
-                match message {
-                    SendReceiveSystemInfo::RetrieveSystemInfo(system_information) => {
-                        
-                    },
-                    SendReceiveSystemInfo::Error(e) => {
-
-                    }
-                }
-            }
-
-            //ui.label(format!("{}", serde_json::to_string(&sys).unwrap()));
-            /*     ROW 1     
-            ui.label("=> Disks:");
-            for disk in sys.disks() { // We display all disks' information:
-                ui.add_space(15.0);
-                ui.label(format!("{:#?}", disk));
-                ui.end_row();
-            }
-
-            ui.label("=> system:");
-            // RAM and swap information:
-            ui.label(format!("total memory: {} bytes", sys.total_memory()));
-            ui.end_row();
-
-            // Display system information:
-            ui.label(format!("System name:             {:?}", sys.name()));
-            ui.label(format!("System OS version:       {:?}", sys.os_version()));
-            ui.end_row();
-            ui.label(format!("System host name:        {:?}", sys.host_name()));
-
-            // Number of CPUs:
-            ui.label(format!("NB CPUs: {}", sys.cpus().len()));
-            ui.end_row();
-            */
+        if self.first_run == true{
+            self.get_specs = true;
+        }
+        self.first_run = false;
+        
+        ui.indent("indented_sysinfo_table", |ui|{
+            let table = TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .column(Column::initial(100.0).range(50.0..=300.0).clip(true))
+                .column(Column::remainder())
+                .min_scrolled_height(0.0);
+            table
+            .header(20.0, |mut header|{
+                header.col(|ui| {
+                    ui.strong("Hardware Name");
+                });
+                header.col(|ui| {
+                    ui.strong("Info");
+                });
+            })
+            .body(|mut body| {
+                body.row(20.0, |mut row| {
+                    row.col(|ui|{
+                        ui.label("System Name");
+                    });
+                    row.col(|ui|{
+                        ui.label(&self.system_name);
+                    });
+                });
+                body.row(20.0, |mut row| {
+                    row.col(|ui|{
+                        ui.label("CPU Name");
+                    });
+                    row.col(|ui|{
+                        ui.label(&self.cpu_name);
+                    });
+                });
+                body.row(20.0, |mut row| {
+                    row.col(|ui|{
+                        ui.label("Total RAM");
+                    });
+                    row.col(|ui|{
+                        ui.label(format!("{} Gb", &self.total_ram));
+                    });
+                });
+                body.row(20.0, |mut row| {
+                    row.col(|ui|{
+                        ui.label("Disks");
+                    });
+                    row.col(|ui|{
+                        ui.label("test");
+                    });
+                });
+            });
 
         });
+        
 
+
+        //ui.label(format!("{}", serde_json::to_string(&sys).unwrap()));
+        /*     ROW 1     
+        ui.label("=> Disks:");
+        for disk in sys.disks() { // We display all disks' information:
+            ui.add_space(15.0);
+            ui.label(format!("{:#?}", disk));
+            ui.end_row();
+        }
+
+        ui.label("=> system:");
+        // RAM and swap information:
+        ui.label(format!("total memory: {} bytes", sys.total_memory()));
+        ui.end_row();
+
+        // Display system information:
+        ui.label(format!("System name:             {:?}", sys.name()));
+        ui.label(format!("System OS version:       {:?}", sys.os_version()));
+        ui.end_row();
+        ui.label(format!("System host name:        {:?}", sys.host_name()));
+
+        // Number of CPUs:
+        ui.label(format!("NB CPUs: {}", sys.cpus().len()));
+        ui.end_row();
+        */
+
+       
     }
 
     fn scripts(&mut self, ui: &mut Ui){ }
 }
 
-
-
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
 
+
+        let ticket_sender = self.send_async_req.tx.clone();
+        let cps_sender = self.send_async_req.tx.clone();
+        let specs_sender = self.send_async_req.tx.clone();
+
         if self.context.get_ticket_button_pressed == true {
             self.context.get_ticket_button_pressed = false;
             let service_num = self.context.so_number.clone();
-            SendAsyncReq::get_ticket(service_num, self.send_async_req.tx.clone()); 
+            SendAsyncReq::get_ticket(service_num, ticket_sender); 
         }
 
         if self.context.get_cps_button_pressed == true {
             self.context.get_cps_button_pressed = false;
             let service_num = self.context.so_number.clone();
-            SendAsyncReq::get_cps(service_num, self.send_async_req.tx.clone());
+            SendAsyncReq::get_cps(service_num, cps_sender);
         }   
 
         if self.context.get_specs == true{
-            self.context.get_specs == false;
-            SendAsyncReq::get_system_specs(self.send_async_req.system_info_tx.clone());
+            self.context.get_specs = false;
+            SendAsyncReq::get_system_specs(specs_sender);
         }
+
+        let receiver = self.context.rx.as_ref().unwrap();
+
         // On the receiving end:
-        while let Ok(message) = self.context.rx.as_ref().unwrap().try_recv() {
-            match message {
-                SendReceiveMessage::TicketInfo(info) => {
-                    // Handle TicketInformation
-                    self.context.customer_name = info.customer_name;
-                    self.context.phone1 = info.customer_phone_1;
-                    self.context.phone2 = info.customer_phone_2;
-                    self.context.checkin_notes = info.checkin_notes;
-                    self.context.output_text += format!(
+        while let Ok(message) = receiver.try_recv() {
+            // Try to parse the JSON string into a TicketInformation
+            if let Ok(info) = serde_json::from_str::<scaffold_builder::TicketInformation>(&message) {
+                let checkin_rep = info.user_id;
+                self.context.checkin_rep = checkin_rep.clone();
+                if checkin_rep == "DMK"{self.context.salesman_cbox = scaffold_builder::Salesman::Danny;}
+                else if checkin_rep == "JDH2"{self.context.salesman_cbox = scaffold_builder::Salesman::Jake}
+
+                // Handle TicketInformation
+                self.context.customer_name = info.customer_name;
+                self.context.phone1 = info.customer_phone_1;
+                self.context.phone2 = info.customer_phone_2;
+                self.context.checkin_notes = info.checkin_notes;
+                self.context.output_text += format!(
                     "Customer Code: {:?}
 Customer Email: {:?}
 Last Invoice Number: {:?}
@@ -839,20 +880,29 @@ Department: {:?}
 Jurisdiction: {:?}
 Type of Order: {:?}
 Item Codes: {:?}\n",
-                    &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
-                    &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
+                &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
+                &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
 
-                }
-                SendReceiveMessage::Cpskeys(info) => {
-                    self.context.webroot_key = info.webroot_key;
-                    self.context.superanti_key = info.superanti_key;
-                }
-                SendReceiveMessage::Error(err) => {
-                    // Handle error
-                    self.context.output_text = err.to_string();
-                }
+            }             
+            else if let Ok(info) = serde_json::from_str::<scaffold_builder::PulledKeys>(&message) {
+                // Handle PulledKeys
+                self.context.webroot_key = info.webroot_key;
+                self.context.superanti_key = info.superanti_key;
+            }
+            // If neither parse was successful, consider it an error
+            else if let Ok(info) = serde_json::from_str::<SystemInformation>(&message) {
+                self.context.system_name = info.system_name;
+                self.context.cpu_name = info.cpu_name;
+                self.context.total_ram = info.total_ram;
+                //self.cpu_name = info.cpu_name;
+                //self.context.
+            }
+            else{
+                // Handle error
+                self.context.output_text = format!("Error parsing JSON: {}", message);
             }
         }
+
         
     
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
