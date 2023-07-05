@@ -1,13 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-//use sysinfo::{System, SystemExt, RefreshKind};
+use sysinfo::*;
 use std::{collections::HashSet, borrow::BorrowMut}; //, os::windows::thread};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use scaffold_builder::PulledKeys;
-use tokio::{sync::watch, task, runtime::Handle};
+use tokio::runtime::Handle;
 use egui_extras::*;
-use std::sync::{Arc, Mutex};
+use catppuccin_egui::MOCHA;
 
 mod request;
 mod data_transfer;
@@ -16,7 +16,7 @@ mod scaffold_builder;
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(900.0, 700.0)),
+        initial_window_size: Some(egui::vec2(925.0, 700.0)),
         ..Default::default()
     };
     eframe::run_native(
@@ -39,15 +39,31 @@ enum Techs{
 }
 #[derive(Debug, PartialEq)]
 enum HardwareTest{
-    ram_pass,
-    ram_fail,
-    ram_not_tested,
-    hdd_pass,
-    hdd_fail,
-    hdd_not_tested,
-    ssd_pass,
-    ssd_fail,
-    ssd_not_tested,
+    RamPass,
+    RamFail,
+    RamNotTested,
+    HddPass,
+    HddFail,
+    HddNotTested,
+    SsdPass,
+    SsdFail,
+    SsdNotTested,
+}
+
+impl HardwareTest{
+    fn as_str(&self) -> &'static str {
+        match *self {
+            HardwareTest::RamPass => "RAM Pass",
+            HardwareTest::RamFail => "RAM Fail",
+            HardwareTest::HddPass => "HDD Pass",
+            HardwareTest::HddFail => "HDD Fail",
+            HardwareTest::SsdPass => "SSD Pass",
+            HardwareTest::SsdFail => "SSD Fail",
+            HardwareTest::RamNotTested => "RAM not tested",
+            HardwareTest::HddNotTested => "HDD not tested",
+            HardwareTest::SsdNotTested => "SSD not tested",
+        }
+    }
 }
 
 enum SendReceiveMessage{
@@ -55,12 +71,24 @@ enum SendReceiveMessage{
     Cpskeys(PulledKeys),
     Error(String)
 }
-pub struct SendRequest {
+
+enum SendReceiveSystemInfo{
+    RetrieveSystemInfo(SystemInformation),
+    Error(String)
+}
+pub struct SystemInformation{
+    cpu_name: String,
+    total_ram: String,
+    system_name: String,
+    disks: Option<String>
+}
+pub struct SendAsyncReq {
     tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>,
+    system_info_tx: Option<std::sync::mpsc::Sender<SendReceiveSystemInfo>>,
 }
 
-impl SendRequest{
-   fn get_ticket(so_number: String, tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>){
+impl SendAsyncReq{
+    fn get_ticket(so_number: String, tx: Option<std::sync::mpsc::Sender<SendReceiveMessage>>){
         let handle = Handle::current();
         
         std::thread::spawn(move||{
@@ -143,7 +171,6 @@ impl SendRequest{
                             Some(tx) => {
                                 if let Err(e) = tx.send(SendReceiveMessage::TicketInfo(ticket_information)) {
                                     tx.send(SendReceiveMessage::Error(e.to_string()));
-                                    
                                 }
                             }
                             None => {eprintln!("Tried to send an update, but the sender is None");}
@@ -158,10 +185,6 @@ impl SendRequest{
                             }
                             None => { eprintln!("Tried to send an update, but the sender is None");}
                         }
-                        
-                        //let mut output_text = output_text_clone.lock().unwrap();
-                        //*output_text = format!("Error: {}",e);
-
                     },
                 }
             });
@@ -227,6 +250,48 @@ impl SendRequest{
             });
         });
     }
+
+    fn get_system_specs(tx: Option<std::sync::mpsc::Sender<SendReceiveSystemInfo>>){
+        let handle = Handle::current();
+        
+        std::thread::spawn(move||{
+            handle.block_on(async{
+                let mut sys = System::new_all(); // Create `System` struct.
+
+                let cpu_brand = sys.cpus()[0].brand().to_string();
+                let ram = (sys.total_memory() / ( 1024 * 1024 * 1024)).to_string();
+                let system = sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
+                let disks = sys.disks();
+                let disks_clone = disks.clone();
+
+                //let mount_point = Option<"">;
+                let available_disk_space = "";
+                let total_disk_space = "";
+
+                for disk in disks_clone{
+                    if !disk.is_removable(){
+                        let mount_point = disk.mount_point().to_str();
+                        mount_point.map(|string|{
+                            println!("Strings: {:?}", string);
+                        });
+                    }
+                    
+                }
+
+                // let system_info = SystemInformation{
+                //     cpu_name: cpu_brand,
+                //     total_ram: ram,
+                //     system_name: system,
+                //     disks:
+                // };
+
+                println!("CPU: {:#?}", cpu_brand);
+                println!("ram: {:#?}", ram);
+                println!("system: {:#?}", system);
+                println!("disks: {:#?}", disks);
+            });
+        });
+    }
 }
 
 struct MastertechContext {
@@ -246,8 +311,10 @@ struct MastertechContext {
     webroot_key: String,
     superanti_key: String,
     recommendations: String,
+    checkin_rep: String,
     output_text: String,
     rx: Option<std::sync::mpsc::Receiver<SendReceiveMessage>>,
+    system_info_rx: Option<std::sync::mpsc::Receiver<SendReceiveSystemInfo>>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -270,6 +337,8 @@ struct MastertechContext {
     copy_webroot_button_pressed: bool,
     copy_sas_button_pressed: bool,
     get_seb_button_pressed: bool,
+    first_run: bool,
+    get_specs: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -277,26 +346,32 @@ struct MastertechContext {
     style: Option<egui_dock::Style>,
     text_color: Color32,
     border_stroke_color: Stroke,
-    bg_color: Color32,
+    bg_color: Color32
 }
 
 struct MasterTechApp {
     context: MastertechContext,
     tree: Tree<String>,
-    send_request: SendRequest,
+    send_async_req: SendAsyncReq,
 }
 
 impl TabViewer for MastertechContext {
     type Tab = String;
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
             "Scripts" => self.scripts(ui),
             "System Information" => self.system_information(ui),
             _ => {
-                ui.label(tab.as_str());
+                let sysinfo_tab = &self.system_info_tab.to_string();
+                if ui.label(tab.as_str()).clicked(){
+                    if tab.as_str() == sysinfo_tab{
+                        self.first_run = true;
+                    }
+                };
             }
         }
     }
@@ -317,13 +392,16 @@ impl TabViewer for MastertechContext {
         self.open_tabs.remove(tab);
         true
     }
+    fn on_add(&mut self, _node: NodeIndex) {
+        //self.open_tabs.add(tab)
+    }
 }
 
 impl Default for MasterTechApp {
     fn default() -> Self {
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<SendReceiveMessage>();
-
+        let (tx_system, rx_system) = std::sync::mpsc::channel::<SendReceiveSystemInfo>();
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "Empty".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Scripts".to_owned(), "System Information".to_owned()]);
         let [_, _] = tree.split_below(
@@ -344,9 +422,11 @@ impl Default for MasterTechApp {
             }
         }
         
-        let send_request = SendRequest{
+        let send_async_req = SendAsyncReq{
             tx: Some(tx),
+            system_info_tx: Some(tx_system),
         };
+
 
         let context = MastertechContext {
             //////////////////////////////////////////
@@ -358,22 +438,23 @@ impl Default for MasterTechApp {
             phone2: "".to_string(),
             salesman_cbox: Salesman::Jake,
             techs_cbox: Techs::Logan,
-            ram_test_cbox: HardwareTest::ram_not_tested,
-            hdd_test_cbox: HardwareTest::ram_not_tested,
-            ssd_test_cbox: HardwareTest::ssd_not_tested,
+            ram_test_cbox: HardwareTest::RamNotTested,
+            hdd_test_cbox: HardwareTest::HddNotTested,
+            ssd_test_cbox: HardwareTest::SsdNotTested,
             checkin_notes: "".to_string(),
             webroot_key: "".to_string(),
             superanti_key: "".to_string(),
             recommendations: "".to_string(),
             send_specs: false,
+            checkin_rep: "Checkin Rep: ".to_string(),
             output_text: "".to_string(),
             rx: Some(rx),
+            system_info_rx: Some(rx_system),
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
-            widget_size: 130.0,
-            //default_margins: Margin::same(10.0),
+            widget_size: 135.0,
             open_tabs,
             show_close_buttons: true,
             show_add_buttons: true,
@@ -390,17 +471,19 @@ impl Default for MasterTechApp {
             copy_webroot_button_pressed: false,
             copy_sas_button_pressed: false,
             get_seb_button_pressed: false,
+            first_run: true,
+            get_specs: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
             //////////////////////////////////////////
             style: None,
-            text_color: Color32::from_rgb(128, 242, 192),//(200,200,200),
+            text_color: Color32::from_rgb(255, 204, 230),//(200,200,200),
             bg_color: Color32::from_rgb(28,30,36),
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124))
         };
 
-        Self { context, tree, send_request }
+        Self { context, tree, send_async_req }
     }
 }
 
@@ -413,228 +496,276 @@ impl MastertechContext {
     }
 
     fn tur_sheet(&mut self, ui: &mut Ui) {
-
         ui.visuals_mut().override_text_color = Some(self.text_color);
-        ui.style_mut().spacing.button_padding = (5.0, 3.0).into();
-        ui.style_mut().spacing.window_margin.left = 15.0;
-        ui.style_mut().spacing.window_margin.right = 15.0;
+        ui.style_mut().spacing.button_padding = (6.0, 3.0).into();
+        ui.set_min_width(600.0);
+        ui.set_max_height(600.0);
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         
-        ui.vertical(|ui| {ui.add_space(5.0);}); // leave some margin above the textEdits
-        
-        ui.columns(2,|column|{
-        column[0].vertical_centered_justified(|ui|{
+        ui.indent("indented", |ui|{
             ui.with_layout(Layout::top_down_justified(Align::Center),|ui|{
-                ui.add_space(80.0);
-                if ui.add(Button::new("Get Ticket")
-                .fill(Color32::from_rgb(50, 57, 71))
-                )//.min_size(vec2(self.widget_size, 5.0)))
-                .clicked(){ 
-                    self.get_ticket_button_pressed = true; // Sets bool to true so the main loop runs the get_ticket function
-                }
+                ui.columns(2, |columns|{
+                    columns[0].vertical_centered(|ui|{
+
+                        ui.vertical(|ui| {ui.add_space(8.0);});
+
+                            ui.set_min_width(self.widget_size*2.0+5.0);
+                            ui.set_max_width(self.widget_size*2.0+6.0);
+
+                            StripBuilder::new(ui)
+                            .cell_layout(Layout::top_down_justified(Align::Center))
+                            .size(Size::remainder()) //for the initial textedits
+                            .size(Size::relative(0.57)) // for the checkin notes
+                            .vertical(|mut strip|{
+                                strip.cell(|ui|{
+                                    ui.set_max_width(self.widget_size * 2.0 + 7.0);
+                                    ui.group(|ui|{
+                                        ui.vertical_centered(|ui|{
+                                            if ui.add(Button::new(RichText::new("Get Ticket")
+                                            .color(Color32::from_rgb(255, 204, 255))
+                                            .strong()
+                                            .italics())
+                                            .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+                                            .min_size(vec2(self.widget_size * 2.0 + 7.0, 7.0)))
+                                            .clicked(){ 
+                                                self.get_ticket_button_pressed = true; // Sets bool to true so the main loop runs the get_ticket function
+                                            }
+                                        }); 
+                                        
+                                        ui.vertical(|ui| {ui.add_space(3.0);});
             
-            
-                Grid::new("tur_sheet_grid1_col1")
-                .spacing(vec2(8.0, 8.0))
-                .num_columns(2)
-                .show(ui, |ui| {
+                                        Grid::new("ticket_information")
+                                        .spacing(vec2(6.0, 8.0))
+                                        .min_col_width(self.widget_size)
+                                        .max_col_width(self.widget_size + 5.0)
+                                        .num_columns(2)
+                                        .show(ui, |ui| {
+                                            
+                                                                /*     ROW 1     */
+                                            ui.add(TextEdit::singleline(&mut self.so_number)
+                                            .hint_text("Service #  ").char_limit(8).desired_width(self.widget_size));
 
-                /*     ROW 1     */
-                ui.add_space(15.0);
-                ui.add(TextEdit::singleline(&mut self.so_number)
-                .hint_text("SO#").char_limit(8).desired_width(self.widget_size));
+                                            let x = ui.add(TextEdit::singleline(&mut self.customer_name)
+                                            .hint_text("Customer Name  ").desired_width(self.widget_size + 3.0));
 
-                ui.add(TextEdit::singleline(&mut self.customer_name)
-                .hint_text("Customer Name").desired_width(self.widget_size));
-                ui.end_row();
+                                            ui.end_row();
 
-                /*     ROW 2     */
-                ui.add_space(15.0);
-                ui.add(TextEdit::singleline(&mut self.phone1)
-                .hint_text("Phone Number 1").desired_width(self.widget_size));
-                ui.add(TextEdit::singleline(&mut self.phone2)
-                .hint_text("Phone Number 2").desired_width(self.widget_size));      
-                ui.end_row();
+                                                                /*     ROW 2     */
+                                            ui.add(TextEdit::singleline(&mut self.phone1)
+                                            .hint_text("Phone Number 1").desired_width(self.widget_size));
+                                            ui.add(TextEdit::singleline(&mut self.phone2)
+                                            .hint_text("Phone Number 2").desired_width(self.widget_size + 3.0));      
+                                            
+                                            ui.end_row();
 
-                /*     ROW 3     */
-                ui.add_space(15.0);
-                ComboBox::from_id_source("salesman_cbox").width(self.widget_size - 2.0)
-                .selected_text(format!("{:?}", self.salesman_cbox))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.salesman_cbox, Salesman::Jake, "Jake");
-                    ui.selectable_value(&mut self.salesman_cbox, Salesman::Danny, "Danny");
-                });
+                                                                /*     ROW 3     */
+                                            ComboBox::from_id_source("salesman_cbox").width(self.widget_size)
+                                            .selected_text(format!("{:?}", self.salesman_cbox))
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.salesman_cbox, Salesman::Jake, "Jake");
+                                                ui.selectable_value(&mut self.salesman_cbox, Salesman::Danny, "Danny");
+                                            });
 
-                ComboBox::from_id_source("techs_cbox").width(self.widget_size - 2.0)
-                .selected_text(format!("{:?}", self.techs_cbox))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.techs_cbox, Techs::Logan, "Logan");
-                    ui.selectable_value(&mut self.techs_cbox, Techs::Bread, "Bread");
-                    ui.selectable_value(&mut self.techs_cbox, Techs::Taco, "Taco");
-                });          
-                    
-                    
-                });
 
-                ui.vertical(|ui| {ui.add_space(3.0);});
-
-                Grid::new("tur_sheet_grid2_col1").spacing(vec2(5.0, 5.0)).num_columns(1)
-                .show(ui, |ui| {
-                    ui.add_space(16.0);
-                    ui.add(TextEdit::multiline(&mut self.checkin_notes)
-                    .hint_text("Checkin Notes").desired_rows(15)
-                );//.desired_width(self.widget_size * 2.0 + 3.0));
-                });
-
-                ui.vertical_centered_justified(|ui| {ui.add_space(3.0);});
-                Grid::new("tur_sheet_grid3_col1")
-                .spacing(vec2(5.0, 5.0))
-                .num_columns(2)
-                .show(ui, |ui| {
-
-                    ui.add_space(15.0);
-                    if ui.add(Button::new("Get Keys")
-                    .fill(Color32::from_rgb(50, 57, 71)))
-                    //.min_size(vec2(self.widget_size, 5.0)))
-                    .clicked(){ 
-                        self.get_cps_button_pressed = true;
-                    }
-                    
-                    if ui.add(Button::new("Check SEB")
-                    .fill(Color32::from_rgb(50, 57, 71)))
-                    //.min_size(vec2(self.widget_size, 5.0)))
-                    .clicked(){ 
-                        self.get_seb_button_pressed = true;
-                        //check_seb_info
-                    }
-                    ui.end_row();
-
-                });
-
-                //ui.vertical(|ui| {ui.add_space(3.0);});
-
-                Grid::new("tur_sheet_grid4_col1")
-                .spacing(vec2(5.0, 5.0))
-                .num_columns(2)
-                .show(ui, |ui| {
-
-                    /*     ROW 1     */
-                    //ui.add_space(15.0);
-                    ui.visuals_mut().override_text_color = Some(Color32::from_rgb(0, 224, 90));
-                    
-                    let webroot_key = "Webroot Key";
-
-                    if ui.add(Button::new(format!("{:?}", webroot_key.as_str()))
-                    .fill(Color32::from_rgb(50, 57, 71))) //.min_size(vec2(ui.available_width(), 10.0)))
-                    
-                    .on_hover_text("Click To Copy Webroot Key to Clipboard")
-                    .clicked(){ 
-                        self.copy_webroot_button_pressed = true;
-                    }
-
-                    /*     ROW 2     */
-                    //ui.add_space(15.0);
-                    ui.visuals_mut().override_text_color = Some(Color32::from_rgb(240, 98, 98));
-
-                    let sas_key = "SuperAnti Key";
-
-                    if ui.add(Button::new(format!("{:?}", sas_key))
-                    .fill(Color32::from_rgb(50, 57, 71))) //.min_size(vec2(self.widget_size - 10.0, 5.0)))
-                    .on_hover_text("Click To Copy SAS Key to Clipboard")
-                    .clicked(){ 
-                        self.copy_sas_button_pressed = true;
-                    }
-
-                    ui.end_row();
-
-                });
-            });
-
-        });
-        column[1].vertical_centered_justified(|ui|{
-            ui.with_layout(Layout::top_down_justified(Align::Center),|ui|{
-                Grid::new("tur_sheet_grid1_col2")
-                .spacing(vec2(5.0, 5.0))
-                .num_columns(2)
-                .show(ui, |ui|{
-
-                    /*     ROW 3     */
-                    ui.add_space(8.0);
-                    ComboBox::from_id_source("ssd_cbox")//.width(self.widget_size - 2.0)
-                    .selected_text(format!("{:?}", self.ssd_test_cbox))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_fail, "SSD Fail");
-                        ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_pass, "SSD Pass");
-                        ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::ssd_not_tested, "SSD Not Tested");
-                    });
-        
-                    ComboBox::from_id_source("hdd_cbox")//.width(self.widget_size - 2.0)
-                    .selected_text(format!("{:?}", self.hdd_test_cbox))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_fail, "HDD Fail");
-                        ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_pass, "HDD Pass");
-                        ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::hdd_not_tested, "HDD Not Tested");
-                    });
-                    ui.end_row();
-
-                });
-
-                Grid::new("tur_sheet_grid2_col2").spacing(vec2(5.0, 5.0)).num_columns(1)
-                .show(ui, |ui|{
-                    ui.add_space(80.0);
-                    ComboBox::from_id_source("ram_cbox")//.width(self.widget_size - 2.0)
-                    .selected_text(format!("{:?}", self.ram_test_cbox))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_fail, "RAM Fail");
-                        ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_pass, "RAM Pass");
-                        ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::ram_not_tested, "RAM Not Tested");
-                    });
-                });
-
-                /*     ROW 1     */
-                ui.add_space(15.0);
-                ui.add(TextEdit::multiline(&mut self.recommendations)
-                .hint_text("Recommendations").desired_rows(15));
-
-                Grid::new("tur_sheet_grid3_col2").spacing(vec2(5.0, 5.0)).num_columns(2)
-                .show(ui, |ui| {
-                    ui.checkbox(&mut self.send_specs, "Send System Info");
-                    ui.end_row();
-                });
-                //#[cfg(feature = "chrono")]
-                //let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
-                //ui.add(egui_extras::DatePickerButton::new(date));
-                ui.end_row();
+                                            ComboBox::from_id_source("techs_cbox").width(self.widget_size)
+                                            .selected_text(format!("{:?}", self.techs_cbox))
+                                            .show_ui(ui, |ui| {
+                                                
+                                                ui.selectable_value(&mut self.techs_cbox, Techs::Logan, "Logan");
+                                                ui.selectable_value(&mut self.techs_cbox, Techs::Bread, "Bread");
+                                                ui.selectable_value(&mut self.techs_cbox, Techs::Taco, "Taco");
+                                            });    
+                                            
+                                            ui.end_row();
+                                                                /*     ROW 4     */
+                                            if ui.add(Button::new("Get Keys").min_size(vec2(self.widget_size, 5.0)))
+                                            .clicked(){ 
+                                                self.get_cps_button_pressed = true;
+                                            }
+                                            
+                                            if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 5.0)))
+                                            .clicked(){ 
+                                                self.get_seb_button_pressed = true;
+                                                //check_seb_info
+                                            }
                 
-                ui.add_space(15.0);
-                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(170, 33, 191));
-                if ui.add(Button::new("Submit TUR Sheet").stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
-                .fill(Color32::from_rgb(38, 38, 38)))//.min_size(vec2(self.widget_size * 2.0+8.0, 8.0)))
-                .clicked(){ 
-                    // TODO
-                }
+                                            ui.end_row();
+                                            
+                                                                /*     ROW 5     */
+                                            
+                                            
+                                            let webroot_key = "Webroot Key"; // Color32::from_rgb(102, 255, 153)
+                                            if ui.add(Button::new(RichText::new(format!("{}", webroot_key))
+                                            .color(Color32::from_rgb(102, 255, 153))
+                                            .strong())
+                                            .min_size(vec2(self.widget_size, 5.0)))
+                                            .on_hover_text("Click To Copy Webroot Key to Clipboard")
+                                            .clicked(){ 
+                                                self.copy_webroot_button_pressed = true;
+                                            }
+                                                
+                                            let sas_key = "SuperAnti Key";
+                                            if ui.add(Button::new(RichText::new(format!("{}", sas_key))
+                                            .color(Color32::from_rgb(255, 61, 126)))
+                                            .min_size(vec2(self.widget_size, 5.0)))
+                                            .on_hover_text("Click To Copy SAS Key to Clipboard")
+                                            .clicked(){ 
+                                                self.copy_sas_button_pressed = true;
+                                            }
 
-            });
-            });
-        });
+                                            ui.end_row();
+                                        });
+                                    });
+                                });
+                                
+                                strip.cell(|ui|{                
+                                    ui.add(TextEdit::multiline(&mut self.checkin_notes)
+                                    .hint_text(RichText::new("Checkin Notes").weak())
+                                    .desired_rows(14));
+
+                                    ui.vertical(|ui|{
+                                        ui.add_space(5.0);
+                                    });
+
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(format!("{}", self.checkin_rep));
+                                    });  
+                                    ui.shrink_height_to_current(); 
+                                });
+                            });
+                            
+                    });
+                    columns[1].centered_and_justified(|ui|{
+                        ui.vertical(|ui| {ui.add_space(8.0);});
+
+                        ui.set_min_width(self.widget_size*2.0+4.0);
+                        ui.set_max_width(self.widget_size*2.0+6.0);
+
+                        StripBuilder::new(ui)
+                        .cell_layout(Layout::top_down_justified(Align::Center))
+                        .size(Size::remainder()) //for the initial textedits
+                        .size(Size::relative(0.6)) // for the checkin notes
+                        .vertical(|mut strip|{
+                            strip.cell(|ui|{
+                                ui.set_max_width(self.widget_size * 2.0+3.0);
+                                ui.group(|ui|{
+                                    ui.vertical_centered(|ui|{
+                                        ui.horizontal(|ui|{
+
+                                            ui.add_space(self.widget_size/1.8);
+
+                                            ComboBox::from_id_source("ram_cbox").width(self.widget_size - 5.0)
+                                            .selected_text(format!("{}", self.ram_test_cbox.as_str()))
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::RamFail, "RAM Fail");
+                                                ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::RamPass, "RAM Pass");
+                                                ui.selectable_value(&mut self.ram_test_cbox, HardwareTest::RamNotTested, "RAM Not Tested");
+                                            }); // Combo Box
+                                        });
+                                        
+                                    }); // Vertical Centered
+        
+                                    Grid::new("drive_tests")
+                                    .spacing(vec2(4.0, 5.0))
+                                    .min_col_width(self.widget_size)
+                                    .num_columns(2)
+                                    .show(ui, |ui| {
+                                                            /*     ROW 1     */
+                                        ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 5.0)
+                                        .selected_text(format!("{}", self.ssd_test_cbox.as_str()))
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::SsdFail, "SSD Fail");
+                                            ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::SsdPass, "SSD Pass");
+                                            ui.selectable_value(&mut self.ssd_test_cbox, HardwareTest::SsdNotTested, "SSD Not Tested");
+                                        }); // Combo Box
+
+                                                            /*     ROW 2     */
+                                        ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 5.0)
+                                        .selected_text(format!("{}", self.hdd_test_cbox.as_str()))
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::HddFail, "HDD Fail");
+                                            ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::HddPass, "HDD Pass");
+                                            ui.selectable_value(&mut self.hdd_test_cbox, HardwareTest::HddNotTested, "HDD Not Tested");
+                                        }); // Combo Box
+                                        ui.end_row();
+                                    }); // Grid   
+
+                                    
+                                    ui.vertical(|ui|{ui.add_space(65.0);});
+
+                                    ui.checkbox(&mut self.send_specs, "Send System Info");
+
+                                        #[cfg(feature = "chrono")]
+                                        let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
+                                        //ui.add(egui_extras::DatePickerButton::new(date));
+
+                                    if ui.add(Button::new(RichText::new("Submit TUR Sheet")
+                                    .color(Color32::from_rgb(255, 204, 255))
+                                    .strong()
+                                    .italics())
+                                    .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))//.min_size(vec2(self.widget_size * 2.0+8.0, 8.0)))
+                                    .clicked(){ 
+                                        // TODO
+                                    }
+
+                                }); // Group
+                            }); // Strip cell
+                            
+                            strip.cell(|ui|{
+                                ui.vertical(|ui| {ui.add_space(8.0);});   
+                                                           
+                                ui.add(TextEdit::multiline(&mut self.recommendations)
+                                .hint_text(RichText::new("Recommendations")
+                                .weak())
+                                .desired_rows(14));
+                                ui.shrink_height_to_current(); 
+
+                            }); //Strip Cell
+                        }); //Strip Builder
+                    }); // Column 1
+                }); // Columns
+            }); // UI layout
+        }); // indent
     }
 
     fn output_console(&mut self, ui: &mut Ui) { 
-        ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::LIGHT_GREEN));
-
-
         ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text.to_string()).hint_text("Output"));
         }
+    
     fn system_information(&mut self, ui: &mut Ui){
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
-        //let mut sys = System::new_with_specifics(RefreshKind::withd);// Create `System` struct.
-        //sys.refresh_all(); // First we update all information of our `System` struct.
-        Grid::new("tur_sheet_grid1_col1").spacing(vec2(5.0, 5.0)).num_columns(2)
+        Grid::new("sysinfo_grid").spacing(vec2(5.0, 5.0)).num_columns(2)
         .show(ui, |ui| { // TODO
+
+            if self.first_run == true{
+                self.get_specs = true;
+            }
+            self.first_run = false;
+            
+            let mut table = TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .column(Column::initial(100.0).range(40.0..=300.0).clip(true))
+            .column(Column::remainder())
+            .min_scrolled_height(0.0);
+
+            while let Ok(message) = self.system_info_rx.as_ref().unwrap().try_recv() {
+                match message {
+                    SendReceiveSystemInfo::RetrieveSystemInfo(system_information) => {
+                        
+                    },
+                    SendReceiveSystemInfo::Error(e) => {
+
+                    }
+                }
+            }
 
             //ui.label(format!("{}", serde_json::to_string(&sys).unwrap()));
             /*     ROW 1     
@@ -672,18 +803,24 @@ impl MastertechContext {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
 
         if self.context.get_ticket_button_pressed == true {
             self.context.get_ticket_button_pressed = false;
             let service_num = self.context.so_number.clone();
-            SendRequest::get_ticket(service_num, self.send_request.tx.clone()); 
+            SendAsyncReq::get_ticket(service_num, self.send_async_req.tx.clone()); 
         }
+
         if self.context.get_cps_button_pressed == true {
             self.context.get_cps_button_pressed = false;
             let service_num = self.context.so_number.clone();
-            SendRequest::get_cps(service_num, self.send_request.tx.clone());
+            SendAsyncReq::get_cps(service_num, self.send_async_req.tx.clone());
         }   
 
+        if self.context.get_specs == true{
+            self.context.get_specs == false;
+            SendAsyncReq::get_system_specs(self.send_async_req.system_info_tx.clone());
+        }
         // On the receiving end:
         while let Ok(message) = self.context.rx.as_ref().unwrap().try_recv() {
             match message {
@@ -721,7 +858,6 @@ Item Codes: {:?}\n",
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
-
                     // allow certain tabs to be toggled
                     for tab in &[&self.context.tur_sheet_tab, &self.context.scripts_tab, &self.context.output_console_tab, &self.context.system_info_tab] {
                         if ui
@@ -734,7 +870,6 @@ Item Codes: {:?}\n",
                             } else {
                                 self.tree.push_to_focused_leaf(tab.to_string());
                             }
-
                             ui.close_menu();
                         }
                     }
@@ -742,13 +877,10 @@ Item Codes: {:?}\n",
             })
         });
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
-            .frame(Frame::central_panel(&ctx.style()).inner_margin(0.))// to set inner margins to 0.
+            .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
             .show(ctx, |ui| {
-
                 let mut style = self.context.style.get_or_insert(Style::from_egui(ui.style())).clone();
-                style.tabs.bg_fill = Color32::from_rgb(35,35,35);
                 style.selection_color = Color32::from_rgb(92,0,87);
-                style.separator.extra_interact_width = 20.0;
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
                 style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
                 style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
@@ -764,6 +896,7 @@ Item Codes: {:?}\n",
                     .style(style)
                     .show_close_buttons(self.context.show_close_buttons)
                     .show_add_buttons(self.context.show_add_buttons)
+                    .show_add_popup(true)
                     .draggable_tabs(self.context.draggable_tabs)
                     .show_tab_name_on_hover(self.context.show_tab_name_on_hover)
                     .show_inside(ui, &mut self.context);
