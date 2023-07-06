@@ -1,8 +1,9 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] use serde_json::{json, Value};
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] use file_browser::FileBrowser;
 // hide output_console window on Windows in release
+use serde_json::{json, Value, value};
 use sysinfo::*;
 use std::{collections::HashSet, borrow::BorrowMut}; //, os::windows::thread};
-use eframe::egui;
+use eframe::{egui, glow::PROGRAM_BINARY_LENGTH};
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use scaffold_builder::PulledKeys;
@@ -12,7 +13,7 @@ use egui_extras::*;
 use catppuccin_egui::MOCHA;
 
 mod request;
-mod data_transfer;
+mod file_browser;
 mod scaffold_builder;
 
 #[tokio::main]
@@ -37,7 +38,24 @@ pub struct SystemInformation{
     cpu_name: String,
     total_ram: String,
     system_name: String,
-    disks: Vec<Value>, //Option<String>
+    disks: DiskData, //Option<String>
+}
+
+#[derive(Serialize, Deserialize)]
+struct DiskData {
+    disks: Vec<Value>,
+}
+
+impl DiskData {
+    fn new() -> Self {
+        DiskData {
+            disks: Vec::new(),
+        }
+    }
+
+    fn add_disk(&mut self, disk: Value){
+        self.disks.push(disk);
+    }
 }
 
 impl SendAsyncReq{
@@ -225,43 +243,26 @@ impl SendAsyncReq{
                 let disks = sys.disks();
                 let disks_clone = disks.clone();
 
-                //let mount_point = Option<"">;
-                let mut available_disk_space = "".to_string();
-                let mut total_disk_space = "".to_string();
 
-                let mut disks_json = vec![];
+                let mut data = DiskData::new();
 
                 for disk in disks_clone{
                     if !disk.is_removable(){
-                        let disk_json = json!({
-
+                        data.add_disk(serde_json::json!({
+                            "name": disk.name(),
                             "letter": disk.mount_point().to_str(),
                             "total space": (disk.total_space() / ( 1024 * 1024 * 1024)).to_string(),
                             "available space": (disk.available_space() / ( 1024 * 1024 * 1024)).to_string(),
-                            
-                        });
-                        disks_json.push(disk_json);
-
-                        let mount_point = disk.mount_point().to_str();
-                        mount_point.map(|string|{
-                            println!("Strings: {:?}", string);
-                        });
-                        //let avail_disk_space = ;
-                        //available_disk_space = avail_disk_space;
-                        mount_point.map(|string|{
-                            println!("Strings: {:?}", string);
-                        });
-                    }
-                    
+                        }));
+                    }   
                 }
                 
-
-                // String for each disk: [letter]:\\ [ Available space / Total space ]
+                // String for each disk: [name] [letter]:\\ [ Available space / Total space ]
                 let system_info = SystemInformation{
                     cpu_name: cpu_brand,
                     total_ram: ram,
                     system_name: system,
-                    disks: disks_json
+                    disks: data
                 };
 
                 let system_info_json = serde_json::to_string(&system_info).unwrap();
@@ -280,6 +281,19 @@ impl SendAsyncReq{
 
             });
         });
+    }
+    
+    #[cfg(target_os = "windows")]
+    fn get_gpu(){
+        let gpu = std::process::Command::new("cmd").args(["/C", "wmic path win32_VideoController get name"]).output();
+        match gpu{
+            Ok(_) => {
+
+            }
+            Err(e) => {
+                println!("Error: {}", e);
+            }
+        }
     }
 }
 
@@ -308,12 +322,14 @@ struct MastertechContext {
     cpu_name: String,
     total_ram: String,
     system_name: String,
-    disks: String,
+    disks: Value,
+    disk_num: usize,
     rx: Option<std::sync::mpsc::Receiver<String>>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
     //////////////////////////////////////////
+    ctx: egui::Context,
     widget_size: f32,
     open_tabs: HashSet<String>,
     show_close_buttons: bool,
@@ -329,8 +345,6 @@ struct MastertechContext {
     animate_progress_bar: bool,
     get_ticket_button_pressed: bool,
     get_cps_button_pressed: bool,
-    copy_webroot_button_pressed: bool,
-    copy_sas_button_pressed: bool,
     get_seb_button_pressed: bool,
     first_run: bool,
     get_specs: bool,
@@ -359,6 +373,7 @@ impl TabViewer for MastertechContext {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
             "Scripts" => self.scripts(ui),
+            "File Browser" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
             _ => {
                 let sysinfo_tab = &self.system_info_tab.to_string();
@@ -398,7 +413,7 @@ impl Default for MasterTechApp {
         let (tx, rx) = std::sync::mpsc::channel::<String>();
 
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
-        let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["Empty1".to_owned(), "Empty".to_owned()]);
+        let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["File Browser".to_owned(), "Empty".to_owned()]);
         let [_, _] = tree.split_below(
             a,
             0.7,
@@ -420,7 +435,6 @@ impl Default for MasterTechApp {
         let send_async_req = SendAsyncReq{
             tx: tx,
         };
-
 
         let context = MastertechContext {
             //////////////////////////////////////////
@@ -448,12 +462,14 @@ impl Default for MasterTechApp {
             cpu_name: "".to_string(),
             total_ram: "".to_string(),
             system_name: "".to_string(),
-            disks: "".to_string(),
+            disks: Value::Array(vec![]),
+            disk_num: 0,
             rx: Some(rx),
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
+            ctx: egui::Context::default(),
             widget_size: 135.0,
             open_tabs,
             show_close_buttons: true,
@@ -468,8 +484,6 @@ impl Default for MasterTechApp {
             animate_progress_bar: false,
             get_ticket_button_pressed: false,
             get_cps_button_pressed: false,
-            copy_webroot_button_pressed: false,
-            copy_sas_button_pressed: false,
             get_seb_button_pressed: false,
             first_run: true,
             get_specs: false,
@@ -497,7 +511,7 @@ impl MastertechContext {
 
     fn tur_sheet(&mut self, ui: &mut Ui) {
         ui.visuals_mut().override_text_color = Some(self.text_color);
-        ui.style_mut().spacing.button_padding = (6.0, 3.0).into();
+        ui.style_mut().spacing.button_padding = (4.0, 4.0).into();
         ui.set_min_width(600.0);
         ui.set_max_height(600.0);
         ui.shrink_width_to_current();
@@ -595,21 +609,25 @@ impl MastertechContext {
                                             ui.end_row();
                                             
                                                                 /*     ROW 5     */
-                                            if ui.add(Button::new(RichText::new(format!("{}", self.webroot_key)).small().strong()
+                                            if ui.add(Button::new(RichText::new(format!("{}", self.webroot_key)).size(9.0)
                                             .color(Color32::from_rgb(102, 255, 153))
                                             .strong())
-                                            .min_size(vec2(self.widget_size, 5.0)))
+                                            .min_size(vec2(self.widget_size + 2.0, 8.0)))
                                             .on_hover_text("Click To Copy Webroot Key to Clipboard")
                                             .clicked(){ 
-                                                self.copy_webroot_button_pressed = true;
+                                                let webroot = self.webroot_key.clone();
+                                                ui.output_mut(|o| o.copied_text = webroot);
                                             }
                                                 
-                                            if ui.add(Button::new(RichText::new(format!("{}", self.superanti_key)).small().strong()
-                                            .color(Color32::from_rgb(255, 61, 126)))
-                                            .min_size(vec2(self.widget_size, 5.0)))
+                                            if ui.add(Button::new(RichText::new(format!("{}", self.superanti_key)).size(9.0)
+                                            .color(Color32::from_rgb(255, 61, 126))
+                                            .strong())
+                                            .min_size(vec2(self.widget_size + 2.0, 8.0)))
                                             .on_hover_text("Click To Copy SAS Key to Clipboard")
                                             .clicked(){ 
-                                                self.copy_sas_button_pressed = true;
+                                                let sas = self.superanti_key.clone();
+                                                ui.output_mut(|o| o.copied_text = sas);
+
                                             }
 
                                             ui.end_row();
@@ -784,46 +802,97 @@ impl MastertechContext {
                         ui.label(format!("{} Gb", &self.total_ram));
                     });
                 });
+                #[cfg(target_os = "windows")]
                 body.row(20.0, |mut row| {
                     row.col(|ui|{
-                        ui.label("Disks");
+                        ui.label("GPU");
                     });
                     row.col(|ui|{
-                        ui.label("test");
+                        let gpu = SendAsyncReq::get_gpu();
+                        ui.label(format!("{}", gpu));
                     });
                 });
+                
             });
 
         });
-        
+        ui.vertical(|ui|{ui.add_space(20.0)});
+        ui.indent("indented_disks",|ui|{
+            let disks_table = TableBuilder::new(ui)
+            .striped(true)
+            .resizable(true)
+            .cell_layout(Layout::left_to_right(Align::Center))
+            .column(Column::exact(15.0))
+            .column(Column::exact(150.0))
+            .columns(Column::remainder(), 2);
+            
+            disks_table
+            .header(20.0, |mut header|{
+                header.col(|ui|{
+                    ui.label("#");
+                });
+                header.col(|ui|{
+                    ui.label("Drive Letter");
+                });
+                // header.col(|ui|{
+                //     ui.label("Space Used");
+                // });
+                header.col(|ui|{
+                    ui.label("Avail / Total Space");
+                });
 
+            })
+            .body(|mut body| {
+                body.rows(
+                20.0,  // Replace with your desired row height
+                self.disk_num,
+                |disk_index, mut row| 
+                {
+                    if let Some(disk) = self.disks.get(disk_index){
+                        //println!("disks: {:#?}", disk);
 
-        //ui.label(format!("{}", serde_json::to_string(&sys).unwrap()));
-        /*     ROW 1     
-        ui.label("=> Disks:");
-        for disk in sys.disks() { // We display all disks' information:
-            ui.add_space(15.0);
-            ui.label(format!("{:#?}", disk));
-            ui.end_row();
-        }
+                        //let disk_name = format!("{:#?}", disk.get("name"));
+                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
+                        let disk_space = format!(
+                            "{} Gb / {} Gb",
+                            disk.get("available space").and_then(Value::as_str).unwrap_or(""),
+                            disk.get("total space").and_then(Value::as_str).unwrap_or("")
+                        );
+                        let disk_used = format!("{}", (disk.get("total space").and_then(Value::as_u64).unwrap_or(0)) - 
+                        (disk.get("available space").and_then(Value::as_u64).unwrap_or(0)));
 
-        ui.label("=> system:");
-        // RAM and swap information:
-        ui.label(format!("total memory: {} bytes", sys.total_memory()));
-        ui.end_row();
+                        let disk_space = format!(
+                            "{} Gb / {} Gb",
+                            disk.get("available space").and_then(Value::as_str).unwrap_or(""),
+                            disk.get("total space").and_then(Value::as_str).unwrap_or("")
+                        );
+                        
+                    
+                        row.col(|ui| {
+                            ui.label(disk_index.to_string());  // Show disk index
+                        });
+                        row.col(|ui| {
+                            ui.label(disk_letter);  // Show disk letter
+                        });
+                        // row.col(|ui| {
+                        //     ui.label(disk_used.to_string());  // Show disk space
+                        // });
+                        row.col(|ui| {
+                            ui.label(disk_space);  // Show disk space
+                        });
+                        self.ctx.request_repaint();
+                    }   
 
-        // Display system information:
-        ui.label(format!("System name:             {:?}", sys.name()));
-        ui.label(format!("System OS version:       {:?}", sys.os_version()));
-        ui.end_row();
-        ui.label(format!("System host name:        {:?}", sys.host_name()));
+                });
+            });
+        });
+    }
 
-        // Number of CPUs:
-        ui.label(format!("NB CPUs: {}", sys.cpus().len()));
-        ui.end_row();
-        */
+    fn file_browse(&mut self, ui: &mut Ui){ 
+        //file_browser::file_browser();
+        let ctx = self.ctx.clone();
+        //file_browser::FileBrowser::file_dialog(&mut x, &ctx);
 
-       
     }
 
     fn scripts(&mut self, ui: &mut Ui){ }
@@ -832,8 +901,8 @@ impl MastertechContext {
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
-
-
+        
+        self.context.ctx = ctx.clone();
         let ticket_sender = self.send_async_req.tx.clone();
         let cps_sender = self.send_async_req.tx.clone();
         let specs_sender = self.send_async_req.tx.clone();
@@ -894,8 +963,21 @@ Item Codes: {:?}\n",
                 self.context.system_name = info.system_name;
                 self.context.cpu_name = info.cpu_name;
                 self.context.total_ram = info.total_ram;
-                //self.cpu_name = info.cpu_name;
-                //self.context.
+                for disk in info.disks.disks{
+                    
+                    self.context.disk_num += 1;
+
+                    if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                        // Convert `disk` to a serde_json::Value
+                        let disk_json = serde_json::to_value(&disk).unwrap();
+                
+                        disks_arr.push(disk_json);
+                    } else {
+                        eprintln!("Expected self.context.disks to be an Array");
+                    }
+                    
+                }
+                
             }
             else{
                 // Handle error

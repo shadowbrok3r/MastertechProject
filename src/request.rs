@@ -95,7 +95,7 @@ pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  
     // Now you can use the method on the instance of ScaffoldRequestBuilder
     let params: Value = scaffold_builder.build_scaffold_call();
 
-    println!("RAW JSON\n\n\n{:?}", params);
+    //println!("RAW JSON\n\n\n{:?}", params);
     let response = reqwest::Client::new().post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
@@ -131,7 +131,7 @@ pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core
             match response {
                 Ok(res) => {
                     let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
-                    println!("response: {:?}", response_text);
+                    //println!("response: {:?}", response_text);
         
                     let mut webroot_key = "";
                     let mut superanti_key = "";
