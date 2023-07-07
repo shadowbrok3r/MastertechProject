@@ -511,7 +511,7 @@ impl MastertechContext {
 
     fn tur_sheet(&mut self, ui: &mut Ui) {
         ui.visuals_mut().override_text_color = Some(self.text_color);
-        ui.style_mut().spacing.button_padding = (4.0, 4.0).into();
+        ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
         ui.set_min_width(600.0);
         ui.set_max_height(600.0);
         ui.shrink_width_to_current();
@@ -680,7 +680,7 @@ impl MastertechContext {
                                     }); // Vertical Centered
         
                                     Grid::new("drive_tests")
-                                    .spacing(vec2(4.0, 5.0))
+                                    .spacing(vec2(4.0, 3.0))
                                     .min_col_width(self.widget_size)
                                     .num_columns(2)
                                     .show(ui, |ui| {
@@ -705,7 +705,16 @@ impl MastertechContext {
                                     }); // Grid   
 
                                     
-                                    ui.vertical(|ui|{ui.add_space(65.0);});
+                                    ui.vertical(|ui|{ui.add_space(18.0);});
+
+                                    
+                                    //for let i = 0 in 0..100{i+= 1};
+                                    let progress_bar = egui::ProgressBar::new(100.0)
+                                        .show_percentage()
+                                        .animate(true);
+                                    ui.add(progress_bar);
+
+                                    ui.vertical(|ui|{ui.add_space(18.0);});
 
                                     ui.checkbox(&mut self.send_specs, "Send System Info");
 
