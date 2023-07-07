@@ -19,7 +19,7 @@ mod scaffold_builder;
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(925.0, 700.0)),
+        initial_window_size: Some(egui::vec2(925.0, 710.0)),
         ..Default::default()
     };
     eframe::run_native(
@@ -78,7 +78,7 @@ impl SendAsyncReq{
                 };
 
                 let response = request::request_ticket_info(scaffold_builder).await;
-                println!("ticket_response: {:?}", response);
+
 
                 match response { // Successfully received GetTicketResponse
                     Ok(get_ticket_response) => {
@@ -296,7 +296,6 @@ impl SendAsyncReq{
         }
     }
 }
-
 struct MastertechContext {
     //////////////////////////////////////////
     /*          Mastertech Vars             */
@@ -343,11 +342,13 @@ struct MastertechContext {
     date: Option<chrono::NaiveDate>,
     send_specs: bool,
     animate_progress_bar: bool,
+    reader_bytes: u32,
     get_ticket_button_pressed: bool,
     get_cps_button_pressed: bool,
     get_seb_button_pressed: bool,
     first_run: bool,
     get_specs: bool,
+    spinner: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -357,7 +358,6 @@ struct MastertechContext {
     border_stroke_color: Stroke,
     bg_color: Color32
 }
-
 struct MasterTechApp {
     context: MastertechContext,
     tree: Tree<String>,
@@ -482,11 +482,13 @@ impl Default for MasterTechApp {
             scripts_tab: "Scripts".to_string(),
             date: None,
             animate_progress_bar: false,
+            reader_bytes: 0,
             get_ticket_button_pressed: false,
             get_cps_button_pressed: false,
             get_seb_button_pressed: false,
             first_run: true,
             get_specs: false,
+            spinner: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -708,11 +710,14 @@ impl MastertechContext {
                                     ui.vertical(|ui|{ui.add_space(18.0);});
 
                                     
-                                    //for let i = 0 in 0..100{i+= 1};
-                                    let progress_bar = egui::ProgressBar::new(100.0)
+                                    let progress_bar = egui::ProgressBar::new(self.reader_bytes as f32)
                                         .show_percentage()
                                         .animate(true);
-                                    ui.add(progress_bar);
+
+                                    if self.spinner == true{
+                                        ui.add(Spinner::new());
+                                    }
+                                    
 
                                     ui.vertical(|ui|{ui.add_space(18.0);});
 
@@ -769,6 +774,13 @@ impl MastertechContext {
         }
         self.first_run = false;
         
+        if self.spinner == true{
+            ui.vertical_centered(|ui|{
+                ui.add(Spinner::new());
+            });
+            
+        }
+
         ui.indent("indented_sysinfo_table", |ui|{
             let table = TableBuilder::new(ui)
                 .striped(true)
@@ -890,6 +902,7 @@ impl MastertechContext {
                             ui.label(disk_space);  // Show disk space
                         });
                         self.ctx.request_repaint();
+                        self.spinner = false;
                     }   
 
                 });
@@ -900,6 +913,7 @@ impl MastertechContext {
     fn file_browse(&mut self, ui: &mut Ui){ 
         //file_browser::file_browser();
         let ctx = self.ctx.clone();
+        file_browser::FileBrowser::file_browsing_test(&ctx);
         //file_browser::FileBrowser::file_dialog(&mut x, &ctx);
 
     }
@@ -919,17 +933,20 @@ impl eframe::App for MasterTechApp {
         if self.context.get_ticket_button_pressed == true {
             self.context.get_ticket_button_pressed = false;
             let service_num = self.context.so_number.clone();
+            self.context.spinner = true;
             SendAsyncReq::get_ticket(service_num, ticket_sender); 
         }
 
         if self.context.get_cps_button_pressed == true {
             self.context.get_cps_button_pressed = false;
             let service_num = self.context.so_number.clone();
+            self.context.spinner = true;
             SendAsyncReq::get_cps(service_num, cps_sender);
         }   
 
         if self.context.get_specs == true{
             self.context.get_specs = false;
+            self.context.spinner = true;
             SendAsyncReq::get_system_specs(specs_sender);
         }
 
@@ -939,6 +956,7 @@ impl eframe::App for MasterTechApp {
         while let Ok(message) = receiver.try_recv() {
             // Try to parse the JSON string into a TicketInformation
             if let Ok(info) = serde_json::from_str::<scaffold_builder::TicketInformation>(&message) {
+                self.context.output_text.clear();
                 let checkin_rep = info.user_id;
                 self.context.checkin_rep = checkin_rep.clone();
                 if checkin_rep == "DMK"{self.context.salesman_cbox = scaffold_builder::Salesman::Danny;}
@@ -960,12 +978,14 @@ Type of Order: {:?}
 Item Codes: {:?}\n",
                 &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
                 &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
+                self.context.spinner = false;
 
             }             
             else if let Ok(info) = serde_json::from_str::<scaffold_builder::PulledKeys>(&message) {
                 // Handle PulledKeys
                 self.context.webroot_key = info.webroot_key;
                 self.context.superanti_key = info.superanti_key;
+                self.context.spinner = false;
             }
             // If neither parse was successful, consider it an error
             else if let Ok(info) = serde_json::from_str::<SystemInformation>(&message) {
@@ -991,6 +1011,7 @@ Item Codes: {:?}\n",
             else{
                 // Handle error
                 self.context.output_text = format!("Error parsing JSON: {}", message);
+                self.context.spinner = false;
             }
         }
 

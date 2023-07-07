@@ -2,6 +2,7 @@ use reqwest::header::{CONTENT_TYPE, ACCEPT};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use std::error::Error;
+use futures_util::StreamExt;
 
 use crate::scaffold_builder::*;
 
@@ -103,6 +104,7 @@ pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  
         .send()
         .await;
 
+
         match response {
             Ok(res) => {
                 let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
@@ -171,6 +173,43 @@ pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core
 //pub async fn get_computer_purchases(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
 
 
+
+/*
+        match response {
+            Ok(mut res) => {
+                let total: u64 = res.headers()
+                    .get(CONTENT_LENGTH)
+                    .and_then(|len| len.to_str().ok())
+                    .and_then(|number| number.parse().ok())
+                    .unwrap_or(0);
+        
+                let mut downloaded: u64 = 0;
+                let mut data = bytes::BytesMut::new();
+        
+                while let Ok(chunk_result) = res.chunk().await {
+                    match chunk_result {
+                        Some(chunk) => {
+                            downloaded += chunk.len() as u64; // Here we update our downloaded count with the size of the chunk
+                            data.extend_from_slice(&chunk);
+                
+                            if total > 0 {
+                                let progress = (downloaded as f64 / total as f64 * 100.0) as u32;
+                                progress_bytes = progress;
+                                println!("progress: {:?}", progress_bytes);
+                            }
+                        },
+                        None => break, // The stream has ended
+                    }
+                }
+                
+        
+                let json_response: GetTicketResponse = serde_json::from_slice(&data)?; // Parse the buffered data
+        
+                Ok(json_response)
+            },
+            Err(e) => Err(Box::new(e)),
+        }
+ */
 
 //     let params = serde_json::json!({
 //         "user_email": user,
