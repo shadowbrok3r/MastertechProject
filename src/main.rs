@@ -283,6 +283,10 @@ impl SendAsyncReq{
         });
     }
     
+    fn get_file_browser(tx: std::sync::mpsc::Sender<String>){
+
+    }
+
     #[cfg(target_os = "windows")]
     fn get_gpu(){
         let gpu = std::process::Command::new("cmd").args(["/C", "wmic path win32_VideoController get name"]).output();
@@ -349,6 +353,7 @@ struct MastertechContext {
     first_run: bool,
     get_specs: bool,
     spinner: bool,
+    read_hidden_files: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -489,6 +494,7 @@ impl Default for MasterTechApp {
             first_run: true,
             get_specs: false,
             spinner: false,
+            read_hidden_files: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -912,9 +918,13 @@ impl MastertechContext {
 
     fn file_browse(&mut self, ui: &mut Ui){ 
         //file_browser::file_browser();
+        ui.checkbox(&mut self.read_hidden_files ,"Show hidden files");
+
+        //ui.checkbox(self.read_dirs_only ,"Show Directories ONLY");
+
         let ctx = self.ctx.clone();
         file_browser::FileBrowser::file_browsing_test(&ctx);
-        //file_browser::FileBrowser::file_dialog(&mut x, &ctx);
+
 
     }
 
