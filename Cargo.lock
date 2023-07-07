@@ -1577,6 +1577,7 @@ dependencies = [
 name = "mastertech_rust_egui"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "catppuccin-egui",
  "chrono",
  "eframe",
@@ -1584,6 +1585,7 @@ dependencies = [
  "egui_dock",
  "egui_extras",
  "egui_file",
+ "futures-util",
  "jwalk",
  "reqwest",
  "serde",

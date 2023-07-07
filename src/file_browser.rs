@@ -1,5 +1,6 @@
-use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::fs::*;
+use tokio::io::*;
+use std::path::Path;
 use jwalk::*;
 use egui_file::FileDialog;
 use std::path::PathBuf;
@@ -10,18 +11,41 @@ pub struct FileBrowser{
 }
 
 impl FileBrowser{
-    pub fn file_dialog(&mut self, ctx: &egui::Context){
-        let mut dialog = FileDialog::open_file(self.opened_file.clone());
-        dialog.open();
-        self.open_file_dialog = Some(dialog);
+    pub async fn file_browsing_test(ctx: &egui::Context) -> tokio::io::Result<()>{
 
-        if let Some(dialog) = &mut self.open_file_dialog {
-            if dialog.show(ctx).selected() {
-                if let Some(file) = dialog.path() {
-                    self.opened_file = Some(file);
-                }
+        let path = Path::new("/home/shadowbroker/Desktop");
+        let mut read_dir = tokio::fs::read_dir(path).await?;
+
+        while let Some(entry) = read_dir.next_entry().await? {
+            let path = entry.path();
+            if path.is_dir() {
+                println!("{}", path.display());
             }
         }
+        Ok(())
+
+
+
+
+        // DirBuilder::new()
+        // .recursive(true)
+        // .create("/tmp/foo/bar/baz")
+        // .await?;
+
+
+        
+
+        // let mut dialog = FileDialog::open_file(self.opened_file.clone());
+        // dialog.open();
+        // self.open_file_dialog = Some(dialog);
+
+        // if let Some(dialog) = &mut self.open_file_dialog {
+        //     if dialog.show(ctx).selected() {
+        //         if let Some(file) = dialog.path() {
+        //             self.opened_file = Some(file);
+        //         }
+        //     }
+        // }
     }
 
 }
