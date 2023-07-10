@@ -836,7 +836,7 @@ impl MastertechContext {
                     });
                     row.col(|ui|{
                         let gpu = SendAsyncReq::get_gpu();
-                        ui.label(format!("{}", gpu));
+                        //ui.label(format!("{}", gpu));
                     });
                 });
                 
