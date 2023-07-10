@@ -354,6 +354,7 @@ struct MastertechContext {
     get_specs: bool,
     spinner: bool,
     read_hidden_files: bool,
+    read_dirs_only: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -495,6 +496,7 @@ impl Default for MasterTechApp {
             get_specs: false,
             spinner: false,
             read_hidden_files: false,
+            read_dirs_only: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -920,10 +922,21 @@ impl MastertechContext {
         //file_browser::file_browser();
         ui.checkbox(&mut self.read_hidden_files ,"Show hidden files");
 
-        //ui.checkbox(self.read_dirs_only ,"Show Directories ONLY");
+       
 
+
+        let handle = Handle::current();
         let ctx = self.ctx.clone();
-        file_browser::FileBrowser::file_browsing_test(&ctx);
+        let mut file_browser = file_browser::FileBrowser::new(ctx);
+
+        ui.checkbox(&mut file_browser.read_dirs_only, "Show Directories ONLY");
+        
+        std::thread::spawn(move||{
+            handle.block_on(async{
+            file_browser.run().await;
+            });
+        });
+        
 
 
     }
