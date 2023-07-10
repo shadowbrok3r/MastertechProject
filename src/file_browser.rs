@@ -4,6 +4,12 @@ use std::path::Path;
 use jwalk::*;
 use egui_file::FileDialog;
 use std::path::PathBuf;
+use std::env;
+
+// Error messages
+const TEMPDIR_ERR_MSG: &str = "Can't write to temporary directory";
+const ENV_READ_ERR_MSG: &str = "Can't access current directory";
+const ENV_WRITE_ERR_MSG: &str = "Can't change environment";
 
 pub struct FileBrowser{
     pub opened_file: Option<PathBuf>,
@@ -12,6 +18,28 @@ pub struct FileBrowser{
 
 impl FileBrowser{
     pub async fn file_browsing_test(ctx: &egui::Context) -> tokio::io::Result<()>{
+        let pwd = env::current_dir().map_err(|_| ENV_READ_ERR_MSG);
+
+        let temp_dir = env::var("temp").unwrap_or_else(|_| env::current_dir()
+        .unwrap()
+        .into_os_string()
+        .into_string()
+        .unwrap());
+
+        let target_dir = &get_target_dir();
+
+        if Path::new(target_dir).exists() {
+            tokio::fs::remove_dir_all(target_dir).await.map_err(|_| TEMPDIR_ERR_MSG);
+        }
+        tokio::fs::create_dir_all(target_dir).await.map_err(|_| TEMPDIR_ERR_MSG);
+
+        env::set_current_dir(target_dir).map_err(|_| ENV_WRITE_ERR_MSG);
+
+        // restore to the actual current directory
+        env::set_current_dir(pwd.unwrap()).map_err(|_| ENV_WRITE_ERR_MSG);
+
+        // remove temporary files
+        // fs::remove_dir_all(target_dir).map_err(|_| "Can't write to temporary directory")?;
 
         let path = Path::new("/home/shadowbroker/Desktop");
         let mut read_dir = tokio::fs::read_dir(path).await?;
@@ -48,6 +76,29 @@ impl FileBrowser{
         // }
     }
 
+}
+
+pub fn get_target_dir() -> String {
+    #[cfg(unix)]
+    return "/tmp/Mastertech".to_string();
+    #[cfg(windows)]
+    return format!(
+        "{p}/Mastertech",
+        p = env::var("temp").unwrap_or_else(|_| env::current_dir()
+            .unwrap()
+            .into_os_string()
+            .into_string()
+            .unwrap())
+    );
+    #[cfg(not(any(unix, windows)))]
+    return format!(
+        "{p}/.Mastertech",
+        p = env::current_dir()
+            .unwrap()
+            .into_os_string()
+            .into_string()
+            .unwrap()
+    );
 }
 
 pub fn file_browser(){
