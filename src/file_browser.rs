@@ -1,159 +1,152 @@
-use tokio::fs::*;
-use tokio::io::*;
-use std::path::Path;
-use jwalk::*;
-use egui_file::FileDialog;
+use std::ffi::OsStr;
+use std::io::{self, Write};
 use std::path::PathBuf;
-use std::env;
+use std::fs;
+use walkdir::WalkDir;
+use tokio::task;
+use std::path::Path;
+use egui::Context;
 
-// Error messages
-const TEMPDIR_ERR_MSG: &str = "Can't write to temporary directory";
-const ENV_READ_ERR_MSG: &str = "Can't access current directory";
-const ENV_WRITE_ERR_MSG: &str = "Can't change environment";
-
-pub struct FileBrowser{
-    pub opened_file: Option<PathBuf>,
-    pub open_file_dialog: Option<FileDialog>,
+enum TreeNode {
+    File(String),
+    Directory(String, Vec<TreeNode>),
 }
 
-impl FileBrowser{
-    pub async fn file_browsing_test(ctx: &egui::Context) -> tokio::io::Result<()>{
-        let pwd = env::current_dir().map_err(|_| ENV_READ_ERR_MSG);
-
-        let temp_dir = env::var("temp").unwrap_or_else(|_| env::current_dir()
-        .unwrap()
-        .into_os_string()
-        .into_string()
-        .unwrap());
-
-        let target_dir = &get_target_dir();
-
-        if Path::new(target_dir).exists() {
-            tokio::fs::remove_dir_all(target_dir).await.map_err(|_| TEMPDIR_ERR_MSG);
-        }
-        tokio::fs::create_dir_all(target_dir).await.map_err(|_| TEMPDIR_ERR_MSG);
-
-        env::set_current_dir(target_dir).map_err(|_| ENV_WRITE_ERR_MSG);
-
-        // restore to the actual current directory
-        env::set_current_dir(pwd.unwrap()).map_err(|_| ENV_WRITE_ERR_MSG);
-
-        // remove temporary files
-        // fs::remove_dir_all(target_dir).map_err(|_| "Can't write to temporary directory")?;
-
-        let path = Path::new("/home/shadowbroker/Desktop");
-        let mut read_dir = tokio::fs::read_dir(path).await?;
-
-        while let Some(entry) = read_dir.next_entry().await? {
-            let path = entry.path();
-            if path.is_dir() {
-                println!("{}", path.display());
-            }
-        }
-        Ok(())
-
-
-
-
-        // DirBuilder::new()
-        // .recursive(true)
-        // .create("/tmp/foo/bar/baz")
-        // .await?;
-
-
-        
-
-        // let mut dialog = FileDialog::open_file(self.opened_file.clone());
-        // dialog.open();
-        // self.open_file_dialog = Some(dialog);
-
-        // if let Some(dialog) = &mut self.open_file_dialog {
-        //     if dialog.show(ctx).selected() {
-        //         if let Some(file) = dialog.path() {
-        //             self.opened_file = Some(file);
-        //         }
-        //     }
-        // }
-    }
-
+pub struct FileBrowser {
+    current_path: PathBuf,
+    ctx: Context,
+    pub read_dirs_only: bool,
 }
 
-pub fn get_target_dir() -> String {
-    #[cfg(unix)]
-    return "/tmp/Mastertech".to_string();
-    #[cfg(windows)]
-    return format!(
-        "{p}/Mastertech",
-        p = env::var("temp").unwrap_or_else(|_| env::current_dir()
-            .unwrap()
-            .into_os_string()
-            .into_string()
-            .unwrap())
-    );
-    #[cfg(not(any(unix, windows)))]
-    return format!(
-        "{p}/.Mastertech",
-        p = env::current_dir()
-            .unwrap()
-            .into_os_string()
-            .into_string()
-            .unwrap()
-    );
-}
-
-pub fn file_browser(){
-
-    let mut total: u64 = 0;
-
-
-    let path = "/home/shadowbroker/";
-
-    for dir_entry_result in WalkDirGeneric::<((), Option<u64>)>::new(&path)
-    .skip_hidden(false)
-    .parallelism(Parallelism::RayonNewPool(4))
-    .process_read_dir(|_, _, _, dir_entry_results| {
-        dir_entry_results.iter_mut().for_each(|dir_entry_result| {
-            if let Ok(dir_entry) = dir_entry_result {
-                if !dir_entry.file_type.is_dir() {
-                    dir_entry.client_state =
-                        Some(dir_entry.metadata().map(|m| m.len()).unwrap_or_default());
-                }
-            }
-        })
-    })
-    {
-        match dir_entry_result {
-            Ok(dir_entry) => {
-                if let Some(len) = &dir_entry.client_state {
-                    eprintln!("counting {:?}", dir_entry.path());
-                    total += len;
-                }
-            }
-            Err(error) => {
-                println!("Read dir_entry error: {}", error);
-            }
+impl FileBrowser {
+    pub fn new(ctx: Context) -> FileBrowser {
+        FileBrowser {
+            current_path: PathBuf::from("."),
+            ctx,
+            read_dirs_only: false,
         }
     }
 
-    println!("path: {} total bytes: {}", path, total);
+    pub async fn run(&mut self) {
+        loop {
+            let absolute_path = fs::canonicalize(&self.current_path).unwrap();
+            let display_path = absolute_path.to_string_lossy().to_string();
+            let display_path = display_path.trim_start_matches("\\\\?\\");
+            // println!("Current Directory: {:?}", display_path);
+
+            let tree = task::block_in_place(|| self.build_tree(&self.current_path).unwrap());
+            self.print_tree(&tree, 0);  // print the tree for debugging
+
+            let contents = task::block_in_place(|| self.list_directory_contents());
+
+            println!("contents: {:?}", contents);
+            //update_gui(contents);  // update GUI with new directory contents
+            // pass context here and repaint 
+
+            let mut option = String::new();
+            task::block_in_place(|| io::stdin().read_line(&mut option)).unwrap();
+            let option = option.trim();
+
+            match option {
+                "copy" => task::block_in_place(|| self.copy_file()),
+                "move" | "rename" => task::block_in_place(|| self.move_or_rename_file()),
+                "create" => task::block_in_place(|| self.create_file()),
+                _ => {
+                    self.current_path = PathBuf::from(option);
+                }
+            };
+        }
+    }
+    
+    fn update_egui_ctx(&mut self, ctx: Context) {
+        self.ctx = ctx;
+    }
+
+    fn print_tree(&self, node: &TreeNode, indent: usize) {
+        let indentation = " ".repeat(indent * 2);
+        match node {
+            TreeNode::File(name) => println!("{}File: {}", indentation, name),
+            TreeNode::Directory(name, children) => {
+                println!("{}Directory: {}", indentation, name);
+                for child in children {
+                    self.print_tree(child, indent + 1);
+                }
+            }
+        }
+    }
+    
+    fn list_directory_contents(&self) -> Vec<String> {
+        let mut contents = Vec::new();
+        if self.read_dirs_only {
+            // Show directories only
+            for entry in WalkDir::new(&self.current_path) {
+                let entry = entry.unwrap();
+                if entry.file_type().is_dir() {
+                    let name = format!("{}", entry.file_name().to_string_lossy());
+                    contents.push(name);
+                }
+            }
+        } else {
+            // Show all files and directories
+            let entries = fs::read_dir(&self.current_path).unwrap();
+            for entry in entries {
+                let entry = entry.unwrap();
+                let metadata = entry.metadata().unwrap();
+                let name = if metadata.is_file() {
+                    format!("{}", entry.file_name().to_string_lossy())
+                } else if metadata.is_dir() {
+                    format!("DIR: {}", entry.file_name().to_string_lossy())
+                } else {
+                    continue;
+                };
+                contents.push(name);
+            }
+        }
+        contents
+    }
+    
+    
+    fn build_tree(&self, path: &Path) -> io::Result<TreeNode> {
+        if path.is_file() {
+            return Ok(TreeNode::File(path.file_name().unwrap_or(OsStr::new("unknown")).to_string_lossy().to_string()));
+        }
+    
+        let mut children = Vec::new();
+        for entry_result in fs::read_dir(path)? {
+            let entry = entry_result?;
+            children.push(self.build_tree(&entry.path())?);
+        }
+    
+        Ok(TreeNode::Directory(path.file_name().unwrap_or(OsStr::new("unknown")).to_string_lossy().to_string(), children))
+    }
+    
+    
+    fn copy_file(&self) {
+        println!("Enter source file:");
+        let mut source = String::new();
+        io::stdin().read_line(&mut source).unwrap();
+        println!("Enter destination file:");
+        let mut destination = String::new();
+        io::stdin().read_line(&mut destination).unwrap();
+        fs::copy(source.trim(), destination.trim()).unwrap();
+    }
+    
+    fn move_or_rename_file(&self) {
+        println!("Enter old file path:");
+        let mut old_path = String::new();
+        io::stdin().read_line(&mut old_path).unwrap();
+        println!("Enter new file path:");
+        let mut new_path = String::new();
+        io::stdin().read_line(&mut new_path).unwrap();
+        fs::rename(old_path.trim(), new_path.trim()).unwrap();
+    }
+    
+    fn create_file(&self) {
+        println!("Enter file path:");
+        let mut file_path = String::new();
+        io::stdin().read_line(&mut file_path).unwrap();
+        let mut file = fs::File::create(file_path.trim()).unwrap();
+        file.write_all(b"").unwrap();
+    }
+    
 }
-
-// pub async fn copy_file(src_path: &str, dst_path: &str) -> Result<T, Box<dyn std::error::Error>> {
-//     // Open source file.
-//     let mut src_file = File::open(src_path).await?;
-//     let mut dst_file = File::create(dst_path).await?;
-    
-//     // Create buffer to read into.
-//     let mut buffer = Vec::new();
-
-//     // Read file to string.
-//     src_file.read_to_end(&mut buffer).await?;
-    
-//     // Write to destination file
-//     dst_file.write_all(&buffer).await?;
-
-//     Ok(())
-// }
-
-// Spawning the copy task
-//let copy_task = tokio::spawn(copy_file("src.txt", "dst.txt"));
