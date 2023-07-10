@@ -20,7 +20,8 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            // "env": { "RUST_BACKTRACE": "full" }
         },
         {
             "type": "lldb",
@@ -38,7 +39,7 @@
                     "kind": "bin"
                 }
             },
-            "args": [],
+            "args": ["RUST_BACKTRACE=1"],
             "cwd": "${workspaceFolder}"
         }
     ]
