@@ -1,137 +1,115 @@
-use std::collections::HashSet;
-use std::ffi::OsStr;
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::path::Path;
-use std::fs;
-use futures_util::future::{join_all, BoxFuture};
-use walkdir::WalkDir;
-use tokio::task;
-use egui::Context;
-use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
+use std::error::Error;
+use std::path::{Path, PathBuf};
+use tokio::fs;
+use tokio::sync::mpsc::UnboundedReceiver;
+use async_recursion::async_recursion; 
 
-#[derive(Clone, Debug)]
+pub enum Command {
+    Refresh,
+    Copy(PathBuf, PathBuf),
+    Move(PathBuf, PathBuf),
+    CreateFile(PathBuf),
+    CreateDirectory(PathBuf),
+    Rename(PathBuf, PathBuf),
+    ExpandDirectory(PathBuf),
+}
+
+#[derive(Debug)]
 pub enum TreeNode {
     File(String),
     Directory(String, Vec<TreeNode>),
-    UnexpandedDirectory(String, PathBuf), // New variant
+    UnexpandedDirectory(String, PathBuf),
 }
-
-// Define a command that can be sent through the channel
-pub enum Command {
-    ExpandDirectory(PathBuf),
-    // More commands can be added here as needed
-}
-
 
 pub struct FileBrowser {
+    pub tree: Option<TreeNode>,
     pub current_path: PathBuf,
     pub read_dirs_only: bool,
-    pub expanded_dirs: HashSet<String>,
-    pub tree: Option<TreeNode>,
-    pub needs_refresh: bool,
-    pub directories: Vec<PathBuf>,
-    sender: UnboundedSender<PathBuf>,
-    receiver: UnboundedReceiver<PathBuf>,
+    pub read_hidden_files: bool,
+    pub expanded_dirs: std::collections::HashSet<String>,
+    command_rx: UnboundedReceiver<Command>,
 }
 
 impl FileBrowser {
-    pub fn new(command_tx: Sender<Command>, command_rx: Receiver<Command>) -> FileBrowser {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        FileBrowser {
-            current_path: PathBuf::from("."),
-            read_dirs_only: false,
-            expanded_dirs: HashSet::new(),
+    pub fn new(current_path: PathBuf,command_rx: UnboundedReceiver<Command>) -> Self {
+        Self {
             tree: None,
-            needs_refresh: true,
-            directories: Vec::new(),
-            command_tx: command_tx.clone(),
+            current_path,
+            read_dirs_only: false,
+            read_hidden_files: false,
+            expanded_dirs: std::collections::HashSet::new(),
+            command_rx,
         }
     }
 
-    pub async fn run(&mut self) -> Result<(), Box<dyn std::error::Error + Send>> {
-        if self.needs_refresh {
-            let current_path_clone = self.current_path.clone();
-            self.tree = Some(self.build_tree(current_path_clone).await.await?);
-            self.needs_refresh = false;
-        }
-        Ok(())
-    }
-    
-    
-
-    pub fn clone_for_thread(&self) -> FileBrowser {
-        FileBrowser {
-            current_path: self.current_path.clone(),
-            read_dirs_only: self.read_dirs_only,
-            expanded_dirs: self.expanded_dirs.clone(),
-            tree: self.tree.clone(),
-            needs_refresh: self.needs_refresh,
-            directories: self.directories.clone()
-        }
-    }
-    
-    
-    pub async fn build_tree(&self, path: PathBuf) -> BoxFuture<'static, Result<TreeNode, Box<dyn std::error::Error + Send>>> {
-        let self_clone = self.clone_for_thread();
-        Box::pin(async move {
-            let mut children = Vec::new();
-            let mut read_dir = tokio::fs::read_dir(path.clone()).await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-
-            let mut dir_entries = Vec::new();
-            while let Some(res) = read_dir.next_entry().await.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>).ok().flatten() {
-                dir_entries.push(res);
-            }
-            
-    
-            let mut child_futures: Vec<BoxFuture<'static, Result<TreeNode, Box<dyn std::error::Error + Send>>>> = Vec::new();
-
-
-
-            for entry in dir_entries {
-                let path = entry.path();
-                if path.file_name().is_some() {
-                    if path.is_dir() {
-                        let name = path.file_name().unwrap().to_string_lossy().to_string();
-                        children.push(TreeNode::UnexpandedDirectory(name, path)); // Add an UnexpandedDirectory node
+    pub async fn run(&mut self) -> Result<(), Box<dyn Error>> {
+        while let Some(command) = self.command_rx.recv().await {
+            match command {
+                Command::Refresh => {
+                    self.tree = Some(self.expand_directory(&self.current_path).await.unwrap());
+                }
+                Command::Copy(src, dst) => {
+                    if src.is_file() {
+                        fs::copy(src, dst).await?;
                     } else {
-                        children.push(TreeNode::File(path.file_name().unwrap().to_string_lossy().to_string()));
+                        todo!(); // Implement directory copying
                     }
                 }
+                Command::Move(src, dst) => {
+                    fs::rename(src, dst).await?;
+                }
+                Command::CreateFile(path) => {
+                    fs::File::create(path).await?;
+                }
+                Command::CreateDirectory(path) => {
+                    fs::create_dir(path).await?;
+                }
+                Command::Rename(old_path, new_path) => {
+                    fs::rename(old_path, new_path).await?;
+                }
+                Command::ExpandDirectory(path) => {
+                    self.tree = Some(self.expand_directory(&path).await.unwrap());
+                }
             }
-            
-            
-    
-            let child_results = join_all(child_futures).await;
-            for child in child_results {
-                children.push(child?);
-            }
-            //let file_name = path.file_name();
-            let file_stem = path.file_stem();
-            let name = match file_stem {
-                Some(stem) => stem.to_string_lossy().to_string(),
-                None => {
-                    if path == Path::new(".") {
-                        ".".to_string() // for current directory
-                    } else if path == Path::new("..") {
-                        "..".to_string() // for parent directory
-                    } else if path.has_root() {
-                        "/".to_string() // for root directory
-                    } else {
-                        return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, "The path does not have a file name")) as Box<dyn std::error::Error + Send>);
-                    }
-                },
-            };
-            
-            
-            
-            
-            
+        }
 
-            Ok(TreeNode::Directory(name, children))
-        })
+        Ok(())
     }
+
+    #[async_recursion]
+    async fn expand_directory(&self, path: &Path) -> Result<TreeNode, std::io::Error> {
+        let dir_name = path
+            .file_name()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid directory name"))?
+            .to_string_lossy()
+            .to_string();
     
+        if self.expanded_dirs.contains(&dir_name) {
+            let mut entries = fs::read_dir(path).await?;
+            let mut children = Vec::new();
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if path.is_dir() {
+                    children.push(self.expand_directory(&path).await?);
+                } else {
+                    let file_name = path
+                        .file_name()
+                        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid file name"))?
+                        .to_string_lossy()
+                        .to_string();
+    
+                    children.push(TreeNode::File(file_name));
+                }
+            }
+            Ok(TreeNode::Directory(dir_name, children))
+        } else {
+            Ok(TreeNode::UnexpandedDirectory(dir_name, path.to_owned()))
+        }
+    }
+}
+
+
+    /* 
     
     pub fn change_directory(&mut self, directory: &str) {
         self.current_path = PathBuf::from(directory);
@@ -191,7 +169,8 @@ impl FileBrowser {
         self.command_tx.send(command).unwrap();
     }
 }
-    /*
+
+
     pub async fn run(&mut self) {
         loop {
             let absolute_path = fs::canonicalize(&self.current_path).unwrap();

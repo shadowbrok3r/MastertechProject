@@ -1,19 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] 
 // hide output_console window on Windows in release
-use serde_json::{json, Value, value};
+use serde_json::Value;
 use std::path::PathBuf;
 use sysinfo::*;
-use std::{collections::HashSet, borrow::BorrowMut}; //, os::windows::thread};
+use std::collections::HashSet; //, os::windows::thread};
 use eframe::{egui, glow::PROGRAM_BINARY_LENGTH};
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use scaffold_builder::PulledKeys;
-use tokio::runtime::Handle;
+use tokio::{runtime::Handle, sync::mpsc::UnboundedReceiver, sync::mpsc::UnboundedSender};
 use serde::{Deserialize, Serialize};
 use egui_extras::*;
-use file_browser::{TreeNode, FileBrowser};
+use file_browser::{TreeNode, FileBrowser, Command};
 use catppuccin_egui::MOCHA;
-use tokio::sync::mpsc::{Sender, Receiver};
 
 mod request;
 mod file_browser;
@@ -331,6 +330,8 @@ struct MastertechContext {
     disks: Value,
     disk_num: usize,
     rx: Option<std::sync::mpsc::Receiver<String>>,
+    command_rx: UnboundedReceiver<Command>,
+    command_tx: UnboundedSender<Command>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -358,7 +359,6 @@ struct MastertechContext {
     spinner: bool,
     read_hidden_files: bool,
     read_dirs_only: bool,
-    file_browser: FileBrowser,
     dragged_directory: Option<PathBuf>,
 
     //////////////////////////////////////////
@@ -422,11 +422,9 @@ impl Default for MasterTechApp {
     fn default() -> Self {
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
-        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let file_browser = FileBrowser::new(command_tx, command_rx);
-
-
+        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
+        //let (_, command_rx2) = tokio::sync::mpsc::unbounded_channel();
+   
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["File Browser".to_owned(), "Empty".to_owned()]);
         let [_, _] = tree.split_below(
@@ -480,6 +478,8 @@ impl Default for MasterTechApp {
             disks: Value::Array(vec![]),
             disk_num: 0,
             rx: Some(rx),
+            command_rx: command_rx,
+            command_tx: command_tx, 
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -506,7 +506,6 @@ impl Default for MasterTechApp {
             spinner: false,
             read_hidden_files: false,
             read_dirs_only: false,
-            file_browser: file_browser,
             dragged_directory: None,
 
             //////////////////////////////////////////
@@ -930,127 +929,53 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
+        let file_browser = FileBrowser::new(PathBuf::from("."), self.command_rx);
+
         ui.checkbox(&mut self.read_hidden_files, "Show hidden files");
-        // Lock the mutex to access `read_dirs_only` and use it to update the checkbox
-        println!("Trying to lock mutex in file_browse (1)");
-        {
-            let mut file_browser_guard = self.file_browser.lock().unwrap();
-            println!("Successfully locked mutex in file_browse (1)");
-            ui.checkbox(&mut file_browser_guard.read_dirs_only, "Show Directories ONLY");
-        }  // MutexGuard is dropped here, unlocking the mutex
-    
-        //
-        println!("Trying to lock mutex in file_browse (2)");
-        {
-            
-            let file_browser_guard = self.file_browser.lock().unwrap();
-            println!("Successfully locked mutex in file_browse (2)");
-            if let Some(tree) = &file_browser_guard.tree {
-                self.print_tree_in_ui(tree, ui);
-            }
-        }
-        println!("Trying to lock mutex in file_browse (3)");
+        ui.checkbox(&mut file_browser.read_dirs_only, "Show Directories ONLY");
+        
+
+        let handle = Handle::current();
+
+        std::thread::spawn(move||{
+            handle.block_on(async{
+                file_browser.run().await;
+            });
+        });
+
         let scroll_view = egui::ScrollArea::new([true, true]).id_source("file_browser_scroll");
         scroll_view.show(ui, |ui| {
-            
-            let file_browser_guard = self.file_browser.lock().unwrap();
-            println!("Successfully locked mutex in file_browse (3)");
-            if let Some(tree) = &file_browser_guard.tree {
+            if let Some(tree) = &file_browser.tree {
                 self.print_tree_in_ui(tree, ui);
             }
         });
-    
-        // Handle keyboard input for copy (Ctrl+C) and cut (Ctrl+X)
+
         if ui.input(|i| i.key_pressed(egui::Key::C)) && ui.input(|i| i.modifiers.ctrl) {
             // Code to copy the selected file or directory
         }
         if ui.input(|i| i.key_pressed(egui::Key::X)) && ui.input(|i| i.modifiers.ctrl) {
             // Code to cut the selected file or directory
         }
-    
-        println!("Trying to lock mutex in file_browse (4)");
-        {
-            
-            let mut file_browser_guard = self.file_browser.lock().unwrap();
-            println!("Successfully locked mutex in file_browse (4)");
-            for dir in &file_browser_guard.directories {
-                let response = ui.button(dir.to_string_lossy());
-    
-                if response.is_pointer_button_down_on() {
-                    // The button was clicked and the mouse button is still down.
-                    // This is the start of a drag operation.
-                    self.dragged_directory = Some(dir.clone());
-                } else if let Some(dragged_dir) = &self.dragged_directory {
-                    if response.hovered() && ui.ctx().input(|i|i.pointer.primary_released()) {
-                        // The mouse button was released while hovering over this button.
-                        // This is the end of a drag operation.
-                        file_browser_guard.copy(&dragged_dir.clone(), &dir.clone());
-                        self.dragged_directory = None;
-                    }
-                }
-            }
-        }
-
-        println!("Trying to lock mutex in file_browse (5)");
-        {
-            println!("Successfully locked mutex in file_browse (5)");
-            let handle = Handle::current();
-            let file_browser_clone = Arc::clone(&self.file_browser);
-            let mut file_browser_guard = self.file_browser.lock().unwrap();
-            if file_browser_guard.needs_refresh {
-                std::thread::spawn(move || {
-                    //let mut rt = tokio::runtime::Runtime::new().unwrap();
-                    handle.block_on(async {
-                        let mut file_browser = file_browser_clone.lock().unwrap();
-                        if let Err(e) = file_browser.run().await {
-                            eprintln!("Error: {:?}", e);
-                        }
-                    });
-                });
-    
-                // Reset the needs_refresh flag
-                //file_browser_guard.needs_refresh = false;
-            }
-
-        }
-        
     }
-
+    
     fn print_tree_in_ui(&self, node: &TreeNode, ui: &mut Ui) {
         match node {
             TreeNode::File(name) => {
                 ui.label(format!("File: {}", name));
             },
             TreeNode::Directory(name, children) => {
-                let expanded_dirs;
-                // Lock the mutex, clone the data, then unlock it
-                {
-                    let file_browser_guard = self.file_browser.lock().unwrap();
-                    expanded_dirs = file_browser_guard.expanded_dirs.clone();
-                }
                 ui.collapsing(format!("Directory: {}", name), |ui| {
-                    if expanded_dirs.contains(name) {
+                    if self.file_browser.expanded_dirs.contains(name) {
                         for child in children {
                             self.print_tree_in_ui(child, ui);
-                            ui.label(format!("  {:?}", &child));
+                            ui.label(format!("  {:#?}", &child));
                         }
                     }
                 });
             },
             TreeNode::UnexpandedDirectory(name, path) => {
-                let (mut new_current_path, mut needs_refresh);
-                {
-                    let mut file_browser_guard = self.file_browser.lock().unwrap();
-                    file_browser_guard.expanded_dirs.insert(name.clone());
-                    new_current_path = path.clone();
-                    needs_refresh = true;
-                }
                 ui.collapsing(format!("Unexpanded: {}", name), |ui| {
-                    {
-                        let mut file_browser_guard = self.file_browser.lock().unwrap();
-                        file_browser_guard.current_path = new_current_path;
-                        file_browser_guard.needs_refresh = needs_refresh;
-                    }
+                    let _ = self.command_tx.send(Command::Refresh);
                 });
             }
         }
