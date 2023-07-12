@@ -1,14 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] 
 // hide output_console window on Windows in release
 use serde_json::Value;
-use std::path::PathBuf;
-use sysinfo::*;
-use std::collections::HashSet; //, os::windows::thread};
+use std::{path::PathBuf, sync::{Arc, Mutex}, collections::HashSet}; //, os::windows::thread};
+use sysinfo::*; 
 use eframe::{egui, glow::PROGRAM_BINARY_LENGTH};
 use egui::*;
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use scaffold_builder::PulledKeys;
-use tokio::{runtime::Handle, sync::mpsc::UnboundedReceiver, sync::mpsc::UnboundedSender};
+use tokio::{runtime::Handle, sync::mpsc::{UnboundedReceiver, UnboundedSender}};
 use serde::{Deserialize, Serialize};
 use egui_extras::*;
 use file_browser::{TreeNode, FileBrowser, Command};
@@ -330,8 +329,6 @@ struct MastertechContext {
     disks: Value,
     disk_num: usize,
     rx: Option<std::sync::mpsc::Receiver<String>>,
-    command_rx: UnboundedReceiver<Command>,
-    command_tx: UnboundedSender<Command>,
 
     //////////////////////////////////////////
     /*          Widgets and UI elements     */
@@ -422,7 +419,6 @@ impl Default for MasterTechApp {
     fn default() -> Self {
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
-        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
         //let (_, command_rx2) = tokio::sync::mpsc::unbounded_channel();
    
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
@@ -478,8 +474,6 @@ impl Default for MasterTechApp {
             disks: Value::Array(vec![]),
             disk_num: 0,
             rx: Some(rx),
-            command_rx: command_rx,
-            command_tx: command_tx, 
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -929,24 +923,54 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-        let file_browser = FileBrowser::new(PathBuf::from("."), self.command_rx);
+        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
+        let (result_tx, result_rx) = std::sync::mpsc::channel::<Option<TreeNode>>();
+        //let file_browser = FileBrowser::new(PathBuf::from("."), self.command_rx);
 
+        //let mut file_browser = FileBrowser::new(PathBuf::from("."), command_rx);
+        
         ui.checkbox(&mut self.read_hidden_files, "Show hidden files");
-        ui.checkbox(&mut file_browser.read_dirs_only, "Show Directories ONLY");
+        ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
         
 
         let handle = Handle::current();
 
         std::thread::spawn(move||{
             handle.block_on(async{
-                file_browser.run().await;
+                let mut file_browser = FileBrowser::new(PathBuf::from("."), command_rx);
+                file_browser.run().await.unwrap();
+                result_tx.send(file_browser.tree).unwrap();
             });
         });
 
         let scroll_view = egui::ScrollArea::new([true, true]).id_source("file_browser_scroll");
         scroll_view.show(ui, |ui| {
-            if let Some(tree) = &file_browser.tree {
-                self.print_tree_in_ui(tree, ui);
+            if let Ok(Some(tree)) = result_rx.try_recv() {
+                let mut nodes: Vec<&TreeNode> = vec![&tree];
+    
+                while let Some(node) = nodes.pop() {
+                    match node {
+                        TreeNode::File(name) => {
+                            ui.label(format!("File: {}", name));
+                        },
+                        TreeNode::Directory(name, children) => {
+                            ui.collapsing(format!("Directory: {}", name), |ui| {
+                                // This is a placeholder. You need to manage expanded directories in your GUI
+                                let expanded_dirs = HashSet::new();
+                                if expanded_dirs.contains(name) {
+                                    for child in children {
+                                        nodes.push(child);
+                                    }
+                                }
+                            });
+                        },
+                        TreeNode::UnexpandedDirectory(name, _path) => {
+                            ui.collapsing(format!("Unexpanded: {}", name), |ui| {
+                                let _ = command_tx.send(Command::Refresh);
+                            });
+                        }
+                    }
+                }
             }
         });
 
@@ -957,33 +981,6 @@ impl MastertechContext {
             // Code to cut the selected file or directory
         }
     }
-    
-    fn print_tree_in_ui(&self, node: &TreeNode, ui: &mut Ui) {
-        match node {
-            TreeNode::File(name) => {
-                ui.label(format!("File: {}", name));
-            },
-            TreeNode::Directory(name, children) => {
-                ui.collapsing(format!("Directory: {}", name), |ui| {
-                    if self.file_browser.expanded_dirs.contains(name) {
-                        for child in children {
-                            self.print_tree_in_ui(child, ui);
-                            ui.label(format!("  {:#?}", &child));
-                        }
-                    }
-                });
-            },
-            TreeNode::UnexpandedDirectory(name, path) => {
-                ui.collapsing(format!("Unexpanded: {}", name), |ui| {
-                    let _ = self.command_tx.send(Command::Refresh);
-                });
-            }
-        }
-    }
-    
-    
-      
-    
 
     fn scripts(&mut self, ui: &mut Ui){ }
 }
