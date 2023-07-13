@@ -10,7 +10,7 @@ use scaffold_builder::PulledKeys;
 use tokio::{runtime::Handle, sync::mpsc::{UnboundedReceiver, UnboundedSender}};
 use serde::{Deserialize, Serialize};
 use egui_extras::*;
-use file_browser::{TreeNode, FileBrowser, Command};
+use file_browser::{file_browsing, Command};
 use catppuccin_egui::MOCHA;
 
 mod request;
@@ -923,64 +923,67 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-        let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel::<Command>();
-        let (result_tx, result_rx) = std::sync::mpsc::channel::<Option<TreeNode>>();
-        //let file_browser = FileBrowser::new(PathBuf::from("."), self.command_rx);
-
-        //let mut file_browser = FileBrowser::new(PathBuf::from("."), command_rx);
-        
-        ui.checkbox(&mut self.read_hidden_files, "Show hidden files");
-        ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
-        
-
-        let handle = Handle::current();
-
-        std::thread::spawn(move||{
-            handle.block_on(async{
-                let mut file_browser = FileBrowser::new(PathBuf::from("."), command_rx);
-                file_browser.run().await.unwrap();
-                result_tx.send(file_browser.tree).unwrap();
-            });
-        });
-
-        let scroll_view = egui::ScrollArea::new([true, true]).id_source("file_browser_scroll");
-        scroll_view.show(ui, |ui| {
-            if let Ok(Some(tree)) = result_rx.try_recv() {
-                let mut nodes: Vec<&TreeNode> = vec![&tree];
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<Command>();
     
-                while let Some(node) = nodes.pop() {
-                    match node {
-                        TreeNode::File(name) => {
-                            ui.label(format!("File: {}", name));
-                        },
-                        TreeNode::Directory(name, children) => {
-                            ui.collapsing(format!("Directory: {}", name), |ui| {
-                                // This is a placeholder. You need to manage expanded directories in your GUI
-                                let expanded_dirs = HashSet::new();
-                                if expanded_dirs.contains(name) {
-                                    for child in children {
-                                        nodes.push(child);
-                                    }
-                                }
-                            });
-                        },
-                        TreeNode::UnexpandedDirectory(name, _path) => {
-                            ui.collapsing(format!("Unexpanded: {}", name), |ui| {
-                                let _ = command_tx.send(Command::Refresh);
-                            });
-                        }
-                    }
+        // Create a TextEdit for directory input.
+        let dir_input = TextEdit::singleline(&mut self.current_dir)
+            .id_source("dir_input");
+        ui.add(dir_input);
+    
+        // Listen for changes in the directory input.
+        if ui.input(|i| i.key_released(Key::Enter)) {
+            let path = if self.current_dir.is_empty() {
+                env::current_dir().unwrap()
+            } else {
+                PathBuf::from(self.current_dir.clone())
+            };
+            let depth = 1; // Default to listing one level of subdirectories.
+            if let Err(e) = sender.send(Command::ListDir(path, depth, receiver.clone())) {
+                eprintln!("Error sending command: {:?}", e);
+            }
+        }
+    
+        // TODO: Handle responses from the file_browsing function to update the file/directory listing.
+    
+        // Create a new ScrollArea for the file/directory listing.
+        let scroll_area = ScrollArea::new([true, true]).id_source("file_browser_scroll");
+        scroll_area.show(ui, |ui| {
+            // TODO: Display the directories and files here.
+        });
+    
+        // Handling for copy, cut, and delete operations.
+        if ui.input(|i| i.key_pressed(Key::C) && i.modifiers.ctrl) {
+            // Assume self.selected_path is the path of the selected file or directory
+            if let Some(selected_path) = &self.selected_path {
+                self.copied_path = Some(selected_path.clone());
+            }
+        }
+        if ui.input(|i| i.key_pressed(Key::V) && i.modifiers.ctrl) {
+            // Paste the copied or cut file or directory to the current directory
+            if let Some(copied_path) = &self.copied_path {
+                let destination_path = PathBuf::from(&self.current_dir);
+                if let Err(e) = sender.send(Command::Copy(copied_path.clone(), destination_path, receiver.clone())) {
+                    eprintln!("Error sending command: {:?}", e);
                 }
             }
-        });
-
-        if ui.input(|i| i.key_pressed(egui::Key::C)) && ui.input(|i| i.modifiers.ctrl) {
-            // Code to copy the selected file or directory
         }
-        if ui.input(|i| i.key_pressed(egui::Key::X)) && ui.input(|i| i.modifiers.ctrl) {
-            // Code to cut the selected file or directory
+        if ui.input(|i| i.key_pressed(Key::X) && i.modifiers.ctrl) {
+            // Assume self.selected_path is the path of the selected file or directory
+            if let Some(selected_path) = &self.selected_path {
+                self.copied_path = Some(selected_path.clone());
+            }
+        }
+        if ui.input(|i| i.key_pressed(Key::Delete)) {
+            // Assume self.selected_path is the path of the selected file or directory
+            if let Some(selected_path) = &self.selected_path {
+                if let Err(e) = sender.send(Command::Delete(selected_path.clone(), receiver.clone())) {
+                    eprintln!("Error sending command: {:?}", e);
+                }
+            }
         }
     }
+    
+    
 
     fn scripts(&mut self, ui: &mut Ui){ }
 }
