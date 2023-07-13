@@ -1,8 +1,108 @@
-use std::{error::Error, path::{Path, PathBuf}};
+use std::io::{stdin, stdout, Write};
+use std::path::PathBuf;
+use tokio::sync::mpsc::unbounded_channel;
 use tokio::fs;
-use tokio::sync::mpsc::UnboundedReceiver;
-use async_recursion::async_recursion; 
+use walkdir::WalkDir;
+use tokio::sync::mpsc::UnboundedSender;
+use std::io::Error;
 
+#[derive(Debug)]
+pub enum Response {
+    Message(String),
+    DirectoryListing(Vec<PathBuf>),
+    Error(Error),
+}
+
+type ResponseSender = UnboundedSender<Response>;
+
+#[derive(Debug)]
+pub enum Command {
+    Copy(PathBuf, PathBuf, ResponseSender),
+    Move(PathBuf, PathBuf, ResponseSender),
+    Delete(PathBuf, ResponseSender),
+    Rename(PathBuf, PathBuf, ResponseSender),
+    ListDir(PathBuf, usize, ResponseSender),
+}
+
+pub async fn file_browsing(mut receiver: tokio::sync::mpsc::UnboundedReceiver<Command>) {
+    while let Some(command) = receiver.recv().await {
+        tokio::spawn(async move {
+            match command {
+                Command::Copy(src, dst, sender) => {
+                    let result = fs::copy(&src, &dst).await;
+                    let response = match result {
+                        Ok(_) => Response::Message(format!("Copied {} to {}", src.display(), dst.display())),
+                        Err(e) => Response::Error(e),
+                    };
+                    if let Err(e) = sender.send(response) {
+                        eprintln!("Error sending response: {:?}", e);
+                    }
+                },
+                Command::Move(src, dst, sender) => {
+                    let result = fs::rename(&src, &dst).await;
+                    let response = match result {
+                        Ok(_) => Response::Message(format!("Moved {} to {}", src.display(), dst.display())),
+                        Err(e) => Response::Error(e),
+                    };
+                    if let Err(e) = sender.send(response) {
+                        eprintln!("Error sending response: {:?}", e);
+                    }
+                },
+                Command::Delete(path, sender) => {
+                    let result = fs::remove_dir_all(&path).await;
+                    let response = match result {
+                        Ok(_) => Response::Message(format!("Deleted {}", path.display())),
+                        Err(e) => Response::Error(e),
+                    };
+                    if let Err(e) = sender.send(response) {
+                        eprintln!("Error sending response: {:?}", e);
+                    }
+                },
+                Command::Rename(src, dst, sender) => {
+                    let result = fs::rename(&src, &dst).await;
+                    let response = match result {
+                        Ok(_) => Response::Message(format!("Renamed {} to {}", src.display(), dst.display())),
+                        Err(e) => Response::Error(e),
+                    };
+                    if let Err(e) = sender.send(response) {
+                        eprintln!("Error sending response: {:?}", e);
+                    }
+                },
+                Command::ListDir(path, depth, sender) => {
+                    let walker = WalkDir::new(&path).max_depth(depth);
+                    let mut entries = Vec::new();
+                    for entry in walker {
+                        let entry = match entry {
+                            Ok(entry) => entry,
+                            Err(e) => {
+                                let response = Response::Error(e.into());
+                                if let Err(e) = sender.send(response) {
+                                    eprintln!("Error sending response: {:?}", e);
+                                }
+                                continue;
+                            }
+                        };
+                        entries.push(entry.into_path());
+                    }
+                    let response = Response::DirectoryListing(entries);
+                    if let Err(e) = sender.send(response) {
+                        eprintln!("Error sending response: {:?}", e);
+                    }
+                },
+            }
+        });
+    }
+}
+
+
+
+
+
+
+
+
+
+/*
 #[derive(Clone)]
 pub enum Command {
     Refresh,
@@ -106,3 +206,4 @@ impl FileBrowser {
     }
 }
 
+*/
