@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] 
 // hide output_console window on Windows in release
 use serde_json::Value;
-use std::{path::PathBuf, sync::{Arc, Mutex}, collections::HashSet}; //, os::windows::thread};
+use std::{path::PathBuf, sync::{Arc, Mutex}, collections::HashSet, env}; //, os::windows::thread};
 use sysinfo::*; 
 use eframe::{egui, glow::PROGRAM_BINARY_LENGTH};
 use egui::*;
@@ -10,9 +10,13 @@ use scaffold_builder::PulledKeys;
 use tokio::{runtime::Handle, sync::mpsc::{UnboundedReceiver, UnboundedSender}};
 use serde::{Deserialize, Serialize};
 use egui_extras::*;
-use file_browser::{file_browsing, Command};
 use catppuccin_egui::MOCHA;
 
+use file_browser::{file_browsing, Command, Response};
+use request::SendScaffoldRequest;
+use system_info::RetrieveSystemInfo;
+
+mod system_info;
 mod request;
 mod file_browser;
 mod scaffold_builder;
@@ -30,277 +34,7 @@ async fn main() -> eframe::Result<()> {
     )
 }
 
-pub struct SendAsyncReq {
-    tx: std::sync::mpsc::Sender<String>,
-}
 
-#[derive(Serialize, Deserialize)]
-pub struct SystemInformation{
-    cpu_name: String,
-    total_ram: String,
-    system_name: String,
-    disks: DiskData, //Option<String>
-}
-
-#[derive(Serialize, Deserialize)]
-struct DiskData {
-    disks: Vec<Value>,
-}
-
-impl DiskData {
-    fn new() -> Self {
-        DiskData {
-            disks: Vec::new(),
-        }
-    }
-
-    fn add_disk(&mut self, disk: Value){
-        self.disks.push(disk);
-    }
-}
-
-impl SendAsyncReq{
-    fn get_ticket(so_number: String, tx: std::sync::mpsc::Sender<String>){
-        let handle = Handle::current();
-        
-        std::thread::spawn(move||{
-            handle.block_on(async{
-                let args = vec![
-                    serde_json::json!(so_number),
-                    serde_json::json!("false"),
-                ];
-            
-                let scaffold_builder = scaffold_builder::ScaffoldRequestBuilder{
-                    app: scaffold_builder::ScaffoldApps::Everest,
-                    action: scaffold_builder::ScaffoldActions::EverestCall, 
-                    call: Some(scaffold_builder::ScaffoldCalls::GetOrder), 
-                    arguments: Some(args.clone())
-            
-                };
-
-                let response = request::request_ticket_info(scaffold_builder).await;
-
-
-                match response { // Successfully received GetTicketResponse
-                    Ok(get_ticket_response) => {
-                        
-                        // You can now use fields of get_ticket_response
-                        let header = &get_ticket_response.header;
-                        let customer = &get_ticket_response.customer;
-                        let addresses = &get_ticket_response.addresses.address_object;
-                        let items_objects = get_ticket_response.items;
-                        //let transactions = &get_ticket_response.transactions;
-
-                        let mut checkin_note = "".to_string();
-                        let mut itemcodes = "".to_string();
-
-                        // DW_UPDATE_DATE is the exact time that the line item (AKA 'items') was added.
-                        // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
-                        for object in items_objects{
-
-                            // If i want to....
-                            // "COST": "7.100000", this is our cost
-                            // ITEM_PR_FEX is what we charge the customer, although AMOUNT is the same value
-                            object.get("NOTE")
-                            .and_then(|v| v.as_str())
-                            .map(|note| {
-                                if note != "null" && !note.is_empty() {
-                                    let parts: Vec<&str> = note.split("Symptoms (Details):").collect();
-                                    if parts.len() > 1{
-                                        let note = &parts[1].to_string();
-                                        checkin_note = note.to_string();
-                                    }
-                                }
-                            });
-
-                            object.get("ITEM_CODE")
-                            .and_then(|v| v.as_str())
-                            .map(|item_code| {
-                                itemcodes += item_code;
-                            });
-                        }
-
-                        let ticket_information = scaffold_builder::TicketInformation{
-                            cust_code: header.CUST_CODE.clone(),
-                            user_id: header.USER_ID.clone(),
-                            customer_phone_1: addresses.TEL1.clone(),
-                            customer_phone_2: addresses.TEL2.clone(),
-                            customer_email: addresses.EMAIL.clone(),
-                            last_invoice_amount: customer.LI_AMT.clone(),
-                            terms: header.TERMS.clone(),
-                            doc_alias: header.DOC_ALIAS.clone(),
-                            department: header.DEP.clone(),
-                            jurisdiction: header.JURISCODE.clone(),
-                            invoice_amnt: header.INV_AMOUNT.clone(),
-                            customer_name: customer.NAME.clone(),
-                            checkin_notes: checkin_note.clone(),
-                            last_invoice_number: customer.LI_DOC.clone(),
-                            item_codes: itemcodes.clone(),
-                            //last_tuneup_date: customer.LAST_TUNEUP_DATE.clone(),
-                            //last_checkin_date: customer.LI_AMT.clone(),
-                            total_invoice_count: customer.NUM_INV.clone(),
-                        };
-
-                        let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();
-
-                        match tx.send(ticket_info_json) {
-                            Ok(_) => {
-                                drop(tx)
-                            },
-                            Err(e) => {
-                                eprintln!("Error while sending ticket information: {}", e.to_string());
-                                drop(tx)
-                            }
-                        }
-                        
-                    },
-                    Err(e) => { 
-                        match tx.send(e.to_string()) {
-                            Ok(_) => {
-                                drop(tx)
-                            },
-                            Err(e) => {
-                                eprintln!("Error while sending error message: {}", e);
-                                drop(tx)
-                            }
-                        }
-                    }
-                    
-                }
-            });
-        }); 
-    }
-    
-    fn get_cps(so_number: String, tx: std::sync::mpsc::Sender<String>){
-        let handle = Handle::current();
-        
-        std::thread::spawn(move||{
-            handle.block_on(async{
-                let args = vec![
-                    serde_json::json!(so_number),
-                ];
-            
-                let scaffold_builder = scaffold_builder::ScaffoldRequestBuilder{
-                    app: scaffold_builder::ScaffoldApps::SoftwareLicenseFetch,
-                    action: scaffold_builder::ScaffoldActions::FetchKeys, 
-                    call: Some(scaffold_builder::ScaffoldCalls::None),
-                    arguments: Some(args.clone())
-                };
-                
-                let response = request::request_keys(scaffold_builder).await;
-
-                match response { // Successfully received GetTicketResponse
-                    Ok(get_keys_response) => {
-
-                        let webroot_key = &get_keys_response.webroot_key;
-                        let superanti_key = &get_keys_response.superanti_key;
-
-                
-
-                        let cps_keys = PulledKeys{
-                            webroot_key: webroot_key.to_string(),
-                            superanti_key: superanti_key.to_string()
-                        };
-
-                        let cps_keys_json = serde_json::to_string(&cps_keys).unwrap();
-                        
-                        match tx.send(cps_keys_json) {
-                            Ok(_) => {
-                                drop(tx)
-                            },
-                            Err(e) => {
-                                eprintln!("Error while sending ticket information: {}", e.to_string());
-                                drop(tx)
-                            }
-                        }
-                        
-                    },
-                    Err(e) => { 
-                        match tx.send(e.to_string()) {
-                            Ok(_) => {
-                                drop(tx)
-                            },
-                            Err(e) => {
-                                eprintln!("Error while sending error message: {}", e);
-                                drop(tx)
-                            }
-                        }
-                    }                    
-                }
-            });
-        });
-    }
-
-    fn get_system_specs(tx: std::sync::mpsc::Sender<String>){
-        let handle = Handle::current();
-        
-        std::thread::spawn(move||{
-            handle.block_on(async{
-                let mut sys = System::new_all(); // Create `System` struct.
-
-                let cpu_brand = sys.cpus()[0].brand().to_string();
-                let ram = (sys.total_memory() / ( 1024 * 1024 * 1024)).to_string();
-                let system = sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
-                let disks = sys.disks();
-                let disks_clone = disks.clone();
-
-
-                let mut data = DiskData::new();
-
-                for disk in disks_clone{
-                    if !disk.is_removable(){
-                        data.add_disk(serde_json::json!({
-                            "name": disk.name(),
-                            "letter": disk.mount_point().to_str(),
-                            "total space": (disk.total_space() / ( 1024 * 1024 * 1024)).to_string(),
-                            "available space": (disk.available_space() / ( 1024 * 1024 * 1024)).to_string(),
-                        }));
-                    }   
-                }
-                
-                // String for each disk: [name] [letter]:\\ [ Available space / Total space ]
-                let system_info = SystemInformation{
-                    cpu_name: cpu_brand,
-                    total_ram: ram,
-                    system_name: system,
-                    disks: data
-                };
-
-                let system_info_json = serde_json::to_string(&system_info).unwrap();
-
-                match tx.send(system_info_json) {
-                    Ok(_) => {
-                        drop(tx);
-                    },
-                    Err(e) => {
-                        eprintln!("Error while sending ticket information: {}", e.to_string());
-                        drop(tx);
-                    }
-                }
-                
-
-
-            });
-        });
-    }
-    
-    fn get_file_browser(tx: std::sync::mpsc::Sender<String>){
-
-    }
-
-    #[cfg(target_os = "windows")]
-    fn get_gpu(){
-        let gpu = std::process::Command::new("cmd").args(["/C", "wmic path win32_VideoController get name"]).output();
-        match gpu{
-            Ok(_) => {
-
-            }
-            Err(e) => {
-                println!("Error: {}", e);
-            }
-        }
-    }
-}
 struct MastertechContext {
     //////////////////////////////////////////
     /*          Mastertech Vars             */
@@ -309,25 +43,30 @@ struct MastertechContext {
     customer_name: String,
     phone1: String,
     phone2: String,
+    checkin_notes: String,
+    recommendations: String,
+    checkin_rep: String,
+    last_invoice_num: String,
+    last_invoice_amnt: String,
+    jurisdiction: String,
+
+    webroot_key: String,
+    superanti_key: String,
+
     salesman_cbox: scaffold_builder::Salesman,
     techs_cbox: scaffold_builder::Techs,
     ram_test_cbox: scaffold_builder::HardwareTest,
     hdd_test_cbox: scaffold_builder::HardwareTest,
     ssd_test_cbox: scaffold_builder::HardwareTest,
-    checkin_notes: String,
-    webroot_key: String,
-    superanti_key: String,
-    recommendations: String,
-    checkin_rep: String,
+
     output_text: String,
-    last_invoice_num: String,
-    last_invoice_amnt: String,
-    jurisdiction: String,
+
     cpu_name: String,
     total_ram: String,
     system_name: String,
     disks: Value,
     disk_num: usize,
+
     rx: Option<std::sync::mpsc::Receiver<String>>,
 
     //////////////////////////////////////////
@@ -359,6 +98,17 @@ struct MastertechContext {
     dragged_directory: Option<PathBuf>,
 
     //////////////////////////////////////////
+    /*          File Browsing               */
+    //////////////////////////////////////////
+    current_dir: String,
+    selected_path: Option<PathBuf>,
+    copied_path: Option<PathBuf>,
+    destination_path: Option<PathBuf>,
+    entries: Vec<PathBuf>,
+    selected_directory: Option<PathBuf>,
+    directory_contents: Vec<PathBuf>,
+
+    //////////////////////////////////////////
     /*          UI Colors                   */
     //////////////////////////////////////////
     style: Option<egui_dock::Style>,
@@ -369,7 +119,8 @@ struct MastertechContext {
 struct MasterTechApp {
     context: MastertechContext,
     tree: Tree<String>,
-    send_async_req: SendAsyncReq,
+    sysinfo_request: system_info::RetrieveSystemInfo,
+    scaffold_request: SendScaffoldRequest,
 }
 
 impl TabViewer for MastertechContext {
@@ -417,10 +168,6 @@ impl TabViewer for MastertechContext {
 
 impl Default for MasterTechApp {
     fn default() -> Self {
-        // Create a watch channel with a default value
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-        //let (_, command_rx2) = tokio::sync::mpsc::unbounded_channel();
-   
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.3, vec!["File Browser".to_owned(), "Empty".to_owned()]);
         let [_, _] = tree.split_below(
@@ -441,8 +188,17 @@ impl Default for MasterTechApp {
             }
         }
         
-        let send_async_req = SendAsyncReq{
-            tx: tx,
+        // Create a watch channel with a default value
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let tx_scaffold = tx.clone();
+        let tx_sysinfo = tx.clone();
+
+        let sysinfo_request = system_info::RetrieveSystemInfo{
+            tx: tx_sysinfo,
+        };
+
+        let scaffold_request = SendScaffoldRequest{
+            tx: tx_scaffold
         };
 
         let context = MastertechContext {
@@ -453,26 +209,31 @@ impl Default for MasterTechApp {
             customer_name: "".to_string(),
             phone1: "".to_string(),
             phone2: "".to_string(),
+            recommendations: "".to_string(),
+            checkin_notes: "".to_string(),
+            send_specs: false,
+            checkin_rep: "Checkin Rep: ".to_string(),
+            last_invoice_num: "".to_string(),
+            last_invoice_amnt: "".to_string(),
+            jurisdiction: "".to_string(),
+
+            webroot_key: "Webroot Key".to_string(),
+            superanti_key: "SuperAnti Key".to_string(),
+
             salesman_cbox: scaffold_builder::Salesman::Jake,
             techs_cbox: scaffold_builder::Techs::Logan,
             ram_test_cbox: scaffold_builder::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold_builder::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold_builder::HardwareTest::SsdNotTested,
-            checkin_notes: "".to_string(),
-            webroot_key: "Webroot Key".to_string(),
-            superanti_key: "SuperAnti Key".to_string(),
-            recommendations: "".to_string(),
-            send_specs: false,
-            checkin_rep: "Checkin Rep: ".to_string(),
+
             output_text: "".to_string(),
-            last_invoice_num: "".to_string(),
-            last_invoice_amnt: "".to_string(),
-            jurisdiction: "".to_string(),
+
             cpu_name: "".to_string(),
             total_ram: "".to_string(),
             system_name: "".to_string(),
             disks: Value::Array(vec![]),
             disk_num: 0,
+
             rx: Some(rx),
 
             //////////////////////////////////////////
@@ -503,6 +264,17 @@ impl Default for MasterTechApp {
             dragged_directory: None,
 
             //////////////////////////////////////////
+            /*          File Browsing               */
+            //////////////////////////////////////////
+            current_dir: env::current_dir().unwrap().to_str().unwrap().to_string(),
+            selected_path: None,
+            copied_path: None,
+            destination_path: None,
+            entries: vec![],
+            selected_directory: None,
+            directory_contents: vec![],
+
+            //////////////////////////////////////////
             /*          UI Colors                   */
             //////////////////////////////////////////
             style: None,
@@ -511,7 +283,7 @@ impl Default for MasterTechApp {
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124))
         };
 
-        Self { context, tree, send_async_req }
+        Self { context, tree, sysinfo_request, scaffold_request }
     }
 }
 
@@ -841,7 +613,7 @@ impl MastertechContext {
                         ui.label("GPU");
                     });
                     row.col(|ui|{
-                        let gpu = SendAsyncReq::get_gpu();
+                        let gpu = RetrieveSystemInfo::get_gpu();
                         //ui.label(format!("{}", gpu));
                     });
                 });
@@ -923,13 +695,41 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<Command>();
+        let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel::<Command>();
+        let (response_sender, mut response_receiver) = tokio::sync::mpsc::unbounded_channel::<Response>();
+
+        ui.horizontal_top(|ui|{
+            ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
+            ui.checkbox(&mut self.read_hidden_files ,"Show hidden files");
+        });
+
+        let directory_depth = 1; // Default to listing one level of subdirectories.
+        // match self.read_dirs_only{
+        //     true => directory_depth = 
+        //     false =>
+        // }
+
+        tokio::spawn(async move {
+            file_browsing(command_receiver).await;
+        });
     
         // Create a TextEdit for directory input.
         let dir_input = TextEdit::singleline(&mut self.current_dir)
             .id_source("dir_input");
         ui.add(dir_input);
     
+        // Send a ListDir command for the current directory.
+        let path = if self.current_dir.is_empty() {
+            env::current_dir().unwrap()
+        } else {
+            PathBuf::from(self.current_dir.clone())
+        };
+        let depth = 1; // Default to listing one level of subdirectories.
+        if let Err(e) = command_sender.send(Command::ListDir(path.clone(), depth, response_sender.clone())) {
+            eprintln!("Error sending command: {:?}", e);
+        }
+
+
         // Listen for changes in the directory input.
         if ui.input(|i| i.key_released(Key::Enter)) {
             let path = if self.current_dir.is_empty() {
@@ -937,18 +737,51 @@ impl MastertechContext {
             } else {
                 PathBuf::from(self.current_dir.clone())
             };
-            let depth = 1; // Default to listing one level of subdirectories.
-            if let Err(e) = sender.send(Command::ListDir(path, depth, receiver.clone())) {
+            
+            if let Err(e) = command_sender.send(Command::ListDir(path, directory_depth, response_sender.clone())) {
                 eprintln!("Error sending command: {:?}", e);
             }
         }
     
-        // TODO: Handle responses from the file_browsing function to update the file/directory listing.
-    
+        // Handle responses from the file_browsing function to update the file/directory listing.
+        while let Ok(response) = response_receiver.try_recv() {
+            match response {
+                Response::DirectoryListing(entries) => {
+                    self.entries = entries;
+                },
+                Response::Message(message) => {
+                    // Display the message to the user in some way.
+                    // This will depend on how your GUI is structured.
+                    println!("{}", message);
+                },
+                Response::Error(error) => {
+                    // Display the error to the user in some way.
+                    // This will depend on how your GUI is structured.
+                    eprintln!("Error: {:?}", error);
+                },
+            }
+        }
+
         // Create a new ScrollArea for the file/directory listing.
         let scroll_area = ScrollArea::new([true, true]).id_source("file_browser_scroll");
         scroll_area.show(ui, |ui| {
-            // TODO: Display the directories and files here.
+            for entry in &self.entries {
+                ui.collapsing(entry.to_string_lossy(), |ui| {
+                    if ui.selectable_label(self.selected_directory.as_ref() == Some(entry), entry.to_string_lossy()).clicked() {
+                        self.selected_directory = Some(entry.clone());
+                        if let Err(e) = command_sender.send(Command::ListDir(entry.clone(), 1, response_sender.clone())) {
+                            eprintln!("Error sending command: {:?}", e);
+                        }
+                    }
+                    if let Some(selected_directory) = &self.selected_directory {
+                        if selected_directory == entry {
+                            for content in &self.directory_contents {
+                                ui.label(content.to_string_lossy());
+                            }
+                        }
+                    }
+                });
+            }
         });
     
         // Handling for copy, cut, and delete operations.
@@ -962,7 +795,7 @@ impl MastertechContext {
             // Paste the copied or cut file or directory to the current directory
             if let Some(copied_path) = &self.copied_path {
                 let destination_path = PathBuf::from(&self.current_dir);
-                if let Err(e) = sender.send(Command::Copy(copied_path.clone(), destination_path, receiver.clone())) {
+                if let Err(e) = command_sender.send(Command::Copy(copied_path.clone(), destination_path, response_sender.clone())) {
                     eprintln!("Error sending command: {:?}", e);
                 }
             }
@@ -976,14 +809,12 @@ impl MastertechContext {
         if ui.input(|i| i.key_pressed(Key::Delete)) {
             // Assume self.selected_path is the path of the selected file or directory
             if let Some(selected_path) = &self.selected_path {
-                if let Err(e) = sender.send(Command::Delete(selected_path.clone(), receiver.clone())) {
+                if let Err(e) = command_sender.send(Command::Delete(selected_path.clone(), response_sender.clone())) {
                     eprintln!("Error sending command: {:?}", e);
                 }
             }
         }
     }
-    
-    
 
     fn scripts(&mut self, ui: &mut Ui){ }
 }
@@ -993,29 +824,30 @@ impl eframe::App for MasterTechApp {
         catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
         
         self.context.ctx = ctx.clone();
-        let ticket_sender = self.send_async_req.tx.clone();
-        let cps_sender = self.send_async_req.tx.clone();
-        let specs_sender = self.send_async_req.tx.clone();
+        let ticket_sender = self.scaffold_request.tx.clone();
+        let cps_sender = self.scaffold_request.tx.clone();
+        let specs_sender = self.sysinfo_request.tx.clone();
 
         if self.context.get_ticket_button_pressed == true {
             self.context.get_ticket_button_pressed = false;
             let service_num = self.context.so_number.clone();
             self.context.spinner = true;
-            SendAsyncReq::get_ticket(service_num, ticket_sender); 
+            SendScaffoldRequest::get_ticket(service_num, ticket_sender); 
         }
 
         if self.context.get_cps_button_pressed == true {
             self.context.get_cps_button_pressed = false;
             let service_num = self.context.so_number.clone();
             self.context.spinner = true;
-            SendAsyncReq::get_cps(service_num, cps_sender);
+            SendScaffoldRequest::get_cps(service_num, cps_sender);
         }   
 
         if self.context.get_specs == true{
             self.context.get_specs = false;
             self.context.spinner = true;
-            SendAsyncReq::get_system_specs(specs_sender);
+            RetrieveSystemInfo::get_system_specs(specs_sender);
         }
+
 
         let receiver = self.context.rx.as_ref().unwrap();
 
@@ -1055,7 +887,7 @@ Item Codes: {:?}\n",
                 self.context.spinner = false;
             }
             // If neither parse was successful, consider it an error
-            else if let Ok(info) = serde_json::from_str::<SystemInformation>(&message) {
+            else if let Ok(info) = serde_json::from_str::<system_info::SystemInformation>(&message) {
                 self.context.system_name = info.system_name;
                 self.context.cpu_name = info.cpu_name;
                 self.context.total_ram = info.total_ram;

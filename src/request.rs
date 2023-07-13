@@ -5,6 +5,11 @@ use std::error::Error;
 use futures_util::StreamExt;
 
 use crate::scaffold_builder::*;
+use tokio::runtime::Handle;
+
+pub struct SendScaffoldRequest {
+    pub tx: std::sync::mpsc::Sender<String>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct GetTicketResponse {
@@ -14,7 +19,6 @@ pub struct GetTicketResponse {
     pub addresses: Addresses,
     pub items: Vec<Value>,
 }
-
 
 pub struct GetKeysResponse{
     pub webroot_key: String,
@@ -163,6 +167,181 @@ pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core
                 },
                 Err(e) => Err(Box::new(e)),
             }
+}
+
+impl SendScaffoldRequest{
+    pub fn get_ticket(so_number: String, tx: std::sync::mpsc::Sender<String>){
+        let handle = Handle::current();
+        
+        std::thread::spawn(move||{
+            handle.block_on(async{
+                let args = vec![
+                    serde_json::json!(so_number),
+                    serde_json::json!("false"),
+                ];
+            
+                let scaffold_builder = ScaffoldRequestBuilder{
+                    app: ScaffoldApps::Everest,
+                    action: ScaffoldActions::EverestCall, 
+                    call: Some(ScaffoldCalls::GetOrder), 
+                    arguments: Some(args.clone())
+            
+                };
+
+                let response = request_ticket_info(scaffold_builder).await;
+
+
+                match response { // Successfully received GetTicketResponse
+                    Ok(get_ticket_response) => {
+                        
+                        // You can now use fields of get_ticket_response
+                        let header = &get_ticket_response.header;
+                        let customer = &get_ticket_response.customer;
+                        let addresses = &get_ticket_response.addresses.address_object;
+                        let items_objects = get_ticket_response.items;
+                        //let transactions = &get_ticket_response.transactions;
+
+                        let mut checkin_note = "".to_string();
+                        let mut itemcodes = "".to_string();
+
+                        // DW_UPDATE_DATE is the exact time that the line item (AKA 'items') was added.
+                        // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
+                        for object in items_objects{
+
+                            // If i want to....
+                            // "COST": "7.100000", this is our cost
+                            // ITEM_PR_FEX is what we charge the customer, although AMOUNT is the same value
+                            object.get("NOTE")
+                            .and_then(|v| v.as_str())
+                            .map(|note| {
+                                if note != "null" && !note.is_empty() {
+                                    let parts: Vec<&str> = note.split("Symptoms (Details):").collect();
+                                    if parts.len() > 1{
+                                        let note = &parts[1].to_string();
+                                        checkin_note = note.to_string();
+                                    }
+                                }
+                            });
+
+                            object.get("ITEM_CODE")
+                            .and_then(|v| v.as_str())
+                            .map(|item_code| {
+                                itemcodes += item_code;
+                            });
+                        }
+
+                        let ticket_information = TicketInformation{
+                            cust_code: header.CUST_CODE.clone(),
+                            user_id: header.USER_ID.clone(),
+                            customer_phone_1: addresses.TEL1.clone(),
+                            customer_phone_2: addresses.TEL2.clone(),
+                            customer_email: addresses.EMAIL.clone(),
+                            last_invoice_amount: customer.LI_AMT.clone(),
+                            terms: header.TERMS.clone(),
+                            doc_alias: header.DOC_ALIAS.clone(),
+                            department: header.DEP.clone(),
+                            jurisdiction: header.JURISCODE.clone(),
+                            invoice_amnt: header.INV_AMOUNT.clone(),
+                            customer_name: customer.NAME.clone(),
+                            checkin_notes: checkin_note.clone(),
+                            last_invoice_number: customer.LI_DOC.clone(),
+                            item_codes: itemcodes.clone(),
+                            //last_tuneup_date: customer.LAST_TUNEUP_DATE.clone(),
+                            //last_checkin_date: customer.LI_AMT.clone(),
+                            total_invoice_count: customer.NUM_INV.clone(),
+                        };
+
+                        let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();
+
+                        match tx.send(ticket_info_json) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                eprintln!("Error while sending ticket information: {}", e.to_string());
+                                drop(tx)
+                            }
+                        }
+                        
+                    },
+                    Err(e) => { 
+                        match tx.send(e.to_string()) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                eprintln!("Error while sending error message: {}", e);
+                                drop(tx)
+                            }
+                        }
+                    }
+                    
+                }
+            });
+        }); 
+    }
+    
+    pub fn get_cps(so_number: String, tx: std::sync::mpsc::Sender<String>){
+        let handle = Handle::current();
+        
+        std::thread::spawn(move||{
+            handle.block_on(async{
+                let args = vec![
+                    serde_json::json!(so_number),
+                ];
+            
+                let scaffold_builder = ScaffoldRequestBuilder{
+                    app: ScaffoldApps::SoftwareLicenseFetch,
+                    action: ScaffoldActions::FetchKeys, 
+                    call: Some(ScaffoldCalls::None),
+                    arguments: Some(args.clone())
+                };
+                
+                let response = request_keys(scaffold_builder).await;
+
+                match response { // Successfully received GetTicketResponse
+                    Ok(get_keys_response) => {
+
+                        let webroot_key = &get_keys_response.webroot_key;
+                        let superanti_key = &get_keys_response.superanti_key;
+
+                
+
+                        let cps_keys = PulledKeys{
+                            webroot_key: webroot_key.to_string(),
+                            superanti_key: superanti_key.to_string()
+                        };
+
+                        let cps_keys_json = serde_json::to_string(&cps_keys).unwrap();
+                        
+                        match tx.send(cps_keys_json) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                eprintln!("Error while sending ticket information: {}", e.to_string());
+                                drop(tx)
+                            }
+                        }
+                        
+                    },
+                    Err(e) => { 
+                        match tx.send(e.to_string()) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                eprintln!("Error while sending error message: {}", e);
+                                drop(tx)
+                            }
+                        }
+                    }                    
+                }
+            });
+        });
+    }
+
+
 }
 
 

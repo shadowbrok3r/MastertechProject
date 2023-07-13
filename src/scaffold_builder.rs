@@ -299,6 +299,7 @@ impl ScaffoldRequestBuilder {
 }
 
 
+
 /*
 Request Array(   <--  Use this method to search for a single key->term pair
     'user_email' => 'user@domain.com',
@@ -334,3 +335,5 @@ Request Array(   <--  Use this method to search for a multiple key->term pairs, 
     'limit' => 20 // the amount of records you'd like to return (max: 1000)
 );
  */
+
+ 
