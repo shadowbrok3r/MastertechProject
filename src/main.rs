@@ -717,6 +717,7 @@ impl MastertechContext {
             .id_source("dir_input");
         ui.add(dir_input);
     
+        // Send a ListDir command for the current directory.
         let path = if self.current_dir.is_empty() {
             env::current_dir().unwrap()
         } else {
@@ -726,30 +727,17 @@ impl MastertechContext {
         if let Err(e) = command_sender.send(Command::ListDir(path.clone(), depth)) {
             eprintln!("Error sending command: {:?}", e);
         }
-
-
-        let depth = 3; // Default to listing one level of subdirectories.
-        // Only send a ListDir command for the current directory if a directory change command hasn't been sent.
-        if !self.directory_changed {
-            if let Err(e) = command_sender.send(Command::ListDir(path.clone(), depth)) {
-                eprintln!("Error sending command: {:?}", e);
-            }
-        }
         self.directory_changed = false;  // Reset the flag for the next frame.
 
         let scroll_area = ScrollArea::new([true, true]).id_source("file_browser_scroll");
         scroll_area.show(ui, |ui| {
             for directory in &self.entries {
                 if let Some(double_clicked_dir) = Self::directory_ui(ui, directory, 0, &mut self.selected_path, command_sender.clone()) {
-                    self.current_dir = double_clicked_dir.to_string_lossy().into_owned();
-
-                    // Send a ListDir command for the new current directory.
-                    if let Err(e) = command_sender.send(Command::ListDir(double_clicked_dir, depth)) {
+                    self.current_dir = double_clicked_dir.to_str().unwrap().to_owned();
+                    let path = PathBuf::from(self.current_dir.clone());
+                    if let Err(e) = command_sender.send(Command::ListDir(path, depth)) {
                         eprintln!("Error sending command: {:?}", e);
                     }
-
-                    // Stop checking other directories.
-                    break;
                 }
             }
         });
@@ -820,7 +808,7 @@ impl MastertechContext {
                 eprintln!("Error sending command: {:?}", e);
             }
         }   
-        
+
         // Always send a ListDir command for the current directory at the end of the function.
         let path = if self.current_dir.is_empty() {
             env::current_dir().unwrap()
