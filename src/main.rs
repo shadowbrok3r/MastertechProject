@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::{path::PathBuf, sync::{Arc, Mutex}, collections::HashSet, env}; //, os::windows::thread};
 use sysinfo::*; 
 use eframe::{egui, glow::PROGRAM_BINARY_LENGTH};
-use egui::*;
+use egui::{*, collapsing_header::CollapsingState};
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use scaffold_builder::PulledKeys;
 use tokio::{runtime::Handle, sync::mpsc::{UnboundedReceiver, UnboundedSender}};
@@ -12,14 +12,16 @@ use serde::{Deserialize, Serialize};
 use egui_extras::*;
 use catppuccin_egui::MOCHA;
 
-use file_browser::{file_browsing, Command, Response};
-use request::SendScaffoldRequest;
-use system_info::RetrieveSystemInfo;
-
 mod system_info;
 mod request;
 mod file_browser;
 mod scaffold_builder;
+
+use file_browser::{file_browsing, Command, Response, Directory};
+use request::SendScaffoldRequest;
+use system_info::RetrieveSystemInfo;
+
+use crate::file_browser::CommandControl;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -33,8 +35,6 @@ async fn main() -> eframe::Result<()> {
         Box::new(|_cc| Box::<MasterTechApp>::default()),
     )
 }
-
-
 struct MastertechContext {
     //////////////////////////////////////////
     /*          Mastertech Vars             */
@@ -100,13 +100,15 @@ struct MastertechContext {
     //////////////////////////////////////////
     /*          File Browsing               */
     //////////////////////////////////////////
+    command_control: CommandControl,
     current_dir: String,
     selected_path: Option<PathBuf>,
     copied_path: Option<PathBuf>,
     destination_path: Option<PathBuf>,
-    entries: Vec<PathBuf>,
-    selected_directory: Option<PathBuf>,
+    entries: Vec<Directory>,
+    selected_directory: Option<Directory>,
     directory_contents: Vec<PathBuf>,
+    directory_changed: bool,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -176,6 +178,7 @@ impl Default for MasterTechApp {
             vec!["Console".to_owned()],
         );
 
+            println!("does this only run once? ");
         let [_, _] = tree.split_below(b, 0.5, vec!["Scripts".to_owned()]);
 
         let mut open_tabs = HashSet::new();
@@ -188,6 +191,7 @@ impl Default for MasterTechApp {
             }
         }
         
+
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         let tx_scaffold = tx.clone();
@@ -200,6 +204,8 @@ impl Default for MasterTechApp {
         let scaffold_request = SendScaffoldRequest{
             tx: tx_scaffold
         };
+
+        let command_control = CommandControl::new();
 
         let context = MastertechContext {
             //////////////////////////////////////////
@@ -266,6 +272,7 @@ impl Default for MasterTechApp {
             //////////////////////////////////////////
             /*          File Browsing               */
             //////////////////////////////////////////
+            command_control: command_control,
             current_dir: env::current_dir().unwrap().to_str().unwrap().to_string(),
             selected_path: None,
             copied_path: None,
@@ -273,6 +280,7 @@ impl Default for MasterTechApp {
             entries: vec![],
             selected_directory: None,
             directory_contents: vec![],
+            directory_changed: false,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -695,61 +703,65 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-        let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel::<Command>();
-        let (response_sender, mut response_receiver) = tokio::sync::mpsc::unbounded_channel::<Response>();
+        let command_sender = self.command_control.get_sender();
+        let response_receiver = self.command_control.get_receiver();
 
         ui.horizontal_top(|ui|{
             ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
             ui.checkbox(&mut self.read_hidden_files ,"Show hidden files");
         });
 
-        let directory_depth = 1; // Default to listing one level of subdirectories.
-        // match self.read_dirs_only{
-        //     true => directory_depth = 
-        //     false =>
-        // }
 
-        tokio::spawn(async move {
-            file_browsing(command_receiver).await;
-        });
-    
         // Create a TextEdit for directory input.
         let dir_input = TextEdit::singleline(&mut self.current_dir)
             .id_source("dir_input");
         ui.add(dir_input);
     
-        // Send a ListDir command for the current directory.
         let path = if self.current_dir.is_empty() {
             env::current_dir().unwrap()
         } else {
             PathBuf::from(self.current_dir.clone())
         };
-        let depth = 1; // Default to listing one level of subdirectories.
-        if let Err(e) = command_sender.send(Command::ListDir(path.clone(), depth, response_sender.clone())) {
+        let depth = 3; // Default to listing one level of subdirectories.
+        if let Err(e) = command_sender.send(Command::ListDir(path.clone(), depth)) {
             eprintln!("Error sending command: {:?}", e);
         }
 
 
-        // Listen for changes in the directory input.
-        if ui.input(|i| i.key_released(Key::Enter)) {
-            let path = if self.current_dir.is_empty() {
-                env::current_dir().unwrap()
-            } else {
-                PathBuf::from(self.current_dir.clone())
-            };
-            
-            if let Err(e) = command_sender.send(Command::ListDir(path, directory_depth, response_sender.clone())) {
+        let depth = 3; // Default to listing one level of subdirectories.
+        // Only send a ListDir command for the current directory if a directory change command hasn't been sent.
+        if !self.directory_changed {
+            if let Err(e) = command_sender.send(Command::ListDir(path.clone(), depth)) {
                 eprintln!("Error sending command: {:?}", e);
             }
         }
-    
+        self.directory_changed = false;  // Reset the flag for the next frame.
+
+        let scroll_area = ScrollArea::new([true, true]).id_source("file_browser_scroll");
+        scroll_area.show(ui, |ui| {
+            for directory in &self.entries {
+                if let Some(double_clicked_dir) = Self::directory_ui(ui, directory, 0, &mut self.selected_path, command_sender.clone()) {
+                    self.current_dir = double_clicked_dir.to_string_lossy().into_owned();
+
+                    // Send a ListDir command for the new current directory.
+                    if let Err(e) = command_sender.send(Command::ListDir(double_clicked_dir, depth)) {
+                        eprintln!("Error sending command: {:?}", e);
+                    }
+
+                    // Stop checking other directories.
+                    break;
+                }
+            }
+        });
+        
+
         // Handle responses from the file_browsing function to update the file/directory listing.
         while let Ok(response) = response_receiver.try_recv() {
             match response {
-                Response::DirectoryListing(entries) => {
-                    self.entries = entries;
+                Response::DirectoryListing(directory) => {
+                    self.entries = vec![directory];
                 },
-                Response::Message(message) => {
+                Response::Success(message) => {
                     // Display the message to the user in some way.
                     // This will depend on how your GUI is structured.
                     println!("{}", message);
@@ -762,60 +774,119 @@ impl MastertechContext {
             }
         }
 
-        // Create a new ScrollArea for the file/directory listing.
-        let scroll_area = ScrollArea::new([true, true]).id_source("file_browser_scroll");
-        scroll_area.show(ui, |ui| {
-            for entry in &self.entries {
-                ui.collapsing(entry.to_string_lossy(), |ui| {
-                    if ui.selectable_label(self.selected_directory.as_ref() == Some(entry), entry.to_string_lossy()).clicked() {
-                        self.selected_directory = Some(entry.clone());
-                        if let Err(e) = command_sender.send(Command::ListDir(entry.clone(), 1, response_sender.clone())) {
-                            eprintln!("Error sending command: {:?}", e);
-                        }
-                    }
-                    if let Some(selected_directory) = &self.selected_directory {
-                        if selected_directory == entry {
-                            for content in &self.directory_contents {
-                                ui.label(content.to_string_lossy());
-                            }
-                        }
-                    }
-                });
-            }
-        });
+        
     
         // Handling for copy, cut, and delete operations.
         if ui.input(|i| i.key_pressed(Key::C) && i.modifiers.ctrl) {
-            // Assume self.selected_path is the path of the selected file or directory
-            if let Some(selected_path) = &self.selected_path {
-                self.copied_path = Some(selected_path.clone());
+            // Assume self.selected_directory is the path of the selected file or directory
+            if let Some(selected_directory) = &self.selected_directory {
+                self.copied_path = Some(selected_directory.path.clone());
             }
         }
         if ui.input(|i| i.key_pressed(Key::V) && i.modifiers.ctrl) {
-            // Paste the copied or cut file or directory to the current directory
             if let Some(copied_path) = &self.copied_path {
-                let destination_path = PathBuf::from(&self.current_dir);
-                if let Err(e) = command_sender.send(Command::Copy(copied_path.clone(), destination_path, response_sender.clone())) {
+                let destination_path = PathBuf::from(self.current_dir.clone());
+                if let Err(e) = command_sender.send(Command::Copy(copied_path.clone(), destination_path)) {
                     eprintln!("Error sending command: {:?}", e);
                 }
             }
         }
         if ui.input(|i| i.key_pressed(Key::X) && i.modifiers.ctrl) {
-            // Assume self.selected_path is the path of the selected file or directory
-            if let Some(selected_path) = &self.selected_path {
-                self.copied_path = Some(selected_path.clone());
-            }
-        }
-        if ui.input(|i| i.key_pressed(Key::Delete)) {
-            // Assume self.selected_path is the path of the selected file or directory
-            if let Some(selected_path) = &self.selected_path {
-                if let Err(e) = command_sender.send(Command::Delete(selected_path.clone(), response_sender.clone())) {
+             // Assume self.selected_directory is the path of the selected file or directory
+             if let Some(selected_directory) = &self.selected_directory {
+                let destination_path = PathBuf::from(self.current_dir.clone());
+                if let Err(e) = command_sender.send(Command::Move(selected_directory.path.clone(), destination_path)) {
                     eprintln!("Error sending command: {:?}", e);
                 }
             }
         }
+        if ui.input(|i| i.key_pressed(Key::Delete)) {
+           // Assume self.selected_directory is the path of the selected file or directory
+           if let Some(selected_directory) = &self.selected_directory {
+            if let Err(e) = command_sender.send(Command::Delete(selected_directory.path.clone())) {
+                eprintln!("Error sending command: {:?}", e);
+            }
+        }
+        }
+        // Listen for changes in the directory input.
+        if ui.input(|i| i.key_released(Key::Enter)) {
+            let path = if self.current_dir.is_empty() {
+                env::current_dir().unwrap()
+            } else {
+                PathBuf::from(self.current_dir.clone())
+            };
+            
+            if let Err(e) = command_sender.send(Command::ListDir(path, depth)) {
+                eprintln!("Error sending command: {:?}", e);
+            }
+        }   
+        
+        // Always send a ListDir command for the current directory at the end of the function.
+        let path = if self.current_dir.is_empty() {
+            env::current_dir().unwrap()
+        } else {
+            PathBuf::from(self.current_dir.clone())
+        };
+        if let Err(e) = command_sender.send(Command::ListDir(path, depth)) {
+            eprintln!("Error sending command: {:?}", e);
+        }
     }
 
+    fn directory_ui(ui: &mut Ui, directory: &Directory, depth: usize, selected_directory: &mut Option<PathBuf>, 
+        command_sender: UnboundedSender<Command>)  -> Option<PathBuf>{
+        let mut double_clicked_dir = None;
+        let id = ui.make_persistent_id(directory.path.to_str().unwrap());
+        let is_selected = match selected_directory {
+            Some(selected_path) => *selected_path == directory.path,
+            None => false,
+        };
+
+        CollapsingState::load_with_default_open(ui.ctx(), id, true)
+            .show_header(ui, |ui| {
+                let interaction = ui.selectable_label(is_selected, directory.path.file_name().unwrap().to_string_lossy());
+                if interaction.clicked() {
+                    *selected_directory = Some(directory.path.clone());
+                }
+                
+                if interaction.double_clicked() {
+                    // For testing, print a message whenever a double click event is detected.
+                    println!("Double clicked: {}", directory.path.display());
+            
+                    // Send a command to list this directory
+                    if let Err(e) = command_sender.send(Command::ListDir(directory.path.clone(), depth + 1)) {
+                        eprintln!("Error sending command: {:?}", e);
+                    }
+            
+                    double_clicked_dir = Some(directory.path.clone());
+                }
+                if interaction.secondary_clicked() {
+                    // Rename the directory
+                    let new_name = Self::rename_directory(ui, directory);
+                    if let Some(new_name) = new_name {
+                        if let Err(e) = command_sender.send(Command::Rename(directory.path.clone(), directory.path.with_file_name(new_name))) {
+                            eprintln!("Error sending command: {:?}", e);
+                        }
+                    }
+                }
+            })
+            .body(|ui| {
+                for sub_directory in &directory.children {
+                    Self::directory_ui(ui, sub_directory, depth + 1, selected_directory, command_sender.clone());
+                }
+            });
+        double_clicked_dir
+    }
+    
+    fn rename_directory(ui: &mut Ui, directory: &Directory) -> Option<String> {
+        // Replace this function body with your UI code to get the new directory name from the user.
+        Some(format!("new_{}", directory.path.file_name().unwrap().to_string_lossy()))
+    }
+    
+    
+    
+    
+
+    
     fn scripts(&mut self, ui: &mut Ui){ }
 }
 
