@@ -109,6 +109,7 @@ struct MastertechContext {
     selected_directory: Option<Directory>,
     directory_contents: Vec<PathBuf>,
     directory_changed: bool,
+    directory_depth: usize,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -281,6 +282,7 @@ impl Default for MasterTechApp {
             selected_directory: None,
             directory_contents: vec![],
             directory_changed: false,
+            directory_depth: 1,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -705,13 +707,12 @@ impl MastertechContext {
     fn file_browse(&mut self, ui: &mut Ui) {
         let command_sender = self.command_control.get_sender();
         let response_receiver = self.command_control.get_receiver();
-
-        ui.horizontal_top(|ui|{
+    
+        ui.horizontal_top(|ui| {
             ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
-            ui.checkbox(&mut self.read_hidden_files ,"Show hidden files");
+            ui.checkbox(&mut self.read_hidden_files, "Show hidden files");
         });
-
-
+    
         // Create a TextEdit for directory input.
         let dir_input = TextEdit::singleline(&mut self.current_dir)
             .id_source("dir_input");
@@ -723,26 +724,28 @@ impl MastertechContext {
         } else {
             PathBuf::from(self.current_dir.clone())
         };
-        let depth = 3; // Default to listing one level of subdirectories.
-        if let Err(e) = command_sender.send(Command::ListDir(path.clone(), depth)) {
+        if let Err(e) = command_sender.send(Command::ListDir(path.clone(), self.directory_depth)) {
             eprintln!("Error sending command: {:?}", e);
         }
-        self.directory_changed = false;  // Reset the flag for the next frame.
-
-        let scroll_area = ScrollArea::new([true, true]).id_source("file_browser_scroll");
+    
+        let scroll_area = ScrollArea::new([true, true]).id_source("file_browser_scroll").auto_shrink([false, false]);
         scroll_area.show(ui, |ui| {
             for directory in &self.entries {
-                if let Some(double_clicked_dir) = Self::directory_ui(ui, directory, 0, &mut self.selected_path, command_sender.clone()) {
+                if let Some(double_clicked_dir) = Self::directory_ui(ui, directory, 1, &mut self.selected_path, command_sender.clone()) {
+                    // Update the current_dir and refresh the TextEdit.
                     self.current_dir = double_clicked_dir.to_str().unwrap().to_owned();
+                    //dir_input.set_text(self.current_dir.clone());
+                    //ui.add(&mut dir_input);
+    
+                    // Send a ListDir command for the new current directory.
                     let path = PathBuf::from(self.current_dir.clone());
-                    if let Err(e) = command_sender.send(Command::ListDir(path, depth)) {
+                    if let Err(e) = command_sender.send(Command::ListDir(path, self.directory_depth)) {
                         eprintln!("Error sending command: {:?}", e);
                     }
                 }
             }
         });
-        
-
+    
         // Handle responses from the file_browsing function to update the file/directory listing.
         while let Ok(response) = response_receiver.try_recv() {
             match response {
@@ -761,17 +764,17 @@ impl MastertechContext {
                 },
             }
         }
-
-        
     
         // Handling for copy, cut, and delete operations.
         if ui.input(|i| i.key_pressed(Key::C) && i.modifiers.ctrl) {
+            println!("CTRL+C");
             // Assume self.selected_directory is the path of the selected file or directory
             if let Some(selected_directory) = &self.selected_directory {
                 self.copied_path = Some(selected_directory.path.clone());
             }
         }
         if ui.input(|i| i.key_pressed(Key::V) && i.modifiers.ctrl) {
+            println!("CTRL+V");
             if let Some(copied_path) = &self.copied_path {
                 let destination_path = PathBuf::from(self.current_dir.clone());
                 if let Err(e) = command_sender.send(Command::Copy(copied_path.clone(), destination_path)) {
@@ -780,8 +783,9 @@ impl MastertechContext {
             }
         }
         if ui.input(|i| i.key_pressed(Key::X) && i.modifiers.ctrl) {
-             // Assume self.selected_directory is the path of the selected file or directory
-             if let Some(selected_directory) = &self.selected_directory {
+            println!("CTRL+X");
+            // Assume self.selected_directory is the path of the selected file or directory
+            if let Some(selected_directory) = &self.selected_directory {
                 let destination_path = PathBuf::from(self.current_dir.clone());
                 if let Err(e) = command_sender.send(Command::Move(selected_directory.path.clone(), destination_path)) {
                     eprintln!("Error sending command: {:?}", e);
@@ -789,47 +793,39 @@ impl MastertechContext {
             }
         }
         if ui.input(|i| i.key_pressed(Key::Delete)) {
-           // Assume self.selected_directory is the path of the selected file or directory
-           if let Some(selected_directory) = &self.selected_directory {
-            if let Err(e) = command_sender.send(Command::Delete(selected_directory.path.clone())) {
-                eprintln!("Error sending command: {:?}", e);
+            println!("Delete key");
+            // Assume self.selected_directory is the path of the selected file or directory
+            if let Some(selected_directory) = &self.selected_directory {
+                if let Err(e) = command_sender.send(Command::Delete(selected_directory.path.clone())) {
+                    eprintln!("Error sending command: {:?}", e);
+                }
             }
-        }
         }
         // Listen for changes in the directory input.
         if ui.input(|i| i.key_released(Key::Enter)) {
+            println!("Enter key");
             let path = if self.current_dir.is_empty() {
                 env::current_dir().unwrap()
             } else {
                 PathBuf::from(self.current_dir.clone())
             };
-            
-            if let Err(e) = command_sender.send(Command::ListDir(path, depth)) {
+    
+            if let Err(e) = command_sender.send(Command::ListDir(path, self.directory_depth)) {
                 eprintln!("Error sending command: {:?}", e);
             }
-        }   
-
-        // Always send a ListDir command for the current directory at the end of the function.
-        let path = if self.current_dir.is_empty() {
-            env::current_dir().unwrap()
-        } else {
-            PathBuf::from(self.current_dir.clone())
-        };
-        if let Err(e) = command_sender.send(Command::ListDir(path, depth)) {
-            eprintln!("Error sending command: {:?}", e);
         }
     }
 
     fn directory_ui(ui: &mut Ui, directory: &Directory, depth: usize, selected_directory: &mut Option<PathBuf>, 
-        command_sender: UnboundedSender<Command>)  -> Option<PathBuf>{
+        command_sender: UnboundedSender<Command>) -> Option<PathBuf> {
         let mut double_clicked_dir = None;
         let id = ui.make_persistent_id(directory.path.to_str().unwrap());
         let is_selected = match selected_directory {
             Some(selected_path) => *selected_path == directory.path,
             None => false,
         };
-
-        CollapsingState::load_with_default_open(ui.ctx(), id, true)
+    
+        CollapsingState::load_with_default_open(ui.ctx(), id, false)
             .show_header(ui, |ui| {
                 let interaction = ui.selectable_label(is_selected, directory.path.file_name().unwrap().to_string_lossy());
                 if interaction.clicked() {
@@ -839,27 +835,20 @@ impl MastertechContext {
                 if interaction.double_clicked() {
                     // For testing, print a message whenever a double click event is detected.
                     println!("Double clicked: {}", directory.path.display());
-            
+    
                     // Send a command to list this directory
                     if let Err(e) = command_sender.send(Command::ListDir(directory.path.clone(), depth + 1)) {
                         eprintln!("Error sending command: {:?}", e);
                     }
-            
+    
                     double_clicked_dir = Some(directory.path.clone());
                 }
-                if interaction.secondary_clicked() {
-                    // Rename the directory
-                    let new_name = Self::rename_directory(ui, directory);
-                    if let Some(new_name) = new_name {
-                        if let Err(e) = command_sender.send(Command::Rename(directory.path.clone(), directory.path.with_file_name(new_name))) {
-                            eprintln!("Error sending command: {:?}", e);
-                        }
-                    }
-                }
+                // Rest of your function...
+    
             })
             .body(|ui| {
                 for sub_directory in &directory.children {
-                    Self::directory_ui(ui, sub_directory, depth + 1, selected_directory, command_sender.clone());
+                    Self::directory_ui(ui, sub_directory, depth, selected_directory, command_sender.clone());
                 }
             });
         double_clicked_dir
@@ -869,7 +858,6 @@ impl MastertechContext {
         // Replace this function body with your UI code to get the new directory name from the user.
         Some(format!("new_{}", directory.path.file_name().unwrap().to_string_lossy()))
     }
-    
     
     
     
