@@ -18,7 +18,7 @@ mod file_browser;
 mod scaffold_builder;
 
 use file_browser::{file_browsing, Command, Response, Directory};
-use request::SendScaffoldRequest;
+use request::SendRequest;
 use system_info::RetrieveSystemInfo;
 
 use crate::file_browser::CommandControl;
@@ -90,12 +90,10 @@ struct MastertechContext {
     get_ticket_button_pressed: bool,
     get_cps_button_pressed: bool,
     get_seb_button_pressed: bool,
+    submit_ticket_pressed: bool,
     first_run: bool,
     get_specs: bool,
     spinner: bool,
-    read_hidden_files: bool,
-    read_dirs_only: bool,
-    dragged_directory: Option<PathBuf>,
 
     //////////////////////////////////////////
     /*          File Browsing               */
@@ -110,6 +108,11 @@ struct MastertechContext {
     directory_contents: Vec<PathBuf>,
     directory_changed: bool,
     directory_depth: usize,
+    double_clicked_dir: Option<PathBuf>,
+    read_hidden_files: bool,
+    read_dirs_only: bool,
+    dragged_directory: Option<PathBuf>,
+    new_dir: String,
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -123,7 +126,7 @@ struct MasterTechApp {
     context: MastertechContext,
     tree: Tree<String>,
     sysinfo_request: system_info::RetrieveSystemInfo,
-    scaffold_request: SendScaffoldRequest,
+    scaffold_request: SendRequest,
 }
 
 impl TabViewer for MastertechContext {
@@ -202,7 +205,7 @@ impl Default for MasterTechApp {
             tx: tx_sysinfo,
         };
 
-        let scaffold_request = SendScaffoldRequest{
+        let scaffold_request = SendRequest{
             tx: tx_scaffold
         };
 
@@ -263,12 +266,10 @@ impl Default for MasterTechApp {
             get_ticket_button_pressed: false,
             get_cps_button_pressed: false,
             get_seb_button_pressed: false,
+            submit_ticket_pressed: false,
             first_run: true,
             get_specs: false,
             spinner: false,
-            read_hidden_files: false,
-            read_dirs_only: false,
-            dragged_directory: None,
 
             //////////////////////////////////////////
             /*          File Browsing               */
@@ -283,6 +284,11 @@ impl Default for MasterTechApp {
             directory_contents: vec![],
             directory_changed: false,
             directory_depth: 1,
+            read_hidden_files: false,
+            read_dirs_only: false,
+            dragged_directory: None,
+            double_clicked_dir: None,
+            new_dir: ".".to_string(),
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -503,11 +509,6 @@ impl MastertechContext {
                                     
                                     ui.vertical(|ui|{ui.add_space(18.0);});
 
-                                    
-                                    let progress_bar = egui::ProgressBar::new(self.reader_bytes as f32)
-                                        .show_percentage()
-                                        .animate(true);
-
                                     if self.spinner == true{
                                         ui.add(Spinner::new());
                                     }
@@ -527,7 +528,7 @@ impl MastertechContext {
                                     .italics())
                                     .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))//.min_size(vec2(self.widget_size * 2.0+8.0, 8.0)))
                                     .clicked(){ 
-                                        // TODO
+                                        self.submit_ticket_pressed = true;
                                     }
 
                                 }); // Group
@@ -713,36 +714,45 @@ impl MastertechContext {
             ui.checkbox(&mut self.read_hidden_files, "Show hidden files");
         });
     
+        // Initialize new_dir with current_dir at the start of each file_browse call.
+        self.new_dir = self.current_dir.clone();
+
         // Create a TextEdit for directory input.
-        let dir_input = TextEdit::singleline(&mut self.current_dir)
+        let dir_input = TextEdit::singleline(&mut self.new_dir)
             .id_source("dir_input");
         ui.add(dir_input);
     
-        // Send a ListDir command for the current directory.
-        let path = if self.current_dir.is_empty() {
-            env::current_dir().unwrap()
-        } else {
-            PathBuf::from(self.current_dir.clone())
-        };
-        if let Err(e) = command_sender.send(Command::ListDir(path.clone(), self.directory_depth)) {
-            eprintln!("Error sending command: {:?}", e);
+        // Only send a ListDir command for the current directory if it has changed.
+        if self.directory_changed {
+            let path = if self.current_dir.is_empty() {
+                env::current_dir().unwrap()
+            } else {
+                PathBuf::from(self.current_dir.clone())
+            };
+            if let Err(e) = command_sender.send(Command::ListDir(path, self.directory_depth)) {
+                eprintln!("Error sending command: {:?}", e);
+            }
+            self.directory_changed = false;  // Reset the flag for the next frame.
         }
+
     
         let scroll_area = ScrollArea::new([true, true]).id_source("file_browser_scroll").auto_shrink([false, false]);
         scroll_area.show(ui, |ui| {
             for directory in &self.entries {
-                if let Some(double_clicked_dir) = Self::directory_ui(ui, directory, 1, &mut self.selected_path, command_sender.clone()) {
+                if let Some(_) = Self::directory_ui(ui, directory, self.directory_depth+1, 
+                    &mut self.selected_path, &mut self.double_clicked_dir, &mut self.new_dir, command_sender.clone()) {
                     // Update the current_dir and refresh the TextEdit.
-                    self.current_dir = double_clicked_dir.to_str().unwrap().to_owned();
-                    //dir_input.set_text(self.current_dir.clone());
-                    //ui.add(&mut dir_input);
-    
-                    // Send a ListDir command for the new current directory.
-                    let path = PathBuf::from(self.current_dir.clone());
-                    if let Err(e) = command_sender.send(Command::ListDir(path, self.directory_depth)) {
-                        eprintln!("Error sending command: {:?}", e);
+                    if let Some(double_clicked_dir) = &self.double_clicked_dir {
+                        self.current_dir = double_clicked_dir.to_str().unwrap().to_owned();
+                
+                        // Send a ListDir command for the new current directory.
+                        let path = PathBuf::from(self.current_dir.clone());
+                        if let Err(e) = command_sender.send(Command::ListDir(path, self.directory_depth+1)) {
+                            eprintln!("Error sending command: {:?}", e);
+                        }
                     }
                 }
+                
             }
         });
     
@@ -801,24 +811,25 @@ impl MastertechContext {
                 }
             }
         }
-        // Listen for changes in the directory input.
         if ui.input(|i| i.key_released(Key::Enter)) {
-            println!("Enter key");
-            let path = if self.current_dir.is_empty() {
-                env::current_dir().unwrap()
-            } else {
-                PathBuf::from(self.current_dir.clone())
-            };
-    
+            self.current_dir = self.new_dir.clone();
+            let path = PathBuf::from(self.current_dir.clone());
             if let Err(e) = command_sender.send(Command::ListDir(path, self.directory_depth)) {
                 eprintln!("Error sending command: {:?}", e);
             }
         }
+        
     }
 
-    fn directory_ui(ui: &mut Ui, directory: &Directory, depth: usize, selected_directory: &mut Option<PathBuf>, 
-        command_sender: UnboundedSender<Command>) -> Option<PathBuf> {
-        let mut double_clicked_dir = None;
+    fn directory_ui(
+        ui: &mut Ui, 
+        directory: &Directory, 
+        depth: usize, 
+        selected_directory: &mut Option<PathBuf>, 
+        double_clicked_dir: &mut Option<PathBuf>,
+        new_dir: &mut String, 
+        command_sender: UnboundedSender<Command>
+    ) -> Option<PathBuf> {
         let id = ui.make_persistent_id(directory.path.to_str().unwrap());
         let is_selected = match selected_directory {
             Some(selected_path) => *selected_path == directory.path,
@@ -826,42 +837,48 @@ impl MastertechContext {
         };
     
         CollapsingState::load_with_default_open(ui.ctx(), id, false)
-            .show_header(ui, |ui| {
-                let interaction = ui.selectable_label(is_selected, directory.path.file_name().unwrap().to_string_lossy());
-                if interaction.clicked() {
-                    *selected_directory = Some(directory.path.clone());
+        .show_header(ui, |ui| {
+            let interaction = ui.selectable_label(is_selected, directory.path.file_name().unwrap().to_string_lossy());
+            if interaction.clicked() {
+                *selected_directory = Some(directory.path.clone());
+            }
+            if interaction.double_clicked() {     
+                // Increase the depth only when a directory is double clicked.
+                let new_depth = depth + 1;
+            
+                // Send a command to list this directory
+                if let Err(e) = command_sender.send(Command::ListDir(directory.path.clone(), new_depth)) {
+                    eprintln!("Error sending command: {:?}", e);
                 }
-                
-                if interaction.double_clicked() {
-                    // For testing, print a message whenever a double click event is detected.
-                    println!("Double clicked: {}", directory.path.display());
-    
-                    // Send a command to list this directory
-                    if let Err(e) = command_sender.send(Command::ListDir(directory.path.clone(), depth + 1)) {
-                        eprintln!("Error sending command: {:?}", e);
-                    }
-    
-                    double_clicked_dir = Some(directory.path.clone());
+            
+                *new_dir = directory.path.to_str().unwrap().to_owned();
+                return Some(directory.path.clone());
+            } else {
+                return None;
+            }
+            
+        })
+        .body(|ui| {
+            for sub_directory in &directory.children {
+                if let Some(double_clicked_dir) = Self::directory_ui(ui, sub_directory, depth + 1, selected_directory, double_clicked_dir, new_dir, command_sender.clone()) {
+                    // If a directory was double clicked in a lower call, return it immediately.
+                    return Some(double_clicked_dir);
                 }
-                // Rest of your function...
-    
-            })
-            .body(|ui| {
-                for sub_directory in &directory.children {
-                    Self::directory_ui(ui, sub_directory, depth, selected_directory, command_sender.clone());
-                }
-            });
-        double_clicked_dir
+            }
+            
+            for file in &directory.files {
+                ui.label(file.file_name().unwrap().to_string_lossy());
+            }
+            None
+        });
+        None
     }
+    
     
     fn rename_directory(ui: &mut Ui, directory: &Directory) -> Option<String> {
         // Replace this function body with your UI code to get the new directory name from the user.
         Some(format!("new_{}", directory.path.file_name().unwrap().to_string_lossy()))
     }
-    
-    
-    
-
     
     fn scripts(&mut self, ui: &mut Ui){ }
 }
@@ -873,20 +890,22 @@ impl eframe::App for MasterTechApp {
         self.context.ctx = ctx.clone();
         let ticket_sender = self.scaffold_request.tx.clone();
         let cps_sender = self.scaffold_request.tx.clone();
+        let submit_ticket_sender = self.scaffold_request.tx.clone();
         let specs_sender = self.sysinfo_request.tx.clone();
 
         if self.context.get_ticket_button_pressed == true {
+            //self.context.customer_name.
             self.context.get_ticket_button_pressed = false;
             let service_num = self.context.so_number.clone();
             self.context.spinner = true;
-            SendScaffoldRequest::get_ticket(service_num, ticket_sender); 
+            SendRequest::get_ticket(service_num, ticket_sender); 
         }
 
         if self.context.get_cps_button_pressed == true {
             self.context.get_cps_button_pressed = false;
             let service_num = self.context.so_number.clone();
             self.context.spinner = true;
-            SendScaffoldRequest::get_cps(service_num, cps_sender);
+            SendRequest::get_cps(service_num, cps_sender);
         }   
 
         if self.context.get_specs == true{
@@ -894,6 +913,75 @@ impl eframe::App for MasterTechApp {
             self.context.spinner = true;
             RetrieveSystemInfo::get_system_specs(specs_sender);
         }
+
+        if self.context.submit_ticket_pressed == true{
+            self.context.submit_ticket_pressed = false;
+            self.context.spinner = true;
+            let html_notes = format!(
+                "<body><strong><h2><code>Ticket Info</code></h2></strong><ul>\n\
+                <li><strong>Customer:</strong>\n     {}</li>\n\
+                <li><strong>SO Number:</strong>\n     {}</li>\n\
+                <li><strong>Salesman:</strong>\n     {}</li>\n\
+                <li><strong>Checkin rep:</strong>\n     {}</li>\n\
+                <li><strong>Technician:</strong>\n     {}</li></ul>\n\n\
+
+                <strong><h2><code>Computer Info</code></h2></strong><ul>\n\
+                <li><strong>Model:</strong>\n     {}</li>\n\
+                <li><strong>CPU:</strong>\n     {}</li>\n\
+                <li><strong>GPU:</strong>\n     </li>\n\
+                <li><strong>RAM:</strong>\n     {}</li>\n\
+
+                <li><strong>SSD test:</strong>\n     {}</li>\n\
+                <li><strong>HDD test:</strong>\n     {}</li>\n\
+                <li><strong>RAM test:</strong>\n     {}</li>\n\
+                <li><strong>Storage Info:</strong>\n     </li>\n\
+                <li><strong>Serials:</strong>\n     </li></ul>\n\n\
+
+                <strong><h2><code>Software Info</code></h2></strong><ul>\n\
+                <li><strong>CPS:</strong>\n     </li>\n\
+                <li><strong>SEB Information:</strong>\n     </li></ul>\n\
+
+                <strong><h2><code>Notes</code></h2></strong><ul>\n\
+                <li><strong>Checkin Notes:</strong>\n     {}</li>\n\
+                <li><strong>Recommendations:</strong>\n     {}</li></ul></body>\n\n",
+
+                self.context.customer_name,
+                self.context.so_number,
+                "String::from(self.context.salesman_cbox)",
+                self.context.checkin_rep,
+                "self.context.techs_cbox.into(),",
+                
+                self.context.system_name,
+                self.context.cpu_name,
+                //self.context.gpu,
+                self.context.total_ram,
+
+                "self.context.ssd_test_cbox.into()",
+                "self.context.hdd_test_cbox.into()",
+                "self.context.ram_test_cbox.into()",
+                //self.context.storage_info,
+                //self.context.serials,
+
+                //self.context.cps,
+                //self.context.seb_info,
+                self.context.checkin_notes,
+                self.context.recommendations,
+            );
+            
+            let ticket = serde_json::json!({
+                "data": {
+                    "projects": [
+                        "1202792139600600"
+                    ],
+                    "name": format!("{} - {}", self.context.customer_name, self.context.so_number),
+                    "html_notes": html_notes,
+                    "resource_subtype": "default_task",
+                    "workspace": "13314583095021"
+                }
+            });
+            
+            SendRequest::send_ticket_request(submit_ticket_sender);
+        }   
 
 
         let receiver = self.context.rx.as_ref().unwrap();

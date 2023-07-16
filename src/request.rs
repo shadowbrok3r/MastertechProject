@@ -7,7 +7,7 @@ use futures_util::StreamExt;
 use crate::scaffold_builder::*;
 use tokio::runtime::Handle;
 
-pub struct SendScaffoldRequest {
+pub struct SendRequest {
     pub tx: std::sync::mpsc::Sender<String>,
 }
 
@@ -169,7 +169,56 @@ pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core
             }
 }
 
-impl SendScaffoldRequest{
+pub async fn send_ticket_info(task_information: Value) -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
+
+    //let params = task_information.
+
+    //println!("{:?}", json_string);
+    let response = reqwest::Client::new().post("https://app.asana.com/api/1.0/tasks?opt_pretty=true") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        .header(CONTENT_TYPE, "application/json")
+        .bearer_auth("Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
+        .header(ACCEPT, "application/json")
+        .json(&task_information)
+        .send()
+        .await;
+
+        match response {
+            Ok(res) => {
+                let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
+                //println!("response: {:?}", response_text);
+    
+                let mut webroot_key = "";
+                let mut superanti_key = "";
+
+                let lines: Vec<&str> = response_text.split("\n").collect();
+                for line in lines {
+                    let parts: Vec<&str> = line.split(": ").collect();
+                    if parts.len() >= 2 {
+                        let prefix = parts[0].trim();
+                        let key = parts[1].trim();
+                        match prefix {
+                            "WRAV" => webroot_key = key,
+                            "SAS" => superanti_key = key,
+                            _ => (),
+                        }
+                    }
+                }
+                
+
+                let response_keys = GetKeysResponse {
+                    webroot_key: webroot_key.to_string(),
+                    superanti_key: superanti_key.to_string(),
+                };
+
+                
+                Ok(response_keys)
+            },
+            Err(e) => Err(Box::new(e)),
+        }
+    }
+
+
+impl SendRequest{
     pub fn get_ticket(so_number: String, tx: std::sync::mpsc::Sender<String>){
         let handle = Handle::current();
         
@@ -341,9 +390,21 @@ impl SendScaffoldRequest{
         });
     }
 
+    pub fn send_ticket_request(tx: std::sync::mpsc::Sender<String>){
+        let handle = Handle::current();
+        
+        std::thread::spawn(move||{
+            handle.block_on(async{
+                let ticket = serde_json::json!({
 
+                });
+
+                let response = send_ticket_info(ticket).await;
+
+            });
+        });
+    }
 }
-
 
 //pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
 
