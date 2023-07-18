@@ -19,7 +19,6 @@ mod file_browser;
 mod scaffold_builder;
 
 use file_browser::{FileBrowser, Command, Response, Directory};
-use file_browser::{FileBrowser, Command, Response, Directory};
 use request::SendRequest;
 use system_info::RetrieveSystemInfo;
 
@@ -119,12 +118,6 @@ struct MastertechContext {
     on_done_tx: mpsc::SyncSender<()>,
     on_done_rc: mpsc::Receiver<()>,
     open: bool,
-    
-    threads: Vec<(JoinHandle<()>, mpsc::SyncSender<egui::Context>)>,
-    on_done_tx: mpsc::SyncSender<()>,
-    on_done_rc: mpsc::Receiver<()>,
-    open: bool,
-    
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -194,19 +187,9 @@ impl std::ops::Drop for MastertechContext {
     }
 }
 
-impl std::ops::Drop for MastertechContext {
-    fn drop(&mut self) {
-        for (handle, show_tx) in self.threads.drain(..) {
-            std::mem::drop(show_tx);
-            handle.join().unwrap();
-        }
-    }
-}
-
 impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
-        let [a, b] = tree.split_left(NodeIndex::root(), 0.36, vec!["File Browser 📂".to_owned(), "Empty".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.36, vec!["File Browser 📂".to_owned(), "Empty".to_owned()]);
         let [_, _] = tree.split_below(
             a,
@@ -243,9 +226,6 @@ impl Default for MasterTechApp {
         };
 
         let command_control = CommandControl::new();
-
-        let threads = Vec::with_capacity(3);
-        let (on_done_tx, on_done_rc) = mpsc::sync_channel(0);
 
         let threads = Vec::with_capacity(3);
         let (on_done_tx, on_done_rc) = mpsc::sync_channel(0);
@@ -334,11 +314,6 @@ impl Default for MasterTechApp {
             on_done_rc,
             open: open,
 
-            threads,
-            on_done_tx,
-            on_done_rc,
-            open: open,
-
             //////////////////////////////////////////
             /*          UI Colors                   */
             //////////////////////////////////////////
@@ -352,31 +327,8 @@ impl Default for MasterTechApp {
     }
 }
 
-// fn new_worker(on_done_tx: mpsc::SyncSender<()>) 
-// -> (JoinHandle<()>, mpsc::SyncSender<Context>) {
-    
-//     let (show_tx, show_rc) = mpsc::sync_channel(0);
-//     let current_handle = Handle::current();
-    
-//     let handle = std::thread::Builder::new()
-//         .spawn(move || {
-//             current_handle.block_on(async{
-//                 let mut file_browser_state = FileBrowser::new();
-//                 while let Ok(ctx) = show_rc.recv() {
-//                     file_browser_state.show(&ctx).await;
-//                     let _ = on_done_tx.send(());
-//                 }
-//             });
-//         })
-//         .expect("failed to spawn thread");
-//     (handle, show_tx)
-// }
-
 impl MastertechContext {
-    // fn spawn_thread(&mut self) {
-    //     self.threads
-    //         .push(new_worker(self.on_done_tx.clone()));
-    // }
+
 
     fn simple_demo_menu(&mut self, ui: &mut Ui) {
         ui.label("Egui widget example");
@@ -782,20 +734,30 @@ impl MastertechContext {
     fn file_browse(&mut self, ui: &mut Ui) {
         let (show_tx, show_rc) = mpsc::sync_channel(0);
         let on_done_tx = self.on_done_tx.clone();
-        for _ in 0..self.threads.len() {
-            let _ = self.on_done_rc.recv();
-        }
+
+            
+
 
         if self.open == true{
             self.open = false;
+            let _ = show_tx.send(self.ctx.clone());
             let handle = Handle::current();
 
             std::thread::spawn(move||{
                 handle.block_on(async{
                         let mut file_browser_state = FileBrowser::new();
                         while let Ok(ctx) = show_rc.recv() {
-                            file_browser_state.show(&ctx).await;
+                            let file_browser_resp = file_browser_state.show(&ctx).await;
                             let _ = on_done_tx.send(());
+
+                            match file_browser_resp{
+                                Ok(resp) => {
+                                    println!("{resp:?}");
+                                },
+                                Err(e) => {
+                                    println!("{e:?}");
+                                }
+                            }
                         }
                     });
                 });
@@ -976,9 +938,7 @@ Item Codes: {:?}\n",
             }
         }
 
-        for (_handle, show_tx) in &self.context.threads {
-            let _ = show_tx.send(ctx.clone());
-        }
+
 
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {

@@ -131,7 +131,7 @@ impl FileBrowser{
 
 
 
-    pub async fn show(&mut self, ctx: &Context){
+    pub async fn show(&mut self, ctx: &Context) -> core::result::Result<(), Box<dyn std::error::Error>>{
 
         let mut command: Option<Command> = None;
 
@@ -329,6 +329,7 @@ impl FileBrowser{
                 },
             };
         }
+        Ok(())
     }
 
     pub fn default_filename(mut self, filename: impl Into<String>) -> Self {
