@@ -19,6 +19,7 @@ mod file_browser;
 mod scaffold_builder;
 
 use file_browser::{FileBrowser, Command, Response, Directory};
+use file_browser::{FileBrowser, Command, Response, Directory};
 use request::SendRequest;
 use system_info::RetrieveSystemInfo;
 
@@ -119,6 +120,11 @@ struct MastertechContext {
     on_done_rc: mpsc::Receiver<()>,
     open: bool,
     
+    threads: Vec<(JoinHandle<()>, mpsc::SyncSender<egui::Context>)>,
+    on_done_tx: mpsc::SyncSender<()>,
+    on_done_rc: mpsc::Receiver<()>,
+    open: bool,
+    
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -144,6 +150,7 @@ impl TabViewer for MastertechContext {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
             "Scripts" => self.scripts(ui),
+            "File Browser 📂" => self.file_browse(ui),
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
             _ => {
@@ -187,9 +194,19 @@ impl std::ops::Drop for MastertechContext {
     }
 }
 
+impl std::ops::Drop for MastertechContext {
+    fn drop(&mut self) {
+        for (handle, show_tx) in self.threads.drain(..) {
+            std::mem::drop(show_tx);
+            handle.join().unwrap();
+        }
+    }
+}
+
 impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
+        let [a, b] = tree.split_left(NodeIndex::root(), 0.36, vec!["File Browser 📂".to_owned(), "Empty".to_owned()]);
         let [a, b] = tree.split_left(NodeIndex::root(), 0.36, vec!["File Browser 📂".to_owned(), "Empty".to_owned()]);
         let [_, _] = tree.split_below(
             a,
@@ -210,6 +227,7 @@ impl Default for MasterTechApp {
         }
         
         let open = true;
+        let open = true;
 
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
@@ -225,6 +243,9 @@ impl Default for MasterTechApp {
         };
 
         let command_control = CommandControl::new();
+
+        let threads = Vec::with_capacity(3);
+        let (on_done_tx, on_done_rc) = mpsc::sync_channel(0);
 
         let threads = Vec::with_capacity(3);
         let (on_done_tx, on_done_rc) = mpsc::sync_channel(0);
@@ -307,6 +328,11 @@ impl Default for MasterTechApp {
             dragged_directory: None,
             double_clicked_dir: None,
             new_dir: ".".to_string(),
+
+            threads,
+            on_done_tx,
+            on_done_rc,
+            open: open,
 
             threads,
             on_done_tx,
@@ -784,6 +810,7 @@ impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
         
+        //self.context.ctx = ctx.clone();
         //self.context.ctx = ctx.clone();
         let ticket_sender = self.scaffold_request.tx.clone();
         let cps_sender = self.scaffold_request.tx.clone();
