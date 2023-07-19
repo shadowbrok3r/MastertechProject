@@ -92,7 +92,8 @@ struct MastertechContext {
     get_cps_button_pressed: bool,
     get_seb_button_pressed: bool,
     submit_ticket_pressed: bool,
-    first_run: bool,
+    specs_first_run: bool,
+    file_browse_run: bool,
     get_specs: bool,
     spinner: bool,
 
@@ -114,9 +115,11 @@ struct MastertechContext {
     read_dirs_only: bool,
     dragged_directory: Option<PathBuf>,
     new_dir: String,
-    threads: Vec<(JoinHandle<()>, mpsc::SyncSender<egui::Context>)>,
-    on_done_tx: mpsc::SyncSender<()>,
-    on_done_rc: mpsc::Receiver<()>,
+    
+    on_done_tx: tokio::sync::mpsc::Sender<()>,
+    on_done_rc: tokio::sync::mpsc::Receiver<()>,
+    show_tx: tokio::sync::mpsc::Sender<Option<egui::Context>>,
+    //show_rc: tokio::sync::mpsc::Receiver<Option<egui::Context>>,
     open: bool,
 
     //////////////////////////////////////////
@@ -150,7 +153,7 @@ impl TabViewer for MastertechContext {
                 let sysinfo_tab = &self.system_info_tab.to_string();
                 if ui.label(tab.as_str()).clicked(){
                     if tab.as_str() == sysinfo_tab{
-                        self.first_run = true;
+                        self.specs_first_run = true;
                     }
                 };
             }
@@ -178,15 +181,6 @@ impl TabViewer for MastertechContext {
     }
 }
 
-impl std::ops::Drop for MastertechContext {
-    fn drop(&mut self) {
-        for (handle, show_tx) in self.threads.drain(..) {
-            std::mem::drop(show_tx);
-            handle.join().unwrap();
-        }
-    }
-}
-
 impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
@@ -210,7 +204,6 @@ impl Default for MasterTechApp {
         }
         
         let open = true;
-        let open = true;
 
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
@@ -227,8 +220,8 @@ impl Default for MasterTechApp {
 
         let command_control = CommandControl::new();
 
-        let threads = Vec::with_capacity(3);
-        let (on_done_tx, on_done_rc) = mpsc::sync_channel(0);
+        let (on_done_tx, on_done_rc) = tokio::sync::mpsc::channel(1);
+        let (show_tx, _) = tokio::sync::mpsc::channel::<Option<egui::Context>>(100);
 
         let context = MastertechContext {
             //////////////////////////////////////////
@@ -286,7 +279,8 @@ impl Default for MasterTechApp {
             get_cps_button_pressed: false,
             get_seb_button_pressed: false,
             submit_ticket_pressed: false,
-            first_run: true,
+            specs_first_run: true,
+            file_browse_run: false,
             get_specs: false,
             spinner: false,
 
@@ -309,9 +303,10 @@ impl Default for MasterTechApp {
             double_clicked_dir: None,
             new_dir: ".".to_string(),
 
-            threads,
             on_done_tx,
             on_done_rc,
+            show_tx,
+            //show_rc,
             open: open,
 
             //////////////////////////////////////////
@@ -328,8 +323,6 @@ impl Default for MasterTechApp {
 }
 
 impl MastertechContext {
-
-
     fn simple_demo_menu(&mut self, ui: &mut Ui) {
         ui.label("Egui widget example");
         ui.menu_button("Sub menu", |ui| {
@@ -590,10 +583,10 @@ impl MastertechContext {
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
-        if self.first_run == true{
+        if self.specs_first_run == true{
             self.get_specs = true;
         }
-        self.first_run = false;
+        self.specs_first_run = false;
         
         if self.spinner == true{
             ui.vertical_centered(|ui|{
@@ -732,36 +725,36 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-        let (show_tx, show_rc) = mpsc::sync_channel(0);
+        let x = ui.button("test");
+
+        let (_, mut show_rc) = tokio::sync::mpsc::channel::<Option<egui::Context>>(100);
         let on_done_tx = self.on_done_tx.clone();
-
-            
-
-
-        if self.open == true{
-            self.open = false;
-            let _ = show_tx.send(self.ctx.clone());
-            let handle = Handle::current();
-
-            std::thread::spawn(move||{
-                handle.block_on(async{
-                        let mut file_browser_state = FileBrowser::new();
-                        while let Ok(ctx) = show_rc.recv() {
-                            let file_browser_resp = file_browser_state.show(&ctx).await;
+        let ctx_repaint = self.ctx.clone();
+        //if self.file_browse_run == true{
+            //self.file_browse_run = false;
+            if x.clicked(){
+            ctx_repaint.request_repaint(); 
+                tokio::spawn( async move { 
+                    let mut file_browser_state = FileBrowser::new();
+                    
+                    while let Some(ctx_option) = show_rc.recv().await {
+                        if let Some(ctx) = ctx_option {
+                            file_browser_state.show(&ctx).await;
                             let _ = on_done_tx.send(());
-
-                            match file_browser_resp{
-                                Ok(resp) => {
-                                    println!("{resp:?}");
-                                },
-                                Err(e) => {
-                                    println!("{e:?}");
-                                }
-                            }
+                        } else {
+                            println!("no context provided");
                         }
-                    });
-                });
-        }
+
+                    }
+
+                    ctx_repaint.request_repaint(); 
+                }); 
+            }
+            
+            
+            
+  
+        //}
         
     }
     
@@ -771,15 +764,11 @@ impl MastertechContext {
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
-        
-        //self.context.ctx = ctx.clone();
-        //self.context.ctx = ctx.clone();
         let ticket_sender = self.scaffold_request.tx.clone();
         let cps_sender = self.scaffold_request.tx.clone();
         let submit_ticket_sender = self.scaffold_request.tx.clone();
         let specs_sender = self.sysinfo_request.tx.clone();
-
-
+        let show_tx = self.context.show_tx.clone();
 
         if self.context.get_ticket_button_pressed == true {
             //self.context.customer_name.
@@ -801,7 +790,7 @@ impl eframe::App for MasterTechApp {
             self.context.spinner = true;
             RetrieveSystemInfo::get_system_specs(specs_sender);
         }
-        
+
 
         if self.context.submit_ticket_pressed == true{
             self.context.submit_ticket_pressed = false;
@@ -938,7 +927,17 @@ Item Codes: {:?}\n",
             }
         }
 
+        if self.context.open == true{
+            self.context.open = false;
+            let _ = show_tx.send(Some(ctx.clone()));
+            self.context.file_browse_run = true;
+        }
 
+        while let Ok(x) = self.context.on_done_rc.try_recv() {
+            //ctx.request_repaint();
+            println!("on_done_rc: {:?}", x);
+            println!("this was hit");
+        }
 
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {

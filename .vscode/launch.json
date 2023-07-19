@@ -21,7 +21,7 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}",
-            "env": { "RUST_BACKTRACE": "full" }
+            // "env": { "RUST_BACKTRACE": "full" }
         },
         {
             "type": "lldb",
