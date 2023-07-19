@@ -5,66 +5,15 @@ use walkdir::WalkDir;
 use tokio::{sync::mpsc::{UnboundedSender, unbounded_channel, UnboundedReceiver}};
 use std::{env, io::{Error, Result}};
 use thiserror::Error;
-
+use std::task::{Context as TaskContext, Poll};
+use std::pin::Pin;
+use std::future::Future;
 use egui::{
     vec2, Align2, Context, Key, Layout, Pos2, RichText, ScrollArea, TextEdit, Ui, Vec2, Window, Color32, Stroke
 };
 
 /// Function that returns `true` if the path is accepted.
 //pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
-
-#[derive(Debug)]
-pub enum Response {
-    DirectoryListing(Directory),
-    Success(String),
-    Error(FileBrowserError),
-}
-
-#[derive(Error, Debug)]
-pub enum FileBrowserError {
-    #[error("I/O error")]
-    Io(#[from] Error),
-    #[error("WalkDir error")]
-    WalkDir(#[from] walkdir::Error),
-    #[error("Other error: {0}")]
-    Other(String),
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Directory {
-    pub path: PathBuf,
-    pub children: Vec<Directory>,
-    pub files: Vec<PathBuf>,
-}
-
-pub struct CommandControl {
-    command_sender: UnboundedSender<Command>,
-    response_receiver: UnboundedReceiver<Response>,
-}
-
-impl CommandControl {
-    pub fn new() -> Self {
-        let (command_sender, command_receiver) = unbounded_channel::<Command>();
-        let (response_sender, response_receiver) = unbounded_channel::<Response>();
-
-        tokio::spawn(async move {
-            //file_browsing(command_receiver, response_sender).await;
-        });
-
-        Self {
-            command_sender,
-            response_receiver,
-        }
-    }
-
-    pub fn get_sender(&self) -> UnboundedSender<Command> {
-        self.command_sender.clone()
-    }
-
-    pub fn get_receiver(&mut self) -> &mut UnboundedReceiver<Response> {
-        &mut self.response_receiver
-    }
-}
 
 #[derive(Debug)]
 pub enum Command {
@@ -93,12 +42,25 @@ pub struct FileBrowser {
     //filter: Option<Filter>,
     rename: bool,
     new_folder: bool,
+    is_ready: bool,
   
     // Show hidden files on unix systems.
     //#[cfg(unix)]
     show_hidden: bool,
 }
 
+// impl Future for FileBrowser{
+//     type Output = String;
+
+//     fn poll(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+//         if self.is_ready {
+//             Poll::Ready(())
+//         } else {
+//             self.is_ready = true;
+//             Poll::Pending
+//         }
+//     }
+// }
 impl FileBrowser{ // sender: UnboundedSender<>
     pub fn new() -> Self{
         let mut path = env::current_dir().unwrap_or_default();
@@ -126,26 +88,17 @@ impl FileBrowser{ // sender: UnboundedSender<>
     
             //#[cfg(unix)]
             show_hidden: false,
+            is_ready: false,
           }
     }
 
-    pub fn init(&mut self){
-       
-    }
+
 
     pub async fn show(&mut self, ctx: &Context) { //-> core::result::Result<(), Box<dyn std::error::Error>>{
 
         let mut command: Option<Command> = None;
 
         egui::TopBottomPanel::top("egui_file_top").show(&ctx, |ui| {
-            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
-            ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
-            ui.set_min_width(600.0);
-            ui.set_max_height(600.0);
-            ui.shrink_width_to_current();
-            ui.shrink_height_to_current();
-            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
-            ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)));
 
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
