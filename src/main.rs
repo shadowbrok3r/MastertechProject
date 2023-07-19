@@ -18,11 +18,11 @@ mod request;
 mod file_browser;
 mod scaffold_builder;
 
-use file_browser::{FileBrowser, Command, Response, Directory};
+use file_browser::{FileBrowser, Command};
 use request::SendRequest;
 use system_info::RetrieveSystemInfo;
 
-use crate::file_browser::CommandControl;
+
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -100,13 +100,13 @@ struct MastertechContext {
     //////////////////////////////////////////
     /*          File Browsing               */
     //////////////////////////////////////////
-    command_control: CommandControl,
+    //command_control: CommandControl,
     current_dir: String,
     selected_path: Option<PathBuf>,
     copied_path: Option<PathBuf>,
     destination_path: Option<PathBuf>,
-    entries: Vec<Directory>,
-    selected_directory: Option<Directory>,
+    //entries: Vec<Directory>,
+    //selected_directory: Option<Directory>,
     directory_contents: Vec<PathBuf>,
     directory_changed: bool,
     directory_depth: usize,
@@ -218,7 +218,7 @@ impl Default for MasterTechApp {
             tx: tx_scaffold
         };
 
-        let command_control = CommandControl::new();
+        //let command_control = CommandControl::new();
 
         let (on_done_tx, on_done_rc) = tokio::sync::mpsc::channel(1);
         let (show_tx, _) = tokio::sync::mpsc::channel::<Option<egui::Context>>(100);
@@ -287,13 +287,12 @@ impl Default for MasterTechApp {
             //////////////////////////////////////////
             /*          File Browsing               */
             //////////////////////////////////////////
-            command_control: command_control,
+
             current_dir: env::current_dir().unwrap().to_str().unwrap().to_string(),
             selected_path: None,
             copied_path: None,
             destination_path: None,
-            entries: vec![],
-            selected_directory: None,
+
             directory_contents: vec![],
             directory_changed: false,
             directory_depth: 1,
@@ -725,37 +724,51 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-        let x = ui.button("test");
 
-        let (_, mut show_rc) = tokio::sync::mpsc::channel::<Option<egui::Context>>(100);
-        let on_done_tx = self.on_done_tx.clone();
-        let ctx_repaint = self.ctx.clone();
-        //if self.file_browse_run == true{
-            //self.file_browse_run = false;
-            if x.clicked(){
-            ctx_repaint.request_repaint(); 
-                tokio::spawn( async move { 
-                    let mut file_browser_state = FileBrowser::new();
-                    
-                    while let Some(ctx_option) = show_rc.recv().await {
-                        if let Some(ctx) = ctx_option {
-                            file_browser_state.show(&ctx).await;
-                            let _ = on_done_tx.send(());
-                        } else {
-                            println!("no context provided");
-                        }
-
-                    }
-
-                    ctx_repaint.request_repaint(); 
-                }); 
-            }
-            
-            
-            
-  
-        //}
+        egui::TopBottomPanel::top("egui_file_top").show_inside(ui, |ui| {
         
+        });
+        egui::TopBottomPanel::bottom("egui_file_bottom").show_inside(ui, |ui| {
+
+        });
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
+            ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
+            //ui.set_min_width(600.0);
+            //ui.set_max_height(600.0);
+            ui.shrink_width_to_current();
+            ui.shrink_height_to_current();
+            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
+            ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)));
+    
+        });
+        // let x = ui.button("test");
+
+        // let (_, mut show_rc) = tokio::sync::mpsc::channel::<Option<egui::Context>>(100);
+        // let on_done_tx = self.on_done_tx.clone();
+        // let ctx_repaint = self.ctx.clone();
+        // //if self.file_browse_run == true{
+        //     //self.file_browse_run = false;
+        //     if x.clicked(){
+        //     ctx_repaint.request_repaint(); 
+        //         tokio::spawn( async move { 
+        //             let mut file_browser_state = FileBrowser::new();
+                    
+        //             while let Some(ctx_option) = show_rc.recv().await {
+        //                 if let Some(ctx) = ctx_option {
+        //                     file_browser_state.show(&ctx).await;
+        //                     let _ = on_done_tx.send(());
+        //                 } else {
+        //                     println!("no context provided");
+        //                 }
+
+        //             }
+
+        //             ctx_repaint.request_repaint(); 
+        //         }); 
+        //     }
+
     }
     
     fn scripts(&mut self, ui: &mut Ui){ }
