@@ -99,7 +99,7 @@ pub struct FileBrowser {
     show_hidden: bool,
 }
 
-impl FileBrowser{
+impl FileBrowser{ // sender: UnboundedSender<>
     pub fn new() -> Self{
         let mut path = env::current_dir().unwrap_or_default();
         let mut filename_edit = String::new();
@@ -129,9 +129,11 @@ impl FileBrowser{
           }
     }
 
+    pub fn init(&mut self){
+       
+    }
 
-
-    pub async fn show(&mut self, ctx: &Context) -> core::result::Result<(), Box<dyn std::error::Error>>{
+    pub async fn show(&mut self, ctx: &Context) { //-> core::result::Result<(), Box<dyn std::error::Error>>{
 
         let mut command: Option<Command> = None;
 
@@ -147,7 +149,7 @@ impl FileBrowser{
 
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
-                    let response = ui.button("stuf").on_hover_text("Parent Folder"); //"⬆"
+                    let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
                         command = Some(Command::UpDirectory);
                     }
@@ -155,7 +157,7 @@ impl FileBrowser{
 
                 ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
                 
-                    let response = ui.button("st").on_hover_text("Refresh"); //"⟲"
+                    let response = ui.button("⟲").on_hover_text("Refresh"); //
                     if response.clicked() {
                         command = Some(Command::Refresh);
                     }
@@ -329,7 +331,8 @@ impl FileBrowser{
                 },
             };
         }
-        Ok(())
+        ctx.request_repaint();
+        // Ok(())
     }
 
     pub fn default_filename(mut self, filename: impl Into<String>) -> Self {
