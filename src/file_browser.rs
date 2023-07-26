@@ -1,66 +1,52 @@
-use std::io::{stdin, stdout, Write};
-use std::path::PathBuf;
+use tokio::sync::mpsc::{channel, Sender, Receiver};
+use eframe::egui::{*, collapsing_header::CollapsingState};
+use std::{path::PathBuf, sync::{Arc, Mutex}, collections::HashSet};
 use tokio::{task, fs};
 use walkdir::WalkDir;
-use tokio::{sync::mpsc::{UnboundedSender, unbounded_channel, UnboundedReceiver}};
-use std::{env, io::{Error, Result}};
-use thiserror::Error;
-use std::task::{Context as TaskContext, Poll};
-use std::pin::Pin;
-use std::future::Future;
-use egui::{
-    vec2, Align2, Context, Key, Layout, Pos2, RichText, ScrollArea, TextEdit, Ui, Vec2, Window, Color32, Stroke
-};
+use std::{env, io::Error};
+use pollster::block_on;
+
 
 /// Function that returns `true` if the path is accepted.
-//pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
+pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Command {
     Copy(PathBuf, PathBuf),
     Move(PathBuf, PathBuf),
     Delete(PathBuf),
     Rename(PathBuf, PathBuf),
-    //ListDir(PathBuf, usize),
-
     CreateDirectory,
     Folder,
     Refresh,
     Select(PathBuf),
     UpDirectory,
+    OpenPath(PathBuf),
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct FileBrowser {
     path: PathBuf, /// Current opened path.
     path_edit: String, /// Editable field with path.
-    selected_file: Option<PathBuf>, /// Selected file path
+    selected_item: Option<PathBuf>, /// Selected file path
     filename_edit: String, /// Editable field with filename.
     files: core::result::Result<Vec<PathBuf>, Error>, /// Files in directory.
+    expanded_folder: bool,
     read_dirs_only: bool,
-    read_hidden_files: bool,
-    //filter: Option<Filter>,
+    show_hidden: bool,
     rename: bool,
     new_folder: bool,
-    is_ready: bool,
-  
-    // Show hidden files on unix systems.
-    //#[cfg(unix)]
-    show_hidden: bool,
+
+    selected_items: HashSet<PathBuf>,
+    filter: Option<Filter>,
+    depth: usize,
+    double_clicked_directory: Option<PathBuf>,
+
+    first_refresh: bool,
+
+    command_rx: Option<Receiver<Option<Command>>>,
 }
 
-// impl Future for FileBrowser{
-//     type Output = String;
-
-//     fn poll(self: Pin<&mut Self>, _cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
-//         if self.is_ready {
-//             Poll::Ready(())
-//         } else {
-//             self.is_ready = true;
-//             Poll::Pending
-//         }
-//     }
-// }
 impl FileBrowser{ // sender: UnboundedSender<>
     pub fn new() -> Self{
         let mut path = env::current_dir().unwrap_or_default();
@@ -73,91 +59,231 @@ impl FileBrowser{ // sender: UnboundedSender<>
             path.pop();
         }
 
+        let (_, command_rx) = channel(4);
+
         Self {
             path,
             path_edit,
-            selected_file: None,
+            selected_item: None,
+            selected_items: HashSet::new(),
             filename_edit,
             files: Ok(Vec::new()),
             read_dirs_only: false,
-            read_hidden_files: false,
-
-            //filter: None,
             rename: true,
+            expanded_folder: false,
             new_folder: true,
-    
-            //#[cfg(unix)]
             show_hidden: false,
-            is_ready: false,
+            first_refresh: true,
+            depth: 1,
+            double_clicked_directory: None,
+            filter: None,
+            command_rx: Some(command_rx),
           }
     }
+    
+    pub async fn run(&mut self, command: Command) {
+        match command{
+            Command::Select(file) => self.select(Some(file)),
+
+            Command::Folder => {
+                println!("Command::Folder");
+                self.selected_item = Some(self.get_folder().to_owned());
+            },
+            
+            Command::Refresh => self.refresh(),
+
+            Command::UpDirectory => {
+                println!("Command::UpDirectory");
+                if self.path.pop() {
+                    self.refresh();
+                }
+            },
+
+            Command::CreateDirectory => {
+                println!("Command::CreateDirectory");
+                let mut path = self.path.clone();
+                let name = match self.filename_edit.is_empty() {
+                    true => "New folder",
+                    false => &self.filename_edit,
+                };
+                path.push(name);
+                // task::spawn(async move{});
+
+                match fs::create_dir(&path).await {
+                    Ok(_) => {
+                        self.refresh();
+                        self.select(Some(path));
+                        // TODO: scroll to selected?
+                    }
+                    Err(err) => println!("Error while creating directory: {err}"),
+                }
 
 
+            },
 
-    pub async fn show(&mut self, ctx: &Context) { //-> core::result::Result<(), Box<dyn std::error::Error>>{
+            Command::Copy(source, destination) => {
+                println!("Command::copy");
+                if let Err(err) = fs::copy(&source, &destination).await {
+                    //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
+                } else {
+                    //let _ = response_sender.send(Response::Success(format!("Successfully copied from {:?} to {:?}", source, destination)));
+                }
+            
+            },
 
-        let mut command: Option<Command> = None;
+            Command::Move(source, destination) => {
+                println!("Command::Move");
+                if let Err(err) = fs::rename(&source, &destination).await {
+                    //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
+                } else {
+                    //let _ = response_sender.send(Response::Success(format!("Successfully moved from {:?} to {:?}", source, destination)));
+                }
+            
+            },
 
-        egui::TopBottomPanel::top("egui_file_top").show(&ctx, |ui| {
+            Command::Delete(path) => {
+                println!("Command::Delete");
+                if let Err(err) = fs::remove_dir_all(&path).await {
+                    //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
+                } else {
+                    //let _ = response_sender.send(Response::Success(format!("Successfully deleted {:?}", path)));
+                }
+            },
 
+            Command::Rename(from, to) => {
+                println!("Command::Rename");
+                match fs::rename(from, &to).await {
+                    Ok(_) => {
+                        self.refresh();
+                        self.select(Some(to));
+                    }
+                    Err(err) => println!("Error while renaming: {err}"),
+                }
+            },
+
+            Command::OpenPath(path) => {
+                self.select(Some(path));
+                self.open_path();
+            },
+
+        }
+    }
+
+    pub fn show(
+        &mut self, 
+        ui: &mut egui::Ui,
+        ctx:&egui::Context,
+        command_tx: Sender<Option<Command>>,
+        mut command_rx: Receiver<Option<Command>>
+    ) {     
+        egui::TopBottomPanel::top("egui_file_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
-                        command = Some(Command::UpDirectory);
+                        match command_tx.blocking_send(Some(Command::UpDirectory)){
+                            Ok(_) => {
+                                println!("sent task successfully");
+                            },
+                            Err(e) => {
+                                print!("{e}");
+                            }
+                        }
                     }
                 });
 
-                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 
                     let response = ui.button("⟲").on_hover_text("Refresh"); //
                     if response.clicked() {
-                        command = Some(Command::Refresh);
+                        match command_tx.blocking_send(Some(Command::Refresh)){
+                            Ok(_) => {
+                                println!("sent task successfully");
+                            },
+                            Err(e) => {
+                                print!("{e}");
+                            }
+                        }
                     }
+                    egui::ScrollArea::new([false, false]).auto_shrink([false, false]).show(ui, |ui| {
+                        let response = ui.add_sized(
+                            ui.available_size_before_wrap(),
+                            egui::TextEdit::singleline(&mut self.path_edit)
+                                .id(egui::Id::new("path_edit"))
+                                .cursor_at_end(true),
+                        );
+                        if response.lost_focus() && response.ctx.input(|state| state.key_pressed(egui::Key::Enter)) {
+                            let path = PathBuf::from(&self.path_edit);
 
-                    let response = ui.add_sized(
-                    ui.available_size(),
-                    TextEdit::singleline(&mut self.path_edit).cursor_at_end(true),
-                    );
+                            match command_tx.blocking_send(Some(Command::OpenPath(path))){
+                                Ok(_) => {
+                                    println!("sent task successfully");
+                                },
+                                Err(e) => {
+                                    print!("{e}");
+                                }
+                            };
 
-                    if response.lost_focus() {
-                        let path = PathBuf::from(&self.path_edit);
-                        //command = Some(Command::Open(path));
-                    };
+                        }
+                    });
+
+
 
                 });
             });
             
             ui.horizontal_top(|ui| {
                 ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
-                ui.checkbox(&mut self.read_hidden_files, "Show hidden files");
+                if ui.checkbox(&mut self.show_hidden, "Show Hidden").changed() {
+                    self.refresh();
+                }
             });
             ui.add_space(ui.spacing().item_spacing.y);
         });
 
         // Bottom file field.
-        egui::TopBottomPanel::bottom("egui_file_bottom").show(&ctx, |ui| {
+        egui::TopBottomPanel::bottom("egui_file_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
             ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if self.new_folder && ui.button("New Folder").clicked() {
-                        command = Some(Command::CreateDirectory);
+                        match command_tx.blocking_send(Some(Command::CreateDirectory)){
+                            Ok(_) => {
+                                println!("ok");
+                            },
+                            Err(e) => {
+                                print!("{e}");
+                            }
+                        }
+                        
                     }
 
                     if self.rename {
+
                         ui.add_enabled_ui(self.can_rename(), |ui| {
                             if ui.button("Rename").clicked() {
-                            if let Some(from) = self.selected_file.clone() {
+                            if let Some(from) = self.selected_item.clone() {
                                 let to = from.with_file_name(&self.filename_edit);
-                                command = Some(Command::Rename(from, to));
+                                
+                                match command_tx.blocking_send(Some(Command::Rename(from, to))){
+                                    Ok(_) => {
+                                        println!("ok");
+                                    },
+                                    Err(e) => {
+                                        print!("{e}");
+                                    }
+                                }
+                                
                             }
                             }
                         });
                     }
+                    
 
-                    let result = ui.add_sized(
-                    ui.available_size(),
-                    TextEdit::singleline(&mut self.filename_edit),
+                    let result = ui.add(
+                    // ui.available_size_before_wrap(),
+                    egui::TextEdit::singleline(&mut self.filename_edit)
+                    .id(egui::Id::new("file_name_edit")),
                     );
 
                     if result.lost_focus()
@@ -172,122 +298,58 @@ impl FileBrowser{ // sender: UnboundedSender<>
             });
         });
 
-        egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.visuals_mut().override_text_color = Some(egui::Color32::from_rgb(255, 204, 230));
+            ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
+            ui.shrink_width_to_current();
+            ui.shrink_height_to_current();
+            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,egui::Color32::from_rgb(28,30,36));
+            ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, egui::Stroke::new(1.0, egui::Color32::from_rgb_additive(150, 62, 124)));
+
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
-            let scroll_area = ScrollArea::new([true, true])
+
+            if self.first_refresh == true{
+                self.first_refresh = false;
+                self.refresh();
+            }
+            let mut command: Option<Command> = None;
+
+            let scroll_area = egui::ScrollArea::new([true, true])
                 .id_source("file_browser_scroll")
                 .auto_shrink([false, false]);
     
-            scroll_area.show_rows(
-            ui,
+            scroll_area.show_rows(ui,
             ui.text_style_height(&egui::TextStyle::Body),
-    self.files.as_ref().map_or(0, |files| files.len()),
-    |ui, range| match self.files.as_ref() {
-                    Ok(files) => {
-                        ui.with_layout(ui.layout().with_cross_justify(true), |ui| {
+            self.files.as_ref().map_or(0, |files| files.len()),
+            |ui, range| match self.files.as_ref() {
+                
+                Ok(files) => {
+                    ui.with_layout(ui.layout().with_main_justify(true), |ui| {
+                        ui.vertical(|ui|{
                             for path in files[range].iter() {
-                                let label = match path.is_dir() {
-                                    true => "🗀 ",
-                                    false => "🗋 ",
-                                }.to_string() + get_file_name(path);
-                
-                                let is_selected = Some(path) == self.selected_file.as_ref();
-                                let selectable_label = ui.selectable_label(is_selected, label);
-                                if selectable_label.clicked() {
-                                    command = Some(Command::Select(path.clone()));
+                                
+                                if let Some(command_result) = display_path(ui, path, &self.selected_item, self.depth, self.show_hidden) {
+                                    let command = Some(command_result);
+                                    block_on(async{self.run(command).await;});
+                                    
                                 }
-                
-                                if selectable_label.double_clicked() {
-                                    // command = Some(match self.dialog_type == DialogType::SaveFile {
-                                    // true => match path.is_dir() {
-                                    //     true => Command::OpenSelected,
-                                    //     false => Command::Save(path.clone()),
-                                    // },
-                                    // false => Command::Open(path.clone()),
-                                    // });
-                                }
+                                
                             }
-                        }).response
-                    }
-                    Err(e) => ui.label(e.to_string()),
-                },
+                            
+
+                        });
+                    }).response
+                }
+                Err(e) => ui.label(e.to_string()),
+            },
             );
         });
-        if let Some(command) = command {
-            match command {
-                Command::Select(file) => self.select(Some(file)),
 
-                Command::Folder => {
-                    //self.selected_file = Some(self.get_folder().to_owned());
-                }
-                
-                Command::Refresh => self.refresh(),
-
-                Command::UpDirectory => {
-                    if self.path.pop() {
-                        self.refresh();
-                    }
-                }
-
-                Command::CreateDirectory => {
-                    let mut path = self.path.clone();
-                    let name = match self.filename_edit.is_empty() {
-                        true => "New folder",
-                        false => &self.filename_edit,
-                    };
-                    path.push(name);
-                    match fs::create_dir(&path).await {
-                        Ok(_) => {
-                        self.refresh();
-                        self.select(Some(path));
-                        // TODO: scroll to selected?
-                        }
-                        Err(err) => println!("Error while creating directory: {err}"),
-                    }
-                }
-                Command::Copy(source, destination) => {
-                    if let Err(err) = fs::copy(&source, &destination).await {
-                        //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
-                    } else {
-                        //let _ = response_sender.send(Response::Success(format!("Successfully copied from {:?} to {:?}", source, destination)));
-                    }
-                },
-                Command::Move(source, destination) => {
-                    if let Err(err) = fs::rename(&source, &destination).await {
-                        //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
-                    } else {
-                        //let _ = response_sender.send(Response::Success(format!("Successfully moved from {:?} to {:?}", source, destination)));
-                    }
-                },
-                Command::Delete(path) => {
-                    if let Err(err) = fs::remove_dir_all(&path).await {
-                        //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
-                    } else {
-                        //let _ = response_sender.send(Response::Success(format!("Successfully deleted {:?}", path)));
-                    }
-                },
-
-                // Command::Rename(source, destination) => {
-                //     if let Err(err) = fs::rename(&source, &destination).await {
-                //         let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
-                //     } else {
-                //         let _ = response_sender.send(Response::Success(format!("Successfully renamed from {:?} to {:?}", source, destination)));
-                //     }
-                // },
-
-                Command::Rename(from, to) => match fs::rename(from, &to).await {
-                    Ok(_) => {
-                        self.refresh();
-                        self.select(Some(to));
-                    }
-                    Err(err) => println!("Error while renaming: {err}"),
-                },
-            };
+        if let Ok(Some(cmd)) = command_rx.try_recv(){
+            block_on(async{self.run(cmd).await;});
         }
-        ctx.request_repaint();
-        // Ok(())
     }
-
+    
     pub fn default_filename(mut self, filename: impl Into<String>) -> Self {
         self.filename_edit = filename.into();
         self
@@ -295,11 +357,22 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
     /// Resulting file path.
     pub fn path(&self) -> Option<PathBuf> {
-        self.selected_file.clone()
+        self.selected_item.clone()
+    }
+
+    /// Set the dialog's current opened path
+    pub fn set_path(&mut self, path: impl Into<PathBuf>) {
+        self.path = path.into();
+        self.refresh();
     }
 
     fn refresh(&mut self) {
-        //read_directory_boxed
+        self.files = Ok(read_folder(
+            &self.path,
+            self.depth,
+            self.filter.as_ref(),
+            self.show_hidden,
+          ));
         self.path_edit = String::from(self.path.to_str().unwrap_or_default());
         self.select(None);
     }
@@ -309,20 +382,22 @@ impl FileBrowser{ // sender: UnboundedSender<>
             Some(path) => get_file_name(path).to_string(),
             None => String::new(),
         };
-        self.selected_file = file;
+        self.selected_item = file;
     }
-
-    fn can_save(&self) -> bool {
-        self.selected_file.is_some() || !self.filename_edit.is_empty()
-    }
-
-    fn can_open(&self) -> bool {
-        self.selected_file.is_some()
-    }
+    
+    fn open_path(&mut self) {
+        if let Some(path) = &self.selected_item {
+          if path.is_dir() {
+            self.set_path(path.clone())
+          } else if path.is_file() {
+            //self.confirm();
+          }
+        }
+      }
 
     fn can_rename(&self) -> bool {
         if !self.filename_edit.is_empty() {
-            if let Some(file) = &self.selected_file {
+            if let Some(file) = &self.selected_item {
             return get_file_name(file) != self.filename_edit;
             }
         }
@@ -330,18 +405,21 @@ impl FileBrowser{ // sender: UnboundedSender<>
         false
     }
     
+    fn get_folder(&self) -> &std::path::Path {
+        if let Some(file) = &self.selected_item {
+            if file.is_dir() {
+                return file.as_path();
+            }
+        }
+    &self.path // No selected file or it's not a folder, so use the current path.
+    }
     
-    // Set a function to filter shown files.
-    // pub fn filter(mut self, filter: Filter) -> Self {
-    //     self.filter = Some(filter);
-    //     self
-    // }
+    /// Set a function to filter shown files.
+    pub fn filter(mut self, filter: Filter) -> Self {
+        self.filter = Some(filter);
+        self
+    }
     
-    // Returns true, if the file selection was confirmed.
-    // pub fn selected(&self) -> bool {
-        // self.state == State::Selected
-    // }
-
 }
 
 #[cfg(windows)]
@@ -367,4 +445,145 @@ fn get_file_name(path: &PathBuf) -> &str {
 #[cfg(windows)]
 extern "C" {
     pub fn GetLogicalDrives() -> u32;
+}
+
+fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, show_hidden: bool) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    let drives = {
+      let mut drives = unsafe { GetLogicalDrives() };
+      let mut letter = b'A';
+      let mut drive_names = Vec::new();
+      while drives > 0 {
+        if drives & 1 != 0 {
+          drive_names.push(format!("{}:\\", letter as char).into());
+        }
+        drives >>= 1;
+        letter += 1;
+      }
+      drive_names
+    };
+
+    let result: Vec<_> = WalkDir::new(path).min_depth(depth).max_depth(depth)
+        .into_iter()
+        .filter_map(|e| e.ok()) // Only retreive the resulted items
+        .map(|entry| entry.path().to_path_buf())// iterate through each direntry
+        .collect();
+
+    let mut result = result;
+
+    result.sort_by(|a, b| {
+        let da = a.is_dir();
+        let db = b.is_dir();
+        match da == db {
+          true => a.file_name().cmp(&b.file_name()),
+          false => db.cmp(&da),
+        }
+    });
+
+    #[cfg(windows)]
+    let result = {
+        let mut items = drives;
+        items.reserve(result.len());
+        items.append(&mut result);
+        items
+    };
+
+    let result = result
+    .into_iter()
+    .filter(|path| {
+        if !path.is_dir() {
+            // Do not show system files.
+            if !path.is_file() {
+                return false;
+            }
+            // Filter.
+            if let Some(filter) = filter.as_ref() {
+                if !filter(path) {
+                    return false;
+                }
+            }
+        }
+        #[cfg(unix)]
+        if !show_hidden && get_file_name(path).starts_with('.') {
+            return false;
+        }
+        true
+    })
+    .collect();
+
+    result
+}
+
+fn list_subfolders(path: &PathBuf, depth: usize) -> Vec<PathBuf>{
+
+    let mut children_items = Vec::new();
+
+    let children = WalkDir::new(path)
+    .min_depth(depth)
+    .max_depth(depth)
+    .into_iter()
+    .filter_map(|e| e.ok()); 
+
+    for items in children {
+        let sub_items = items.path().to_path_buf();
+        children_items.push(sub_items);
+    }
+    children_items
+    
+}
+
+fn display_path(ui: &mut egui::Ui, path: &PathBuf, selected_item: &Option<PathBuf>, depth: usize, show_hidden: bool) -> Option<Command> {
+    let mut command = None;
+    let label = match path.is_dir() {
+        true => "🗀 ",
+        false => "🗋 ",
+    }.to_string() + get_file_name(path);
+
+    if path.is_dir() {
+
+        let id = ui.make_persistent_id(path.as_path().to_string_lossy());
+        let sub_paths = list_subfolders(path, depth);
+
+        CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
+        .show_header(ui, |ui| {
+            let is_selected = Some(path) == selected_item.as_ref();
+            let selectable_label = ui.selectable_label(is_selected, &label);
+            let mut double_click = false;
+            let mut single_click = false;
+            if selectable_label.clicked(){
+                single_click = true;
+            }
+            if selectable_label.double_clicked() || selectable_label.ctx.input(|state| state.key_pressed(egui::Key::Enter)){
+                double_click = true;
+            }
+            match double_click{
+                true => command = Some(Command::OpenPath(path.clone())), 
+                false => {
+                    match single_click{
+                        true => command = Some(Command::Select(path.clone())),
+                        false => {}
+                    }  
+                }
+            }
+        })
+        .body(|ui| {
+            for sub_path in sub_paths {
+                if let Some(cmd) = display_path(ui, &sub_path, selected_item, depth + 1, show_hidden) {
+                    command = Some(cmd);
+                }
+            }
+        });
+
+    } else {
+
+        // for files, create a selectable label directly
+        let is_selected = Some(path) == selected_item.as_ref();
+        let selectable_label = ui.selectable_label(is_selected, &label);
+        if selectable_label.clicked() { 
+            command = Some(Command::Select(path.clone())); 
+        }
+    }
+    println!("command: {command:?}");
+    command
+    
 }
