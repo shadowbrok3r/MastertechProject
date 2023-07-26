@@ -8,7 +8,7 @@ use egui::{*, collapsing_header::CollapsingState};
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use scaffold_builder::PulledKeys;
 
-use tokio::{runtime::Handle, sync::mpsc::{UnboundedReceiver, UnboundedSender}};
+use tokio::{runtime::Handle, sync::mpsc::{UnboundedReceiver, UnboundedSender, channel}};
 use serde::{Deserialize, Serialize};
 use egui_extras::*;
 use catppuccin_egui::MOCHA;
@@ -21,8 +21,6 @@ mod scaffold_builder;
 use file_browser::{FileBrowser, Command};
 use request::SendRequest;
 use system_info::RetrieveSystemInfo;
-
-
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -100,27 +98,13 @@ struct MastertechContext {
     //////////////////////////////////////////
     /*          File Browsing               */
     //////////////////////////////////////////
-    //command_control: CommandControl,
-    current_dir: String,
-    selected_path: Option<PathBuf>,
-    copied_path: Option<PathBuf>,
-    destination_path: Option<PathBuf>,
-    //entries: Vec<Directory>,
-    //selected_directory: Option<Directory>,
-    directory_contents: Vec<PathBuf>,
-    directory_changed: bool,
-    directory_depth: usize,
-    double_clicked_dir: Option<PathBuf>,
-    read_hidden_files: bool,
-    read_dirs_only: bool,
-    dragged_directory: Option<PathBuf>,
-    new_dir: String,
-    
+    file_browser: Arc<Mutex<FileBrowser>>,
+    open: bool,
     on_done_tx: tokio::sync::mpsc::Sender<()>,
     on_done_rc: tokio::sync::mpsc::Receiver<()>,
     show_tx: tokio::sync::mpsc::Sender<Option<egui::Context>>,
     //show_rc: tokio::sync::mpsc::Receiver<Option<egui::Context>>,
-    open: bool,
+  
 
     //////////////////////////////////////////
     /*          UI Colors                   */
@@ -202,8 +186,6 @@ impl Default for MasterTechApp {
                 }
             }
         }
-        
-        let open = true;
 
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
@@ -217,8 +199,6 @@ impl Default for MasterTechApp {
         let scaffold_request = SendRequest{
             tx: tx_scaffold
         };
-
-        //let command_control = CommandControl::new();
 
         let (on_done_tx, on_done_rc) = tokio::sync::mpsc::channel(1);
         let (show_tx, _) = tokio::sync::mpsc::channel::<Option<egui::Context>>(100);
@@ -287,26 +267,11 @@ impl Default for MasterTechApp {
             //////////////////////////////////////////
             /*          File Browsing               */
             //////////////////////////////////////////
-
-            current_dir: env::current_dir().unwrap().to_str().unwrap().to_string(),
-            selected_path: None,
-            copied_path: None,
-            destination_path: None,
-
-            directory_contents: vec![],
-            directory_changed: false,
-            directory_depth: 1,
-            read_hidden_files: false,
-            read_dirs_only: false,
-            dragged_directory: None,
-            double_clicked_dir: None,
-            new_dir: ".".to_string(),
-
+            file_browser: Arc::new(Mutex::new(FileBrowser::new())),
+            open: false,
             on_done_tx,
             on_done_rc,
             show_tx,
-            //show_rc,
-            open: open,
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -724,51 +689,11 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-
-        egui::TopBottomPanel::top("egui_file_top").show_inside(ui, |ui| {
-        
-        });
-        egui::TopBottomPanel::bottom("egui_file_bottom").show_inside(ui, |ui| {
-
-        });
-
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
-            ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
-            //ui.set_min_width(600.0);
-            //ui.set_max_height(600.0);
-            ui.shrink_width_to_current();
-            ui.shrink_height_to_current();
-            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
-            ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)));
-    
-        });
-        // let x = ui.button("test");
-
-        // let (_, mut show_rc) = tokio::sync::mpsc::channel::<Option<egui::Context>>(100);
-        // let on_done_tx = self.on_done_tx.clone();
-        // let ctx_repaint = self.ctx.clone();
-        // //if self.file_browse_run == true{
-        //     //self.file_browse_run = false;
-        //     if x.clicked(){
-        //     ctx_repaint.request_repaint(); 
-        //         tokio::spawn( async move { 
-        //             let mut file_browser_state = FileBrowser::new();
-                    
-        //             while let Some(ctx_option) = show_rc.recv().await {
-        //                 if let Some(ctx) = ctx_option {
-        //                     file_browser_state.show(&ctx).await;
-        //                     let _ = on_done_tx.send(());
-        //                 } else {
-        //                     println!("no context provided");
-        //                 }
-
-        //             }
-
-        //             ctx_repaint.request_repaint(); 
-        //         }); 
-        //     }
-
+        let (command_tx, command_rx) = channel(4);
+        // Lock the Mutex and show the GUI
+        let file_browser_clone = Arc::clone(&self.file_browser);
+        let mut file_browser = file_browser_clone.lock().unwrap();
+        file_browser.show(ui, &self.ctx.clone(), command_tx.clone(), command_rx);
     }
     
     fn scripts(&mut self, ui: &mut Ui){ }
@@ -781,7 +706,7 @@ impl eframe::App for MasterTechApp {
         let cps_sender = self.scaffold_request.tx.clone();
         let submit_ticket_sender = self.scaffold_request.tx.clone();
         let specs_sender = self.sysinfo_request.tx.clone();
-        let show_tx = self.context.show_tx.clone();
+        //let show_tx = self.context.show_tx.clone();
 
         if self.context.get_ticket_button_pressed == true {
             //self.context.customer_name.
@@ -803,7 +728,6 @@ impl eframe::App for MasterTechApp {
             self.context.spinner = true;
             RetrieveSystemInfo::get_system_specs(specs_sender);
         }
-
 
         if self.context.submit_ticket_pressed == true{
             self.context.submit_ticket_pressed = false;
@@ -874,10 +798,7 @@ impl eframe::App for MasterTechApp {
             SendRequest::send_ticket_request(submit_ticket_sender);
         }   
 
-
         let receiver = self.context.rx.as_ref().unwrap();
-
-        // On the receiving end:
         while let Ok(message) = receiver.try_recv() {
             // Try to parse the JSON string into a TicketInformation
             if let Ok(info) = serde_json::from_str::<scaffold_builder::TicketInformation>(&message) {
@@ -938,18 +859,6 @@ Item Codes: {:?}\n",
                 self.context.output_text = format!("Error parsing JSON: {}", message);
                 self.context.spinner = false;
             }
-        }
-
-        if self.context.open == true{
-            self.context.open = false;
-            let _ = show_tx.send(Some(ctx.clone()));
-            self.context.file_browse_run = true;
-        }
-
-        while let Ok(x) = self.context.on_done_rc.try_recv() {
-            //ctx.request_repaint();
-            println!("on_done_rc: {:?}", x);
-            println!("this was hit");
         }
 
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
