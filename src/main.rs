@@ -693,7 +693,7 @@ impl MastertechContext {
         // Lock the Mutex and show the GUI
         let file_browser_clone = Arc::clone(&self.file_browser);
         let mut file_browser = file_browser_clone.lock().unwrap();
-        file_browser.show(ui, &self.ctx.clone(), command_tx.clone(), command_rx);
+        file_browser.show(ui, &self.ctx.clone(), command_tx, command_rx);
     }
     
     fn scripts(&mut self, ui: &mut Ui){ }

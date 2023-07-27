@@ -1,4 +1,4 @@
-use tokio::sync::mpsc::{channel, Sender, Receiver};
+use tokio::sync::mpsc::{channel, Sender, Receiver, UnboundedReceiver, UnboundedSender, unbounded_channel};
 use eframe::egui::{*, collapsing_header::CollapsingState};
 use std::{path::PathBuf, sync::{Arc, Mutex}, collections::HashSet};
 use tokio::{task, fs};
@@ -181,14 +181,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
-                        match command_tx.blocking_send(Some(Command::UpDirectory)){
-                            Ok(_) => {
-                                println!("sent task successfully");
-                            },
-                            Err(e) => {
-                                print!("{e}");
-                            }
-                        }
+                        // match command_tx.blocking_send(Some(Command::UpDirectory)){
+                        //     Ok(_) => {
+                        //         println!("sent task successfully");
+                        //     },
+                        //     Err(e) => {
+                        //         print!("{e}");
+                        //     }
+                        // }
                     }
                 });
 
@@ -196,14 +196,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 
                     let response = ui.button("⟲").on_hover_text("Refresh"); //
                     if response.clicked() {
-                        match command_tx.blocking_send(Some(Command::Refresh)){
-                            Ok(_) => {
-                                println!("sent task successfully");
-                            },
-                            Err(e) => {
-                                print!("{e}");
-                            }
-                        }
+                        // match command_tx.blocking_send(Some(Command::Refresh)){
+                        //     Ok(_) => {
+                        //         println!("sent task successfully");
+                        //     },
+                        //     Err(e) => {
+                        //         print!("{e}");
+                        //     }
+                        // }
                     }
                     egui::ScrollArea::new([false, false]).auto_shrink([false, false]).show(ui, |ui| {
                         let response = ui.add_sized(
@@ -215,14 +215,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
                         if response.lost_focus() && response.ctx.input(|state| state.key_pressed(egui::Key::Enter)) {
                             let path = PathBuf::from(&self.path_edit);
 
-                            match command_tx.blocking_send(Some(Command::OpenPath(path))){
-                                Ok(_) => {
-                                    println!("sent task successfully");
-                                },
-                                Err(e) => {
-                                    print!("{e}");
-                                }
-                            };
+                            // match command_tx.blocking_send(Some(Command::OpenPath(path))){
+                            //     Ok(_) => {
+                            //         println!("sent task successfully");
+                            //     },
+                            //     Err(e) => {
+                            //         print!("{e}");
+                            //     }
+                            // };
 
                         }
                     });
@@ -247,14 +247,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if self.new_folder && ui.button("New Folder").clicked() {
-                        match command_tx.blocking_send(Some(Command::CreateDirectory)){
-                            Ok(_) => {
-                                println!("ok");
-                            },
-                            Err(e) => {
-                                print!("{e}");
-                            }
-                        }
+                        // match command_tx.blocking_send(Some(Command::CreateDirectory)){
+                        //     Ok(_) => {
+                        //         println!("ok");
+                        //     },
+                        //     Err(e) => {
+                        //         print!("{e}");
+                        //     }
+                        // }
                         
                     }
 
@@ -265,14 +265,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             if let Some(from) = self.selected_item.clone() {
                                 let to = from.with_file_name(&self.filename_edit);
                                 
-                                match command_tx.blocking_send(Some(Command::Rename(from, to))){
-                                    Ok(_) => {
-                                        println!("ok");
-                                    },
-                                    Err(e) => {
-                                        print!("{e}");
-                                    }
-                                }
+                                // match command_tx.blocking_send(Some(Command::Rename(from, to))){
+                                //     Ok(_) => {
+                                //         println!("ok");
+                                //     },
+                                //     Err(e) => {
+                                //         print!("{e}");
+                                //     }
+                                // }
                                 
                             }
                             }
@@ -309,33 +309,31 @@ impl FileBrowser{ // sender: UnboundedSender<>
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
             if self.first_refresh == true{
-                self.first_refresh = false;
                 self.refresh();
             }
-            let mut command: Option<Command> = None;
 
-            let scroll_area = egui::ScrollArea::new([true, true])
+            egui::ScrollArea::new([true, true])
                 .id_source("file_browser_scroll")
-                .auto_shrink([false, false]);
-    
-            scroll_area.show_rows(ui,
+                .auto_shrink([false, false])
+                .show_rows(ui,
             ui.text_style_height(&egui::TextStyle::Body),
             self.files.as_ref().map_or(0, |files| files.len()),
             |ui, range| match self.files.as_ref() {
-                
                 Ok(files) => {
+                    println!("does this hit only once?");
                     ui.with_layout(ui.layout().with_main_justify(true), |ui| {
                         ui.vertical(|ui|{
-                            for path in files[range].iter() {
-                                
-                                if let Some(command_result) = display_path(ui, path, &self.selected_item, self.depth, self.show_hidden) {
-                                    let command = Some(command_result);
-                                    block_on(async{self.run(command).await;});
-                                    
+                            if self.first_refresh == true{
+                                self.first_refresh = false;
+                                for path in files[range].iter() {
+                                    // need to change this functionality somehow, i cant call display path in
+                                    // the for loop if i want to not have it spawn a million tasks.
+                                    // i may need to change the functionality of the read_folder function
+                                    // so when and only when refresh happens, it calls display_path
+                                    display_path(ui, &path, &self.selected_item, self.depth, command_tx.clone());
                                 }
                                 
                             }
-                            
 
                         });
                     }).response
@@ -514,26 +512,34 @@ fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, show_hidde
     result
 }
 
-fn list_subfolders(path: &PathBuf, depth: usize) -> Vec<PathBuf>{
+fn list_subfolders(path: &PathBuf, depth: usize) -> UnboundedReceiver<Vec<PathBuf>>{
+    // may need to create a channel of its own here to send and receive
+    // children_items
+    let (tx, rx) = unbounded_channel::<Vec<PathBuf>>();
+    let path = path.clone();
 
-    let mut children_items = Vec::new();
-
-    let children = WalkDir::new(path)
-    .min_depth(depth)
-    .max_depth(depth)
-    .into_iter()
-    .filter_map(|e| e.ok()); 
-
-    for items in children {
-        let sub_items = items.path().to_path_buf();
-        children_items.push(sub_items);
-    }
-    children_items
+    tokio::spawn(async move{
+        let mut children_items = Vec::new();
+        let children = WalkDir::new(path)
+        .min_depth(depth)
+        .max_depth(depth)
+        .into_iter()
+        .filter_map(|e| e.ok()); 
     
+        for items in children {
+            let sub_items = items.path().to_path_buf();
+            children_items.push(sub_items);
+        }
+        match tx.send(children_items){
+            Ok(x) => println!("ok: {x:?}"),
+            Err(_) => println!("error")
+        }
+        
+    });
+    return rx;
 }
 
-fn display_path(ui: &mut egui::Ui, path: &PathBuf, selected_item: &Option<PathBuf>, depth: usize, show_hidden: bool) -> Option<Command> {
-    let mut command = None;
+fn display_path(ui: &mut egui::Ui, path: &PathBuf, selected_item: &Option<PathBuf>, depth: usize, command_tx: Sender<Option<Command>>) {//-> Option<Command> {
     let label = match path.is_dir() {
         true => "🗀 ",
         false => "🗋 ",
@@ -542,36 +548,36 @@ fn display_path(ui: &mut egui::Ui, path: &PathBuf, selected_item: &Option<PathBu
     if path.is_dir() {
 
         let id = ui.make_persistent_id(path.as_path().to_string_lossy());
-        let sub_paths = list_subfolders(path, depth);
+        let mut rx = list_subfolders(path, depth);
 
         CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
         .show_header(ui, |ui| {
             let is_selected = Some(path) == selected_item.as_ref();
             let selectable_label = ui.selectable_label(is_selected, &label);
-            let mut double_click = false;
-            let mut single_click = false;
+
             if selectable_label.clicked(){
-                single_click = true;
+                match command_tx.blocking_send(Some(Command::Select(path.clone()))){
+                    Ok(_) => println!("Success"),
+                    Err(e) => println!("error: {e:?}")
+                }
+                
+
             }
             if selectable_label.double_clicked() || selectable_label.ctx.input(|state| state.key_pressed(egui::Key::Enter)){
-                double_click = true;
-            }
-            match double_click{
-                true => command = Some(Command::OpenPath(path.clone())), 
-                false => {
-                    match single_click{
-                        true => command = Some(Command::Select(path.clone())),
-                        false => {}
-                    }  
+                match command_tx.blocking_send(Some(Command::OpenPath(path.clone()))){
+                    Ok(_) => println!("Success"),
+                    Err(e) => println!("error: {e:?}")
                 }
             }
+
         })
         .body(|ui| {
-            for sub_path in sub_paths {
-                if let Some(cmd) = display_path(ui, &sub_path, selected_item, depth + 1, show_hidden) {
-                    command = Some(cmd);
+            while let Ok(children_items) = rx.try_recv(){
+                for sub_path in children_items {
+                    display_path(ui, &sub_path, selected_item, depth + 1, command_tx.clone());
                 }
             }
+
         });
 
     } else {
@@ -580,10 +586,43 @@ fn display_path(ui: &mut egui::Ui, path: &PathBuf, selected_item: &Option<PathBu
         let is_selected = Some(path) == selected_item.as_ref();
         let selectable_label = ui.selectable_label(is_selected, &label);
         if selectable_label.clicked() { 
-            command = Some(Command::Select(path.clone())); 
+            match command_tx.blocking_send(Some(Command::Select(path.clone()))){
+                Ok(_) => println!("Success"),
+                Err(e) => println!("error: {e:?}")
+            } 
         }
     }
-    println!("command: {command:?}");
-    command
+    // println!("command: {command:?}");
+
+    // command
     
 }
+
+
+// TODO
+/* NOW i will need to find a way to keep track of the list of items being displayed
+ * so they only display one time, so threads are not spawning all the time
+ * Gamplan: this function has a lot of recursiveness, because i run
+ * display_path inside of the for loop for every subdir, which could be a lot.
+ ****
+ * Watch the one guy who talked about the select! macro, and look at how
+ * he cloned that broadcast receiver
+ ****
+ * I need to utilize multi threading to compute the directories, the hashset
+ * to store the items (Caching) ((This should be what i return from this fn,
+ * or send through a channel)), the Arc<Mutex<T>> if needed for passing 
+ * info into spawned threads, 
+ ****
+ * READ::CROSSBEAM ---v
+ * like channels for communication between threads, scoped threads, and 
+ * various LOCK-FREE data structures. It's great for tasks where you need 
+ * fine control over threads and concurrent computations.
+ ****/
+
+// if selectable_label.clicked() {
+//     if self.selected_items.contains(path) {
+//         self.selected_items.remove(path);
+//     } else {
+//         self.selected_items.insert(path.clone());
+//     }
+// }
