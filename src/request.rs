@@ -2,9 +2,8 @@ use reqwest::header::{CONTENT_TYPE, ACCEPT};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use std::error::Error;
-use futures_util::StreamExt;
 
-use crate::scaffold_builder::*;
+use crate::scaffold::*;
 use tokio::runtime::Handle;
 
 pub struct SendRequest {
@@ -96,11 +95,12 @@ pub struct ItemsArray{ // number of items is the number of item codes you have o
 
 }
 
-pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
+pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  
+-> core::result::Result<GetTicketResponse, Box<dyn Error>> {
+
     // Now you can use the method on the instance of ScaffoldRequestBuilder
     let params: Value = scaffold_builder.build_scaffold_call();
 
-    //println!("RAW JSON\n\n\n{:?}", params);
     let response = reqwest::Client::new().post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
@@ -111,10 +111,10 @@ pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  
 
         match response {
             Ok(res) => {
-                let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
-                //let raw_response = res.text().await?;
-                //println!("Server response: {}", raw_response);
-                //let json_response: GetTicketResponse = serde_json::from_str(&raw_response)?;
+                //let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
+                let raw_response = res.text().await?;
+                println!("Server response: {}", raw_response);
+                let json_response: GetTicketResponse = serde_json::from_str(&raw_response)?;
 
                 Ok(json_response)
             },
@@ -122,11 +122,11 @@ pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  
         }
 }
 
-pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
-        // Now you can use the method on the instance of ScaffoldRequestBuilder
+pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  
+-> core::result::Result<GetKeysResponse, Box<dyn Error>> {
+
         let params: Value = scaffold_builder.build_scaffold_call();
 
-        //println!("{:?}", json_string);
         let response = reqwest::Client::new().post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
@@ -169,11 +169,9 @@ pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  -> core
             }
 }
 
-pub async fn send_ticket_info(task_information: Value) -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
+pub async fn send_ticket_info(task_information: Value) 
+-> core::result::Result<GetKeysResponse, Box<dyn Error>> {
 
-    //let params = task_information.
-
-    //println!("{:?}", json_string);
     let response = reqwest::Client::new().post("https://app.asana.com/api/1.0/tasks?opt_pretty=true") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .bearer_auth("Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
@@ -216,7 +214,6 @@ pub async fn send_ticket_info(task_information: Value) -> core::result::Result<G
             Err(e) => Err(Box::new(e)),
         }
     }
-
 
 impl SendRequest{
     pub fn get_ticket(so_number: String, tx: std::sync::mpsc::Sender<String>){
@@ -408,11 +405,7 @@ impl SendRequest{
 
 //pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
 
-//
-
 //pub async fn get_computer_purchases(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
-
-
 
 /*
         match response {
@@ -461,16 +454,5 @@ impl SendRequest{
 //         "arg2": "false", 
 //         "company": "pcl"
 //      });    
-
-
-/*Bounded channel: If you need a bounded channel, you should use a bounded Tokio mpsc channel for both directions of communication. 
-Instead of calling the async send or recv methods, in synchronous code you will need to use the blocking_send or blocking_recv methods.
-
-Unbounded channel: You should use the kind of channel that matches where the receiver is. So for sending a message from async to sync, 
-you should use the standard library unbounded channel or crossbeam. Similarly, for sending a message from sync to async, you should use an unbounded Tokio mpsc channel.
-
-Please be aware that the above remarks were written with the mpsc channel in mind, but they can also be generalized to other kinds of channels. 
-In general, any channel method that isn’t marked async can be called anywhere, including outside of the runtime. For example, sending a message on a 
-oneshot channel from outside the runtime is perfectly fine. */
 
 

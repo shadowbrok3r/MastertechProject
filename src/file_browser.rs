@@ -487,7 +487,7 @@ extern "C" {
 
 /** Returns a Vec<PathBuf> of current directory contents and files. */
 fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, show_hidden: bool) -> Vec<PathBuf> {
-    #[cfg(windows)]
+    //#[cfg(windows)]
     // let drives = {
     //   let mut drives = unsafe { GetLogicalDrives() };
     //   let mut letter = b'A';
@@ -502,12 +502,12 @@ fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, show_hidde
     //   drive_names
     // };
 
+
     let result: Vec<_> = WalkDir::new(path).min_depth(depth).max_depth(depth)
         .into_iter()
         .filter_map(|e| e.ok()) // Only retreive the resulted items
         .map(|entry| entry.path().to_path_buf())// iterate through each direntry
         .collect();
-
     let mut result = result;
 
     result.sort_by(|a, b| {
