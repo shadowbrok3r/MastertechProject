@@ -13,6 +13,7 @@ pub enum Techs{
     Taco
 }
 #[derive(Debug, PartialEq)]
+
 pub enum HardwareTest{
     RamPass,
     RamFail,
@@ -24,6 +25,7 @@ pub enum HardwareTest{
     SsdFail,
     SsdNotTested,
 }
+
 
 impl HardwareTest{
     pub fn as_str(&self) -> &'static str {
@@ -40,6 +42,7 @@ impl HardwareTest{
         }
     }
 }
+
 struct ScaffoldAuth{
     user: String,
     password: String
@@ -211,7 +214,7 @@ impl ScaffoldCalls {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TicketInformation{
     pub cust_code: String,
     pub user_id: String, // "USER_ID": "BP3", //checkin rep
@@ -235,6 +238,7 @@ pub struct TicketInformation{
     pub item_codes: String,
 }
 
+
 #[derive(Serialize, Deserialize)]
 pub struct PulledKeys{
     pub webroot_key: String,
@@ -244,9 +248,9 @@ pub struct PulledKeys{
 impl ScaffoldRequestBuilder {
     pub fn build_scaffold_call(&mut self) -> Value {
 
-        let credentials = ScaffoldAuth::default();
-        let user = credentials.user;
-        let pass = credentials.password;
+        //let credentials = ScaffoldAuth::default();
+        //let user = credentials.user;
+        //let pass = credentials.password;
         let company = "pcl".to_string();
         
         let mut scaffold_call = serde_json::json!({
