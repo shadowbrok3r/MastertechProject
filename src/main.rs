@@ -8,7 +8,7 @@ use egui::{*, collapsing_header::CollapsingState};
 use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
 use scaffold_builder::PulledKeys;
 
-use tokio::{runtime::Handle, sync::mpsc::{UnboundedReceiver, UnboundedSender, channel}};
+use tokio::{sync::mpsc::{UnboundedReceiver, UnboundedSender, channel}};
 use serde::{Deserialize, Serialize};
 use egui_extras::*;
 use catppuccin_egui::MOCHA;
