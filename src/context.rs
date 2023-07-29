@@ -617,7 +617,7 @@ impl MastertechContext {
                         ui.label("GPU");
                     });
                     row.col(|ui|{
-                        let gpu = RetrieveSystemInfo::get_gpu();
+                        //let gpu = RetrieveSystemInfo::get_gpu();
                         //ui.label(format!("{}", gpu));
                     });
                 });
