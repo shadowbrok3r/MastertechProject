@@ -1,13 +1,13 @@
 use serde_json::Value;
-use std::{path::PathBuf, thread::JoinHandle, sync::{mpsc, Arc, Mutex}, collections::HashSet, env, time::Duration}; //, os::windows::thread};
+use std::{sync::{Arc, Mutex}, collections::HashSet}; //, os::windows::thread};
 
 use eframe::egui;
-use egui::{*, collapsing_header::CollapsingState};
-use egui_dock::{DockArea, Node, NodeIndex, Style, TabViewer, Tree};
+use egui::*;
+use egui_dock::{Node, NodeIndex, Tree, TabViewer};
 use scaffold::PulledKeys;
 
-use tokio::{sync::mpsc::{UnboundedReceiver, UnboundedSender, channel}};
-use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::channel;
+
 use egui_extras::*;
 
 use crate::{
@@ -163,7 +163,7 @@ pub struct MasterTechApp {
 impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
-        let [a, b] = tree.split_left(NodeIndex::root(), 0.36, vec!["File Browser 📂".to_owned(), "Scripts".to_owned()]);
+        let [a, _] = tree.split_left(NodeIndex::root(), 0.3, vec!["File Browser 📂".to_owned(), "Scripts".to_owned()]);
         let [_, _] = tree.split_below(
             a,
             0.7,
@@ -357,7 +357,7 @@ impl MastertechContext {
                                             ui.add(TextEdit::singleline(&mut self.so_number)
                                             .hint_text("Service #  ").char_limit(8).desired_width(self.widget_size));
 
-                                            let x = ui.add(TextEdit::singleline(&mut self.ticket_info.customer_name)
+                                            ui.add(TextEdit::singleline(&mut self.ticket_info.customer_name)
                                             .hint_text("Customer Name  ").desired_width(self.widget_size + 3.0));
 
                                             ui.end_row();
@@ -616,7 +616,7 @@ impl MastertechContext {
                     row.col(|ui|{
                         ui.label("GPU");
                     });
-                    row.col(|ui|{
+                    row.col(|_ui|{
                         //let gpu = RetrieveSystemInfo::get_gpu();
                         //ui.label(format!("{}", gpu));
                     });
@@ -651,7 +651,7 @@ impl MastertechContext {
                 });
 
             })
-            .body(|mut body| {
+            .body(|body| {
                 body.rows(
                 20.0,  // Replace with your desired row height
                 self.disk_num,
@@ -662,19 +662,9 @@ impl MastertechContext {
 
                         //let disk_name = format!("{:#?}", disk.get("name"));
                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
-                        let disk_space = format!(
-                            "{} Gb / {} Gb",
-                            disk.get("available space").and_then(Value::as_str).unwrap_or(""),
-                            disk.get("total space").and_then(Value::as_str).unwrap_or("")
-                        );
-                        let disk_used = format!("{}", (disk.get("total space").and_then(Value::as_u64).unwrap_or(0)) - 
-                        (disk.get("available space").and_then(Value::as_u64).unwrap_or(0)));
 
-                        let disk_space = format!(
-                            "{} Gb / {} Gb",
-                            disk.get("available space").and_then(Value::as_str).unwrap_or(""),
-                            disk.get("total space").and_then(Value::as_str).unwrap_or("")
-                        );
+
+
                         
                     
                         row.col(|ui| {
@@ -683,10 +673,17 @@ impl MastertechContext {
                         row.col(|ui| {
                             ui.label(disk_letter);  // Show disk letter
                         });
+                        // let disk_used = format!("{}", (disk.get("total space").and_then(Value::as_u64).unwrap_or(0)) - 
+                        // (disk.get("available space").and_then(Value::as_u64).unwrap_or(0)));
                         // row.col(|ui| {
                         //     ui.label(disk_used.to_string());  // Show disk space
                         // });
                         row.col(|ui| {
+                            let disk_space = format!(
+                                "{} Gb / {} Gb",
+                                disk.get("available space").and_then(Value::as_str).unwrap_or(""),
+                                disk.get("total space").and_then(Value::as_str).unwrap_or("")
+                            );
                             ui.label(disk_space);  // Show disk space
                         });
                         self.ctx.request_repaint();
@@ -706,7 +703,7 @@ impl MastertechContext {
         file_browser.show(ui, &self.ctx.clone(), command_tx, command_rx);
     }
     
-    fn scripts(&mut self, ui: &mut Ui){ }
+    fn scripts(&mut self, _ui: &mut Ui){ }
 }
 
 // pub struct Wrapper {

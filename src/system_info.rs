@@ -39,7 +39,7 @@ impl RetrieveSystemInfo{
         
         std::thread::spawn(move||{
             handle.block_on(async{
-                let mut sys = System::new_all(); // Create `System` struct.
+                let sys = System::new_all(); // Create `System` struct.
 
                 let cpu_brand = sys.cpus()[0].brand().to_string();
                 let ram = (sys.total_memory() / ( 1024 * 1024 * 1024)).to_string();

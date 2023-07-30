@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 use reqwest::header::{CONTENT_TYPE, ACCEPT};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
