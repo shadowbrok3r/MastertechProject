@@ -182,17 +182,22 @@ impl Default for MasterTechApp {
             }
         }
 
+
+
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         let tx_scaffold = tx.clone();
         let tx_sysinfo = tx.clone();
+
+        let client = reqwest::Client::new();
 
         let sysinfo_request = system_info::RetrieveSystemInfo{
             tx: tx_sysinfo,
         };
 
         let scaffold_request = SendRequest{
-            tx: tx_scaffold
+            tx: tx_scaffold,
+            client,
         };
 
         let ticket_information = TicketInformation {

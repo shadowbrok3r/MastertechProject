@@ -1,3 +1,4 @@
+#![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
