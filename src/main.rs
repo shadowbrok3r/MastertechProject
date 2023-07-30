@@ -1,10 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
+//#![allow(unused_imports)] //it thinks im not using catppuccin_egui
 
-use eframe::egui;
-use egui::*;
-use egui_dock::{DockArea, Style};
-use egui_extras::*;
-use catppuccin_egui::MOCHA;
 mod system_info;
 mod request;
 mod file_browser;
@@ -14,10 +10,16 @@ use request::SendRequest;
 use system_info::RetrieveSystemInfo;
 use context::MasterTechApp;
 
+use eframe::egui;
+use egui::*;
+use egui_dock::{DockArea, Style};
+use catppuccin_egui::MOCHA;
+
+
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(925.0, 730.0)),
+        initial_window_size: Some(egui::vec2(925.0, 740.0)),
         ..Default::default()
     };
     eframe::run_native(
@@ -30,7 +32,7 @@ async fn main() -> eframe::Result<()> {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        catppuccin_egui::set_theme(ctx, catppuccin_egui::MOCHA);
+        catppuccin_egui::set_theme(ctx, MOCHA);
         let ticket_sender = self.scaffold_request.tx.clone();
         let cps_sender = self.scaffold_request.tx.clone();
         let submit_ticket_sender = self.scaffold_request.tx.clone();
@@ -68,23 +70,19 @@ impl eframe::App for MasterTechApp {
                 <li><strong>Salesman:</strong>\n     {}</li>\n\
                 <li><strong>Checkin rep:</strong>\n     {}</li>\n\
                 <li><strong>Technician:</strong>\n     {}</li></ul>\n\n\
-
                 <strong><h2><code>Computer Info</code></h2></strong><ul>\n\
                 <li><strong>Model:</strong>\n     {}</li>\n\
                 <li><strong>CPU:</strong>\n     {}</li>\n\
                 <li><strong>GPU:</strong>\n     </li>\n\
                 <li><strong>RAM:</strong>\n     {}</li>\n\
-
                 <li><strong>SSD test:</strong>\n     {}</li>\n\
                 <li><strong>HDD test:</strong>\n     {}</li>\n\
                 <li><strong>RAM test:</strong>\n     {}</li>\n\
                 <li><strong>Storage Info:</strong>\n     </li>\n\
                 <li><strong>Serials:</strong>\n     </li></ul>\n\n\
-
                 <strong><h2><code>Software Info</code></h2></strong><ul>\n\
                 <li><strong>CPS:</strong>\n     </li>\n\
                 <li><strong>SEB Information:</strong>\n     </li></ul>\n\
-
                 <strong><h2><code>Notes</code></h2></strong><ul>\n\
                 <li><strong>Checkin Notes:</strong>\n     {}</li>\n\
                 <li><strong>Recommendations:</strong>\n     {}</li></ul></body>\n\n",
@@ -112,7 +110,7 @@ impl eframe::App for MasterTechApp {
                 self.context.recommendations,
             );
             
-            let ticket = serde_json::json!({
+            let _ticket = serde_json::json!({
                 "data": {
                     "projects": [
                         "1202792139600600"

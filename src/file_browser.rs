@@ -1,18 +1,18 @@
-use tokio::sync::mpsc::{channel, Sender, Receiver, UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Sender, Receiver};
 use eframe::egui::{*, collapsing_header::CollapsingState};
-use std::{path::PathBuf, sync::{Arc, Mutex}, collections::{HashSet, HashMap}, cell::RefCell};
-use tokio::{task, fs};
+use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
+use tokio::fs;
 use walkdir::WalkDir;
-use std::{env, io::Error};
+use std::env;
 use pollster::block_on;
-use crossbeam;
+use crossbeam::channel;
 
 /// Function that returns `true` if the path is accepted.
 pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
 
 #[derive(Debug)]
 pub enum Command {
-    Copy(PathBuf, PathBuf),
+    Copy(PathBuf, PathBuf, channel::Sender<u64>),
     Move(PathBuf, PathBuf),
     Delete(PathBuf),
     Rename(PathBuf, PathBuf),
@@ -30,22 +30,16 @@ pub struct FileBrowser {
     path_edit: String, /// Editable field with path.
     selected_item: Option<PathBuf>, /// Selected file path
     filename_edit: String, /// Editable field with filename.
-    files: core::result::Result<Vec<PathBuf>, Error>, /// Files in directory.
     read_dirs_only: bool,
     show_hidden: bool,
     rename: bool,
     new_folder: bool,
-
     selected_items: RefCell<HashSet<PathBuf>>,
     dir_contents: RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
-    
     filter: Option<Filter>,
     depth: usize,
-    double_clicked_directory: Option<PathBuf>,
 
     first_refresh_contents: bool,
-
-    command_rx: Option<Receiver<Option<Command>>>,
 }
 
 impl FileBrowser{ // sender: UnboundedSender<>
@@ -60,27 +54,20 @@ impl FileBrowser{ // sender: UnboundedSender<>
             path.pop();
         }
 
-        let (_, command_rx) = channel(4);
-
         Self {
             path,
             path_edit,
             selected_item: None,
-
             selected_items: RefCell::new(HashSet::new()),
             dir_contents: RefCell::new(HashMap::new()),
-
             filename_edit,
-            files: Ok(Vec::new()),
             read_dirs_only: false,
             rename: true,
             new_folder: true,
             show_hidden: false,
             first_refresh_contents: true,
             depth: 1,
-            double_clicked_directory: None,
             filter: None,
-            command_rx: Some(command_rx),
           }
     }
     
@@ -123,13 +110,16 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
             },
 
-            Command::Copy(source, destination) => {
+            Command::Copy(source, destination, progress_tx) => {
                 println!("Command::copy");
-                if let Err(err) = fs::copy(&source, &destination).await {
-                    //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
-                } else {
-                    //let _ = response_sender.send(Response::Success(format!("Successfully copied from {:?} to {:?}", source, destination)));
-                }
+                
+                tokio::spawn(async move{
+                    match fs::copy(&source, &destination).await {
+                        Ok(bytes_copied) => progress_tx.send(bytes_copied).unwrap(),
+                        Err(e) => println!("{e:?}")
+                    }
+                });
+
             
             },
 
@@ -183,12 +173,12 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
     pub fn show(
         &mut self, 
-        ui: &mut egui::Ui,
-        ctx:&egui::Context,
+        ui: &mut Ui,
+        ctx:&Context,
         command_tx: Sender<Option<Command>>,
         mut command_rx: Receiver<Option<Command>>
     ) {     
-        egui::TopBottomPanel::top("egui_file_top").show_inside(ui, |ui| {
+        TopBottomPanel::top("egui_file_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
@@ -204,7 +194,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     }
                 });
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 
                     let response = ui.button("⟲").on_hover_text("Refresh"); //
                     if response.clicked() {
@@ -217,14 +207,15 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             }
                         }
                     }
-                    egui::ScrollArea::new([false, false]).auto_shrink([false, false]).show(ui, |ui| {
+                    ScrollArea::new([false, false]).auto_shrink([false, false]).show(ui, |ui| {
                         let response = ui.add_sized(
                             ui.available_size_before_wrap(),
-                            egui::TextEdit::singleline(&mut self.path_edit)
-                                .id(egui::Id::new("path_edit"))
+                            TextEdit::singleline(&mut self.path_edit)
+                                .id(Id::new("path_edit"))
                                 .cursor_at_end(true),
-                        );
-                        if response.lost_focus() && response.ctx.input(|state| state.key_pressed(egui::Key::Enter)) {
+                        ).on_hover_text(&self.path_edit);
+                       
+                        if response.lost_focus() && response.ctx.input(|state| state.key_pressed(Key::Enter)) {
                             let path = PathBuf::from(&self.path_edit);
 
                             match command_tx.try_send(Some(Command::OpenPath(path))){
@@ -253,18 +244,55 @@ impl FileBrowser{ // sender: UnboundedSender<>
             ui.add_space(ui.spacing().item_spacing.y);
         });
 
-        egui::TopBottomPanel::bottom("egui_file_bottom").show_inside(ui, |ui| {
+        TopBottomPanel::bottom("egui_file_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
+
+            // let (progress_tx, progress_rx) = channel::unbounded::<u64>();
+            // let src = PathBuf::new();
+            // let source = src.join("D:\\Users\\Owner\\Desktop\\B.S.-10.5-Sized_B.S.-10.5.ctb");
+
+            // let dest = PathBuf::new();
+            // let destination = dest.join("D:\\Users\\Owner\\Desktop\\filestuff");
+
+            // match command_tx.try_send(Some(
+            //     Command::Copy(
+            //         source, 
+            //         destination, 
+            //         progress_tx.clone()
+            //     )
+            // )){
+            //     Ok(_) => println!("ok"),
+            //     Err(e) => print!("{e}")
+            // }
+            // match progress_rx.try_recv() {
+            //     Ok(bytes_copied) => {
+            //         // Update the progress bar
+            //         ui.add(
+            //             ProgressBar::new(bytes_copied as f32)
+            //             .show_percentage()
+            //             .animate(true)
+            //             .fill(Color32::from_rgb(255, 255, 255))
+            //         );
+            //         println!("Copied {bytes_copied} bytes", );
+            //     }
+            //     Err(channel::TryRecvError::Empty) => {
+            //         // No progress update yet, do nothing
+            //     }
+            //     Err(channel::TryRecvError::Disconnected) => {
+            //         // The file copying thread has finished
+            //         println!("File copying finished");
+            //     }
+            // }
+
+
+            ui.add_space(ui.spacing().item_spacing.y * 2.0);
+
             ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if self.new_folder && ui.button("New Folder").clicked() {
                         match command_tx.try_send(Some(Command::CreateDirectory)){
-                            Ok(_) => {
-                                println!("ok");
-                            },
-                            Err(e) => {
-                                print!("{e}");
-                            }
+                            Ok(_) => println!("ok"),
+                            Err(e) => print!("{e}")
                         }
                         
                     }
@@ -293,14 +321,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
                     let result = ui.add(
                     // ui.available_size_before_wrap(),
-                    egui::TextEdit::singleline(&mut self.filename_edit)
-                    .id(egui::Id::new("file_name_edit")),
+                    TextEdit::singleline(&mut self.filename_edit)
+                    .id(Id::new("file_name_edit")),
                     );
 
                     if result.lost_focus()
                     && result
                         .ctx
-                        .input(|state| state.key_pressed(egui::Key::Enter))
+                        .input(|state| state.key_pressed(Key::Enter))
                     && !self.filename_edit.is_empty(){
                         let path = self.path.join(&self.filename_edit);
 
@@ -309,12 +337,12 @@ impl FileBrowser{ // sender: UnboundedSender<>
             });
         });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.visuals_mut().override_text_color = Some(egui::Color32::from_rgb(255, 204, 230));
+        CentralPanel::default().show_inside(ui, |ui| {
+            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
             //ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
             ui.shrink_width_to_current();ui.shrink_height_to_current();
-            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,egui::Color32::from_rgb(28,30,36));
-            ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, egui::Stroke::new(1.0, egui::Color32::from_rgb_additive(150, 62, 124)));
+            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
+            ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)));
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
@@ -322,11 +350,11 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 self.refresh_contents();
             }
 
-            egui::ScrollArea::new([true, true])
+            ScrollArea::new([true, true])
             .id_source("file_browser_scroll")
             .auto_shrink([false, false])
             .show_rows(ui,
-            ui.text_style_height(&egui::TextStyle::Body),
+            ui.text_style_height(&TextStyle::Body),
             self.dir_contents.borrow().get(&self.path).map_or(0, |files| files.len()),
             |ui, range| match self.dir_contents.borrow().get(&self.path) {
                 Some(files) => {
@@ -378,13 +406,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
         a folder
     */
     fn refresh_contents(&mut self) {
-        // self.files = Ok(read_folder(
-        //     &self.path,
-        //     self.depth,
-        //     self.filter.as_ref(),
-        //     self.show_hidden,
-        //   ));
-        // self.path_edit = String::from(self.path.to_str().unwrap_or_default());
         let new_contents = read_folder(
             &self.path,
             self.depth,
@@ -560,7 +581,7 @@ fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, show_hidde
     and makes only directories collapsible so we can see its subcontents 
  */
 fn display_path(
-    ui: &mut egui::Ui,
+    ui: &mut Ui,
     path: &PathBuf,
     selected_items: &RefCell<HashSet<PathBuf>>,
     depth: usize,
@@ -607,7 +628,7 @@ fn display_path(
                 }
 
                 if selectable_label.double_clicked()
-                    || selectable_label.ctx.input(|state| state.key_pressed(egui::Key::Enter))
+                    || selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
                 {
                     match command_tx.try_send(Some(Command::OpenPath(path.clone()))) {
                         Ok(_) => println!("Success"),
