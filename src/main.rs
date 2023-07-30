@@ -44,7 +44,7 @@ impl eframe::App for MasterTechApp {
             self.context.get_ticket_button_pressed = false;
             let service_num = self.context.so_number.clone();
             self.context.spinner = true;
-            SendRequest::get_ticket(service_num, ticket_sender); 
+            SendRequest::get_ticket(service_num, ticket_sender, self.scaffold_request.client.clone()); 
         }
 
         if self.context.get_cps_button_pressed == true {
