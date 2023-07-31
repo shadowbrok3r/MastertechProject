@@ -4,14 +4,9 @@ use reqwest::header::{CONTENT_TYPE, ACCEPT};
 use serde::Deserialize;
 use serde_json::*;
 use std::error::Error;
-
 use crate::scaffold::*;
-use tokio::runtime::Handle;
-
-pub struct SendRequest {
-    pub tx: std::sync::mpsc::Sender<String>,
-    pub client: reqwest::Client
-}
+use asana_sdk::*;
+use asana_sdk::models::Model;
 
 #[derive(Debug, Deserialize)]
 pub struct GetTicketResponse {
@@ -98,9 +93,12 @@ pub struct ItemsArray{ // number of items is the number of item codes you have o
 
 }
 
+pub struct SendRequest {
+    pub tx: std::sync::mpsc::Sender<String>,
+}
+
 impl SendRequest{
     pub fn get_ticket(so_number: String, tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
-        let handle = Handle::current();
         
         tokio::spawn(async move{
             let args = vec![
@@ -118,7 +116,7 @@ impl SendRequest{
             };
 
             // Await the response 
-            let response = request_ticket_info(scaffold_builder).await;
+            let response = request_ticket_info(scaffold_builder, client).await;
 
             // Handle the response
             match response { // Successfully received GetTicketResponse
@@ -208,106 +206,106 @@ impl SendRequest{
                 
             }
         });
-        // std::thread::spawn(move||{
-        //     handle.block_on(async{
-
-        //     });
-        // }); 
     }
     
     pub fn get_cps(so_number: String, tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
-        let handle = Handle::current();
+        tokio::spawn(async move{
+            let args = vec![
+                serde_json::json!(so_number),
+            ];
         
-        std::thread::spawn(move||{
-            handle.block_on(async{
-                let args = vec![
-                    serde_json::json!(so_number),
-                ];
+            let scaffold_builder = ScaffoldRequestBuilder{
+                app: ScaffoldApps::SoftwareLicenseFetch,
+                action: ScaffoldActions::FetchKeys, 
+                call: Some(ScaffoldCalls::None),
+                arguments: Some(args.clone())
+            };
             
-                let scaffold_builder = ScaffoldRequestBuilder{
-                    app: ScaffoldApps::SoftwareLicenseFetch,
-                    action: ScaffoldActions::FetchKeys, 
-                    call: Some(ScaffoldCalls::None),
-                    arguments: Some(args.clone())
-                };
-                
-                let response = request_keys(scaffold_builder).await;
+            let response = request_keys(scaffold_builder, client).await;
 
-                match response { // Successfully received GetTicketResponse
-                    Ok(get_keys_response) => {
+            match response { // Successfully received GetTicketResponse
+                Ok(get_keys_response) => {
 
-                        let webroot_key = &get_keys_response.webroot_key;
-                        let superanti_key = &get_keys_response.superanti_key;
+                    let webroot_key = &get_keys_response.webroot_key;
+                    let superanti_key = &get_keys_response.superanti_key;
 
-                
+            
 
-                        let cps_keys = PulledKeys{
-                            webroot_key: webroot_key.to_string(),
-                            superanti_key: superanti_key.to_string()
-                        };
+                    let cps_keys = PulledKeys{
+                        webroot_key: webroot_key.to_string(),
+                        superanti_key: superanti_key.to_string()
+                    };
 
-                        let cps_keys_json = serde_json::to_string(&cps_keys).unwrap();
-                        
-                        match tx.send(cps_keys_json) {
-                            Ok(_) => {
-                                drop(tx)
-                            },
-                            Err(e) => {
-                                eprintln!("Error while sending ticket information: {}", e.to_string());
-                                drop(tx)
-                            }
+                    let cps_keys_json = serde_json::to_string(&cps_keys).unwrap();
+                    
+                    match tx.send(cps_keys_json) {
+                        Ok(_) => {
+                            drop(tx)
+                        },
+                        Err(e) => {
+                            eprintln!("Error while sending ticket information: {}", e.to_string());
+                            drop(tx)
                         }
-                        
-                    },
-                    Err(e) => { 
-                        match tx.send(e.to_string()) {
-                            Ok(_) => {
-                                drop(tx)
-                            },
-                            Err(e) => {
-                                eprintln!("Error while sending error message: {}", e);
-                                drop(tx)
-                            }
+                    }
+                    
+                },
+                Err(e) => { 
+                    match tx.send(e.to_string()) {
+                        Ok(_) => {
+                            drop(tx)
+                        },
+                        Err(e) => {
+                            eprintln!("Error while sending error message: {}", e);
+                            drop(tx)
                         }
-                    }                    
-                }
-            });
+                    }
+                }                    
+            }
         });
     }
 
     pub fn send_ticket_request(tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
-        let handle = Handle::current();
         
-        std::thread::spawn(move||{
-            handle.block_on(async{
-                let ticket = serde_json::json!({
-
-                });
-
-                let response = send_ticket_info(ticket).await;
+        tokio::spawn(async move{
+             // Connect with your Asana PAT (token), from https://app.asana.com/0/developer-console
+            let mut asana = Asana::connect(String::from("1/your:personal-access-token"));
+            // "Authorization", "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2"
+            model!(Assignee "assignee" {
+                name: String
+            });
+            
+            model!(Project "projects" {
+                name: String
+            });
+            
+            model!(Tasks "tasks" {
+                name: String,
+                projects: Vec<Project>,
+                assignee: Option<Assignee>,
+            } Project, Assignee);
+            
+            let ticket = serde_json::json!({
 
             });
+
+            let response = send_ticket_info(ticket, client).await;
         });
     }
 }
 
-pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)  
+async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, client: reqwest::Client)  
 -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
 
     // Now you can use the method on the instance of ScaffoldRequestBuilder
     let params: Value = scaffold_builder.build_scaffold_call();
 
-    let response = reqwest::Client::new().post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+    let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .json(&params)
         .send()
         .await;
 
-        
-    let res = reqwest::Client::new();
-
-    let x = res.clone();
     match response {
         Ok(res) => {
             //let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
@@ -321,12 +319,12 @@ pub async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder)
     }
 }
 
-pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)  
+async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqwest::Client)  
 -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
 
         let params: Value = scaffold_builder.build_scaffold_call();
 
-        let response = reqwest::Client::new().post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .json(&params)
@@ -368,10 +366,10 @@ pub async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder)
             }
 }
 
-pub async fn send_ticket_info(task_information: Value) 
+async fn send_ticket_info(task_information: Value, client: reqwest::Client) 
 -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
 
-    let response = reqwest::Client::new().post("https://app.asana.com/api/1.0/tasks?opt_pretty=true") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+    let response = client.post("https://app.asana.com/api/1.0/tasks?opt_pretty=true") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .bearer_auth("Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
         .header(ACCEPT, "application/json")

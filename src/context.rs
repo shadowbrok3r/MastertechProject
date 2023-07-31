@@ -5,9 +5,8 @@ use eframe::egui;
 use egui::*;
 use egui_dock::{Node, NodeIndex, Tree, TabViewer};
 use scaffold::PulledKeys;
-
 use tokio::sync::mpsc::channel;
-
+use asana_sdk::{self, model};
 use egui_extras::*;
 
 use crate::{
@@ -15,6 +14,7 @@ use crate::{
     file_browser::FileBrowser, 
     system_info, 
     request::SendRequest,
+    system_info::RetrieveSystemInfo
 };
 
 /** 
@@ -57,7 +57,10 @@ pub struct MastertechContext {
     pub ticket_info: TicketInformation,
     pub keys: PulledKeys,
     pub file_browser: Arc<Mutex<FileBrowser>>,
-
+    pub client: reqwest::Client,
+    scaffold_request: SendRequest,
+    sysinfo_request: system_info::RetrieveSystemInfo,
+    
     pub salesman_cbox: scaffold::Salesman,
     pub techs_cbox: scaffold::Techs,
     pub ram_test_cbox: scaffold::HardwareTest,
@@ -93,10 +96,6 @@ pub struct MastertechContext {
     pub reader_bytes: u32,
 
     pub animate_progress_bar: bool,
-    pub get_ticket_button_pressed: bool,
-    pub get_cps_button_pressed: bool,
-    pub get_seb_button_pressed: bool,
-    pub submit_ticket_pressed: bool,
     pub specs_first_run: bool,
     pub file_browse_run: bool,
     pub get_specs: bool,
@@ -155,10 +154,7 @@ impl TabViewer for MastertechContext {
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: Tree<String>,
-    pub sysinfo_request: system_info::RetrieveSystemInfo,
-    pub scaffold_request: SendRequest,
 }
-
 
 impl Default for MasterTechApp {
     fn default() -> Self {
@@ -182,14 +178,12 @@ impl Default for MasterTechApp {
             }
         }
 
-
+        let client = reqwest::Client::new();
 
         // Create a watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         let tx_scaffold = tx.clone();
         let tx_sysinfo = tx.clone();
-
-        let client = reqwest::Client::new();
 
         let sysinfo_request = system_info::RetrieveSystemInfo{
             tx: tx_sysinfo,
@@ -197,7 +191,6 @@ impl Default for MasterTechApp {
 
         let scaffold_request = SendRequest{
             tx: tx_scaffold,
-            client,
         };
 
         let ticket_information = TicketInformation {
@@ -220,8 +213,7 @@ impl Default for MasterTechApp {
         };
 
         let context = MastertechContext {
-/*             
-            
+            /*             
             customer_name: "".to_string(),
             phone1: "".to_string(),
             phone2: "".to_string(),
@@ -229,7 +221,8 @@ impl Default for MasterTechApp {
             checkin_rep: "Checkin Rep: ".to_string(),
             last_invoice_num: "".to_string(),
             last_invoice_amnt: "".to_string(),
-            jurisdiction: "".to_string(), */
+            jurisdiction: "".to_string(), 
+            */
 
             so_number: "".to_string(),
             recommendations: "".to_string(),
@@ -239,6 +232,9 @@ impl Default for MasterTechApp {
                 webroot_key: "Webroot Key".to_string(), 
                 superanti_key: "SuperAnti Key".to_string() 
             },
+            scaffold_request,
+            sysinfo_request,
+            client,
 
             salesman_cbox: scaffold::Salesman::Jake,
             techs_cbox: scaffold::Techs::Logan,
@@ -277,10 +273,6 @@ impl Default for MasterTechApp {
 
             send_specs: false,
 
-            get_ticket_button_pressed: false,
-            get_cps_button_pressed: false,
-            get_seb_button_pressed: false,
-            submit_ticket_pressed: false,
             specs_first_run: true,
             file_browse_run: false,
             get_specs: false,
@@ -297,7 +289,7 @@ impl Default for MasterTechApp {
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124))
         };
 
-        Self { context, tree, sysinfo_request, scaffold_request }
+        Self { context, tree }
     }
 }
 
@@ -345,7 +337,9 @@ impl MastertechContext {
                                             .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
                                             .min_size(vec2(self.widget_size * 2.0 + 7.0, 7.0)))
                                             .clicked(){ 
-                                                self.get_ticket_button_pressed = true; // Sets bool to true so the main loop runs the get_ticket function
+                                                let service_num = self.so_number.clone();
+                                                self.spinner = true;
+                                                SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
                                             }
                                         }); 
                                         
@@ -397,12 +391,14 @@ impl MastertechContext {
                                                                 /*     ROW 4     */
                                             if ui.add(Button::new("Get Keys").min_size(vec2(self.widget_size, 5.0)))
                                             .clicked(){ 
-                                                self.get_cps_button_pressed = true;
+                                                let service_num = self.so_number.clone();
+                                                self.spinner = true;
+                                                SendRequest::get_cps(service_num, self.scaffold_request.tx.clone(), self.client.clone());
                                             }
                                             
                                             if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 5.0)))
                                             .clicked(){ 
-                                                self.get_seb_button_pressed = true;
+                                                
                                                 //check_seb_info
                                             }
                 
@@ -516,9 +512,9 @@ impl MastertechContext {
 
                                     ui.checkbox(&mut self.send_specs, "Send System Info");
 
-                                        #[cfg(feature = "chrono")]
-                                        let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
-                                        //ui.add(egui_extras::DatePickerButton::new(date));
+                                    #[cfg(feature = "chrono")]
+                                    let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
+                                    //ui.add(egui_extras::DatePickerButton::new(date));
 
                                     if ui.add(Button::new(RichText::new("Submit TUR Sheet")
                                     .color(Color32::from_rgb(255, 204, 255))
@@ -526,7 +522,68 @@ impl MastertechContext {
                                     .italics())
                                     .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))//.min_size(vec2(self.widget_size * 2.0+8.0, 8.0)))
                                     .clicked(){ 
-                                        self.submit_ticket_pressed = true;
+                                        self.spinner = true;
+                                        
+                                        let html_notes = format!(
+                                            "<body><strong><h2><code>Ticket Info</code></h2></strong><ul>\n\
+                                            <li><strong>Customer:</strong>\n     {}</li>\n\
+                                            <li><strong>SO Number:</strong>\n     {}</li>\n\
+                                            <li><strong>Salesman:</strong>\n     {}</li>\n\
+                                            <li><strong>Checkin rep:</strong>\n     {}</li>\n\
+                                            <li><strong>Technician:</strong>\n     {}</li></ul>\n\n\
+                                            <strong><h2><code>Computer Info</code></h2></strong><ul>\n\
+                                            <li><strong>Model:</strong>\n     {}</li>\n\
+                                            <li><strong>CPU:</strong>\n     {}</li>\n\
+                                            <li><strong>GPU:</strong>\n     </li>\n\
+                                            <li><strong>RAM:</strong>\n     {}</li>\n\
+                                            <li><strong>SSD test:</strong>\n     {}</li>\n\
+                                            <li><strong>HDD test:</strong>\n     {}</li>\n\
+                                            <li><strong>RAM test:</strong>\n     {}</li>\n\
+                                            <li><strong>Storage Info:</strong>\n     </li>\n\
+                                            <li><strong>Serials:</strong>\n     </li></ul>\n\n\
+                                            <strong><h2><code>Software Info</code></h2></strong><ul>\n\
+                                            <li><strong>CPS:</strong>\n     </li>\n\
+                                            <li><strong>SEB Information:</strong>\n     </li></ul>\n\
+                                            <strong><h2><code>Notes</code></h2></strong><ul>\n\
+                                            <li><strong>Checkin Notes:</strong>\n     {}</li>\n\
+                                            <li><strong>Recommendations:</strong>\n     {}</li></ul></body>\n\n",
+                            
+                                            self.ticket_info.customer_name,
+                                            self.so_number,
+                                            "String::from(self.context.salesman_cbox)",
+                                            self.ticket_info.user_id,
+                                            "self.context.techs_cbox.into(),",
+                                            
+                                            self.system_name,
+                                            self.cpu_name,
+                                            //self.context.gpu,
+                                            self.total_ram,
+                            
+                                            "self.context.ssd_test_cbox.into()",
+                                            "self.context.hdd_test_cbox.into()",
+                                            "self.context.ram_test_cbox.into()",
+                                            //self.context.storage_info,
+                                            //self.context.serials,
+                            
+                                            //self.context.cps,
+                                            //self.context.seb_info,
+                                            self.ticket_info.checkin_notes,
+                                            self.recommendations,
+                                        );
+                                        
+                                        let _ticket = serde_json::json!({
+                                            "data": {
+                                                "projects": [
+                                                    "1202792139600600"
+                                                ],
+                                                "name": format!("{} - {}", self.ticket_info.customer_name, self.so_number),
+                                                "html_notes": html_notes,
+                                                "resource_subtype": "default_task",
+                                                "workspace": "13314583095021"
+                                            }
+                                        });
+                                        
+                                        SendRequest::send_ticket_request(self.scaffold_request.tx.clone(), self.client.clone());
                                     }
 
                                 }); // Group
@@ -563,7 +620,11 @@ impl MastertechContext {
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
         if self.specs_first_run == true{
-            self.get_specs = true;
+            // self.get_specs = true;
+            let specs_sender = self.sysinfo_request.tx.clone();
+            self.spinner = true;
+            
+            RetrieveSystemInfo::get_system_specs(specs_sender);
         }
         self.specs_first_run = false;
         
@@ -668,10 +729,6 @@ impl MastertechContext {
                         //let disk_name = format!("{:#?}", disk.get("name"));
                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
 
-
-
-                        
-                    
                         row.col(|ui| {
                             ui.label(disk_index.to_string());  // Show disk index
                         });
@@ -698,6 +755,7 @@ impl MastertechContext {
                 });
             });
         });
+        self.spinner = false;
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
@@ -710,17 +768,3 @@ impl MastertechContext {
     
     fn scripts(&mut self, _ui: &mut Ui){ }
 }
-
-// pub struct Wrapper {
-//     pub app: MasterTechApp,
-//     // Add other fields if necessary
-// }
-
-// impl Default for Wrapper {
-//     fn default() -> Self {
-//         Self {
-//             app: MasterTechApp::default(),
-//             // Initialize other fields if necessary
-//         }
-//     }
-// }
