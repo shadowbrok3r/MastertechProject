@@ -6,8 +6,7 @@ mod request;
 mod file_browser;
 mod scaffold;
 mod context;
-use request::SendRequest;
-use system_info::RetrieveSystemInfo;
+
 use context::MasterTechApp;
 
 use eframe::egui;
@@ -33,97 +32,6 @@ async fn main() -> eframe::Result<()> {
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         catppuccin_egui::set_theme(ctx, MOCHA);
-        let ticket_sender = self.scaffold_request.tx.clone();
-        let cps_sender = self.scaffold_request.tx.clone();
-        let submit_ticket_sender = self.scaffold_request.tx.clone();
-        let specs_sender = self.sysinfo_request.tx.clone();
-        //let show_tx = self.context.show_tx.clone();
-
-        if self.context.get_ticket_button_pressed == true {
-            //self.context.customer_name.
-            self.context.get_ticket_button_pressed = false;
-            let service_num = self.context.so_number.clone();
-            self.context.spinner = true;
-            SendRequest::get_ticket(service_num, ticket_sender, self.scaffold_request.client.clone()); 
-        }
-
-        if self.context.get_cps_button_pressed == true {
-            self.context.get_cps_button_pressed = false;
-            let service_num = self.context.so_number.clone();
-            self.context.spinner = true;
-            SendRequest::get_cps(service_num, cps_sender);
-        }   
-
-        if self.context.get_specs == true{
-            self.context.get_specs = false;
-            self.context.spinner = true;
-            RetrieveSystemInfo::get_system_specs(specs_sender);
-        }
-
-        if self.context.submit_ticket_pressed == true{
-            self.context.submit_ticket_pressed = false;
-            self.context.spinner = true;
-            let html_notes = format!(
-                "<body><strong><h2><code>Ticket Info</code></h2></strong><ul>\n\
-                <li><strong>Customer:</strong>\n     {}</li>\n\
-                <li><strong>SO Number:</strong>\n     {}</li>\n\
-                <li><strong>Salesman:</strong>\n     {}</li>\n\
-                <li><strong>Checkin rep:</strong>\n     {}</li>\n\
-                <li><strong>Technician:</strong>\n     {}</li></ul>\n\n\
-                <strong><h2><code>Computer Info</code></h2></strong><ul>\n\
-                <li><strong>Model:</strong>\n     {}</li>\n\
-                <li><strong>CPU:</strong>\n     {}</li>\n\
-                <li><strong>GPU:</strong>\n     </li>\n\
-                <li><strong>RAM:</strong>\n     {}</li>\n\
-                <li><strong>SSD test:</strong>\n     {}</li>\n\
-                <li><strong>HDD test:</strong>\n     {}</li>\n\
-                <li><strong>RAM test:</strong>\n     {}</li>\n\
-                <li><strong>Storage Info:</strong>\n     </li>\n\
-                <li><strong>Serials:</strong>\n     </li></ul>\n\n\
-                <strong><h2><code>Software Info</code></h2></strong><ul>\n\
-                <li><strong>CPS:</strong>\n     </li>\n\
-                <li><strong>SEB Information:</strong>\n     </li></ul>\n\
-                <strong><h2><code>Notes</code></h2></strong><ul>\n\
-                <li><strong>Checkin Notes:</strong>\n     {}</li>\n\
-                <li><strong>Recommendations:</strong>\n     {}</li></ul></body>\n\n",
-
-                self.context.ticket_info.customer_name,
-                self.context.so_number,
-                "String::from(self.context.salesman_cbox)",
-                self.context.ticket_info.user_id,
-                "self.context.techs_cbox.into(),",
-                
-                self.context.system_name,
-                self.context.cpu_name,
-                //self.context.gpu,
-                self.context.total_ram,
-
-                "self.context.ssd_test_cbox.into()",
-                "self.context.hdd_test_cbox.into()",
-                "self.context.ram_test_cbox.into()",
-                //self.context.storage_info,
-                //self.context.serials,
-
-                //self.context.cps,
-                //self.context.seb_info,
-                self.context.ticket_info.checkin_notes,
-                self.context.recommendations,
-            );
-            
-            let _ticket = serde_json::json!({
-                "data": {
-                    "projects": [
-                        "1202792139600600"
-                    ],
-                    "name": format!("{} - {}", self.context.ticket_info.customer_name, self.context.so_number),
-                    "html_notes": html_notes,
-                    "resource_subtype": "default_task",
-                    "workspace": "13314583095021"
-                }
-            });
-            
-            SendRequest::send_ticket_request(submit_ticket_sender);
-        }   
 
         let receiver = self.context.rx.as_ref().unwrap();
         while let Ok(message) = receiver.try_recv() {
@@ -189,6 +97,8 @@ Item Codes: {:?}\n",
                 self.context.spinner = false;
             }
         }
+
+
 
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
