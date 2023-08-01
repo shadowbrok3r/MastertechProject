@@ -275,7 +275,7 @@ impl SendRequest{
         });
     }
 
-    pub fn send_ticket_request(tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
+    pub fn send_ticket_request(tx: std::sync::mpsc::Sender<String>, client: reqwest::Client, payload: String){
 
         tokio::spawn(async move{
             // ideally, id like to also add the functionality to search for a task by the SO number
@@ -292,11 +292,11 @@ impl SendRequest{
             asana_config.user_agent = None;
             
             task.name = Some("customer_name - SO#".to_string());
-            task.assignee = Some("ding-dong or dipshit".to_string());
-            task.workspace = Some("".to_string());
-            task.projects = Some(vec!["1202792139600600".to_string()]);
-            task.assignee = Some("".to_string());
-            task.html_notes = Some("".to_string());
+            task.assignee = Some("1199992640930465".to_string());
+            task.workspace = Some("13314583095021".to_string());
+            //task.projects = Some(vec!["1202792139600600".to_string()]);
+            task.followers = Some(vec!["1199992640930465".to_string()]); // Logan: 1199992640930465
+            task.html_notes = Some(payload);
             // task.due_on = TODO gotta get the widget for time working
             //task.resource_subtype = Some("".to_string());
             //task.dependencies = Some("".to_string());
@@ -306,18 +306,25 @@ impl SendRequest{
                 data: Some(Box::new(task))
             };
 
-            let result = 
-            create_task(&asana_config, 
+            // Serialize the payload to a JSON string and calculate its length
+            let payload_json = serde_json::to_string(&asana_task).unwrap();
+            let content_length = payload_json.len();
+
+            println!("Content length: {}", content_length);
+
+            match create_task(&asana_config, 
                 asana_task, 
-                Some(true), 
+                Some(true), //only set to true if debugging
                 None)
-                .await;
+                .await
+            {
+                Ok(res) => {
+                    println!("{res:?}");
+                    //res.data.
+                },
+                Err(e) => println!("{e}")
+            }
 
-            let ticket = serde_json::json!({
-
-            });
-
-            //let response = send_ticket_info(ticket, client).await;
         });
     }
 }
@@ -395,51 +402,6 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
             }
 }
 
-async fn send_ticket_info(task_information: Value, client: reqwest::Client) 
--> core::result::Result<GetKeysResponse, Box<dyn Error>> {
-
-    let response = client.post("https://app.asana.com/api/1.0/tasks?opt_pretty=true") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-        .header(CONTENT_TYPE, "application/json")
-        .bearer_auth("Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
-        .header(ACCEPT, "application/json")
-        .json(&task_information)
-        .send()
-        .await;
-
-        match response {
-            Ok(res) => {
-                let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
-                //println!("response: {:?}", response_text);
-    
-                let mut webroot_key = "";
-                let mut superanti_key = "";
-
-                let lines: Vec<&str> = response_text.split("\n").collect();
-                for line in lines {
-                    let parts: Vec<&str> = line.split(": ").collect();
-                    if parts.len() >= 2 {
-                        let prefix = parts[0].trim();
-                        let key = parts[1].trim();
-                        match prefix {
-                            "WRAV" => webroot_key = key,
-                            "SAS" => superanti_key = key,
-                            _ => (),
-                        }
-                    }
-                }
-                
-
-                let response_keys = GetKeysResponse {
-                    webroot_key: webroot_key.to_string(),
-                    superanti_key: superanti_key.to_string(),
-                };
-
-                
-                Ok(response_keys)
-            },
-            Err(e) => Err(Box::new(e)),
-        }
-    }
 
 
 

@@ -522,54 +522,51 @@ impl MastertechContext {
                                     .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))//.min_size(vec2(self.widget_size * 2.0+8.0, 8.0)))
                                     .clicked(){ 
                                         self.spinner = true;
-                                        
+                                        let cust = &self.ticket_info.customer_name;
+                                        let so_num = &self.so_number;
+                                        let salesman = &format!("{:?}", &self.salesman_cbox);
+                                        let checkin_rep = &self.ticket_info.user_id;
+                                        let technician = &format!("{:?}", &self.techs_cbox);
+                                        let system_name = &self.system_name;
+                                        let cpu_name = &self.cpu_name;
+                                        let total_ram = &self.total_ram;
+                                        let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
+                                        let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
+                                        let ram_test = &format!("{:?}", &self.ram_test_cbox);
+                                        let checkin_notes = &self.ticket_info.checkin_notes;
+                                        let recommendations = &self.recommendations;
+
                                         let html_notes = format!(
-                                            "<body><strong><h2><code>Ticket Info</code></h2></strong><ul>\n\
-                                            <li><strong>Customer:</strong>\n     {}</li>\n\
-                                            <li><strong>SO Number:</strong>\n     {}</li>\n\
-                                            <li><strong>Salesman:</strong>\n     {}</li>\n\
-                                            <li><strong>Checkin rep:</strong>\n     {}</li>\n\
-                                            <li><strong>Technician:</strong>\n     {}</li></ul>\n\n\
-                                            <strong><h2><code>Computer Info</code></h2></strong><ul>\n\
-                                            <li><strong>Model:</strong>\n     {}</li>\n\
-                                            <li><strong>CPU:</strong>\n     {}</li>\n\
-                                            <li><strong>GPU:</strong>\n     </li>\n\
-                                            <li><strong>RAM:</strong>\n     {}</li>\n\
-                                            <li><strong>SSD test:</strong>\n     {}</li>\n\
-                                            <li><strong>HDD test:</strong>\n     {}</li>\n\
-                                            <li><strong>RAM test:</strong>\n     {}</li>\n\
-                                            <li><strong>Storage Info:</strong>\n     </li>\n\
-                                            <li><strong>Serials:</strong>\n     </li></ul>\n\n\
-                                            <strong><h2><code>Software Info</code></h2></strong><ul>\n\
-                                            <li><strong>CPS:</strong>\n     </li>\n\
-                                            <li><strong>SEB Information:</strong>\n     </li></ul>\n\
-                                            <strong><h2><code>Notes</code></h2></strong><ul>\n\
-                                            <li><strong>Checkin Notes:</strong>\n     {}</li>\n\
-                                            <li><strong>Recommendations:</strong>\n     {}</li></ul></body>\n\n",
-                            
-                                            self.ticket_info.customer_name,
-                                            self.so_number,
-                                            "String::from(self.context.salesman_cbox)",
-                                            self.ticket_info.user_id,
-                                            "self.context.techs_cbox.into(),",
+                                            "<body><strong><h2><code>Ticket Info</code></h2></strong><ul>\n
+                                            <li><strong>Customer:</strong>\n     {cust}</li>\n
+                                            <li><strong>SO Number:</strong>\n     {so_num}</li>\n
+                                            <li><strong>Salesman:</strong>\n     {salesman}</li>\n\
+                                            <li><strong>Checkin rep:</strong>\n     {checkin_rep}</li>\n
+                                            <li><strong>Technician:</strong>\n     {technician}</li></ul>\n\n
+
+                                            <strong><h2><code>Computer Info</code></h2></strong><ul>\n
+                                            <li><strong>Model:</strong>\n     {system_name}</li>\n
+                                            <li><strong>CPU:</strong>\n     {cpu_name}</li>\n
+                                            <li><strong>GPU:</strong>\n     </li>\n
+                                            <li><strong>RAM:</strong>\n     {total_ram}</li>\n
+
+                                            <li><strong>SSD test:</strong>\n     {ssd_test}</li>\n
+                                            <li><strong>HDD test:</strong>\n     {hdd_test}</li>\n
+                                            <li><strong>RAM test:</strong>\n     {ram_test}</li>\n
+
+                                            <li><strong>Storage Info:</strong>\n     </li>\n
+                                            <li><strong>Serials:</strong>\n     </li></ul>\n\n
+
+                                            <strong><h2><code>Software Info</code></h2></strong><ul>\n
+                                            <li><strong>CPS:</strong>\n     </li>\n
+                                            <li><strong>SEB Information:</strong>\n     </li></ul>\n
                                             
-                                            self.system_name,
-                                            self.cpu_name,
-                                            //self.context.gpu,
-                                            self.total_ram,
-                            
-                                            "self.context.ssd_test_cbox.into()",
-                                            "self.context.hdd_test_cbox.into()",
-                                            "self.context.ram_test_cbox.into()",
-                                            //self.context.storage_info,
-                                            //self.context.serials,
-                            
-                                            //self.context.cps,
-                                            //self.context.seb_info,
-                                            self.ticket_info.checkin_notes,
-                                            self.recommendations,
+                                            <strong><h2><code>Notes</code></h2></strong><ul>\n
+                                            <li><strong>Checkin Notes:</strong>\n     {checkin_notes}</li>\n
+                                            <li><strong>Recommendations:</strong>\n     {recommendations}</li></ul></body>\n\n",
                                         );
                                         
+                                        /* 
                                         let _ticket = serde_json::json!({
                                             "data": {
                                                 "projects": [
@@ -580,9 +577,10 @@ impl MastertechContext {
                                                 "resource_subtype": "default_task",
                                                 "workspace": "13314583095021"
                                             }
-                                        });
+                                        }); 
+                                        */
                                         
-                                        SendRequest::send_ticket_request(self.scaffold_request.tx.clone(), self.client.clone());
+                                        SendRequest::send_ticket_request(self.scaffold_request.tx.clone(), self.client.clone(), html_notes);
                                     }
 
                                 }); // Group
