@@ -5,8 +5,19 @@ use serde::Deserialize;
 use serde_json::*;
 use std::error::Error;
 use crate::scaffold::*;
-use asana_sdk::*;
-use asana_sdk::models::Model;
+use asana::{
+    apis::{
+        configuration::Configuration, 
+        tasks_api::{
+            create_task,
+            delete_task,
+        }
+    }, 
+    models::{
+        task_request,
+        InlineObject35
+    }
+};
 
 #[derive(Debug, Deserialize)]
 pub struct GetTicketResponse {
@@ -265,30 +276,48 @@ impl SendRequest{
     }
 
     pub fn send_ticket_request(tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
-        
+
         tokio::spawn(async move{
-             // Connect with your Asana PAT (token), from https://app.asana.com/0/developer-console
-            let mut asana = Asana::connect(String::from("1/your:personal-access-token"));
-            // "Authorization", "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2"
-            model!(Assignee "assignee" {
-                name: String
-            });
+            // ideally, id like to also add the functionality to search for a task by the SO number
+            // so we can update the ticket or delete it, or add an attachment
+            // i should use create_attachment_for_task,
+            //  dependencies: Option<Vec<AsanaResource>> 
+            // to add spo as dependancy to task
+
+            let mut asana_config = Configuration::new();
+            let mut task = task_request::TaskRequest::new();
+
+            asana_config.client = client;
+            asana_config.bearer_access_token = Some("1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2".to_string());
+            asana_config.user_agent = None;
             
-            model!(Project "projects" {
-                name: String
-            });
-            
-            model!(Tasks "tasks" {
-                name: String,
-                projects: Vec<Project>,
-                assignee: Option<Assignee>,
-            } Project, Assignee);
-            
+            task.name = Some("customer_name - SO#".to_string());
+            task.assignee = Some("ding-dong or dipshit".to_string());
+            task.workspace = Some("".to_string());
+            task.projects = Some(vec!["1202792139600600".to_string()]);
+            task.assignee = Some("".to_string());
+            task.html_notes = Some("".to_string());
+            // task.due_on = TODO gotta get the widget for time working
+            //task.resource_subtype = Some("".to_string());
+            //task.dependencies = Some("".to_string());
+
+            let asana_task = 
+            InlineObject35{
+                data: Some(Box::new(task))
+            };
+
+            let result = 
+            create_task(&asana_config, 
+                asana_task, 
+                Some(true), 
+                None)
+                .await;
+
             let ticket = serde_json::json!({
 
             });
 
-            let response = send_ticket_info(ticket, client).await;
+            //let response = send_ticket_info(ticket, client).await;
         });
     }
 }
