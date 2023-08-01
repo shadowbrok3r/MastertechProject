@@ -275,7 +275,15 @@ impl SendRequest{
         });
     }
 
-    pub fn send_ticket_request(tx: std::sync::mpsc::Sender<String>, client: reqwest::Client, payload: String){
+    pub fn send_ticket_request(
+        tx: std::sync::mpsc::Sender<String>, 
+        client: reqwest::Client, 
+        task_name: (&String, &String),
+        html_notes: String,
+    ){
+
+        let cust = task_name.0.clone();
+        let so_num = task_name.1.clone();
 
         tokio::spawn(async move{
             // ideally, id like to also add the functionality to search for a task by the SO number
@@ -291,12 +299,12 @@ impl SendRequest{
             asana_config.bearer_access_token = Some("1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2".to_string());
             asana_config.user_agent = None;
             
-            task.name = Some("customer_name - SO#".to_string());
+            task.name = Some(format!("{cust} - {so_num}"));
             task.assignee = Some("1199992640930465".to_string());
             task.workspace = Some("13314583095021".to_string());
             //task.projects = Some(vec!["1202792139600600".to_string()]);
             task.followers = Some(vec!["1199992640930465".to_string()]); // Logan: 1199992640930465
-            task.html_notes = Some(payload);
+            task.html_notes = Some(html_notes);
             // task.due_on = TODO gotta get the widget for time working
             //task.resource_subtype = Some("".to_string());
             //task.dependencies = Some("".to_string());
@@ -306,10 +314,10 @@ impl SendRequest{
                 data: Some(Box::new(task))
             };
 
-            // Serialize the payload to a JSON string and calculate its length
-            let payload_json = serde_json::to_string(&asana_task).unwrap();
-            let content_length = payload_json.len();
-
+            // Serialize the html_notes to a JSON string and calculate its length
+            let html_notes_json = serde_json::to_string(&asana_task).unwrap();
+            let content_length = html_notes_json.len();
+            println!("{asana_task:?}");
             println!("Content length: {}", content_length);
 
             match create_task(&asana_config, 
@@ -319,8 +327,10 @@ impl SendRequest{
                 .await
             {
                 Ok(res) => {
-                    println!("{res:?}");
+                    println!("response without data: {res:?}");
+                    //println!("response: {:?}", res.data.unwrap());
                     //res.data.
+                    
                 },
                 Err(e) => println!("{e}")
             }

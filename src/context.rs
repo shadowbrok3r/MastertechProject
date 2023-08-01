@@ -6,7 +6,7 @@ use egui::*;
 use egui_dock::{Node, NodeIndex, Tree, TabViewer};
 use scaffold::PulledKeys;
 use tokio::sync::mpsc::channel;
-use egui_extras::*;
+use egui_extras::{*, DatePickerButton};
 
 use crate::{
     scaffold::{self, TicketInformation}, 
@@ -40,16 +40,6 @@ impl MyStruct {
 
 */
 pub struct MastertechContext { 
-    /*     
-    pub customer_name: String,
-    pub phone1: String,
-    pub phone2: String,
-    pub checkin_notes: String,
-    pub checkin_rep: String,
-    pub last_invoice_num: String,
-    pub last_invoice_amnt: String,
-    pub jurisdiction: String, 
-    */
     pub so_number: String,
     pub recommendations: String,
 
@@ -163,9 +153,7 @@ impl Default for MasterTechApp {
             a,
             0.7,
             vec!["Console".to_owned()],
-        );
-
-        //let [_, _] = tree.split_below(b, 0.5, vec!["Scripts".to_owned()]);
+        );//let [_, _] = tree.split_below(b, 0.5, vec!["Scripts".to_owned()]);
 
         let mut open_tabs = HashSet::new();
 
@@ -179,7 +167,7 @@ impl Default for MasterTechApp {
 
         let client = reqwest::Client::new();
 
-        // Create a watch channel with a default value
+        // Create watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         let tx_scaffold = tx.clone();
         let tx_sysinfo = tx.clone();
@@ -212,17 +200,6 @@ impl Default for MasterTechApp {
         };
 
         let context = MastertechContext {
-            /*             
-            customer_name: "".to_string(),
-            phone1: "".to_string(),
-            phone2: "".to_string(),
-            checkin_notes: "".to_string(),
-            checkin_rep: "Checkin Rep: ".to_string(),
-            last_invoice_num: "".to_string(),
-            last_invoice_amnt: "".to_string(),
-            jurisdiction: "".to_string(), 
-            */
-
             so_number: "".to_string(),
             recommendations: "".to_string(),
 
@@ -234,9 +211,12 @@ impl Default for MasterTechApp {
             scaffold_request,
             sysinfo_request,
             client,
+            file_browser: Arc::new(Mutex::new(FileBrowser::new())),
 
-            salesman_cbox: scaffold::Salesman::Jake,
-            techs_cbox: scaffold::Techs::Logan,
+            // I should just make this section take
+            // the whole enum
+            salesman_cbox: scaffold::Salesman::Jake, 
+            techs_cbox: scaffold::Techs::Logan, 
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
@@ -277,7 +257,7 @@ impl Default for MasterTechApp {
             get_specs: false,
             spinner: false,
 
-            file_browser: Arc::new(Mutex::new(FileBrowser::new())),
+            
 
             //////////////////////////////////////////
             /*          UI Colors                   */
@@ -511,15 +491,18 @@ impl MastertechContext {
 
                                     ui.checkbox(&mut self.send_specs, "Send System Info");
 
-                                    #[cfg(feature = "chrono")]
+                                    //#[cfg(feature = "chrono")]
+                                    
                                     let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
-                                    //ui.add(egui_extras::DatePickerButton::new(date));
+                                    ui.add(DatePickerButton::new(date));
+                                    ui.end_row();
+                                    
 
                                     if ui.add(Button::new(RichText::new("Submit TUR Sheet")
                                     .color(Color32::from_rgb(255, 204, 255))
                                     .strong()
                                     .italics())
-                                    .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))//.min_size(vec2(self.widget_size * 2.0+8.0, 8.0)))
+                                    .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))
                                     .clicked(){ 
                                         self.spinner = true;
                                         let cust = &self.ticket_info.customer_name;
@@ -536,51 +519,112 @@ impl MastertechContext {
                                         let checkin_notes = &self.ticket_info.checkin_notes;
                                         let recommendations = &self.recommendations;
 
+                                        println!("{:?}", self.date);
+                                        
+                                        let task_name = (cust, so_num);
                                         let html_notes = format!(
-                                            "<body><strong><h2><code>Ticket Info</code></h2></strong><ul>\n
-                                            <li><strong>Customer:</strong>\n     {cust}</li>\n
-                                            <li><strong>SO Number:</strong>\n     {so_num}</li>\n
-                                            <li><strong>Salesman:</strong>\n     {salesman}</li>\n\
-                                            <li><strong>Checkin rep:</strong>\n     {checkin_rep}</li>\n
-                                            <li><strong>Technician:</strong>\n     {technician}</li></ul>\n\n
-
-                                            <strong><h2><code>Computer Info</code></h2></strong><ul>\n
-                                            <li><strong>Model:</strong>\n     {system_name}</li>\n
-                                            <li><strong>CPU:</strong>\n     {cpu_name}</li>\n
-                                            <li><strong>GPU:</strong>\n     </li>\n
-                                            <li><strong>RAM:</strong>\n     {total_ram}</li>\n
-
-                                            <li><strong>SSD test:</strong>\n     {ssd_test}</li>\n
-                                            <li><strong>HDD test:</strong>\n     {hdd_test}</li>\n
-                                            <li><strong>RAM test:</strong>\n     {ram_test}</li>\n
-
-                                            <li><strong>Storage Info:</strong>\n     </li>\n
-                                            <li><strong>Serials:</strong>\n     </li></ul>\n\n
-
-                                            <strong><h2><code>Software Info</code></h2></strong><ul>\n
-                                            <li><strong>CPS:</strong>\n     </li>\n
-                                            <li><strong>SEB Information:</strong>\n     </li></ul>\n
-                                            
-                                            <strong><h2><code>Notes</code></h2></strong><ul>\n
-                                            <li><strong>Checkin Notes:</strong>\n     {checkin_notes}</li>\n
-                                            <li><strong>Recommendations:</strong>\n     {recommendations}</li></ul></body>\n\n",
+                                            "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>\n
+                                            <li><strong>Salesman:</strong>              {salesman}</li>\n
+                                            <li><strong>Checkin rep:</strong>           {checkin_rep}</li>\n
+                                            <li><strong>Technician:</strong>            {technician}</li></ul>\n
+                                            <strong><h2><code>      Computer Info       </code></h2></strong>\n
+                                            <table>
+                                                <tr>
+                                                    <td></td>
+                                                    <td>Details</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>OS</td>
+                                                    <td>{system_name}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>CPU</td>
+                                                    <td>{cpu_name}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>RAM</td>
+                                                    <td>{total_ram}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td>GPU</td>
+                                                    <td></td>
+                                                </tr>
+                                                <tr>
+                                                    <td>Antivirus</td>
+                                                    <td></td>
+                                                </tr>
+                                                <tr>
+                                                    <td>SEB</td>
+                                                    <td></td>
+                                                </tr>
+                                            </table>
+                                            <table>
+                                                <tr>
+                                                    <td>Drive Letter</td>
+                                                    <td>Available Space</td>
+                                                    <td>Total Space</td>
+                                                    <td>S/N# (may be encoded)</td>
+                                                </tr>
+                                                <tr>
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td></td>
+                                                </tr>
+                                                <tr>
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td></td>
+                                                </tr>
+                                                <tr>
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td></td>
+                                                </tr>
+                                                <tr>
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td></td>
+                                                    <td></td>
+                                                </tr>
+                                            </table>
+                                            <ul>
+                                            <li><strong>SSD test:</strong>     {ssd_test}</li>\n
+                                            <li><strong>HDD test:</strong>     {hdd_test}</li>\n
+                                            <li><strong>RAM test:</strong>     {ram_test}</li></ul>\n
+                                
+                                            <h2><strong><code>      Notes       </code></strong></h2><ul>\n
+                                            <li><strong>        Checkin Notes:      </strong>\n     {checkin_notes}</li>\n
+                                            <li><strong>        Recommendations:        </strong>\n     {recommendations}</li></ul></body>",
                                         );
-                                        
-                                        /* 
-                                        let _ticket = serde_json::json!({
-                                            "data": {
-                                                "projects": [
-                                                    "1202792139600600"
-                                                ],
-                                                "name": format!("{} - {}", self.ticket_info.customer_name, self.so_number),
-                                                "html_notes": html_notes,
-                                                "resource_subtype": "default_task",
-                                                "workspace": "13314583095021"
-                                            }
-                                        }); 
+                                        // I think i should probably just pass send_ticket_request the
+                                        // whole ticket_info struct
+
+                                        /*
+                                            cust_code: "".to_string(),
+                                            user_id: "".to_string(),
+                                            terms: "".to_string(),
+                                            doc_alias: "".to_string(),
+                                            department: "".to_string(),
+                                            jurisdiction: "".to_string(),
+                                            invoice_amnt: "".to_string(),
+
+                                            customer_email: "".to_string(),
+                                            last_invoice_number: "".to_string(),
+                                            last_invoice_amount: "".to_string(),
+                                            total_invoice_count: "".to_string(),
+
+                                            item_codes: "".to_string(),
                                         */
-                                        
-                                        SendRequest::send_ticket_request(self.scaffold_request.tx.clone(), self.client.clone(), html_notes);
+
+                                        SendRequest::send_ticket_request(
+                                            self.scaffold_request.tx.clone(), 
+                                            self.client.clone(), 
+                                            task_name,
+                                            html_notes
+                                        );
                                     }
 
                                 }); // Group
