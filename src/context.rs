@@ -6,7 +6,6 @@ use egui::*;
 use egui_dock::{Node, NodeIndex, Tree, TabViewer};
 use scaffold::PulledKeys;
 use tokio::sync::mpsc::channel;
-use asana_sdk::{self, model};
 use egui_extras::*;
 
 use crate::{
