@@ -13,7 +13,7 @@ use crate::{
     file_browser::FileBrowser, 
     system_info, 
     request::SendRequest,
-    system_info::RetrieveSystemInfo
+    system_info::{RetrieveSystemInfo, SystemInformation, DiskData}
 };
 
 /** 
@@ -49,7 +49,7 @@ pub struct MastertechContext {
     pub client: reqwest::Client,
     scaffold_request: SendRequest,
     sysinfo_request: system_info::RetrieveSystemInfo,
-    
+    pub system_information: SystemInformation,
     pub salesman_cbox: scaffold::Salesman,
     pub techs_cbox: scaffold::Techs,
     pub ram_test_cbox: scaffold::HardwareTest,
@@ -58,10 +58,6 @@ pub struct MastertechContext {
 
     pub output_text: String,
     
-    pub cpu_name: String,
-    pub total_ram: String,
-    pub system_name: String,
-    pub disks: Value,
     pub disk_num: usize,
 
     pub tur_sheet_tab: String,
@@ -199,6 +195,14 @@ impl Default for MasterTechApp {
             item_codes: "".to_string(),
         };
 
+        let system_information = SystemInformation {
+            cpu_name: "".to_string(),
+            total_ram: "".to_string(),
+            system_name: "".to_string(),
+            disks: DiskData::new(),
+            gpu: Some("".to_string()),
+        };
+
         let context = MastertechContext {
             so_number: "".to_string(),
             recommendations: "".to_string(),
@@ -223,11 +227,10 @@ impl Default for MasterTechApp {
 
             output_text: "".to_string(),
 
-            cpu_name: "".to_string(),
-            total_ram: "".to_string(),
-            system_name: "".to_string(),
-            disks: Value::Array(vec![]),
+            system_information,
+            
             disk_num: 0,
+
 
             rx: Some(rx),
 
@@ -504,127 +507,139 @@ impl MastertechContext {
                                     .italics())
                                     .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))
                                     .clicked(){ 
-                                        self.spinner = true;
+                                        
+                                        
                                         let cust = &self.ticket_info.customer_name;
                                         let so_num = &self.so_number;
-                                        let salesman = &format!("{:?}", &self.salesman_cbox);
-                                        let checkin_rep = &self.ticket_info.user_id;
-                                        let technician = &format!("{:?}", &self.techs_cbox);
-                                        let system_name = &self.system_name;
-                                        let cpu_name = &self.cpu_name;
-                                        let total_ram = &self.total_ram;
-                                        let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
-                                        let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
-                                        let ram_test = &format!("{:?}", &self.ram_test_cbox);
-                                        let checkin_notes = &self.ticket_info.checkin_notes;
-                                        let recommendations = &self.recommendations;
 
-                                        println!("{:?}", self.date);
+                                        if !cust.is_empty() && !so_num.is_empty()
+                                        {
+                                            self.spinner = true;
+                                            let salesman = &format!("{:?}", &self.salesman_cbox);
+                                            let checkin_rep = &self.ticket_info.user_id;
+                                            let technician = &format!("{:?}", &self.techs_cbox);
+                                            let system_name = &self.system_information.system_name;
+                                            let cpu_name = &self.system_information.cpu_name;
+                                            let total_ram = &self.system_information.total_ram;
+                                            let gpu = &self.system_information.gpu.unwrap();
+                                            let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
+                                            let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
+                                            let ram_test = &format!("{:?}", &self.ram_test_cbox);
+                                            let checkin_notes = &self.ticket_info.checkin_notes;
+                                            let recommendations = &self.recommendations;
+
+                                            println!("{:?}", self.date);
+                                            
+                                            let task_name = (cust, so_num);
+                                            let html_notes = format!(
+                                                "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>\n
+                                                <li><strong>Salesman:</strong>              {salesman}</li>\n
+                                                <li><strong>Checkin rep:</strong>           {checkin_rep}</li>\n
+                                                <li><strong>Technician:</strong>            {technician}</li></ul>\n
+                                                <strong><h2><code>      Computer Info       </code></h2></strong>\n
+                                                <table>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td>Details</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>OS</td>
+                                                        <td>{system_name}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>CPU</td>
+                                                        <td>{cpu_name}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>RAM</td>
+                                                        <td>{total_ram}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>GPU</td>
+                                                        <td>{gpu}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>Antivirus</td>
+                                                        <td></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>SEB</td>
+                                                        <td></td>
+                                                    </tr>
+                                                </table>
+                                                <table>
+                                                    <tr>
+                                                        <td>Drive Letter</td>
+                                                        <td>Available Space</td>
+                                                        <td>Total Space</td>
+                                                        <td>S/N# (may be encoded)</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                    </tr>
+                                                </table>
+                                                <ul>
+                                                <li><strong>SSD test:</strong>     {ssd_test}</li>\n
+                                                <li><strong>HDD test:</strong>     {hdd_test}</li>\n
+                                                <li><strong>RAM test:</strong>     {ram_test}</li></ul>\n
+                                    
+                                                <h2><strong><code>      Notes       </code></strong></h2><ul>\n
+                                                <li><strong>        Checkin Notes:      </strong>\n     {checkin_notes}</li>\n
+                                                <li><strong>        Recommendations:        </strong>\n     {recommendations}</li></ul></body>",
+                                            );
+                                            // I think i should probably just pass send_ticket_request the
+                                            // whole ticket_info struct
+
+                                            /*
+                                                cust_code: "".to_string(),
+                                                user_id: "".to_string(),
+                                                terms: "".to_string(),
+                                                doc_alias: "".to_string(),
+                                                department: "".to_string(),
+                                                jurisdiction: "".to_string(),
+                                                invoice_amnt: "".to_string(),
+
+                                                customer_email: "".to_string(),
+                                                last_invoice_number: "".to_string(),
+                                                last_invoice_amount: "".to_string(),
+                                                total_invoice_count: "".to_string(),
+
+                                                item_codes: "".to_string(),
+                                            */
+
+                                            SendRequest::send_ticket_request(
+                                                self.scaffold_request.tx.clone(), 
+                                                self.client.clone(), 
+                                                task_name,
+                                                html_notes
+                                            );
+                                            self.spinner = false;
                                         
-                                        let task_name = (cust, so_num);
-                                        let html_notes = format!(
-                                            "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>\n
-                                            <li><strong>Salesman:</strong>              {salesman}</li>\n
-                                            <li><strong>Checkin rep:</strong>           {checkin_rep}</li>\n
-                                            <li><strong>Technician:</strong>            {technician}</li></ul>\n
-                                            <strong><h2><code>      Computer Info       </code></h2></strong>\n
-                                            <table>
-                                                <tr>
-                                                    <td></td>
-                                                    <td>Details</td>
-                                                </tr>
-                                                <tr>
-                                                    <td>OS</td>
-                                                    <td>{system_name}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td>CPU</td>
-                                                    <td>{cpu_name}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td>RAM</td>
-                                                    <td>{total_ram}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td>GPU</td>
-                                                    <td></td>
-                                                </tr>
-                                                <tr>
-                                                    <td>Antivirus</td>
-                                                    <td></td>
-                                                </tr>
-                                                <tr>
-                                                    <td>SEB</td>
-                                                    <td></td>
-                                                </tr>
-                                            </table>
-                                            <table>
-                                                <tr>
-                                                    <td>Drive Letter</td>
-                                                    <td>Available Space</td>
-                                                    <td>Total Space</td>
-                                                    <td>S/N# (may be encoded)</td>
-                                                </tr>
-                                                <tr>
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td></td>
-                                                </tr>
-                                                <tr>
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td></td>
-                                                </tr>
-                                                <tr>
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td></td>
-                                                </tr>
-                                                <tr>
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td></td>
-                                                    <td></td>
-                                                </tr>
-                                            </table>
-                                            <ul>
-                                            <li><strong>SSD test:</strong>     {ssd_test}</li>\n
-                                            <li><strong>HDD test:</strong>     {hdd_test}</li>\n
-                                            <li><strong>RAM test:</strong>     {ram_test}</li></ul>\n
-                                
-                                            <h2><strong><code>      Notes       </code></strong></h2><ul>\n
-                                            <li><strong>        Checkin Notes:      </strong>\n     {checkin_notes}</li>\n
-                                            <li><strong>        Recommendations:        </strong>\n     {recommendations}</li></ul></body>",
-                                        );
-                                        // I think i should probably just pass send_ticket_request the
-                                        // whole ticket_info struct
-
-                                        /*
-                                            cust_code: "".to_string(),
-                                            user_id: "".to_string(),
-                                            terms: "".to_string(),
-                                            doc_alias: "".to_string(),
-                                            department: "".to_string(),
-                                            jurisdiction: "".to_string(),
-                                            invoice_amnt: "".to_string(),
-
-                                            customer_email: "".to_string(),
-                                            last_invoice_number: "".to_string(),
-                                            last_invoice_amount: "".to_string(),
-                                            total_invoice_count: "".to_string(),
-
-                                            item_codes: "".to_string(),
-                                        */
-
-                                        SendRequest::send_ticket_request(
-                                            self.scaffold_request.tx.clone(), 
-                                            self.client.clone(), 
-                                            task_name,
-                                            html_notes
-                                        );
+                                        }
+                                        else{
+                                            self.output_text = "You need to enter a customer name or Service number".to_string();
+                                        }
                                     }
 
                                 }); // Group
@@ -699,7 +714,7 @@ impl MastertechContext {
                         ui.label("System Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.system_name);
+                        ui.label(&self.system_information.system_name);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -707,7 +722,7 @@ impl MastertechContext {
                         ui.label("CPU Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.cpu_name);
+                        ui.label(&self.system_information.cpu_name);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -715,7 +730,7 @@ impl MastertechContext {
                         ui.label("Total RAM");
                     });
                     row.col(|ui|{
-                        ui.label(format!("{} Gb", &self.total_ram));
+                        ui.label(format!("{} Gb", &self.system_information.total_ram));
                     });
                 });
                 #[cfg(target_os = "windows")]
@@ -724,8 +739,7 @@ impl MastertechContext {
                         ui.label("GPU");
                     });
                     row.col(|_ui|{
-                        //let gpu = RetrieveSystemInfo::get_gpu();
-                        //ui.label(format!("{}", gpu));
+                        //ui.label(format!("{:?}", &self.system_information.gpu));
                     });
                 });
                 
@@ -763,8 +777,8 @@ impl MastertechContext {
                 20.0,  // Replace with your desired row height
                 self.disk_num,
                 |disk_index, mut row| 
-                {
-                    if let Some(disk) = self.disks.get(disk_index){
+            {                                                           // this is stupid..
+                    if let Some(disk) = self.system_information.disks.disks.get(disk_index){
                         //println!("disks: {:#?}", disk);
 
                         //let disk_name = format!("{:#?}", disk.get("name"));

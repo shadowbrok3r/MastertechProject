@@ -14,6 +14,7 @@ pub struct SystemInformation{
     pub total_ram: String,
     pub system_name: String,
     pub disks: DiskData, //Option<String>
+    pub gpu: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -22,7 +23,7 @@ pub struct DiskData {
 }
 
 impl DiskData {
-    fn new() -> Self {
+    pub fn new() -> Self {
         DiskData {
             disks: Vec::new(),
         }
@@ -43,7 +44,7 @@ impl RetrieveSystemInfo{
                 let sys = System::new_all(); // Create `System` struct.
 
                 let cpu_brand = sys.cpus()[0].brand().to_string();
-                let ram = (sys.total_memory() / ( 1024 * 1024 * 1024)).to_string();
+                let ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_string();
                 let system = sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
                 let disks = sys.disks();
                 let disks_clone = disks.clone();
@@ -61,26 +62,65 @@ impl RetrieveSystemInfo{
                         }));
                     }   
                 }
-                
-                // String for each disk: [name] [letter]:\\ [ Available space / Total space ]
-                let system_info = SystemInformation{
-                    cpu_name: cpu_brand,
-                    total_ram: ram,
-                    system_name: system,
-                    disks: data
-                };
 
-                let system_info_json = serde_json::to_string(&system_info).unwrap();
+                let gpu = 
+                String::from_utf8(
+                    std::process::Command::new("cmd")
+                    .args(["/C", "wmic path win32_VideoController get name"])
+                    .output().unwrap().stdout
+                );
 
-                match tx.send(system_info_json) {
-                    Ok(_) => {
-                        drop(tx);
-                    },
-                    Err(e) => {
-                        eprintln!("Error while sending ticket information: {}", e.to_string());
-                        drop(tx);
+                // match gpu{
+                //     Ok(output) => {
+                //         println!("{:?}", output)
+                //     }
+                //     Err(e) => {
+                //         println!("Error: {}", e);
+                //     }
+                // }
+                if let Ok(gpu) = gpu{
+                    let system_info = SystemInformation{
+                        cpu_name: cpu_brand,
+                        total_ram: ram,
+                        system_name: system,
+                        disks: data,
+                        gpu: Some(gpu)
+                    };
+                    let system_info_json = serde_json::to_string(&system_info).unwrap();
+
+                    match tx.send(system_info_json) {
+                        Ok(_) => {
+                            drop(tx);
+                        },
+                        Err(e) => {
+                            eprintln!("Error while sending ticket information: {}", e.to_string());
+                            drop(tx);
+                        }
                     }
                 }
+                else {
+                    let system_info = SystemInformation{
+                        cpu_name: cpu_brand,
+                        total_ram: ram,
+                        system_name: system,
+                        disks: data,
+                        gpu: None
+                    };
+                    let system_info_json = serde_json::to_string(&system_info).unwrap();
+
+                    match tx.send(system_info_json) {
+                        Ok(_) => {
+                            drop(tx);
+                        },
+                        Err(e) => {
+                            eprintln!("Error while sending ticket information: {}", e.to_string());
+                            drop(tx);
+                        }
+                    }
+                }
+
+
+
                 
 
 
@@ -91,14 +131,6 @@ impl RetrieveSystemInfo{
 
     #[cfg(target_os = "windows")]
     pub fn get_gpu(){
-        let gpu = std::process::Command::new("cmd").args(["/C", "wmic path win32_VideoController get name"]).output();
-        match gpu{
-            Ok(_) => {
-
-            }
-            Err(e) => {
-                println!("Error: {}", e);
-            }
-        }
+        
     }
 }
