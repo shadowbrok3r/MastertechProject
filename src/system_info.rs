@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
 use tokio::runtime::Handle;
-
+use regex::Regex;
 pub struct RetrieveSystemInfo {
     pub tx: std::sync::mpsc::Sender<String>,
 }
@@ -37,100 +37,100 @@ impl DiskData {
 impl RetrieveSystemInfo{
 
     pub fn get_system_specs(tx: std::sync::mpsc::Sender<String>){
-        let handle = Handle::current();
         
-        std::thread::spawn(move||{
-            handle.block_on(async{
-                let sys = System::new_all(); // Create `System` struct.
+        tokio::spawn(async {
+            let sys = System::new_all(); // Create `System` struct.
 
-                let cpu_brand = sys.cpus()[0].brand().to_string();
-                let ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_string();
-                let system = sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
-                let disks = sys.disks();
-                let disks_clone = disks.clone();
+            let cpu_brand = sys.cpus()[0].brand().to_string();
+            let ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_string();
+            let system = sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
+            let disks = sys.disks();
+            let disks_clone = disks.clone();
 
 
-                let mut data = DiskData::new();
+            let mut data = DiskData::new();
 
-                for disk in disks_clone{
-                    if !disk.is_removable(){
-                        data.add_disk(serde_json::json!({
-                            "name": disk.name(),
-                            "letter": disk.mount_point().to_str(),
-                            "total space": (disk.total_space() / ( 1024 * 1024 * 1024)).to_string(),
-                            "available space": (disk.available_space() / ( 1024 * 1024 * 1024)).to_string(),
-                        }));
-                    }   
+            for disk in disks_clone{
+                if !disk.is_removable(){
+                    data.add_disk(serde_json::json!({
+                        "name": disk.name(),
+                        "letter": disk.mount_point().to_str(),
+                        "total space": (disk.total_space() / ( 1024 * 1024 * 1024)).to_string(),
+                        "available space": (disk.available_space() / ( 1024 * 1024 * 1024)).to_string(),
+                    }));
+                }   
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                let gpu_name = 
+                String::from_utf8(
+                    tokio::process::Command::new("cmd")
+                    .args(["/C", "wmic path win32_VideoController get name"])
+                    .output()
+                    .await
+                    .unwrap()
+                    .stdout
+                );
+                let system_info = SystemInformation{
+                    cpu_name: cpu_brand,
+                    total_ram: ram,
+                    system_name: system,
+                    disks: data,
+                    gpu: Some(gpu_name)
+                };
+                let system_info_json = serde_json::to_string(&system_info).unwrap();
+                println!("system info json: {}", system_info_json);
+                match tx.send(system_info_json) {
+                    Ok(_) => {
+                        drop(tx);
+                    },
+                    Err(e) => {
+                        eprintln!("Error while sending ticket information: {}", e.to_string());
+                        drop(tx);
+                    }
                 }
+            }
 
+
+            #[cfg(target_os = "linux")]
+            {
+                let re = Regex::new(r"\[(.*)\]").unwrap();
+                let mut gpu_name = String::new();
                 let gpu = 
                 String::from_utf8(
-                    std::process::Command::new("cmd")
-                    .args(["/C", "wmic path win32_VideoController get name"])
-                    .output().unwrap().stdout
+                    tokio::process::Command::new("sh")
+                        .arg("-c")
+                        .arg("lspci | grep VGA")
+                        .output()
+                        .await
+                        .unwrap()
+                        .stdout
                 );
-
-                // match gpu{
-                //     Ok(output) => {
-                //         println!("{:?}", output)
-                //     }
-                //     Err(e) => {
-                //         println!("Error: {}", e);
-                //     }
-                // }
-                if let Ok(gpu) = gpu{
-                    let system_info = SystemInformation{
-                        cpu_name: cpu_brand,
-                        total_ram: ram,
-                        system_name: system,
-                        disks: data,
-                        gpu: Some(gpu)
-                    };
-                    let system_info_json = serde_json::to_string(&system_info).unwrap();
-
-                    match tx.send(system_info_json) {
-                        Ok(_) => {
-                            drop(tx);
-                        },
-                        Err(e) => {
-                            eprintln!("Error while sending ticket information: {}", e.to_string());
-                            drop(tx);
-                        }
-                    }
+                if let Some(captures) = re.captures(gpu.clone().unwrap_or("empty".to_string()).as_str()){
+                    let full_gpu_name = &captures[1];
+                    gpu_name = full_gpu_name.split_whitespace().take(3).collect::<Vec<&str>>().join(" ");
                 }
-                else {
-                    let system_info = SystemInformation{
-                        cpu_name: cpu_brand,
-                        total_ram: ram,
-                        system_name: system,
-                        disks: data,
-                        gpu: None
-                    };
-                    let system_info_json = serde_json::to_string(&system_info).unwrap();
-
-                    match tx.send(system_info_json) {
-                        Ok(_) => {
-                            drop(tx);
-                        },
-                        Err(e) => {
-                            eprintln!("Error while sending ticket information: {}", e.to_string());
-                            drop(tx);
-                        }
-                    }
-                }
-
-
-
-                
-
-
-            });
-        });
-    }
     
-
-    #[cfg(target_os = "windows")]
-    pub fn get_gpu(){
-        
+                let system_info = SystemInformation{
+                    cpu_name: cpu_brand,
+                    total_ram: ram,
+                    system_name: system,
+                    disks: data,
+                    gpu: Some(gpu_name)
+                };
+                let system_info_json = serde_json::to_string(&system_info).unwrap();
+                println!("system info json: {}", system_info_json);
+                match tx.send(system_info_json) {
+                    Ok(_) => {
+                        drop(tx);
+                    },
+                    Err(e) => {
+                        eprintln!("Error while sending ticket information: {}", e.to_string());
+                        drop(tx);
+                    }
+                }
+            }         
+        });
     }
 }
