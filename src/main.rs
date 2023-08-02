@@ -72,21 +72,21 @@ Item Codes: {:?}\n",
             }
             // If neither parse was successful, consider it an error
             else if let Ok(info) = serde_json::from_str::<system_info::SystemInformation>(&message) {
-                self.context.system_name = info.system_name;
-                self.context.cpu_name = info.cpu_name;
-                self.context.total_ram = info.total_ram;
+                self.context.system_information.system_name = info.system_name;
+                self.context.system_information.cpu_name = info.cpu_name;
+                self.context.system_information.total_ram = info.total_ram;
                 for disk in info.disks.disks{
                     
-                    self.context.disk_num += 1;
+                    // self.context.disk_num += 1;
 
-                    if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                        // Convert `disk` to a serde_json::Value
-                        let disk_json = serde_json::to_value(&disk).unwrap();
+                    // if let Some(disks_arr) = self.context.system_information.disks.disks.as_array_mut() {
+                    //     // Convert `disk` to a serde_json::Value
+                    //     let disk_json = serde_json::to_value(&disk).unwrap();
                 
-                        disks_arr.push(disk_json);
-                    } else {
-                        eprintln!("Expected self.context.disks to be an Array");
-                    }
+                    //     disks_arr.push(disk_json);
+                    // } else {
+                    //     eprintln!("Expected self.context.disks to be an Array");
+                    // }
                     
                 }
                 
