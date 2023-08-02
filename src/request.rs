@@ -3,6 +3,7 @@
 use reqwest::header::{CONTENT_TYPE, ACCEPT};
 use serde::Deserialize;
 use serde_json::*;
+use tokio::io::AsyncWriteExt;
 use std::error::Error;
 use crate::scaffold::*;
 use asana::{
@@ -143,8 +144,23 @@ impl SendRequest{
                     let mut checkin_note = "".to_string();
                     let mut itemcodes = "".to_string();
 
+                    let mut li_amt = "".to_string();
+                    let mut li_doc = "".to_string();
+                    let mut inv_amnt = "".to_string();
+                    let mut num_inv = "".to_string();
+                    println!("customer.LI_AMT: {}", customer.LI_AMT);
+                    println!("customer.LI_DOC: {}", customer.LI_DOC);
+                    println!("customer.INV_AMOUNT: {}", header.INV_AMOUNT);
+                    if customer.LI_AMT != Value::Null || customer.LI_AMT != "null"{ li_amt = customer.LI_AMT.clone() }
+                    if customer.LI_DOC != Value::Null || customer.LI_DOC != "null"{ li_doc = customer.LI_DOC.clone(); }
+                    if header.INV_AMOUNT != Value::Null || header.INV_AMOUNT != "null"{ inv_amnt = header.INV_AMOUNT.clone(); }
+                    //if customer.NUM_INV
+                    println!("{li_amt}");
+                    println!("{li_doc}");
+                    println!("{inv_amnt}");
                     // DW_UPDATE_DATE is the exact time that the line item (AKA 'items') was added.
                     // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
+                    
                     for object in items_objects{
 
                         // If i want to....
@@ -169,29 +185,31 @@ impl SendRequest{
                         });
                     }
 
+
                     let ticket_information = TicketInformation{
                         cust_code: header.CUST_CODE.clone(),
                         user_id: header.USER_ID.clone(),
                         customer_phone_1: addresses.TEL1.clone(),
                         customer_phone_2: addresses.TEL2.clone(),
                         customer_email: addresses.EMAIL.clone(),
-                        last_invoice_amount: customer.LI_AMT.clone(),
+                        last_invoice_amount: li_amt,
                         terms: header.TERMS.clone(),
                         doc_alias: header.DOC_ALIAS.clone(),
                         department: header.DEP.clone(),
                         jurisdiction: header.JURISCODE.clone(),
-                        invoice_amnt: header.INV_AMOUNT.clone(),
+                        invoice_amnt: inv_amnt,
                         customer_name: customer.NAME.clone(),
                         checkin_notes: checkin_note.clone(),
-                        last_invoice_number: customer.LI_DOC.clone(),
+                        last_invoice_number: li_doc,
                         item_codes: itemcodes.clone(),
+                        total_invoice_count: num_inv,
                         //last_tuneup_date: customer.LAST_TUNEUP_DATE.clone(),
                         //last_checkin_date: customer.LI_AMT.clone(),
-                        total_invoice_count: customer.NUM_INV.clone(),
                     };
+                    
 
                     let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();
-
+                    println!("ticket info in spawned thread: \n{ticket_info_json:?}");
                     match tx.send(ticket_info_json) {
                         Ok(_) => {
                             drop(tx)
@@ -280,10 +298,21 @@ impl SendRequest{
         client: reqwest::Client, 
         task_name: (&String, &String),
         html_notes: String,
+        assignees: (&String, &String),
+        due_date: String,
     ){
-
         let cust = task_name.0.clone();
         let so_num = task_name.1.clone();
+
+        let mut assigned_salesman = "1202792432658520".to_string(); // Jake
+        let mut assigned_tech = "1199992640930465".to_string(); // Logan
+
+        if assignees.0 == "JDH2"{ assigned_salesman = "1202791016369879".to_string(); }
+        else if assignees.0 == "DMK"{ assigned_salesman = "1202791016369879".to_string() }
+
+        if assignees.1 == "LL" { assigned_tech = "1199992640930465".to_string(); }
+        else if assignees.1 == "BLK" { assigned_tech = "1202792432421640".to_string(); }
+        else if assignees.1 == "TBN" { assigned_tech = "1202792432551073".to_string(); }
 
         tokio::spawn(async move{
             // ideally, id like to also add the functionality to search for a task by the SO number
@@ -300,12 +329,12 @@ impl SendRequest{
             asana_config.user_agent = None;
             
             task.name = Some(format!("{cust} - {so_num}"));
-            task.assignee = Some("1199992640930465".to_string());
+            task.assignee = Some(assigned_salesman.clone());
             task.workspace = Some("13314583095021".to_string());
-            //task.projects = Some(vec!["1202792139600600".to_string()]);
-            task.followers = Some(vec!["1199992640930465".to_string()]); // Logan: 1199992640930465
+            task.projects = Some(vec!["1202792139600600".to_string()]);
+            task.followers = Some(vec![assigned_salesman, assigned_tech]); // Logan: 1199992640930465
             task.html_notes = Some(html_notes);
-            // task.due_on = TODO gotta get the widget for time working
+            task.due_on = Some(due_date);
             //task.resource_subtype = Some("".to_string());
             //task.dependencies = Some("".to_string());
 
@@ -354,12 +383,26 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
 
     match response {
         Ok(res) => {
-            //let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
-            let raw_response = res.text().await?;
-            println!("Server response: {}", raw_response);
-            let json_response: GetTicketResponse = serde_json::from_str(&raw_response)?;
+            // let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
 
-            Ok(json_response)
+            //let raw_response = res.text().await?;
+            //println!("Server response: {}", raw_response);
+            //let json_response: GetTicketResponse = serde_json::from_str(&raw_response).unwrap();
+            let json_response: Value = res.json().await?;
+            match json_response.is_null(){
+                true =>{
+
+                }, 
+                false => {}
+            }
+            if !json_response.is_null(){
+                let resp: GetTicketResponse = serde_json::from_str(json_response.as_str().unwrap()).unwrap();
+                Ok(resp)
+            }else{
+                let resp: GetTicketResponse = serde_json::from_str(json_response.as_str().unwrap()).unwrap();
+                Err(Box::new(e))
+            }
+
         },
         Err(e) => Err(Box::new(e)),
     }

@@ -1,6 +1,5 @@
-use serde_json::Value;
 use std::{sync::{Arc, Mutex}, collections::HashSet}; //, os::windows::thread};
-
+use serde_json::Value;
 use eframe::egui;
 use egui::*;
 use egui_dock::{Node, NodeIndex, Tree, TabViewer};
@@ -49,7 +48,7 @@ pub struct MastertechContext {
     pub client: reqwest::Client,
     scaffold_request: SendRequest,
     sysinfo_request: system_info::RetrieveSystemInfo,
-    pub system_information: SystemInformation,
+    //pub system_information: SystemInformation,
     pub salesman_cbox: scaffold::Salesman,
     pub techs_cbox: scaffold::Techs,
     pub ram_test_cbox: scaffold::HardwareTest,
@@ -58,6 +57,11 @@ pub struct MastertechContext {
 
     pub output_text: String,
     
+    pub cpu_name: String,
+    pub total_ram: String,
+    pub system_name: String,
+    pub gpu: Option<String>,
+    pub disks: Value,
     pub disk_num: usize,
 
     pub tur_sheet_tab: String,
@@ -194,14 +198,8 @@ impl Default for MasterTechApp {
             checkin_notes: "".to_string(),
             item_codes: "".to_string(),
         };
-
-        let system_information = SystemInformation {
-            cpu_name: "".to_string(),
-            total_ram: "".to_string(),
-            system_name: "".to_string(),
-            disks: DiskData::new(),
-            gpu: Some("".to_string()),
-        };
+        
+        //let system_information = SystemInformation {};
 
         let context = MastertechContext {
             so_number: "".to_string(),
@@ -227,8 +225,12 @@ impl Default for MasterTechApp {
 
             output_text: "".to_string(),
 
-            system_information,
             
+            cpu_name: "".to_string(),
+            total_ram: "".to_string(),
+            system_name: "".to_string(),
+            disks: Value::Array(vec![]),
+            gpu: Some("".to_string()),
             disk_num: 0,
 
 
@@ -483,22 +485,21 @@ impl MastertechContext {
                                     }); // Grid   
 
                                     
-                                    ui.vertical(|ui|{ui.add_space(18.0);});
+                                    ui.vertical(|ui|{ui.add_space(8.0);});
 
                                     if self.spinner == true{
                                         ui.add(Spinner::new());
                                     }
                                     
 
-                                    ui.vertical(|ui|{ui.add_space(18.0);});
+                                    ui.vertical(|ui|{ui.add_space(8.0);});
 
                                     ui.checkbox(&mut self.send_specs, "Send System Info");
-
-                                    //#[cfg(feature = "chrono")]
                                     
                                     let date = self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
                                     ui.add(DatePickerButton::new(date));
-                                    ui.end_row();
+
+                                    ui.vertical(|ui|{ui.add_space(8.0);});
                                     
 
                                     if ui.add(Button::new(RichText::new("Submit TUR Sheet")
@@ -511,26 +512,30 @@ impl MastertechContext {
                                         
                                         let cust = &self.ticket_info.customer_name;
                                         let so_num = &self.so_number;
-
+                                        if self.send_specs == true{
+                                            //RetrieveSystemInfo::get_system_specs(specs_sender);
+                                        }
                                         if !cust.is_empty() && !so_num.is_empty()
                                         {
                                             self.spinner = true;
                                             let salesman = &format!("{:?}", &self.salesman_cbox);
                                             let checkin_rep = &self.ticket_info.user_id;
                                             let technician = &format!("{:?}", &self.techs_cbox);
-                                            let system_name = &self.system_information.system_name;
-                                            let cpu_name = &self.system_information.cpu_name;
-                                            let total_ram = &self.system_information.total_ram;
-                                            let gpu = &self.system_information.gpu.unwrap();
+                                            let system_name = &self.system_name;
+                                            let cpu_name = &self.cpu_name;
+                                            let total_ram = &self.total_ram;
+                                            let gpu = &self.gpu.clone().unwrap();
                                             let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
                                             let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
                                             let ram_test = &format!("{:?}", &self.ram_test_cbox);
                                             let checkin_notes = &self.ticket_info.checkin_notes;
-                                            let recommendations = &self.recommendations;
+                                            let recommendations = &self.recommendations;   
 
-                                            println!("{:?}", self.date);
-                                            
                                             let task_name = (cust, so_num);
+                                            let assignees = (checkin_rep, technician);
+
+                                            let date = format!("{}", self.date.unwrap());
+                                            //let antivirus = tokio::process::Command()
                                             let html_notes = format!(
                                                 "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>\n
                                                 <li><strong>Salesman:</strong>              {salesman}</li>\n
@@ -628,11 +633,14 @@ impl MastertechContext {
                                                 item_codes: "".to_string(),
                                             */
 
+
                                             SendRequest::send_ticket_request(
                                                 self.scaffold_request.tx.clone(), 
                                                 self.client.clone(), 
                                                 task_name,
-                                                html_notes
+                                                html_notes,
+                                                assignees,
+                                                date,
                                             );
                                             self.spinner = false;
                                         
@@ -676,7 +684,6 @@ impl MastertechContext {
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
         if self.specs_first_run == true{
-            // self.get_specs = true;
             let specs_sender = self.sysinfo_request.tx.clone();
             self.spinner = true;
             
@@ -687,10 +694,11 @@ impl MastertechContext {
         if self.spinner == true{
             ui.vertical_centered(|ui|{
                 ui.add(Spinner::new());
-            });
-            
+            }); 
         }
 
+        let gpu = &self.gpu.clone().unwrap_or("no GPU found".to_string());
+        //let disks = self.disks.disks.clone();
         ui.indent("indented_sysinfo_table", |ui|{
             let table = TableBuilder::new(ui)
                 .striped(true)
@@ -714,7 +722,7 @@ impl MastertechContext {
                         ui.label("System Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.system_information.system_name);
+                        ui.label(&self.system_name);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -722,7 +730,7 @@ impl MastertechContext {
                         ui.label("CPU Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.system_information.cpu_name);
+                        ui.label(&self.cpu_name);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -730,16 +738,15 @@ impl MastertechContext {
                         ui.label("Total RAM");
                     });
                     row.col(|ui|{
-                        ui.label(format!("{} Gb", &self.system_information.total_ram));
+                        ui.label(format!("{} Gb", &self.total_ram));
                     });
                 });
-                #[cfg(target_os = "windows")]
                 body.row(20.0, |mut row| {
                     row.col(|ui|{
                         ui.label("GPU");
                     });
-                    row.col(|_ui|{
-                        //ui.label(format!("{:?}", &self.system_information.gpu));
+                    row.col(|ui|{
+                        ui.label(gpu);
                     });
                 });
                 
@@ -778,7 +785,7 @@ impl MastertechContext {
                 self.disk_num,
                 |disk_index, mut row| 
             {                                                           // this is stupid..
-                    if let Some(disk) = self.system_information.disks.disks.get(disk_index){
+                    if let Some(disk) = self.disks.get(disk_index){
                         //println!("disks: {:#?}", disk);
 
                         //let disk_name = format!("{:#?}", disk.get("name"));
