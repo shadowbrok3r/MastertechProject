@@ -526,11 +526,11 @@ impl MastertechContext {
                                             let task_name = (cust, so_num);
                                             let assignees = (checkin_rep, technician);
                                             let date = format!("{}", self.date.unwrap());
-                                            let installed_antivirus = RetrieveSystemInfo::get_antivirus().unwrap();
-                                            let mut cps = String::new();
-                                            for antivirus in installed_antivirus{
-                                                cps = antivirus.1;
-                                            }
+                                            //let installed_antivirus = RetrieveSystemInfo::get_antivirus().unwrap();
+                                            //let mut cps = String::new();
+                                            // for antivirus in installed_antivirus{
+                                            //     cps = antivirus.1;
+                                            // }
                                             let mut specs = String::new();
                                             if self.send_specs == true{
                                                 //RetrieveSystemInfo::get_system_specs(tx)
@@ -563,25 +563,13 @@ impl MastertechContext {
                                                     </tr>
                                                     <tr>
                                                         <td>Antivirus</td>
-                                                        <td>{cps}</td>
+                                                        <td></td>
                                                     </tr>
                                                     <tr>
                                                         <td>SEB</td>
                                                         <td></td>
                                                     </tr>
                                                 </table>
-                                                ");
-                                            }else{
-                                                specs = "No specs sent".to_string();
-                                            }
-                                            let html_notes = format!( //52891684
-                                                "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>\n
-                                                <li><strong>Salesman:</strong>              {salesman}</li>\n
-                                                <li><strong>Checkin rep:</strong>           {checkin_rep}</li>\n
-                                                <li><strong>Technician:</strong>            {technician}</li></ul>\n
-                                                <strong><h2><code>      Computer Info       </code></h2></strong>\n
-                                                {specs}
-                                                <hr>
                                                 <table>
                                                     <tr>
                                                         <td>Drive Letter</td>
@@ -614,15 +602,24 @@ impl MastertechContext {
                                                         <td></td>
                                                     </tr>
                                                 </table>
+                                                ");
+                                            }else{
+                                                specs = "No specs sent".to_string();
+                                            }
+                                            let html_notes = format!( //52891684
+                                                "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>
+                                                <li><strong>Salesman:</strong>              {salesman}</li>
+                                                <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
+                                                <li><strong>Technician:</strong>            {technician}</li></ul>
+                                                <strong><h2><code>      Computer Info       </code></h2></strong>
+                                                {specs}
                                                 <hr>
-                                                <ul>
-                                                <li><strong>SSD test:</strong>     {ssd_test}</li>\n
-                                                <li><strong>HDD test:</strong>     {hdd_test}</li>\n
-                                                <li><strong>RAM test:</strong>     {ram_test}</li></ul>\n
-                                    
-                                                <h2><strong><code>      Notes       </code></strong></h2><ul>\n
-                                                <li><strong>        Checkin Notes:      </strong>\n     {checkin_notes}</li>\n
-                                                <li><strong>        Recommendations:        </strong>\n     {recommendations}</li></ul></body>",
+                                                <ul><li><strong>SSD test:</strong>     {ssd_test}</li>
+                                                <li><strong>HDD test:</strong>     {hdd_test}</li>
+                                                <li><strong>RAM test:</strong>     {ram_test}</li></ul>
+                                                <h2><strong><code>      Notes       </code></strong></h2><ul>
+                                                <li><strong>        Checkin Notes:      </strong>     {checkin_notes}</li>\n
+                                                <li><strong>        Recommendations:        </strong>     {recommendations}</li></ul></body>",
                                             );
                                             // I think i should probably just pass send_ticket_request the
                                             // whole ticket_info struct
