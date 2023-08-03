@@ -43,18 +43,18 @@ pub struct Header {
     pub DEP: String, // "DEP": "LTN"
     pub JURISCODE: String, //"JURISCODE": "LTN",
     pub COG: String, // "COG": "7.1000", //Cost of goods?
-    pub INV_AMOUNT: String, // "INV_AMOUNT": "53.6100",
+    pub INV_AMOUNT: Option<String>, // "INV_AMOUNT": "53.6100",
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Customer {
     pub NAME: String, // "NAME": "Timber Ridge Fireplace LLC",
     //pub CUSTOMER_ADDRESS: String,
-    pub LI_DOC: String, //"LI_DOC": "53745333",
-    pub LI_AMT: String,  //"LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
+    pub LI_DOC: Option<String>, //"LI_DOC": "53745333",
+    pub LI_AMT: Option<String>,  //"LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
     //pub LAST_TUNEUP_DATE: String, // <-- HERE
     pub DW_UPDATE_DATE: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
-    pub NUM_INV: String, // "NUM_INV": "21",
+    pub NUM_INV: Option<String>, // "NUM_INV": "21",
 /*		"LP_AMT": "-53.6100",
 		"LP_DOC": "52883815",
 		"LP_DOC_TYP": "8",
@@ -148,16 +148,27 @@ impl SendRequest{
                     let mut li_doc = "".to_string();
                     let mut inv_amnt = "".to_string();
                     let mut num_inv = "".to_string();
-                    println!("customer.LI_AMT: {}", customer.LI_AMT);
-                    println!("customer.LI_DOC: {}", customer.LI_DOC);
-                    println!("customer.INV_AMOUNT: {}", header.INV_AMOUNT);
-                    if customer.LI_AMT != Value::Null || customer.LI_AMT != "null"{ li_amt = customer.LI_AMT.clone() }
-                    if customer.LI_DOC != Value::Null || customer.LI_DOC != "null"{ li_doc = customer.LI_DOC.clone(); }
-                    if header.INV_AMOUNT != Value::Null || header.INV_AMOUNT != "null"{ inv_amnt = header.INV_AMOUNT.clone(); }
-                    //if customer.NUM_INV
-                    println!("{li_amt}");
-                    println!("{li_doc}");
-                    println!("{inv_amnt}");
+
+                    if customer.LI_AMT.is_some() { 
+                        li_amt = customer.LI_AMT.clone().unwrap_or_else(||{
+                            "null value".to_string()
+                        }) 
+                    }
+                    if customer.LI_DOC.is_some() { 
+                        li_doc = customer.LI_DOC.clone().unwrap_or_else(||{
+                            "null value".to_string()
+                        }) 
+                    }
+                    if header.INV_AMOUNT.is_some() { 
+                        inv_amnt = header.INV_AMOUNT.clone().unwrap_or_else(||{
+                            "null value".to_string()
+                        }) 
+                    }
+                    if customer.NUM_INV.is_some() { 
+                        num_inv = customer.NUM_INV.clone().unwrap_or_else(||{
+                            "null value".to_string()
+                        }) 
+                    }
                     // DW_UPDATE_DATE is the exact time that the line item (AKA 'items') was added.
                     // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
                     
@@ -181,7 +192,7 @@ impl SendRequest{
                         object.get("ITEM_CODE")
                         .and_then(|v| v.as_str())
                         .map(|item_code| {
-                            itemcodes += item_code;
+                            itemcodes += &format!("{item_code}\n").to_string();
                         });
                     }
 
@@ -307,7 +318,7 @@ impl SendRequest{
         let mut assigned_salesman = "1202792432658520".to_string(); // Jake
         let mut assigned_tech = "1199992640930465".to_string(); // Logan
 
-        if assignees.0 == "JDH2"{ assigned_salesman = "1202791016369879".to_string(); }
+        if assignees.0 == "JDH2"{ assigned_salesman = "1202792432658520".to_string(); }
         else if assignees.0 == "DMK"{ assigned_salesman = "1202791016369879".to_string() }
 
         if assignees.1 == "LL" { assigned_tech = "1199992640930465".to_string(); }
@@ -339,14 +350,11 @@ impl SendRequest{
             //task.dependencies = Some("".to_string());
 
             let asana_task = 
-            InlineObject35{
-                data: Some(Box::new(task))
-            };
+            InlineObject35{ data: Some(Box::new(task)) };
 
             // Serialize the html_notes to a JSON string and calculate its length
             let html_notes_json = serde_json::to_string(&asana_task).unwrap();
             let content_length = html_notes_json.len();
-            println!("{asana_task:?}");
             println!("Content length: {}", content_length);
 
             match create_task(&asana_config, 
@@ -355,12 +363,7 @@ impl SendRequest{
                 None)
                 .await
             {
-                Ok(res) => {
-                    println!("response without data: {res:?}");
-                    //println!("response: {:?}", res.data.unwrap());
-                    //res.data.
-                    
-                },
+                Ok(res) => println!("response without data: {res:?}"),
                 Err(e) => println!("{e}")
             }
 
@@ -383,26 +386,13 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
 
     match response {
         Ok(res) => {
-            // let json_response: GetTicketResponse = res.json().await?;// serde_json::from_str(&raw_response)?;
-
-            //let raw_response = res.text().await?;
-            //println!("Server response: {}", raw_response);
-            //let json_response: GetTicketResponse = serde_json::from_str(&raw_response).unwrap();
-            let json_response: Value = res.json().await?;
-            match json_response.is_null(){
-                true =>{
-
-                }, 
-                false => {}
-            }
-            if !json_response.is_null(){
-                let resp: GetTicketResponse = serde_json::from_str(json_response.as_str().unwrap()).unwrap();
-                Ok(resp)
-            }else{
-                let resp: GetTicketResponse = serde_json::from_str(json_response.as_str().unwrap()).unwrap();
-                Err(Box::new(e))
-            }
-
+            let json_response: GetTicketResponse = res.json().await?;
+            /*
+                let raw_response = res.text().await?;
+                println!("Server response: {}", raw_response);
+                let json_response: GetTicketResponse = serde_json::from_str(&raw_response).unwrap();
+            */
+           Ok(json_response)
         },
         Err(e) => Err(Box::new(e)),
     }

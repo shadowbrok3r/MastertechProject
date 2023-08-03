@@ -2,7 +2,8 @@
 use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
-use tokio::runtime::Handle;
+use tokio::{io::{self, ErrorKind}, runtime::Handle};
+use crossbeam::channel;
 use regex::Regex;
 pub struct RetrieveSystemInfo {
     pub tx: std::sync::mpsc::Sender<String>,
@@ -35,6 +36,42 @@ impl DiskData {
 }
 
 impl RetrieveSystemInfo{
+    pub fn get_antivirus() -> io::Result<Vec<(String, String)>> {
+        let (sender, receiver) = channel::unbounded();
+        let antivirus_names = vec![
+            "mbam", 
+            "avast", 
+            "avg", 
+            "mcaffee", 
+            "norton", 
+            "webroot", 
+            "superantispyware"
+            ];
+    
+        for antivirus in antivirus_names.clone().into_iter() {
+            let sender = sender.clone();
+            tokio::spawn(async move {
+                let output = tokio::process::Command::new("cmd")
+                    .args(&["/C", &format!("where /r \"C:\\Program Files\" {}", antivirus)])
+                    .output()
+                    .await
+                    .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to execute command: {}", e)))?;
+                    
+                let path = String::from_utf8(output.stdout)
+                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("Failed to convert output to String: {}", e)))?;
+                
+                sender.send((antivirus, path)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
+            });
+        }
+    
+        let mut antivirus_paths = Vec::new();
+        for _ in 0..antivirus_names.len() {
+            let path = receiver.recv().map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to receive data from channel"))?;
+            antivirus_paths.push((path.0.to_string(), path.1));
+        }
+    
+        Ok(antivirus_paths)
+    }
 
     pub fn get_system_specs(tx: std::sync::mpsc::Sender<String>){
         
@@ -67,6 +104,8 @@ impl RetrieveSystemInfo{
                 String::from_utf8(
                     tokio::process::Command::new("cmd")
                     .args(["/C", "wmic path win32_VideoController get name"])
+                    // "-Command {", 
+                    //"(win32_videocontroller | select-object -property Name | ft -autosize -hidetableheaders | out-string).trim()}"
                     .output()
                     .await
                     .unwrap()
@@ -77,7 +116,7 @@ impl RetrieveSystemInfo{
                     total_ram: ram,
                     system_name: system,
                     disks: data,
-                    gpu: Some(gpu_name)
+                    gpu: Some(gpu_name.unwrap())
                 };
                 let system_info_json = serde_json::to_string(&system_info).unwrap();
                 println!("system info json: {}", system_info_json);

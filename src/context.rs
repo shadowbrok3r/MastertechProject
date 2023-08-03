@@ -1,4 +1,5 @@
-use std::{sync::{Arc, Mutex}, collections::HashSet}; //, os::windows::thread};
+use std::{sync::{Arc, Mutex}, collections::HashSet}; use crossbeam::channel;
+//, os::windows::thread};
 use serde_json::Value;
 use eframe::egui;
 use egui::*;
@@ -12,7 +13,7 @@ use crate::{
     file_browser::FileBrowser, 
     system_info, 
     request::SendRequest,
-    system_info::{RetrieveSystemInfo, SystemInformation, DiskData}
+    system_info::RetrieveSystemInfo
 };
 
 /** 
@@ -507,41 +508,38 @@ impl MastertechContext {
                                     .strong()
                                     .italics())
                                     .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))
-                                    .clicked(){ 
-                                        
-                                        
+                                    .clicked(){
                                         let cust = &self.ticket_info.customer_name;
                                         let so_num = &self.so_number;
-                                        if self.send_specs == true{
-                                            //RetrieveSystemInfo::get_system_specs(specs_sender);
-                                        }
+
                                         if !cust.is_empty() && !so_num.is_empty()
                                         {
                                             self.spinner = true;
                                             let salesman = &format!("{:?}", &self.salesman_cbox);
                                             let checkin_rep = &self.ticket_info.user_id;
                                             let technician = &format!("{:?}", &self.techs_cbox);
-                                            let system_name = &self.system_name;
-                                            let cpu_name = &self.cpu_name;
-                                            let total_ram = &self.total_ram;
-                                            let gpu = &self.gpu.clone().unwrap();
-                                            let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
                                             let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
                                             let ram_test = &format!("{:?}", &self.ram_test_cbox);
+                                            let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
                                             let checkin_notes = &self.ticket_info.checkin_notes;
                                             let recommendations = &self.recommendations;   
-
                                             let task_name = (cust, so_num);
                                             let assignees = (checkin_rep, technician);
-
                                             let date = format!("{}", self.date.unwrap());
-                                            //let antivirus = tokio::process::Command()
-                                            let html_notes = format!(
-                                                "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>\n
-                                                <li><strong>Salesman:</strong>              {salesman}</li>\n
-                                                <li><strong>Checkin rep:</strong>           {checkin_rep}</li>\n
-                                                <li><strong>Technician:</strong>            {technician}</li></ul>\n
-                                                <strong><h2><code>      Computer Info       </code></h2></strong>\n
+                                            let installed_antivirus = RetrieveSystemInfo::get_antivirus().unwrap();
+                                            let mut cps = String::new();
+                                            for antivirus in installed_antivirus{
+                                                cps = antivirus.1;
+                                            }
+                                            let mut specs = String::new();
+                                            if self.send_specs == true{
+                                                //RetrieveSystemInfo::get_system_specs(tx)
+                                                let system_name = &self.system_name;
+                                                let cpu_name = &self.cpu_name;
+                                                let total_ram = &self.total_ram;
+                                                let gpu = &self.gpu.clone().unwrap();
+                                                specs = format!("
+                                                <hr>
                                                 <table>
                                                     <tr>
                                                         <td></td>
@@ -565,13 +563,25 @@ impl MastertechContext {
                                                     </tr>
                                                     <tr>
                                                         <td>Antivirus</td>
-                                                        <td></td>
+                                                        <td>{cps}</td>
                                                     </tr>
                                                     <tr>
                                                         <td>SEB</td>
                                                         <td></td>
                                                     </tr>
                                                 </table>
+                                                ");
+                                            }else{
+                                                specs = "No specs sent".to_string();
+                                            }
+                                            let html_notes = format!( //52891684
+                                                "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>\n
+                                                <li><strong>Salesman:</strong>              {salesman}</li>\n
+                                                <li><strong>Checkin rep:</strong>           {checkin_rep}</li>\n
+                                                <li><strong>Technician:</strong>            {technician}</li></ul>\n
+                                                <strong><h2><code>      Computer Info       </code></h2></strong>\n
+                                                {specs}
+                                                <hr>
                                                 <table>
                                                     <tr>
                                                         <td>Drive Letter</td>
@@ -604,6 +614,7 @@ impl MastertechContext {
                                                         <td></td>
                                                     </tr>
                                                 </table>
+                                                <hr>
                                                 <ul>
                                                 <li><strong>SSD test:</strong>     {ssd_test}</li>\n
                                                 <li><strong>HDD test:</strong>     {hdd_test}</li>\n
