@@ -298,7 +298,7 @@ impl ScaffoldRequestBuilder {
             }
                 
         }
-        return scaffold_call;
+        scaffold_call
     }
        
 }

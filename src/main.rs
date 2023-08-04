@@ -19,6 +19,7 @@ use catppuccin_egui::MOCHA;
 async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(925.0, 740.0)),
+        icon_data: Some(load_icon()),
         ..Default::default()
     };
     eframe::run_native(
@@ -27,7 +28,23 @@ async fn main() -> eframe::Result<()> {
         Box::new(|_cc| Box::<MasterTechApp>::default()),
     )
 }
-
+pub(crate) fn load_icon() -> eframe::IconData {
+	let (icon_rgba, icon_width, icon_height) = {
+		let icon = include_bytes!("assets/cpu.png");
+		let image = image::load_from_memory(icon)
+			.expect("Failed to open icon path")
+			.into_rgba8();
+		let (width, height) = image.dimensions();
+		let rgba = image.into_raw();
+		(rgba, width, height)
+	};
+	
+	eframe::IconData {
+		rgba: icon_rgba,
+		width: icon_width,
+		height: icon_height,
+	}
+}
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
