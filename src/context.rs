@@ -296,7 +296,43 @@ impl MastertechContext {
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         //ui.allocate_exact_size(desired_size, sense)
-        
+        /*
+                        //ui.vertical(|ui| {ui.add_space(3.0);});
+                ui.group(|ui| {
+                    StripBuilder::new(ui)
+                    .cell_layout(Layout::left_to_right(Align::Center))
+                    .size(Size::exact(200.0)) //for the initial textedits
+                    .size(Size::remainder()) // for the checkin notes
+                    .horizontal(|mut strip|{
+                        strip.cell(|ui|{
+                            ScrollArea::new([false, true])
+                            .max_height(245.0)
+                            .max_width(300.0)
+                            .id_source("checkin_notes_scroll")
+                            .show(ui, |ui|{
+                                ui.add(TextEdit::multiline(&mut self.ticket_info.checkin_notes)
+                                .hint_text(RichText::new("Checkin Notes").weak())
+                                .desired_rows(16));
+                            });
+                            ui.shrink_height_to_current(); 
+                        }); // Strip cell
+                        
+                        strip.cell(|ui|{  
+                            ScrollArea::new([false, true])
+                            .id_source("recomendations_scroll")
+                            .max_height(245.0)
+                            .max_width(300.0)
+                            .show(ui, |ui|{
+                                ui.add(TextEdit::multiline(&mut self.recommendations)
+                                .hint_text(RichText::new("Recommendations")
+                                .weak())
+                                .desired_rows(16));
+                            });
+                            ui.shrink_height_to_current(); 
+
+                        }); //Strip Cell
+                    }); //Strip Builder
+                }); //group */
         //ui.indent("indented", |ui|{
             ui.with_layout(Layout::left_to_right(Align::Center),|ui|{
             
