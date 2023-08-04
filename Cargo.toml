@@ -27,6 +27,13 @@ pollster = "0.3.0"
 crossbeam = "0.8.2"
 asana = "0.1.1"
 regex = "1.9.1"
+image = "0.24.6"
+winres = "0.1.12"
+
+[package.metadata.winres]
+OriginalFilename = "Mastertech.EXE"
+LegalCopyright = "Copyright © 2023"
+#...
 #opener = "0.6.1"
 #directories = "5.0.1"
 #jwalk = "0.8.1"
