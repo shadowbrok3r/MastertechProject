@@ -1,5 +1,5 @@
-use std::{sync::{Arc, Mutex}, collections::HashSet}; use crossbeam::channel;
-//, os::windows::thread};
+use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
+use chrono::format;
 use serde_json::Value;
 use eframe::egui;
 use egui::*;
@@ -7,6 +7,7 @@ use egui_dock::{Node, NodeIndex, Tree, TabViewer};
 use scaffold::PulledKeys;
 use tokio::sync::mpsc::channel;
 use egui_extras::{*, DatePickerButton, Column};
+use egui_file::FileDialog;
 
 use crate::{
     scaffold::{self, TicketInformation}, 
@@ -49,6 +50,10 @@ pub struct MastertechContext {
     pub client: reqwest::Client,
     scaffold_request: SendRequest,
     sysinfo_request: system_info::RetrieveSystemInfo,
+
+    pub opened_file: Option<PathBuf>,
+    pub open_file_dialog: Option<FileDialog>,
+    
     //pub system_information: SystemInformation,
     pub salesman_cbox: scaffold::Salesman,
     pub techs_cbox: scaffold::Techs,
@@ -152,7 +157,7 @@ impl Default for MasterTechApp {
         let [a, _] = tree.split_left(NodeIndex::root(), 0.3, vec!["File Browser 📂".to_owned(), "Scripts".to_owned()]);
         let [_, _] = tree.split_below(
             a,
-            0.7,
+            0.72,
             vec!["Console".to_owned()],
         );//let [_, _] = tree.split_below(b, 0.5, vec!["Scripts".to_owned()]);
 
@@ -216,6 +221,8 @@ impl Default for MasterTechApp {
             client,
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
 
+            opened_file: None,
+            open_file_dialog: None,
             // I should just make this section take
             // the whole enum
             salesman_cbox: scaffold::Salesman::Jake, 
@@ -302,8 +309,8 @@ impl MastertechContext {
             ui.horizontal(|ui| {ui.add_space(8.0);});
             StripBuilder::new(ui)
             .cell_layout(Layout::left_to_right(Align::Center))
-            .size(Size::exact(170.0)) // allocates top two strips from top -> bottom
-            .size(Size::exact(40.0)) // space between top and bottom strips
+            .size(Size::exact(174.0)) // allocates top two strips from top -> bottom
+            .size(Size::exact(35.0)) // space between top and bottom strips
             .size(Size::exact(235.0)) // allocates bottom two strips from top -> bottom
             .vertical(|mut strip|
             { 
@@ -338,6 +345,8 @@ impl MastertechContext {
                                         )
                                         .clicked()
                                         { 
+                                            self.output_text.clear();
+                                            self.output_text = "Its Everest, this may take a 'moment'".to_string();
                                             let service_num = self.so_number.clone();
                                             self.spinner = true;
                                             SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
@@ -359,26 +368,47 @@ impl MastertechContext {
                                             .horizontal_top(|ui|
                                             {
                                                 Grid::new("ticket_info_grid")
-                                                .spacing(vec2(6.0, 8.0))
-                                                .min_col_width(self.widget_size)
-                                                .max_col_width(self.widget_size + 5.0)
+                                                .spacing(vec2(4.0, 7.0))
+                                                .min_col_width(self.widget_size+3.0)
+                                                .max_col_width(self.widget_size + 8.0)
                                                 .num_columns(2)
                                                 .show(ui, |ui| 
                                                 {
                                                                         /*     ROW 1     */
-                                                    ui.add(TextEdit::singleline(&mut self.so_number)
-                                                    .hint_text("Service #  ").char_limit(8).desired_width(self.widget_size));
+                                                    ui.add(
+                                                        TextEdit::singleline(&mut self.so_number)
+                                                        .hint_text("Service #  ")
+                                                        .char_limit(8)
+                                                        .vertical_align(Align::Center)
+                                                        .margin(vec2(4.0, 4.0))
+                                                        .min_size(vec2(self.widget_size+2.0,14.0))
+                                                    );
 
-                                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_name)
-                                                    .hint_text("Customer Name  ").desired_width(self.widget_size + 3.0));
+                                                    ui.add(
+                                                        TextEdit::singleline(&mut self.ticket_info.customer_name)
+                                                        .hint_text("Customer Name  ")
+                                                        .vertical_align(Align::Center)
+                                                        .margin(vec2(4.0, 4.0))
+                                                        .min_size(vec2(self.widget_size+2.0,14.0))
+                                                    );
 
                                                     ui.end_row();
 
                                                                         /*     ROW 2     */
-                                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_phone_1)
-                                                    .hint_text("Phone Number 1").desired_width(self.widget_size));
-                                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_phone_2)
-                                                    .hint_text("Phone Number 2").desired_width(self.widget_size + 3.0));      
+                                                    ui.add(
+                                                        TextEdit::singleline(&mut self.ticket_info.customer_phone_1)
+                                                        .hint_text("Phone Number 1")
+                                                        .vertical_align(Align::Center)
+                                                        .margin(vec2(4.0, 4.0))
+                                                        .min_size(vec2(self.widget_size+2.0,14.0))
+                                                    );
+                                                    ui.add(
+                                                        TextEdit::singleline(&mut self.ticket_info.customer_phone_2)
+                                                        .hint_text("Phone Number 2")
+                                                        .vertical_align(Align::Center)
+                                                        .margin(vec2(4.0, 4.0))
+                                                        .min_size(vec2(self.widget_size+2.0,14.0))
+                                                    );     
                                                     
                                                     ui.end_row();
 
@@ -402,14 +432,14 @@ impl MastertechContext {
                                                     
                                                     ui.end_row();
                                                                         /*     ROW 4     */
-                                                    if ui.add(Button::new("Get Keys").min_size(vec2(self.widget_size, 5.0)))
+                                                    if ui.add(Button::new("Get Keys").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
                                                         let service_num = self.so_number.clone();
                                                         self.spinner = true;
                                                         SendRequest::get_cps(service_num, self.scaffold_request.tx.clone(), self.client.clone());
                                                     }
                                                     
-                                                    if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 5.0)))
+                                                    if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
                                                         
                                                         //check_seb_info
@@ -421,7 +451,7 @@ impl MastertechContext {
                                                     if ui.add(Button::new(RichText::new(format!("{}", self.keys.webroot_key)).size(9.0)
                                                     .color(Color32::from_rgb(102, 255, 153))
                                                     .strong())
-                                                    .min_size(vec2(self.widget_size + 2.0, 8.0)))
+                                                    .min_size(vec2(self.widget_size + 2.0, 15.0)))
                                                     .on_hover_text("Click To Copy Webroot Key to Clipboard")
                                                     .clicked(){ 
                                                         let webroot = self.keys.webroot_key.clone();
@@ -431,7 +461,7 @@ impl MastertechContext {
                                                     if ui.add(Button::new(RichText::new(format!("{}", self.keys.superanti_key)).size(9.0)
                                                     .color(Color32::from_rgb(255, 61, 126))
                                                     .strong())
-                                                    .min_size(vec2(self.widget_size + 2.0, 8.0)))
+                                                    .min_size(vec2(self.widget_size + 2.0, 15.0)))
                                                     .on_hover_text("Click To Copy SAS Key to Clipboard")
                                                     .clicked(){ 
                                                         let sas = self.keys.superanti_key.clone();
@@ -471,9 +501,9 @@ impl MastertechContext {
                                             ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamPass, "RAM Pass");
                                             ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamNotTested, "RAM Not Tested");
                                         }); // Combo Box
-                                    
                                     }); // H top
                 
+
                                     Grid::new("drive_tests")
                                     .spacing(vec2(4.0, 3.0))
                                     .min_col_width(self.widget_size)
@@ -499,21 +529,63 @@ impl MastertechContext {
                                         ui.end_row();
                                     }); // Grid   
                 
-                
-                                    if self.spinner == true{ui.add(Spinner::new());}
-
-                                    ui.vertical(|ui|{ui.add_space(8.0);});
-
-                                    ui.checkbox(&mut self.send_specs, "Send System Info");
-                
-                                    //ui.style_mut().spacing.button_padding = (2.0, 3.0).into();
-                                    ui.vertical(|ui|{ui.add_space(8.0);});
-                                    let date = 
-                                        self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
+                                    if self.spinner == true{
                                         ui.add(
-                                            //[5.0, 5.0], 
-                                            DatePickerButton::new(date)
-                                    );
+                                            Spinner::new()
+                                            .color(Color32::LIGHT_RED)
+                                            .size(20.0)
+                                        );
+                                    }
+
+                                    ui.vertical(|ui|{ui.add_space(6.0);});
+
+                                    ui.horizontal_top(|ui|{
+                                        Grid::new("othershit")
+                                        .spacing(vec2(4.0, 3.0))
+                                        .min_col_width(self.widget_size)
+                                        .num_columns(2)
+                                        .show(ui, |ui| {
+                                            let date = self.date.get_or_insert_with(|| 
+                                                chrono::offset::Utc::now().date_naive());
+                                            ui.add(DatePickerButton::new(date));
+
+                                            ui.checkbox(&mut self.send_specs, "Send System Info");
+
+                                            ui.end_row();
+                                        });
+                                    });
+
+                                    ui.vertical(|ui|{ui.add_space(6.0);});
+
+                                    let mut attached_file = PathBuf::new();
+
+                                    if let Some(file) = &self.opened_file{
+                                        attached_file = file.to_path_buf();
+                                    }
+
+                                    // Extract just the file name from the PathBuf
+                                    let file_name = attached_file.file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("");
+
+                                    if ui
+                                    .add(Button::new
+                                        (
+                                            RichText::new(
+                                                format!("Upload 🗋 {{ {} }}", file_name)
+                                        )
+                                        )
+                                        .min_size(vec2(self.widget_size, 8.0))
+                                        
+                                    )
+                                    .clicked()
+                                    {
+                                        let mut dialog = FileDialog::open_file(self.opened_file.clone())
+                                        .id(Id::new("File Dialog"));
+                                        dialog.open();
+                                        self.open_file_dialog = Some(dialog);
+                                    };
+
                                 }); // group
 
                                 ui.vertical(|ui|{ui.add_space(3.0);});
@@ -521,6 +593,7 @@ impl MastertechContext {
                                 ui
                                 .vertical_centered_justified(|ui|
                                 {
+                                    
                                     if ui
                                     .add(
                                         Button::new
@@ -549,8 +622,13 @@ impl MastertechContext {
                                             let checkin_notes = &self.ticket_info.checkin_notes;
                                             let recommendations = &self.recommendations;   
                                             let task_name = (cust, so_num);
-                                            let assignees = (checkin_rep, technician);
+                                            let assignees = (salesman, technician);
                                             let date = format!("{}", self.date.unwrap());
+
+                                            let mut attached_file: Option<PathBuf> = Some(PathBuf::new());
+                                            if let Some(file) = &self.opened_file{
+                                                attached_file = Some(file.to_path_buf());
+                                            }
                                             //let installed_antivirus = RetrieveSystemInfo::get_antivirus().unwrap();
                                             //let mut cps = String::new();
                                             // for antivirus in installed_antivirus{
@@ -674,11 +752,13 @@ impl MastertechContext {
                                                 html_notes,
                                                 assignees,
                                                 date,
+                                                attached_file
                                             );
                                             self.spinner = false;
                                         
                                         }
                                         else{
+                                            self.output_text.clear();
                                             self.output_text = "You need to enter a customer name or Service number".to_string();
                                         }
                                     }

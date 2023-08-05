@@ -1,10 +1,11 @@
 #![allow(non_snake_case)]
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports, unused_variables))]
+use crossbeam::channel;
 use reqwest::header::{CONTENT_TYPE, ACCEPT};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::*;
 use tokio::io::AsyncWriteExt;
-use std::error::Error;
+use std::{error::Error, path::PathBuf};
 use crate::scaffold::*;
 use asana::{
     apis::{
@@ -12,11 +13,11 @@ use asana::{
         tasks_api::{
             create_task,
             delete_task,
-        }
+        }, attachments_api::create_attachment_for_task
     }, 
     models::{
         task_request,
-        InlineObject35
+        InlineObject35, TaskResponse
     }
 };
 
@@ -107,6 +108,14 @@ pub struct ItemsArray{ // number of items is the number of item codes you have o
 
 pub struct SendRequest {
     pub tx: std::sync::mpsc::Sender<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AsanaResponse{
+    pub gid: Option<String>,
+    pub created_at: Option<String>,
+    pub error: Option<String>,
+    pub raw_resp: Option<String>,
 }
 
 impl SendRequest{
@@ -220,7 +229,6 @@ impl SendRequest{
                     
 
                     let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();
-                    println!("ticket info in spawned thread: \n{ticket_info_json:?}");
                     match tx.send(ticket_info_json) {
                         Ok(_) => {
                             drop(tx)
@@ -311,7 +319,10 @@ impl SendRequest{
         html_notes: String,
         assignees: (&String, &String),
         due_date: String,
+        file_attachment: Option<PathBuf>
     ){
+        let (sender, receiver) = channel::bounded::<String>(5);
+
         let cust = task_name.0.clone();
         let so_num = task_name.1.clone();
 
@@ -324,6 +335,13 @@ impl SendRequest{
         if assignees.1 == "LL" { assigned_tech = "1199992640930465".to_string(); }
         else if assignees.1 == "BLK" { assigned_tech = "1202792432421640".to_string(); }
         else if assignees.1 == "TBN" { assigned_tech = "1202792432551073".to_string(); }
+
+        let mut asana_response = AsanaResponse{
+            gid: Some("".to_string()),
+            created_at: Some("".to_string()),
+            error: Some("".to_string()),
+            raw_resp: Some("".to_string())
+        };
 
         tokio::spawn(async move{
             // ideally, id like to also add the functionality to search for a task by the SO number
@@ -356,15 +374,71 @@ impl SendRequest{
             let html_notes_json = serde_json::to_string(&asana_task).unwrap();
             let content_length = html_notes_json.len();
             println!("Content length: {}", content_length);
+            
+
+            
 
             match create_task(&asana_config, 
                 asana_task, 
                 Some(true), //only set to true if debugging
-                None)
-                .await
+                None
+                ).await
             {
-                Ok(res) => println!("response without data: {res:?}"),
-                Err(e) => println!("{e}")
+                Ok(res) => {
+                    let data = res.data.unwrap(); //.gid.unwrap().to_string();
+                    println!("{data:?}");
+                    asana_response.gid = Some(data.gid.unwrap().to_string());
+                    asana_response.created_at = Some(data.created_at.unwrap().to_string());
+
+                    let asana_json_response = serde_json::to_string(&asana_response).unwrap();
+
+                    match sender.send(asana_json_response){
+                        Ok(_) => println!("sent data successfully"),
+                        Err(e) => println!("{e}")
+                    }
+                    
+                },
+                Err(e) => {
+                    match e{
+                        asana::apis::Error::Reqwest(e) => println!("reqwest error: {e}"),
+                        asana::apis::Error::Serde(e) => println!("Serde error: {e}"),
+                        asana::apis::Error::Io(e) => println!("IO error: {e}"),
+                        asana::apis::Error::ResponseError(e) => {
+                            match tx.send(e.content){
+                                Ok(_) => println!("sent error successfully"),
+                                Err(e) => println!("send error: {e}")
+                            };
+                        }
+                    }
+                }
+            }
+
+            let mut task_gid = String::new();
+            if let Ok(gid) = receiver.recv(){
+                println!("received gid: {gid}");
+                task_gid = gid;
+            }
+            
+
+            match create_attachment_for_task(
+                &asana_config, 
+                task_gid.as_str(), 
+                Some(true), 
+                None, 
+                None, 
+                None, 
+                file_attachment
+                ).await
+            {
+                Ok(res) => println!("response without data: {:?}", res.data.unwrap()),
+                Err(e) => {
+                    match e{
+                        asana::apis::Error::Reqwest(e) => println!("reqwest error: {e}"),
+                        asana::apis::Error::Serde(e) => println!("Serde error: {e}"),
+                        asana::apis::Error::Io(e) => println!("IO error: {e}"),
+                        asana::apis::Error::ResponseError(e) => println!("Response error: {:?}", e.content.as_str()),
+                    }
+                }
             }
 
         });

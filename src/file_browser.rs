@@ -178,7 +178,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         command_tx: Sender<Option<Command>>,
         mut command_rx: Receiver<Option<Command>>
     ) {     
-        TopBottomPanel::top("egui_file_top").show_inside(ui, |ui| {
+        TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
@@ -244,7 +244,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             ui.add_space(ui.spacing().item_spacing.y);
         });
 
-        TopBottomPanel::bottom("egui_file_bottom").show_inside(ui, |ui| {
+        TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
             // let (progress_tx, progress_rx) = channel::unbounded::<u64>();

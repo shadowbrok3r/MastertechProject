@@ -107,13 +107,26 @@ Item Codes: {:?}\n",
                 }
                 
             }
+            else if let Ok(info) = serde_json::from_str::<request::AsanaResponse>(&message) { 
+                if let Some(e) = info.error{
+                    self.context.output_text = format!("{e:#?}");
+                };
+                self.context.output_text = format!("{:#?}", info.raw_resp);
+            }
             else{
-                self.context.output_text = format!("Error parsing JSON: {}", message);
+                self.context.output_text = format!("{}", message);
                 self.context.spinner = false;
             }
         }
-
-
+        
+        if let Some(dialog) = &mut self.context.open_file_dialog {
+            
+            if dialog.show(&ctx).selected() {
+                if let Some(file) = dialog.path() {
+                    self.context.opened_file = Some(file.to_path_buf());
+                }
+            }
+        }
 
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
