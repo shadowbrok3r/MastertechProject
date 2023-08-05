@@ -288,411 +288,454 @@ impl MastertechContext {
 
     fn tur_sheet(&mut self, ui: &mut Ui) {
         ui.visuals_mut().override_text_color = Some(self.text_color);
-        ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
-        ui.set_width(600.0);
-        ui.set_height(600.0);
+        ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
         ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
-        //ui.allocate_exact_size(desired_size, sense)
-        /*
-                        //ui.vertical(|ui| {ui.add_space(3.0);});
-                ui.group(|ui| {
-                    StripBuilder::new(ui)
-                    .cell_layout(Layout::left_to_right(Align::Center))
-                    .size(Size::exact(200.0)) //for the initial textedits
-                    .size(Size::remainder()) // for the checkin notes
-                    .horizontal(|mut strip|{
-                        strip.cell(|ui|{
+        ui.vertical(|ui|{ui.add_space(8.0);});
+        
+
+        ui.with_layout(
+            Layout::left_to_right(Align::Center),|ui|
+        {     
+            ui.horizontal(|ui| {ui.add_space(8.0);});
+            StripBuilder::new(ui)
+            .cell_layout(Layout::left_to_right(Align::Center))
+            .size(Size::exact(170.0)) // allocates top two strips from top -> bottom
+            .size(Size::exact(40.0)) // space between top and bottom strips
+            .size(Size::exact(235.0)) // allocates bottom two strips from top -> bottom
+            .vertical(|mut strip|
+            { 
+                strip
+                .strip(|builder|
+                { 
+                    builder
+                    .size(Size::exact(290.0)) // allocates ticket info from left -> right
+                    .size(Size::exact(8.0)) // allocates empty space between HW tests and ticket info
+                    .size(Size::exact(290.0)) // allocates HW tests from left -> right
+                    .horizontal(|mut strip|
+                    { 
+                        strip
+                        .strip(|builder|
+                        {
+                            builder
+                            .size(Size::exact(30.0)) // 30 top to bottom get_ticket button
+                            .size(Size::remainder()) //
+                            .vertical(| mut strip|
+                            {
+                                strip
+                                .cell(|ui| // get_ticket button
+                                {
+                                    ui.vertical_centered_justified(|ui|{
+                                        if ui.add(
+                                            Button::new(RichText::new("Get Ticket")
+                                                .color(Color32::from_rgb(255, 204, 255))
+                                                .strong()
+                                                .italics()
+                                            )
+                                            .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+                                        )
+                                        .clicked()
+                                        { 
+                                            let service_num = self.so_number.clone();
+                                            self.spinner = true;
+                                            SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
+                                        } 
+                                    }); // v center justified
+                                }); // strip cell
+
+                                strip
+                                .cell(|ui| // ticket_info_grid fields
+                                {
+                                    //ui.vertical(|ui|{ui.add_space(8.0);});
+                                    ui
+                                    .group(|ui|
+                                    {
+                                        ui
+                                        .vertical_centered_justified(|ui|
+                                        {
+                                            ui
+                                            .horizontal_top(|ui|
+                                            {
+                                                Grid::new("ticket_info_grid")
+                                                .spacing(vec2(6.0, 8.0))
+                                                .min_col_width(self.widget_size)
+                                                .max_col_width(self.widget_size + 5.0)
+                                                .num_columns(2)
+                                                .show(ui, |ui| 
+                                                {
+                                                                        /*     ROW 1     */
+                                                    ui.add(TextEdit::singleline(&mut self.so_number)
+                                                    .hint_text("Service #  ").char_limit(8).desired_width(self.widget_size));
+
+                                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_name)
+                                                    .hint_text("Customer Name  ").desired_width(self.widget_size + 3.0));
+
+                                                    ui.end_row();
+
+                                                                        /*     ROW 2     */
+                                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_phone_1)
+                                                    .hint_text("Phone Number 1").desired_width(self.widget_size));
+                                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_phone_2)
+                                                    .hint_text("Phone Number 2").desired_width(self.widget_size + 3.0));      
+                                                    
+                                                    ui.end_row();
+
+                                                                        /*     ROW 3     */
+                                                    ComboBox::from_id_source("salesman_cbox").width(self.widget_size)
+                                                    .selected_text(format!("{:?}", self.salesman_cbox))
+                                                    .show_ui(ui, |ui| {
+                                                        ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Jake, "Jake");
+                                                        ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Danny, "Danny");
+                                                    });
+
+
+                                                    ComboBox::from_id_source("techs_cbox").width(self.widget_size)
+                                                    .selected_text(format!("{:?}", self.techs_cbox))
+                                                    .show_ui(ui, |ui| {
+                                                        
+                                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Logan, "Logan");
+                                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Bread, "Bread");
+                                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Taco, "Taco");
+                                                    });    
+                                                    
+                                                    ui.end_row();
+                                                                        /*     ROW 4     */
+                                                    if ui.add(Button::new("Get Keys").min_size(vec2(self.widget_size, 5.0)))
+                                                    .clicked(){ 
+                                                        let service_num = self.so_number.clone();
+                                                        self.spinner = true;
+                                                        SendRequest::get_cps(service_num, self.scaffold_request.tx.clone(), self.client.clone());
+                                                    }
+                                                    
+                                                    if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 5.0)))
+                                                    .clicked(){ 
+                                                        
+                                                        //check_seb_info
+                                                    }
+                        
+                                                    ui.end_row();
+                                                    
+                                                                        /*     ROW 5     */
+                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.webroot_key)).size(9.0)
+                                                    .color(Color32::from_rgb(102, 255, 153))
+                                                    .strong())
+                                                    .min_size(vec2(self.widget_size + 2.0, 8.0)))
+                                                    .on_hover_text("Click To Copy Webroot Key to Clipboard")
+                                                    .clicked(){ 
+                                                        let webroot = self.keys.webroot_key.clone();
+                                                        ui.output_mut(|o| o.copied_text = webroot);
+                                                    }
+                                                        
+                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.superanti_key)).size(9.0)
+                                                    .color(Color32::from_rgb(255, 61, 126))
+                                                    .strong())
+                                                    .min_size(vec2(self.widget_size + 2.0, 8.0)))
+                                                    .on_hover_text("Click To Copy SAS Key to Clipboard")
+                                                    .clicked(){ 
+                                                        let sas = self.keys.superanti_key.clone();
+                                                        ui.output_mut(|o| o.copied_text = sas);
+
+                                                    }
+
+                                                    ui.end_row();
+                                                }); // grid
+                                            });
+                                        }); // v center justified
+                                    });
+                                }); // strip cell
+                            });
+                        });
+                        
+                        strip.empty();
+
+                        strip
+                        .cell(|ui|
+                        {
+                            ui
+                            .vertical_centered(|ui|
+                            {
+                                ui
+                                .group(|ui|
+                                {
+                                    ui
+                                    .horizontal_top(|ui|
+                                    {
+                                        ui.add_space(self.widget_size/1.8);
+            
+                                        ComboBox::from_id_source("ram_cbox").width(self.widget_size - 5.0)
+                                        .selected_text(format!("{}", self.ram_test_cbox.as_str()))
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamFail, "RAM Fail");
+                                            ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamPass, "RAM Pass");
+                                            ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamNotTested, "RAM Not Tested");
+                                        }); // Combo Box
+                                    
+                                    }); // H top
+                
+                                    Grid::new("drive_tests")
+                                    .spacing(vec2(4.0, 3.0))
+                                    .min_col_width(self.widget_size)
+                                    .num_columns(2)
+                                    .show(ui, |ui| {
+                                                            /*     ROW 1     */
+                                        ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 5.0)
+                                        .selected_text(format!("{}", self.ssd_test_cbox.as_str()))
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdFail, "SSD Fail");
+                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdPass, "SSD Pass");
+                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdNotTested, "SSD Not Tested");
+                                        }); // Combo Box
+                
+                                                            /*     ROW 2     */
+                                        ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 5.0)
+                                        .selected_text(format!("{}", self.hdd_test_cbox.as_str()))
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddFail, "HDD Fail");
+                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddPass, "HDD Pass");
+                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddNotTested, "HDD Not Tested");
+                                        }); // Combo Box
+                                        ui.end_row();
+                                    }); // Grid   
+                
+                
+                                    if self.spinner == true{ui.add(Spinner::new());}
+
+                                    ui.vertical(|ui|{ui.add_space(8.0);});
+
+                                    ui.checkbox(&mut self.send_specs, "Send System Info");
+                
+                                    //ui.style_mut().spacing.button_padding = (2.0, 3.0).into();
+                                    ui.vertical(|ui|{ui.add_space(8.0);});
+                                    let date = 
+                                        self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
+                                        ui.add(
+                                            //[5.0, 5.0], 
+                                            DatePickerButton::new(date)
+                                    );
+                                }); // group
+
+                                ui.vertical(|ui|{ui.add_space(3.0);});
+
+                                ui
+                                .vertical_centered_justified(|ui|
+                                {
+                                    if ui
+                                    .add(
+                                        Button::new
+                                        (
+                                            RichText::new("Submit TUR Sheet")
+                                                .color(Color32::from_rgb(255, 204, 255))
+                                                .strong()
+                                                .italics()
+                                        )
+                                            .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+                                    )
+                                    .clicked()
+                                    {
+                                        let cust = &self.ticket_info.customer_name;
+                                        let so_num = &self.so_number;
+                
+                                        if !cust.is_empty() && !so_num.is_empty()
+                                        {
+                                            self.spinner = true;
+                                            let salesman = &format!("{:?}", &self.salesman_cbox);
+                                            let checkin_rep = &self.ticket_info.user_id;
+                                            let technician = &format!("{:?}", &self.techs_cbox);
+                                            let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
+                                            let ram_test = &format!("{:?}", &self.ram_test_cbox);
+                                            let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
+                                            let checkin_notes = &self.ticket_info.checkin_notes;
+                                            let recommendations = &self.recommendations;   
+                                            let task_name = (cust, so_num);
+                                            let assignees = (checkin_rep, technician);
+                                            let date = format!("{}", self.date.unwrap());
+                                            //let installed_antivirus = RetrieveSystemInfo::get_antivirus().unwrap();
+                                            //let mut cps = String::new();
+                                            // for antivirus in installed_antivirus{
+                                            //     cps = antivirus.1;
+                                            // }
+                                            let mut specs = String::new();
+                                            if self.send_specs == true{
+                                                //RetrieveSystemInfo::get_system_specs(tx)
+                                                let system_name = &self.system_name;
+                                                let cpu_name = &self.cpu_name;
+                                                let total_ram = &self.total_ram;
+                                                let gpu = &self.gpu.clone().unwrap();
+                                                specs = format!("
+                                                <hr>
+                                                <table>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td>Details</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>OS</td>
+                                                        <td>{system_name}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>CPU</td>
+                                                        <td>{cpu_name}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>RAM</td>
+                                                        <td>{total_ram}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>GPU</td>
+                                                        <td>{gpu}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>Antivirus</td>
+                                                        <td></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>SEB</td>
+                                                        <td></td>
+                                                    </tr>
+                                                </table>
+                                                <table>
+                                                    <tr>
+                                                        <td>Drive Letter</td>
+                                                        <td>Available Space</td>
+                                                        <td>Total Space</td>
+                                                        <td>S/N# (may be encoded)</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                        <td></td>
+                                                    </tr>
+                                                </table>
+                                                ");
+                                            }else{
+                                                specs = "No specs sent".to_string();
+                                            }
+                                            let html_notes = format!( //52891684
+                                                "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>
+                                                <li><strong>Salesman:</strong>              {salesman}</li>
+                                                <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
+                                                <li><strong>Technician:</strong>            {technician}</li></ul>
+                                                <strong><h2><code>      Computer Info       </code></h2></strong>
+                                                {specs}
+                                                <hr>
+                                                <ul><li><strong>SSD test:</strong>     {ssd_test}</li>
+                                                <li><strong>HDD test:</strong>     {hdd_test}</li>
+                                                <li><strong>RAM test:</strong>     {ram_test}</li></ul>
+                                                <h2><strong><code>      Notes       </code></strong></h2><ul>
+                                                <li><strong>        Checkin Notes:      </strong>     {checkin_notes}</li>\n
+                                                <li><strong>        Recommendations:        </strong>     {recommendations}</li></ul></body>",
+                                            );
+                                            // I think i should probably just pass send_ticket_request the
+                                            // whole ticket_info struct
+                
+                                            /*
+                                                cust_code: "".to_string(),
+                                                user_id: "".to_string(),
+                                                terms: "".to_string(),
+                                                doc_alias: "".to_string(),
+                                                department: "".to_string(),
+                                                jurisdiction: "".to_string(),
+                                                invoice_amnt: "".to_string(),
+                
+                                                customer_email: "".to_string(),
+                                                last_invoice_number: "".to_string(),
+                                                last_invoice_amount: "".to_string(),
+                                                total_invoice_count: "".to_string(),
+                
+                                                item_codes: "".to_string(),
+                                            */
+                
+                
+                                            SendRequest::send_ticket_request(
+                                                self.scaffold_request.tx.clone(), 
+                                                self.client.clone(), 
+                                                task_name,
+                                                html_notes,
+                                                assignees,
+                                                date,
+                                            );
+                                            self.spinner = false;
+                                        
+                                        }
+                                        else{
+                                            self.output_text = "You need to enter a customer name or Service number".to_string();
+                                        }
+                                    }
+                                }); // vertical center justified
+                            }); // vertical center
+                        }); // cell
+                    }); // strip.strip builder
+                }); // strip.strip
+
+                strip.empty();
+
+                strip
+                .strip(|builder|
+                {
+                    builder
+                    .size(Size::exact(300.0)) // allocates checkinNotes info from left -> right
+                    .size(Size::exact(-5.0)) // allocates empty space between checkin notes and recommendations
+                    .size(Size::exact(300.0)) // allocates recommendations from left -> right
+                    .horizontal(|mut strip|
+                    {
+                        strip
+                        .cell(|ui|
+                        {
                             ScrollArea::new([false, true])
-                            .max_height(245.0)
-                            .max_width(300.0)
                             .id_source("checkin_notes_scroll")
                             .show(ui, |ui|{
-                                ui.add(TextEdit::multiline(&mut self.ticket_info.checkin_notes)
-                                .hint_text(RichText::new("Checkin Notes").weak())
-                                .desired_rows(16));
+                                ui.add_sized(
+                                    vec2(ui.available_width()-4.0, ui.available_height()),
+                                    TextEdit::multiline(&mut self.ticket_info.checkin_notes)
+                                    .hint_text(RichText::new("Checkin Notes").weak())
+                                    .desired_rows(15)
+                                );
                             });
                             ui.shrink_height_to_current(); 
-                        }); // Strip cell
-                        
-                        strip.cell(|ui|{  
+                        }); // cell
+
+                        strip.empty();
+
+                        strip.cell(|ui|
+                        {
                             ScrollArea::new([false, true])
                             .id_source("recomendations_scroll")
-                            .max_height(245.0)
-                            .max_width(300.0)
                             .show(ui, |ui|{
-                                ui.add(TextEdit::multiline(&mut self.recommendations)
-                                .hint_text(RichText::new("Recommendations")
-                                .weak())
-                                .desired_rows(16));
+                                ui.add_sized(
+                                    vec2(ui.available_width()-4.0, ui.available_height()), 
+                                    TextEdit::multiline(&mut self.recommendations)
+                                    .hint_text(RichText::new("Recommendations")
+                                    .weak())
+                                    .desired_rows(15)
+                                );
                             });
                             ui.shrink_height_to_current(); 
-
-                        }); //Strip Cell
-                    }); //Strip Builder
-                }); //group */
-        //ui.indent("indented", |ui|{
-            ui.with_layout(Layout::left_to_right(Align::Center),|ui|{
-            
-                // ui.columns(2, |columns|{
-                    // columns[0].set_max_width(300.0);
-                    // columns[0].set_max_height(450.0);
-                    // columns[1].set_max_width(300.0);
-                    // columns[1].set_max_height(450.0);
-                    // columns[0].horizontal_centered(|ui|{
-                    // });
-                    // columns[1].horizontal_centered(|ui|{
-                    // }); // Column 1
-                //}); // Columns
-                        
-                ui.horizontal(|ui| {ui.add_space(8.0);});
-
-
-                        //ui.set_max_width(self.widget_size * 2.0 + 7.0);
-                ui.group(|ui|{
-                    StripBuilder::new(ui)
-                    .cell_layout(Layout::left_to_right(Align::Center))
-                    .size(Size::exact(300.0)) //for the initial textedits
-                    .size(Size::exact(300.0)) // for the checkin notes
-                    .vertical(|mut strip|{
-                        strip.cell(|ui|{
-                            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::RED);
-                            // ScrollArea::new([false, true])
-                            // .max_height(245.0)
-                            // .max_width(300.0)
-                            // .id_source("tur_left_area")
-                            // .show(ui, |ui|{
-                            ui.horizontal_centered(|ui|{
-                                if ui.add(Button::new(RichText::new("Get Ticket")
-                                .color(Color32::from_rgb(255, 204, 255))
-                                .strong()
-                                .italics())
-                                .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
-                                .min_size(vec2(self.widget_size * 2.0 + 7.0, 7.0)))
-                                .clicked(){ 
-                                    let service_num = self.so_number.clone();
-                                    self.spinner = true;
-                                    SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
-                                }
-                                
-                            
-                                //ui.vertical(|ui| {ui.add_space(3.0);});
-    
-                                Grid::new("ticket_information")
-                                .spacing(vec2(6.0, 8.0))
-                                .min_col_width(self.widget_size)
-                                .max_col_width(self.widget_size + 5.0)
-                                .num_columns(2)
-                                .show(ui, |ui| {
-                                    
-                                                        /*     ROW 1     */
-                                    ui.add(TextEdit::singleline(&mut self.so_number)
-                                    .hint_text("Service #  ").char_limit(8).desired_width(self.widget_size));
-
-                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_name)
-                                    .hint_text("Customer Name  ").desired_width(self.widget_size + 3.0));
-
-                                    ui.end_row();
-
-                                                        /*     ROW 2     */
-                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_phone_1)
-                                    .hint_text("Phone Number 1").desired_width(self.widget_size));
-                                    ui.add(TextEdit::singleline(&mut self.ticket_info.customer_phone_2)
-                                    .hint_text("Phone Number 2").desired_width(self.widget_size + 3.0));      
-                                    
-                                    ui.end_row();
-
-                                                        /*     ROW 3     */
-                                    ComboBox::from_id_source("salesman_cbox").width(self.widget_size)
-                                    .selected_text(format!("{:?}", self.salesman_cbox))
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Jake, "Jake");
-                                        ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Danny, "Danny");
-                                    });
-
-
-                                    ComboBox::from_id_source("techs_cbox").width(self.widget_size)
-                                    .selected_text(format!("{:?}", self.techs_cbox))
-                                    .show_ui(ui, |ui| {
-                                        
-                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Logan, "Logan");
-                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Bread, "Bread");
-                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Taco, "Taco");
-                                    });    
-                                    
-                                    ui.end_row();
-                                                        /*     ROW 4     */
-                                    if ui.add(Button::new("Get Keys").min_size(vec2(self.widget_size, 5.0)))
-                                    .clicked(){ 
-                                        let service_num = self.so_number.clone();
-                                        self.spinner = true;
-                                        SendRequest::get_cps(service_num, self.scaffold_request.tx.clone(), self.client.clone());
-                                    }
-                                    
-                                    if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 5.0)))
-                                    .clicked(){ 
-                                        
-                                        //check_seb_info
-                                    }
-        
-                                    ui.end_row();
-                                    
-                                                        /*     ROW 5     */
-                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.webroot_key)).size(9.0)
-                                    .color(Color32::from_rgb(102, 255, 153))
-                                    .strong())
-                                    .min_size(vec2(self.widget_size + 2.0, 8.0)))
-                                    .on_hover_text("Click To Copy Webroot Key to Clipboard")
-                                    .clicked(){ 
-                                        let webroot = self.keys.webroot_key.clone();
-                                        ui.output_mut(|o| o.copied_text = webroot);
-                                    }
-                                        
-                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.superanti_key)).size(9.0)
-                                    .color(Color32::from_rgb(255, 61, 126))
-                                    .strong())
-                                    .min_size(vec2(self.widget_size + 2.0, 8.0)))
-                                    .on_hover_text("Click To Copy SAS Key to Clipboard")
-                                    .clicked(){ 
-                                        let sas = self.keys.superanti_key.clone();
-                                        ui.output_mut(|o| o.copied_text = sas);
-
-                                    }
-
-                                    ui.end_row();
-                                });
-                            });
-                            // }); 
-                        });
-                        strip.cell(|ui|{          
-                            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::GREEN);    
-                            ui.set_max_width(self.widget_size * 2.0+3.0);
-
-                            ui.horizontal_centered(|ui|{
-                                ui.horizontal(|ui|{
-
-                                    ui.add_space(self.widget_size/1.8);
-
-                                    ComboBox::from_id_source("ram_cbox").width(self.widget_size - 5.0)
-                                    .selected_text(format!("{}", self.ram_test_cbox.as_str()))
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamFail, "RAM Fail");
-                                        ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamPass, "RAM Pass");
-                                        ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamNotTested, "RAM Not Tested");
-                                    }); // Combo Box
-                                });
-                            }); // Vertical Centered
-
-                            Grid::new("drive_tests")
-                            .spacing(vec2(4.0, 3.0))
-                            .min_col_width(self.widget_size)
-                            .num_columns(2)
-                            .show(ui, |ui| {
-                                                    /*     ROW 1     */
-                                ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 5.0)
-                                .selected_text(format!("{}", self.ssd_test_cbox.as_str()))
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdFail, "SSD Fail");
-                                    ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdPass, "SSD Pass");
-                                    ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdNotTested, "SSD Not Tested");
-                                }); // Combo Box
-
-                                                    /*     ROW 2     */
-                                ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 5.0)
-                                .selected_text(format!("{}", self.hdd_test_cbox.as_str()))
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddFail, "HDD Fail");
-                                    ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddPass, "HDD Pass");
-                                    ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddNotTested, "HDD Not Tested");
-                                }); // Combo Box
-                                ui.end_row();
-                            }); // Grid   
-
-                            
-                            //ui.vertical(|ui|{ui.add_space(4.0);});
-
-                            if self.spinner == true{ui.add(Spinner::new());}
-
-                            //ui.vertical(|ui|{ui.add_space(4.0);});
-
-                            ui.checkbox(&mut self.send_specs, "Send System Info");
-
-                            //ui.style_mut().spacing.button_padding = (2.0, 3.0).into();
-                            let date = 
-                                self.date.get_or_insert_with(|| chrono::offset::Utc::now().date_naive());
-                                ui.add(
-                                    //[5.0, 5.0], 
-                                    DatePickerButton::new(date)
-                            );
-
-                            if ui.add(Button::new(RichText::new("Submit TUR Sheet")
-                            .color(Color32::from_rgb(255, 204, 255))
-                            .strong()
-                            .italics())
-                            .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101))))
-                            .clicked(){
-                                let cust = &self.ticket_info.customer_name;
-                                let so_num = &self.so_number;
-
-                                if !cust.is_empty() && !so_num.is_empty()
-                                {
-                                    self.spinner = true;
-                                    let salesman = &format!("{:?}", &self.salesman_cbox);
-                                    let checkin_rep = &self.ticket_info.user_id;
-                                    let technician = &format!("{:?}", &self.techs_cbox);
-                                    let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
-                                    let ram_test = &format!("{:?}", &self.ram_test_cbox);
-                                    let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
-                                    let checkin_notes = &self.ticket_info.checkin_notes;
-                                    let recommendations = &self.recommendations;   
-                                    let task_name = (cust, so_num);
-                                    let assignees = (checkin_rep, technician);
-                                    let date = format!("{}", self.date.unwrap());
-                                    //let installed_antivirus = RetrieveSystemInfo::get_antivirus().unwrap();
-                                    //let mut cps = String::new();
-                                    // for antivirus in installed_antivirus{
-                                    //     cps = antivirus.1;
-                                    // }
-                                    let mut specs = String::new();
-                                    if self.send_specs == true{
-                                        //RetrieveSystemInfo::get_system_specs(tx)
-                                        let system_name = &self.system_name;
-                                        let cpu_name = &self.cpu_name;
-                                        let total_ram = &self.total_ram;
-                                        let gpu = &self.gpu.clone().unwrap();
-                                        specs = format!("
-                                        <hr>
-                                        <table>
-                                            <tr>
-                                                <td></td>
-                                                <td>Details</td>
-                                            </tr>
-                                            <tr>
-                                                <td>OS</td>
-                                                <td>{system_name}</td>
-                                            </tr>
-                                            <tr>
-                                                <td>CPU</td>
-                                                <td>{cpu_name}</td>
-                                            </tr>
-                                            <tr>
-                                                <td>RAM</td>
-                                                <td>{total_ram}</td>
-                                            </tr>
-                                            <tr>
-                                                <td>GPU</td>
-                                                <td>{gpu}</td>
-                                            </tr>
-                                            <tr>
-                                                <td>Antivirus</td>
-                                                <td></td>
-                                            </tr>
-                                            <tr>
-                                                <td>SEB</td>
-                                                <td></td>
-                                            </tr>
-                                        </table>
-                                        <table>
-                                            <tr>
-                                                <td>Drive Letter</td>
-                                                <td>Available Space</td>
-                                                <td>Total Space</td>
-                                                <td>S/N# (may be encoded)</td>
-                                            </tr>
-                                            <tr>
-                                                <td></td>
-                                                <td></td>
-                                                <td></td>
-                                                <td></td>
-                                            </tr>
-                                            <tr>
-                                                <td></td>
-                                                <td></td>
-                                                <td></td>
-                                                <td></td>
-                                            </tr>
-                                            <tr>
-                                                <td></td>
-                                                <td></td>
-                                                <td></td>
-                                                <td></td>
-                                            </tr>
-                                            <tr>
-                                                <td></td>
-                                                <td></td>
-                                                <td></td>
-                                                <td></td>
-                                            </tr>
-                                        </table>
-                                        ");
-                                    }else{
-                                        specs = "No specs sent".to_string();
-                                    }
-                                    let html_notes = format!( //52891684
-                                        "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>
-                                        <li><strong>Salesman:</strong>              {salesman}</li>
-                                        <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
-                                        <li><strong>Technician:</strong>            {technician}</li></ul>
-                                        <strong><h2><code>      Computer Info       </code></h2></strong>
-                                        {specs}
-                                        <hr>
-                                        <ul><li><strong>SSD test:</strong>     {ssd_test}</li>
-                                        <li><strong>HDD test:</strong>     {hdd_test}</li>
-                                        <li><strong>RAM test:</strong>     {ram_test}</li></ul>
-                                        <h2><strong><code>      Notes       </code></strong></h2><ul>
-                                        <li><strong>        Checkin Notes:      </strong>     {checkin_notes}</li>\n
-                                        <li><strong>        Recommendations:        </strong>     {recommendations}</li></ul></body>",
-                                    );
-                                    // I think i should probably just pass send_ticket_request the
-                                    // whole ticket_info struct
-
-                                    /*
-                                        cust_code: "".to_string(),
-                                        user_id: "".to_string(),
-                                        terms: "".to_string(),
-                                        doc_alias: "".to_string(),
-                                        department: "".to_string(),
-                                        jurisdiction: "".to_string(),
-                                        invoice_amnt: "".to_string(),
-
-                                        customer_email: "".to_string(),
-                                        last_invoice_number: "".to_string(),
-                                        last_invoice_amount: "".to_string(),
-                                        total_invoice_count: "".to_string(),
-
-                                        item_codes: "".to_string(),
-                                    */
-
-
-                                    SendRequest::send_ticket_request(
-                                        self.scaffold_request.tx.clone(), 
-                                        self.client.clone(), 
-                                        task_name,
-                                        html_notes,
-                                        assignees,
-                                        date,
-                                    );
-                                    self.spinner = false;
-                                
-                                }
-                                else{
-                                    self.output_text = "You need to enter a customer name or Service number".to_string();
-                                }
-                            }
-                        });
-                    });
-                });
-
-
-                        
-                    
-                
-            }); // UI layout
-
-
-        //}); // indent
+                        }); // cell
+                    }); // strip builder
+                }); // strip.strip
+            }); //strip builder
+        }); // UI layout
     }
 
     fn output_console(&mut self, ui: &mut Ui) { 
