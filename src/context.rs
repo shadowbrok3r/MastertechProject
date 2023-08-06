@@ -625,7 +625,7 @@ impl MastertechContext {
                                             let assignees = (salesman, technician);
                                             let date = format!("{}", self.date.unwrap());
 
-                                            let mut attached_file: Option<PathBuf> = Some(PathBuf::new());
+                                            let mut attached_file: Option<PathBuf> = None;
                                             if let Some(file) = &self.opened_file{
                                                 attached_file = Some(file.to_path_buf());
                                             }
@@ -642,6 +642,7 @@ impl MastertechContext {
                                                 let total_ram = &self.total_ram;
                                                 let gpu = &self.gpu.clone().unwrap();
                                                 specs = format!("
+                                                <strong><h2><code>           Computer Info            </code></h2></strong>
                                                 <hr>
                                                 <table>
                                                     <tr>
@@ -707,14 +708,13 @@ impl MastertechContext {
                                                 </table>
                                                 ");
                                             }else{
-                                                specs = "No specs sent".to_string();
+                                                specs = "Computer information was not sent with ticket".to_string();
                                             }
                                             let html_notes = format!( //52891684
-                                                "<body><h2><strong><code>Ticket Info</code></strong></h2><ul>
+                                                "<body><h2><strong><code>           Ticket Info            </code></strong></h2><ul>
                                                 <li><strong>Salesman:</strong>              {salesman}</li>
                                                 <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
                                                 <li><strong>Technician:</strong>            {technician}</li></ul>
-                                                <strong><h2><code>      Computer Info       </code></h2></strong>
                                                 {specs}
                                                 <hr>
                                                 <ul><li><strong>SSD test:</strong>     {ssd_test}</li>

@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports, unused_variables))]
 use crossbeam::channel;
-use reqwest::header::{CONTENT_TYPE, ACCEPT};
+use reqwest::{header::{CONTENT_TYPE, ACCEPT}, multipart::{Form, Part}};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use tokio::io::AsyncWriteExt;
@@ -353,7 +353,7 @@ impl SendRequest{
             let mut asana_config = Configuration::new();
             let mut task = task_request::TaskRequest::new();
 
-            asana_config.client = client;
+            asana_config.client = client.clone();
             asana_config.bearer_access_token = Some("1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2".to_string());
             asana_config.user_agent = None;
             
@@ -377,7 +377,7 @@ impl SendRequest{
             
 
             
-
+            
             match create_task(&asana_config, 
                 asana_task, 
                 Some(true), //only set to true if debugging
@@ -385,17 +385,80 @@ impl SendRequest{
                 ).await
             {
                 Ok(res) => {
-                    let data = res.data.unwrap(); //.gid.unwrap().to_string();
+                    let data = res.data.unwrap();
                     println!("{data:?}");
-                    asana_response.gid = Some(data.gid.unwrap().to_string());
-                    asana_response.created_at = Some(data.created_at.unwrap().to_string());
+                    let file = file_attachment.clone();
 
-                    let asana_json_response = serde_json::to_string(&asana_response).unwrap();
+                    if let Some(file) = file{
+                        let attachment_client = client.clone();
+                        if let Some(gid) = data.gid{
+                            asana_response.gid = Some(gid.to_string());
+                        }
+                        if let Some(created_at) = data.created_at{
+                            asana_response.created_at = Some(created_at.to_string());
+                        }
+                        // Extract just the file name from the PathBuf
+                        let file_name = file.file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
 
-                    match sender.send(asana_json_response){
-                        Ok(_) => println!("sent data successfully"),
-                        Err(e) => println!("{e}")
+                        let gid = asana_response.gid.unwrap().clone();
+                        let byte_content: Vec<u8> = file.to_str().unwrap().as_bytes().to_vec();
+                        let part = Part::bytes(byte_content).file_name("{file_name}");
+
+                        let form = Form::new()
+                        .part("file", part)
+                        .part("parent", Part::text(gid));
+
+
+
+                        // Send the request
+                        let response = attachment_client
+                        .post("https://app.asana.com/api/1.0/attachments")
+                        .header(ACCEPT, "application/json")
+                        .multipart(form)
+                        .send()
+                        .await;
+
+
+                        match response{
+                            Ok(resp) => {
+                                let x: AsanaResponse = resp.json().await.unwrap();
+                                
+                                match sender.send(x.raw_resp.unwrap()){
+                                    Ok(_) => { println!("sent data successfully"); drop(tx); },
+                                    Err(e) => { println!("{e}"); drop(tx); }
+                                }
+                            },
+                            Err(e) => {
+                                println!("{e}")
+                            },
+                        }
+                        // match create_attachment_for_task(
+                        //     &asana_config, 
+                        //     asana_response.gid.unwrap().as_str(), 
+                        //     Some(true), 
+                        //     None, 
+                        //     None, 
+                        //     None, 
+                        //     file_attachment
+                        //     ).await
+                        // {
+                        //     Ok(res) => println!("response without data: {:?}", res.data.unwrap()),
+                        //     Err(e) => {
+                        //         match e{
+                        //             asana::apis::Error::Reqwest(e) => println!("reqwest error: {e}"),
+                        //             asana::apis::Error::Serde(e) => println!("Serde error: {e}"),
+                        //             asana::apis::Error::Io(e) => println!("IO error: {e}"),
+                        //             asana::apis::Error::ResponseError(e) => println!("Response error: {:?}", e.content.as_str()),
+                        //         }
+                        //     }
+                        // }
                     }
+
+                    // let asana_json_response = serde_json::to_string(&asana_response).unwrap();
+
+
                     
                 },
                 Err(e) => {
@@ -405,7 +468,7 @@ impl SendRequest{
                         asana::apis::Error::Io(e) => println!("IO error: {e}"),
                         asana::apis::Error::ResponseError(e) => {
                             match tx.send(e.content){
-                                Ok(_) => println!("sent error successfully"),
+                                Ok(_) => { println!("sent error successfully"); drop(tx); },
                                 Err(e) => println!("send error: {e}")
                             };
                         }
@@ -413,33 +476,14 @@ impl SendRequest{
                 }
             }
 
-            let mut task_gid = String::new();
-            if let Ok(gid) = receiver.recv(){
-                println!("received gid: {gid}");
-                task_gid = gid;
-            }
+            // let mut task_gid = String::new();
+            // if let Ok(gid) = receiver.recv(){
+            //     println!("received gid: {gid}");
+            //     task_gid = gid;
+            // }
             
 
-            match create_attachment_for_task(
-                &asana_config, 
-                task_gid.as_str(), 
-                Some(true), 
-                None, 
-                None, 
-                None, 
-                file_attachment
-                ).await
-            {
-                Ok(res) => println!("response without data: {:?}", res.data.unwrap()),
-                Err(e) => {
-                    match e{
-                        asana::apis::Error::Reqwest(e) => println!("reqwest error: {e}"),
-                        asana::apis::Error::Serde(e) => println!("Serde error: {e}"),
-                        asana::apis::Error::Io(e) => println!("IO error: {e}"),
-                        asana::apis::Error::ResponseError(e) => println!("Response error: {:?}", e.content.as_str()),
-                    }
-                }
-            }
+
 
         });
     }
@@ -451,7 +495,8 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
     // Now you can use the method on the instance of ScaffoldRequestBuilder
     let params: Value = scaffold_builder.build_scaffold_call();
 
-    let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+    let response = client
+        .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .json(&params)
