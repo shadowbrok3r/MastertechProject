@@ -108,10 +108,10 @@ Item Codes: {:?}\n",
                 
             }
             else if let Ok(info) = serde_json::from_str::<request::AsanaResponse>(&message) { 
-                if let Some(e) = info.error{
-                    self.context.output_text = format!("{e:#?}");
+                if let Some(e) = info.status{
+                    self.context.output_text = format!("Status Code: {e:#?}");
                 };
-                self.context.output_text = format!("{:#?}", info.raw_resp);
+                self.context.output_text = format!("{:#?}", info.gid);
             }
             else{
                 self.context.output_text = format!("{}", message);
