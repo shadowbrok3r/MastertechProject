@@ -346,10 +346,16 @@ impl MastertechContext {
                                         .clicked()
                                         { 
                                             self.output_text.clear();
-                                            self.output_text = "Its Everest, this may take a 'moment'".to_string();
+                                            
                                             let service_num = self.so_number.clone();
-                                            self.spinner = true;
-                                            SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
+                                            if !service_num.is_empty(){
+                                                self.output_text = "Its Everest, this may take a 'moment'".to_string();
+                                                self.spinner = true;
+                                                SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
+                                            }else{
+                                                self.output_text = "You need to enter an SO number before submitting TUR sheet".to_string();
+                                            }
+
                                         } 
                                     }); // v center justified
                                 }); // strip cell
@@ -744,7 +750,7 @@ impl MastertechContext {
                                                 item_codes: "".to_string(),
                                             */
                 
-                
+                                            println!("attached file: {attached_file:?}");
                                             SendRequest::send_ticket_request(
                                                 self.scaffold_request.tx.clone(), 
                                                 self.client.clone(), 
