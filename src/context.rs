@@ -637,11 +637,11 @@ impl MastertechContext {
                                             }
 
                                             let mut specs = String::new();
+                                            let mut cps = String::new();
                                             if self.send_specs == true{
+
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
-
-                                                //let mut cps = String::new();
 
                                                 let installed_antivirus = RetrieveSystemInfo::get_antivirus()
                                                 .map_err(|e| self.output_text = format!("Error checking antivirus: {e}\n"));
@@ -649,8 +649,11 @@ impl MastertechContext {
                                                 if let Ok(antivirus) = installed_antivirus {
                                                     for (name, is_installed) in antivirus {
                                                         match is_installed {
-                                                            Some(true) => {println!("{} is installed.", name)},
-                                                            _ => println!("{} is not installed.", name),
+                                                            Some(true) => {
+                                                                self.output_text = format!("Installed antivirus: {name:?}");
+                                                                cps = name;
+                                                            },
+                                                            _ => {},
                                                         }
                                                     }
                                                 }
@@ -665,14 +668,14 @@ impl MastertechContext {
                                                 let system_name = &self.system_name;
                                                 let cpu_name = &self.cpu_name;
                                                 let total_ram = &self.total_ram;
-                                                let gpu = &self.gpu.clone().unwrap();
+                                                let gpu = &self.gpu.clone().unwrap_or("no gpu detected".to_string());
                                                 specs = format!("
-                                                <strong><h2><code>           Computer Info            </code></h2></strong>
                                                 <hr>
+                                                <strong><h2><code>           Computer Info            </code></h2></strong>
                                                 <table>
                                                     <tr>
                                                         <td></td>
-                                                        <td>Details</td>
+                                                        <td data-cell-widths=\"500\" width=\"500\">Details</td>
                                                     </tr>
                                                     <tr>
                                                         <td>OS</td>
@@ -692,7 +695,7 @@ impl MastertechContext {
                                                     </tr>
                                                     <tr>
                                                         <td>Antivirus</td>
-                                                        <td></td>
+                                                        <td>{cps}</td>
                                                     </tr>
                                                     <tr>
                                                         <td>SEB</td>
@@ -745,7 +748,7 @@ impl MastertechContext {
                                                 <ul><li><strong>SSD test:</strong>     {ssd_test}</li>
                                                 <li><strong>HDD test:</strong>     {hdd_test}</li>
                                                 <li><strong>RAM test:</strong>     {ram_test}</li></ul>
-                                                <h2><strong><code>      Notes       </code></strong></h2><ul>
+                                                <h2><strong><code>           Notes           </code></strong></h2><ul>
                                                 <li><strong>        Checkin Notes:      </strong>     {checkin_notes}</li>\n
                                                 <li><strong>        Recommendations:        </strong>     {recommendations}</li></ul></body>",
                                             );
@@ -779,6 +782,8 @@ impl MastertechContext {
                                                 attached_file
                                             );
                                             self.spinner = false;
+                                            
+                                            self.output_text += "\nSent Ticket";
                                         }
                                         else{
                                             self.output_text.clear();
