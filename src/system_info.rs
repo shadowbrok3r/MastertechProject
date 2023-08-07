@@ -36,20 +36,20 @@ impl DiskData {
 }
 
 impl RetrieveSystemInfo{
-    pub fn get_antivirus() -> io::Result<Vec<(String, String)>> {
+    pub fn get_antivirus() -> io::Result<Vec<(String, Option<bool>)>> {
         let (sender, receiver) = channel::unbounded();
-        let antivirus_names = vec![
-            "mbam", // where /r "C:\Program Files" mbam
-            "avast", // where /r "C:\Program Files" aswtoolssvc
-            "avg", // where /r "C:\Program Files" avgToolsSvc.exe
-            "mcaffee", // where /r "C:\Program Files (x86)" mcuicnt
+        let av_to_search = vec![
+            "mbam", // MALWAREBYTES
+            "aswtoolssvc", // AVAST
+            "avgToolsSvc", // AVG
+            "mcuicnt", // MCAFFEE
             "norton", 
-            "webroot", // where /r "C:\Program Files" wrsa
-            "eset", // where /r "C:\Program Files" egui
-            "superantispyware" // where /r "C:\Program Files" superantispyware
+            "wrsa", // WEBROOT
+            "egui", // ESET
+            "superantispyware" // SUPERANTI
             ];
-    
-        for antivirus in antivirus_names.clone().into_iter() {
+            
+        for antivirus in av_to_search.clone().into_iter() {
             let sender = sender.clone();
             tokio::spawn(async move {
                 let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
@@ -60,20 +60,23 @@ impl RetrieveSystemInfo{
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to execute command: {}", e)))?;
 
-                let path = String::from_utf8(output.stdout)
-                    .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("Failed to convert output to String: {}", e)))?;
+                    let exists = if output.stdout.is_empty() {
+                        None
+                    } else {
+                        Some(true)
+                    };
 
-                sender.send((antivirus, path)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
+                    sender.send((antivirus.to_string(), exists)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
             });
         }
     
-        let mut antivirus_paths = Vec::new();
-        for _ in 0..antivirus_names.len() {
-            let path = receiver.recv().map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to receive data from channel"))?;
-            antivirus_paths.push((path.0.to_string(), path.1));
+        let mut antivirus_exists = Vec::new();
+        for _ in 0..av_to_search.len() {
+            let exists = receiver.recv().map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to receive data from channel"))?;
+            antivirus_exists.push(exists);
         }
     
-        Ok(antivirus_paths)
+        Ok(antivirus_exists)
     }
 
     pub fn get_system_specs(tx: std::sync::mpsc::Sender<String>){
