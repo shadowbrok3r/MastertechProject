@@ -1,4 +1,6 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
+use std::{collections::HashMap, sync::Arc};
+
 use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
@@ -49,8 +51,20 @@ impl RetrieveSystemInfo{
             "superantispyware" // SUPERANTI
             ];
             
+            let antivirus_mapping = Arc::new([
+                ("mbam", "Malwarebytes"),
+                ("aswtoolssvc", "Avast"),
+                ("avgToolsSvc", "AVG"),
+                ("mcuicnt", "McAfee"),
+                ("norton", "Norton"),
+                ("wrsa", "Webroot"),
+                ("egui", "ESET"),
+                ("superantispyware", "SuperAntiSpyware"),
+            ].iter().cloned().collect::<HashMap<&str, &str>>());
+
         for antivirus in av_to_search.clone().into_iter() {
             let sender = sender.clone();
+            let antivirus_mapping = Arc::clone(&antivirus_mapping);
             tokio::spawn(async move {
                 let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
                 let output = tokio::process::Command::new("cmd")
@@ -66,7 +80,9 @@ impl RetrieveSystemInfo{
                         Some(true)
                     };
 
-                    sender.send((antivirus.to_string(), exists)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
+                    let name = antivirus_mapping.get(antivirus).unwrap_or(&antivirus);
+
+                    sender.send((name.to_string(), exists)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
             });
         }
     
@@ -117,12 +133,23 @@ impl RetrieveSystemInfo{
                     .unwrap()
                     .stdout
                 );
+
+                let mut new_gpu_name = "";
+                let clone_gpu_name = gpu_name.clone().unwrap_or("no gpu detected".to_string());
+                let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
+                for gpu_untrimmed in parse_gpu_name{
+                    let parse_newline: Vec<&str> = gpu_untrimmed.split("\n").collect();
+                    new_gpu_name = parse_newline.clone()[0].trim();
+                }
+                
+                
+
                 let system_info = SystemInformation{
                     cpu_name: cpu_brand,
                     total_ram: ram,
                     system_name: system,
                     disks: data,
-                    gpu: Some(gpu_name.unwrap())
+                    gpu: Some(new_gpu_name.to_string())
                 };
                 let system_info_json = serde_json::to_string(&system_info).unwrap();
                 println!("system info json: {}", system_info_json);
