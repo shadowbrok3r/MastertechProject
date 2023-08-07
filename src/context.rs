@@ -642,22 +642,24 @@ impl MastertechContext {
 
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
-
-                                                let installed_antivirus = RetrieveSystemInfo::get_antivirus()
-                                                .map_err(|e| self.output_text = format!("Error checking antivirus: {e}\n"));
-                                                
-                                                if let Ok(antivirus) = installed_antivirus {
-                                                    for (name, is_installed) in antivirus {
-                                                        match is_installed {
-                                                            Some(true) => {
-                                                                self.output_text = format!("Installed antivirus: {name:?}");
-                                                                cps = name;
-                                                            },
-                                                            _ => {},
+                                                if cfg!(windows){
+                                                    let installed_antivirus = RetrieveSystemInfo::get_antivirus()
+                                                    .map_err(|e| self.output_text = format!("Error checking antivirus: {e}\n"));
+                                                    
+                                                    if let Ok(antivirus) = installed_antivirus {
+                                                        for (name, is_installed) in antivirus {
+                                                            match is_installed {
+                                                                Some(true) => {
+                                                                    self.output_text = format!("Installed antivirus: {name:?}");
+                                                                    cps = name;
+                                                                },
+                                                                _ => {},
+                                                            }
                                                         }
                                                     }
+                                                    cps.insert_str(0,"\n");
                                                 }
-
+                                                
                                                 // for antivirus in installed_antivirus.unwrap().iter(){
                                                 //     self.output_text = format!("Installed antivirus: \n{antivirus:?}\n");
                                                 //     // this is blocking, need to fix

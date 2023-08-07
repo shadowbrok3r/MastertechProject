@@ -382,9 +382,6 @@ impl SendRequest{
             let content_length = html_notes_json.len();
             println!("Content length: {}", content_length);
             
-
-            
-            
             match create_task(&asana_config, 
                 asana_task, 
                 Some(true), //only set to true if debugging
@@ -413,7 +410,6 @@ impl SendRequest{
                                         
                                         let file_attachment = file_attachment.clone();
                                         let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
-                                        //let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
                                         
                                         let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
                                         let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
