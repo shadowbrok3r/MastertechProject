@@ -323,7 +323,7 @@ impl SendRequest{
     ) 
     {
         let (sender, receiver) = channel::bounded::<String>(5);
-
+        
         let cust = task_name.0.clone();
         let so_num = task_name.1.clone();
 
@@ -337,7 +337,7 @@ impl SendRequest{
         else if assignees.1 == "BLK" { assigned_tech = "1202792432421640".to_string(); }
         else if assignees.1 == "TBN" { assigned_tech = "1202792432551073".to_string(); }
 
-        let mut asana_response = AsanaResponse{
+        let asana_response = AsanaResponse{
             gid: Some("".to_string()),
             //created_at: Some("".to_string()),
             status: Some(200),
@@ -404,8 +404,12 @@ impl SendRequest{
                                         let file_name = file.file_name()
                                         .and_then(|name| name.to_str())
                                         .unwrap_or("no file name");
-
-                                        let byte_content: Vec<u8> = file.to_str().unwrap_or("no bytes").as_bytes().to_vec();
+                                        
+                                        let file_attachment = file_attachment.clone();
+                                        let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
+                                        //let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
+                                        
+                                        let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
                                         let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
 
                                         let form = Form::new()
@@ -455,17 +459,23 @@ impl SendRequest{
                         asana::apis::Error::Serde(e) => println!("Serde error: {e}"),
                         asana::apis::Error::Io(e) => println!("IO error: {e}"),
                         asana::apis::Error::ResponseError(e) => {
-                            match tx.send(e.content){
-                                Ok(_) => { println!("sent error successfully"); drop(tx); },
+                            let send_tx = tx.clone();
+                            match send_tx.send(e.content){
+                                Ok(_) => { println!("sent error successfully"); drop(send_tx); },
                                 Err(e) => println!("send error: {e}")
                             };
                         }
                     }
                 }
             }
-
+            let send = tx.clone();
             if let Ok(message) = receiver.recv(){
-                //message
+                let msg = message.clone();
+                
+                match send.send(msg){
+                    Ok(_) => println!("sent message ok"),
+                    Err(e) => println!("{e}")
+                }
                 println!("received: {message}");
             }
 
