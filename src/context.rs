@@ -750,7 +750,6 @@ impl MastertechContext {
                                                 item_codes: "".to_string(),
                                             */
                 
-                                            println!("attached file: {attached_file:?}");
                                             SendRequest::send_ticket_request(
                                                 self.scaffold_request.tx.clone(), 
                                                 self.client.clone(), 
@@ -761,7 +760,6 @@ impl MastertechContext {
                                                 attached_file
                                             );
                                             self.spinner = false;
-                                        
                                         }
                                         else{
                                             self.output_text.clear();
