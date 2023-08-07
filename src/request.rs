@@ -359,9 +359,15 @@ impl SendRequest{
             asana_config.user_agent = None;
             
             task.name = Some(format!("{cust} - {so_num}"));
-            task.assignee = Some(assigned_salesman.clone());
+            
             task.workspace = Some("13314583095021".to_string());
-            task.projects = Some(vec!["1202792139600600".to_string()]);
+            if !cfg!(debug_assertions){
+                task.projects = Some(vec!["1202792139600600".to_string()]);
+                task.assignee = Some(assigned_salesman.clone());
+            }else{
+                task.assignee = Some("1199992640930465".to_string());
+            }
+            
             task.followers = Some(vec![assigned_salesman, assigned_tech]); // Logan: 1199992640930465
             task.html_notes = Some(html_notes);
             task.due_on = Some(due_date);
