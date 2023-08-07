@@ -39,27 +39,30 @@ impl RetrieveSystemInfo{
     pub fn get_antivirus() -> io::Result<Vec<(String, String)>> {
         let (sender, receiver) = channel::unbounded();
         let antivirus_names = vec![
-            "mbam", 
-            "avast", 
-            "avg", 
-            "mcaffee", 
+            "mbam", // where /r "C:\Program Files" mbam
+            "avast", // where /r "C:\Program Files" aswtoolssvc
+            "avg", // where /r "C:\Program Files" avgToolsSvc.exe
+            "mcaffee", // where /r "C:\Program Files (x86)" mcuicnt
             "norton", 
-            "webroot", 
-            "superantispyware"
+            "webroot", // where /r "C:\Program Files" wrsa
+            "eset", // where /r "C:\Program Files" egui
+            "superantispyware" // where /r "C:\Program Files" superantispyware
             ];
     
         for antivirus in antivirus_names.clone().into_iter() {
             let sender = sender.clone();
             tokio::spawn(async move {
+                let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
                 let output = tokio::process::Command::new("cmd")
-                    .args(&["/C", &format!("where /r \"C:\\Program Files\" {}", antivirus)])
+                    .args(&["/C"])
+                    .args(where_cmd)
                     .output()
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to execute command: {}", e)))?;
-                    
+
                 let path = String::from_utf8(output.stdout)
                     .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("Failed to convert output to String: {}", e)))?;
-                
+
                 sender.send((antivirus, path)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
             });
         }

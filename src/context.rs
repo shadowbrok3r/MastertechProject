@@ -635,13 +635,21 @@ impl MastertechContext {
                                             if let Some(file) = &self.opened_file{
                                                 attached_file = Some(file.to_path_buf());
                                             }
-                                            //let installed_antivirus = RetrieveSystemInfo::get_antivirus().unwrap();
-                                            //let mut cps = String::new();
-                                            // for antivirus in installed_antivirus{
-                                            //     cps = antivirus.1;
-                                            // }
+
                                             let mut specs = String::new();
                                             if self.send_specs == true{
+                                                self.output_text.clear();
+                                                self.output_text += "pulling system information. Please wait a moment..\n";
+
+                                                let installed_antivirus = RetrieveSystemInfo::get_antivirus()
+                                                .map_err(|e| self.output_text = format!("Error checking antivirus: {e}\n"));
+                                                //let mut cps = String::new();
+                                                for antivirus in installed_antivirus.unwrap().iter(){
+                                                    self.output_text = format!("Installed antivirus: \n{antivirus:?}\n");
+                                                    // this is blocking, need to fix
+                                                    //todo!()
+                                                }
+
                                                 //RetrieveSystemInfo::get_system_specs(tx)
                                                 let system_name = &self.system_name;
                                                 let cpu_name = &self.cpu_name;
