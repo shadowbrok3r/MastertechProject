@@ -638,7 +638,11 @@ impl MastertechContext {
 
                                             let mut specs = String::new();
                                             let mut cps = String::new();
+                                            let mut final_disk = String::new();
+
                                             if self.send_specs == true{
+                                                let specs_sender = self.sysinfo_request.tx.clone();
+                                                RetrieveSystemInfo::get_system_specs(specs_sender);
 
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
@@ -659,14 +663,45 @@ impl MastertechContext {
                                                     }
                                                     cps.insert_str(0,"\n");
                                                 }
-                                                
-                                                // for antivirus in installed_antivirus.unwrap().iter(){
-                                                //     self.output_text = format!("Installed antivirus: \n{antivirus:?}\n");
-                                                //     // this is blocking, need to fix
-                                                //     //todo!()
-                                                // }
 
-                                                //RetrieveSystemInfo::get_system_specs(tx)
+                                                
+                                                for index in 0..self.disk_num{
+                                                    if let Some(disk) = self.disks.get(index){
+                                                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
+                                                        let disk_available = format!(
+                                                            "{} Gb", disk.get("available space").and_then(Value::as_str).unwrap_or("")
+                                                        );
+                                                        let disk_total = format!(
+                                                            "{} Gb", disk.get("total space").and_then(Value::as_str).unwrap_or("")
+                                                        );
+                                                        
+                                                        let mut each_disk = String::new();
+                                                        each_disk += &format!("
+                                                        <tr>
+                                                        <td>{disk_letter}</td>
+                                                        <td>{disk_available}</td>
+                                                        <td>{disk_total}</td>
+                                                        <td></td>
+                                                        </tr>
+                                                        ");
+
+                                                        final_disk = format!
+                                                            ("
+                                                            <table>
+                                                            <tr>
+                                                                <td>Drive Letter</td>
+                                                                <td>Available Space</td>
+                                                                <td>Total Space</td>
+                                                                <td>S/N# (may be encoded)</td>
+                                                            </tr>
+                                                            {each_disk}
+                                                            </table>
+
+                                                        ");
+                                                    }
+                                                }
+                                                
+
                                                 let system_name = &self.system_name;
                                                 let cpu_name = &self.cpu_name;
                                                 let total_ram = &self.total_ram;
@@ -704,38 +739,6 @@ impl MastertechContext {
                                                         <td></td>
                                                     </tr>
                                                 </table>
-                                                <table>
-                                                    <tr>
-                                                        <td>Drive Letter</td>
-                                                        <td>Available Space</td>
-                                                        <td>Total Space</td>
-                                                        <td>S/N# (may be encoded)</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td></td>
-                                                        <td></td>
-                                                        <td></td>
-                                                        <td></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td></td>
-                                                        <td></td>
-                                                        <td></td>
-                                                        <td></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td></td>
-                                                        <td></td>
-                                                        <td></td>
-                                                        <td></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td></td>
-                                                        <td></td>
-                                                        <td></td>
-                                                        <td></td>
-                                                    </tr>
-                                                </table>
                                                 ");
                                             }else{
                                                 specs = "Computer information was not sent with ticket".to_string();
@@ -746,6 +749,7 @@ impl MastertechContext {
                                                 <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
                                                 <li><strong>Technician:</strong>            {technician}</li></ul>
                                                 {specs}
+                                                {final_disk}
                                                 <hr>
                                                 <ul><li><strong>SSD test:</strong>     {ssd_test}</li>
                                                 <li><strong>HDD test:</strong>     {hdd_test}</li>
@@ -960,9 +964,6 @@ impl MastertechContext {
                 |disk_index, mut row| 
             {                                                           // this is stupid..
                     if let Some(disk) = self.disks.get(disk_index){
-                        //println!("disks: {:#?}", disk);
-
-                        //let disk_name = format!("{:#?}", disk.get("name"));
                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
 
                         row.col(|ui| {
@@ -971,11 +972,6 @@ impl MastertechContext {
                         row.col(|ui| {
                             ui.label(disk_letter);  // Show disk letter
                         });
-                        // let disk_used = format!("{}", (disk.get("total space").and_then(Value::as_u64).unwrap_or(0)) - 
-                        // (disk.get("available space").and_then(Value::as_u64).unwrap_or(0)));
-                        // row.col(|ui| {
-                        //     ui.label(disk_used.to_string());  // Show disk space
-                        // });
                         row.col(|ui| {
                             let disk_space = format!(
                                 "{} Gb / {} Gb",

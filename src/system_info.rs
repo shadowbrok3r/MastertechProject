@@ -68,7 +68,7 @@ impl RetrieveSystemInfo{
             tokio::spawn(async move {
                 let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
                 let output = tokio::process::Command::new("cmd")
-                    .args(&["/C"])
+                    .args(&["start", "/B", "cmd","/C"])
                     .args(where_cmd)
                     .output()
                     .await
@@ -136,10 +136,14 @@ impl RetrieveSystemInfo{
 
                 let mut new_gpu_name = "";
                 let clone_gpu_name = gpu_name.clone().unwrap_or("no gpu detected".to_string());
+                println!("{clone_gpu_name}");
                 let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
+                println!("{parse_gpu_name}");
                 for gpu_untrimmed in parse_gpu_name{
                     let parse_newline: Vec<&str> = gpu_untrimmed.split("\n").collect();
+                    println!("{parse_newline}");
                     new_gpu_name = parse_newline.clone()[0].trim();
+                    println!("{new_gpu_name}");
                 }
                 
                 
