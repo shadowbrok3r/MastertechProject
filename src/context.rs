@@ -1,11 +1,12 @@
 use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
 use chrono::format;
+use crossbeam::scope;
 use serde_json::Value;
 use eframe::egui;
 use egui::*;
 use egui_dock::{Node, NodeIndex, Tree, TabViewer};
 use scaffold::PulledKeys;
-use tokio::sync::mpsc::channel;
+use tokio::{sync::mpsc::channel, runtime::Handle};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 
@@ -49,7 +50,7 @@ pub struct MastertechContext {
     pub file_browser: Arc<Mutex<FileBrowser>>,
     pub client: reqwest::Client,
     scaffold_request: SendRequest,
-    sysinfo_request: system_info::RetrieveSystemInfo,
+    pub sysinfo_request: system_info::RetrieveSystemInfo,
 
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
@@ -639,11 +640,9 @@ impl MastertechContext {
                                             let mut specs = String::new();
                                             let mut cps = String::new();
                                             let mut final_disk = String::new();
+                                            let mut each_disk = String::new();
 
                                             if self.send_specs == true{
-                                                let specs_sender = self.sysinfo_request.tx.clone();
-                                                RetrieveSystemInfo::get_system_specs(specs_sender);
-
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
                                                 if cfg!(windows){
@@ -654,14 +653,14 @@ impl MastertechContext {
                                                         for (name, is_installed) in antivirus {
                                                             match is_installed {
                                                                 Some(true) => {
-                                                                    self.output_text = format!("Installed antivirus: {name:?}");
-                                                                    cps = name;
+                                                                    self.output_text += &format!("Installed antivirus: {name}");
+                                                                    cps += "\n";
+                                                                    cps += &format!("{name}");
                                                                 },
                                                                 _ => {},
                                                             }
                                                         }
                                                     }
-                                                    cps.insert_str(0,"\n");
                                                 }
 
                                                 
@@ -675,7 +674,8 @@ impl MastertechContext {
                                                             "{} Gb", disk.get("total space").and_then(Value::as_str).unwrap_or("")
                                                         );
                                                         
-                                                        let mut each_disk = String::new();
+                                                        
+
                                                         each_disk += &format!("
                                                         <tr>
                                                         <td>{disk_letter}</td>
@@ -684,6 +684,8 @@ impl MastertechContext {
                                                         <td></td>
                                                         </tr>
                                                         ");
+
+                                                        println!("{each_disk}");
 
                                                         final_disk = format!
                                                             ("
@@ -698,10 +700,11 @@ impl MastertechContext {
                                                             </table>
 
                                                         ");
+
                                                     }
                                                 }
                                                 
-
+                                                println!("{final_disk}");
                                                 let system_name = &self.system_name;
                                                 let cpu_name = &self.cpu_name;
                                                 let total_ram = &self.total_ram;

@@ -13,6 +13,7 @@ use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
+use system_info::RetrieveSystemInfo;
 
 
 #[tokio::main]
@@ -50,6 +51,11 @@ impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         catppuccin_egui::set_theme(ctx, MOCHA);
 
+        if self.context.specs_first_run == true{
+            let specs_sender = self.context.sysinfo_request.tx.clone();
+            RetrieveSystemInfo::get_system_specs(specs_sender);
+        }
+        self.context.specs_first_run = false;
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
@@ -67,15 +73,15 @@ impl eframe::App for MasterTechApp {
                 self.context.ticket_info.customer_phone_1 = info.customer_phone_1;
                 self.context.ticket_info.customer_phone_2 = info.customer_phone_2;
                 self.context.ticket_info.checkin_notes = info.checkin_notes;
-                self.context.output_text += format!(
-                    "Customer Code: {:?}
-Customer Email: {:?}
-Last Invoice Number: {:?}
-Last Invoice Amount: {:?}
-Department: {:?}
-Jurisdiction: {:?}
-Type of Order: {:?}
-Item Codes: {:?}\n",
+                self.context.output_text += &format!(
+                    "Customer Code: {}
+Customer Email: {}
+Last Invoice Number: {}
+Last Invoice Amount: {}
+Department: {}
+Jurisdiction: {}
+Type of Order: {}
+Item Codes: {}",
                 &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
                 &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
                 self.context.spinner = false;
