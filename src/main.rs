@@ -149,7 +149,7 @@ Item Codes: {:?}\n",
                 });
             })
         });
-        
+
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
             .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
             .show(ctx, |ui| {
