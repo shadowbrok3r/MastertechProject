@@ -136,17 +136,10 @@ impl RetrieveSystemInfo{
 
                 let mut new_gpu_name = "";
                 let clone_gpu_name = gpu_name.clone().unwrap_or("no gpu detected".to_string());
-                println!("{clone_gpu_name}");
                 let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
-                println!("{parse_gpu_name}");
-                for gpu_untrimmed in parse_gpu_name{
-                    let parse_newline: Vec<&str> = gpu_untrimmed.split("\n").collect();
-                    println!("{parse_newline}");
-                    new_gpu_name = parse_newline.clone()[0].trim();
-                    println!("{new_gpu_name}");
+                if parse_gpu_name[0].is_empty(){
+                    new_gpu_name = parse_gpu_name.clone()[1].trim();
                 }
-                
-                
 
                 let system_info = SystemInformation{
                     cpu_name: cpu_brand,
@@ -155,8 +148,8 @@ impl RetrieveSystemInfo{
                     disks: data,
                     gpu: Some(new_gpu_name.to_string())
                 };
+
                 let system_info_json = serde_json::to_string(&system_info).unwrap();
-                println!("system info json: {}", system_info_json);
                 match tx.send(system_info_json) {
                     Ok(_) => {
                         drop(tx);
