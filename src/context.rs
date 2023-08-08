@@ -1,6 +1,6 @@
 use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
 use chrono::format;
-use crossbeam::scope;
+use crossbeam::{scope, channel::TryRecvError};
 use serde_json::Value;
 use eframe::egui;
 use egui::*;
@@ -620,6 +620,15 @@ impl MastertechContext {
                                         if !cust.is_empty() && !so_num.is_empty()
                                         {
                                             self.spinner = true;
+
+                                            if self.spinner == true{
+                                                ui.add(
+                                                    Spinner::new()
+                                                    .color(Color32::LIGHT_RED)
+                                                    .size(20.0)
+                                                );
+                                            }
+
                                             let salesman = &format!("{:?}", &self.salesman_cbox);
                                             let checkin_rep = &self.ticket_info.user_id;
                                             let technician = &format!("{:?}", &self.techs_cbox);
@@ -636,6 +645,7 @@ impl MastertechContext {
                                             if let Some(file) = &self.opened_file{
                                                 attached_file = Some(file.to_path_buf());
                                             }
+                                            let mut new_out_text = String::new();
 
                                             let mut specs = String::new();
                                             let mut cps = String::new();
@@ -645,23 +655,25 @@ impl MastertechContext {
                                             if self.send_specs == true{
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
+
                                                 if cfg!(windows){
                                                     let installed_antivirus = RetrieveSystemInfo::get_antivirus()
-                                                    .map_err(|e| self.output_text = format!("Error checking antivirus: {e}\n"));
-                                                    
-                                                    if let Ok(antivirus) = installed_antivirus {
-                                                        for (name, is_installed) in antivirus {
-                                                            match is_installed {
-                                                                Some(true) => {
-                                                                    self.output_text += &format!("Installed antivirus: {name}");
-                                                                    cps += "\n";
-                                                                    cps += &format!("{name}");
-                                                                },
-                                                                _ => {},
-                                                            }
+                                                    .map_err(|e| 
+                                                        new_out_text = format!("Error checking antivirus: {e}\n")
+                                                    ).unwrap();
+
+
+                                                    for (name, is_installed) in installed_antivirus {
+                                                        match is_installed {
+                                                            Some(true) => {
+                                                                self.output_text += &format!("Installed antivirus: {name}");
+                                                                cps += "\n";
+                                                                cps += &format!("{name}");
+                                                            },
+                                                            _ => {},
                                                         }
                                                     }
-                                                }
+                                                } // im going to just have to move this into the eframe::upate loop
 
                                                 
                                                 for index in 0..self.disk_num{
@@ -684,8 +696,6 @@ impl MastertechContext {
                                                         <td></td>
                                                         </tr>
                                                         ");
-
-                                                        println!("{each_disk}");
 
                                                         final_disk = format!
                                                             ("
@@ -715,7 +725,7 @@ impl MastertechContext {
                                                 <table>
                                                     <tr>
                                                         <td></td>
-                                                        <td data-cell-widths=\"500\" width=\"500\">Details</td>
+                                                        <td data-cell-widths=\"480\" width=\"480\">Details</td>
                                                     </tr>
                                                     <tr>
                                                         <td>OS</td>
@@ -727,7 +737,7 @@ impl MastertechContext {
                                                     </tr>
                                                     <tr>
                                                         <td>RAM</td>
-                                                        <td>{total_ram}</td>
+                                                        <td>{total_ram} Gb</td>
                                                     </tr>
                                                     <tr>
                                                         <td>GPU</td>
@@ -865,9 +875,8 @@ impl MastertechContext {
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
         if self.specs_first_run == true{
-            let specs_sender = self.sysinfo_request.tx.clone();
             self.spinner = true;
-            
+            let specs_sender = self.sysinfo_request.tx.clone();
             RetrieveSystemInfo::get_system_specs(specs_sender);
         }
         self.specs_first_run = false;
@@ -990,7 +999,7 @@ impl MastertechContext {
                 });
             });
         });
-        self.spinner = false;
+        //self.spinner = false;
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
