@@ -1,6 +1,5 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
-use std::{collections::HashMap, sync::Arc};
-
+use std::{collections::HashMap, sync::Arc, path::Path};
 use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
@@ -108,7 +107,7 @@ impl RetrieveSystemInfo{
 
 
             let mut data = DiskData::new();
-
+            
             for disk in disks_clone{
                 if !disk.is_removable(){
                     data.add_disk(serde_json::json!({
@@ -119,7 +118,7 @@ impl RetrieveSystemInfo{
                     }));
                 }   
             }
-
+            
             #[cfg(target_os = "windows")]
             {
                 let gpu_name = 
