@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "MasterTech"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "asana",
  "bytes",
