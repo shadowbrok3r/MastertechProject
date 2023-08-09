@@ -1,26 +1,36 @@
-use self_update::{self, cargo_crate_version};
+use chrono::format::format;
+use self_update::{
+    self, 
+    cargo_crate_version,
+    backends::github::{
+        ReleaseList,
+        Update,
+    }
+};
 
-pub fn run() -> Result<(), Box<dyn ::std::error::Error>> {
-    let releases = self_update::backends::github::ReleaseList::configure()
+const TOKEN: &str = "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";
+
+pub fn run() -> Result<(String, String), Box<dyn ::std::error::Error>> {
+    let releases = ReleaseList::configure()
         .repo_owner("shadowbrok3r")
         .repo_name("Mastertech4.0")
+        .auth_token(TOKEN)
         .build()?
         .fetch()?;
-    println!("found releases:");
-    println!("{:#?}\n", releases);
+    println!("{releases:#?}\n");
 
-    let status = self_update::backends::github::Update::configure()
+    let status = Update::configure()
         .repo_owner("shadowbrok3r")
         .repo_name("Mastertech4.0")
         .bin_name("github")
         .show_download_progress(true)
-        //.target_version_tag("v9.9.10")
-        //.show_output(false)
-        //.no_confirm(true)
-        .auth_token("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")
+        .auth_token(TOKEN)
         .current_version(cargo_crate_version!())
         .build()?
         .update()?;
     println!("Update status: `{}`!", status.version());
-    Ok(())
+
+    let update_status = format!("{}", status.version());
+    let release_versions = format!("{releases:#?}");
+    Ok((release_versions, update_status))
 }

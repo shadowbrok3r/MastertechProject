@@ -295,12 +295,23 @@ impl MastertechContext {
             ui.label("hello :)");
         });
         if ui.button("update").clicked(){
-            tokio::spawn(async move{
+            let (tx, rx) = crossbeam::channel::bounded(1);
+
+            tokio::task::spawn_blocking(move || {
                 match run(){
-                    Ok(_) => println!("ok"),
+                    Ok(response) => {
+                        match tx.send((response.0, response.1)){
+                            Ok(_) => println!("send ok"),
+                            Err(e) => println!("{e}"),
+                        }
+                    },
                     Err(e) => println!("err: {e}"),
                 }
             });
+            if let Ok(res) = rx.recv(){
+                self.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
+            }
+            
 
         }
     }
@@ -655,7 +666,7 @@ impl MastertechContext {
                                             if let Some(file) = &self.opened_file{
                                                 attached_file = Some(file.to_path_buf());
                                             }
-                                            let mut new_out_text = String::new();
+                                            //let mut new_out_text = String::new();
 
                                             let mut specs = String::new();
                                             let mut cps = String::new();
@@ -666,7 +677,8 @@ impl MastertechContext {
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
 
-                                                if cfg!(windows){
+                                                #[cfg(target_os="windows")]
+                                                {
                                                     let installed_antivirus = RetrieveSystemInfo::get_antivirus()
                                                     .map_err(|e| 
                                                         new_out_text = format!("Error checking antivirus: {e}\n")
