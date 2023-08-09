@@ -32,7 +32,7 @@ async fn main() -> eframe::Result<()> {
 }
 pub(crate) fn load_icon() -> eframe::IconData {
 	let (icon_rgba, icon_width, icon_height) = {
-		let icon = include_bytes!("assets/cpu.png");
+		let icon = include_bytes!("assets/mastertechlogo.png");
 		let image = image::load_from_memory(icon)
 			.expect("Failed to open icon path")
 			.into_rgba8();
@@ -82,7 +82,7 @@ Last Invoice Amount: {}
 Department: {}
 Jurisdiction: {}
 Type of Order: {}
-Item Codes: {}",
+Item Codes: \n{}",
                 &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
                 &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
                 self.context.spinner = false;
