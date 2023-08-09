@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
+use std::{sync::{Arc, Mutex}, collections::HashSet, path::{PathBuf, Path}};
 use chrono::format;
 use crossbeam::{scope, channel::TryRecvError};
 use serde_json::Value;
@@ -9,6 +9,7 @@ use scaffold::PulledKeys;
 use tokio::{sync::mpsc::channel, runtime::Handle};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
+use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 
 use crate::{
     scaffold::{self, TicketInformation}, 
@@ -888,6 +889,7 @@ impl MastertechContext {
         }
 
         let gpu = &self.gpu.clone().unwrap_or("no GPU found".to_string());
+
         //let disks = self.disks.disks.clone();
         ui.indent("indented_sysinfo_table", |ui|{
             let table = TableBuilder::new(ui)
@@ -977,6 +979,8 @@ impl MastertechContext {
             {                                                           // this is stupid..
                     if let Some(disk) = self.disks.get(disk_index){
                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
+
+                        //let disk_smart = SmartDisk::new(Path::new(disk.get("letter").unwrap()));
 
                         row.col(|ui| {
                             ui.label(disk_index.to_string());  // Show disk index
