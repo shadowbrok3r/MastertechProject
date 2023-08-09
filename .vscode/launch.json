@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'mastertech_rust_egui'",
+            "name": "Debug executable 'MasterTech'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=mastertech_rust_egui",
-                    "--package=mastertech_rust_egui"
+                    "--bin=MasterTech",
+                    "--package=MasterTech"
                 ],
                 "filter": {
-                    "name": "mastertech_rust_egui",
+                    "name": "MasterTech",
                     "kind": "bin"
                 }
             },
@@ -26,16 +26,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'mastertech_rust_egui'",
+            "name": "Debug unit tests in executable 'MasterTech'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=mastertech_rust_egui",
-                    "--package=mastertech_rust_egui"
+                    "--bin=MasterTech",
+                    "--package=MasterTech"
                 ],
                 "filter": {
-                    "name": "mastertech_rust_egui",
+                    "name": "MasterTech",
                     "kind": "bin"
                 }
             },

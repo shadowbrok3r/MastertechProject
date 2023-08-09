@@ -1,7 +1,6 @@
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [package]
-name = "mastertech_rust_egui"
-version = "0.1.0"
+name = "MasterTech"
+version = "4.0.1"
 edition = "2021"
 
 [build-dependencies]
@@ -29,7 +28,8 @@ asana = "0.1.1"
 regex = "1.9.1"
 image = "0.24.6"
 egui_file = "0.10.0"
-libatasmart = "0.3.1"
+#libatasmart = "0.3.1"
+self_update = "0.37.0"
 #winres = "0.1.12"
 
 [package.metadata.winres]

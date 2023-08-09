@@ -6,6 +6,7 @@ mod request;
 mod file_browser;
 mod scaffold;
 mod context;
+pub mod self_updater;
 
 use context::MasterTechApp;
 
