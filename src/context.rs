@@ -9,7 +9,8 @@ use scaffold::PulledKeys;
 use tokio::{sync::mpsc::channel, runtime::Handle};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
-use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use crate::self_updater::run;
+// use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 
 use crate::{
     scaffold::{self, TicketInformation}, 
@@ -293,6 +294,15 @@ impl MastertechContext {
         ui.menu_button("Sub menu", |ui| {
             ui.label("hello :)");
         });
+        if ui.button("update").clicked(){
+            tokio::spawn(async move{
+                match run(){
+                    Ok(_) => println!("ok"),
+                    Err(e) => println!("err: {e}"),
+                }
+            });
+
+        }
     }
 
     fn tur_sheet(&mut self, ui: &mut Ui) {
@@ -348,7 +358,6 @@ impl MastertechContext {
                                         .clicked()
                                         { 
                                             self.output_text.clear();
-                                            
                                             let service_num = self.so_number.clone();
                                             if !service_num.is_empty(){
                                                 self.output_text = "Its Everest, this may take a 'moment'".to_string();

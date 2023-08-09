@@ -35,6 +35,7 @@ impl DiskData {
         self.disks.push(disk);
     }
 }
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 impl RetrieveSystemInfo{
     pub fn get_antivirus() -> io::Result<Vec<(String, Option<bool>)>> {
@@ -66,9 +67,11 @@ impl RetrieveSystemInfo{
             let antivirus_mapping = Arc::clone(&antivirus_mapping);
             tokio::spawn(async move {
                 let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
+                
                 let output = tokio::process::Command::new("cmd")
-                    .args(&["start", "/B", "cmd","/C"])
+                    .args(&["/C"])
                     .args(where_cmd)
+                    .creation_flags(CREATE_NO_WINDOW)
                     .output()
                     .await
                     .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to execute command: {}", e)))?;
