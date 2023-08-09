@@ -666,7 +666,7 @@ impl MastertechContext {
                                                     for (name, is_installed) in installed_antivirus {
                                                         match is_installed {
                                                             Some(true) => {
-                                                                self.output_text += &format!("Installed antivirus: {name}");
+                                                                self.output_text += &format!("{name} detected");
                                                                 cps += "\n";
                                                                 cps += &format!("{name}");
                                                             },
