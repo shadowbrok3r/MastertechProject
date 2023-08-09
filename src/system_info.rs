@@ -38,6 +38,7 @@ impl DiskData {
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 impl RetrieveSystemInfo{
+    #[cfg(target_os="windows")]
     pub fn get_antivirus() -> io::Result<Vec<(String, Option<bool>)>> {
         let (sender, receiver) = channel::unbounded();
         let av_to_search = vec![
@@ -63,11 +64,14 @@ impl RetrieveSystemInfo{
             ].iter().cloned().collect::<HashMap<&str, &str>>());
 
         for antivirus in av_to_search.clone().into_iter() {
+
             let sender = sender.clone();
             let antivirus_mapping = Arc::clone(&antivirus_mapping);
+
             tokio::spawn(async move {
+
                 let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
-                
+
                 let output = tokio::process::Command::new("cmd")
                     .args(&["/C"])
                     .args(where_cmd)

@@ -12,7 +12,7 @@ eframe = "0.22.0"
 egui = "0.22.0"
 egui_dock = "0.6.3"
 egui_extras = {version = "0.22.0", features = ["datepicker"]}
-reqwest = {version = "0.11.18", features = ["json", "stream"] }
+reqwest = {version = "0.11.18", features = ["json", "stream", "blocking"] }
 sysinfo = "0.29.2"
 tokio = { version = "1.29.1", features = ["full"] }
 serde = { version = "1.0.164", features = ["derive"] }
@@ -30,6 +30,7 @@ image = "0.24.6"
 egui_file = "0.10.0"
 #libatasmart = "0.3.1"
 self_update = "0.37.0"
+libatasmart-sys = "0.2.0"
 #winres = "0.1.12"
 
 [package.metadata.winres]

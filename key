@@ -1,4 +1,0 @@
-curl -L \                                                                                                                                 [16:06:16]
--H 'Authorization: token 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' \
--H "Accept: application/octet-stream" \
-https://api.github.com/repos/shadowbrok3r/Mastertech4.0/releases/assets/120676783 --output mtexh.exe
