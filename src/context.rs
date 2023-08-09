@@ -686,15 +686,15 @@ impl MastertechContext {
                 
                                                 item_codes: "".to_string(),
                                             */
-                                            let mut cust_code = &self.ticket_info.cust_code;
-                                            let mut doc_alias = &self.ticket_info.doc_alias;
-                                            let mut department = &self.ticket_info.department;
-                                            let mut juris = &self.ticket_info.jurisdiction;
-                                            let mut inv_amt = &self.ticket_info.invoice_amnt;
-                                            let mut cust_email = &self.ticket_info.customer_email;
-                                            let mut last_inv_num = &self.ticket_info.last_invoice_number;
-                                            let mut last_inv_amt = &self.ticket_info.last_invoice_amount;
-                                            let mut total_inv_num = &self.ticket_info.total_invoice_count;
+                                            let cust_code = &self.ticket_info.cust_code;
+                                            let doc_alias = &self.ticket_info.doc_alias;
+                                            let department = &self.ticket_info.department;
+                                            let juris = &self.ticket_info.jurisdiction;
+                                            let inv_amt = &self.ticket_info.invoice_amnt;
+                                            let cust_email = &self.ticket_info.customer_email;
+                                            let last_inv_num = &self.ticket_info.last_invoice_number;
+                                            let last_inv_amt = &self.ticket_info.last_invoice_amount;
+                                            let total_inv_num = &self.ticket_info.total_invoice_count;
 
                                             let extra_customer_info = format!
                                             ("
