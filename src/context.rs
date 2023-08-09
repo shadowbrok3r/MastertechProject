@@ -148,7 +148,6 @@ impl TabViewer for MastertechContext {
         //self.open_tabs.add(tab)
     }
 }
-
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: Tree<String>,
@@ -290,9 +289,9 @@ impl Default for MasterTechApp {
 
 impl MastertechContext {
     fn simple_demo_menu(&mut self, ui: &mut Ui) {
-        ui.label("Egui widget example");
+        ui.label("Secret menu... -.-");
         ui.menu_button("Sub menu", |ui| {
-            ui.label("hello :)");
+            ui.label("(.)(.)");
         });
         if ui.button("update").clicked(){
             let (tx, rx) = crossbeam::channel::bounded(1);
@@ -661,18 +660,57 @@ impl MastertechContext {
                                             let task_name = (cust, so_num);
                                             let assignees = (salesman, technician);
                                             let date = format!("{}", self.date.unwrap());
-
                                             let mut attached_file: Option<PathBuf> = None;
                                             if let Some(file) = &self.opened_file{
                                                 attached_file = Some(file.to_path_buf());
                                             }
-                                            //let mut new_out_text = String::new();
+                                            let mut new_out_text = String::new();
 
                                             let mut specs = String::new();
                                             let mut cps = String::new();
                                             let mut final_disk = String::new();
                                             let mut each_disk = String::new();
+                                                                                        /*
+                                                cust_code: "".to_string(),
+                                                user_id: "".to_string(),
+                                                terms: "".to_string(),
+                                                doc_alias: "".to_string(),
+                                                department: "".to_string(),
+                                                jurisdiction: "".to_string(),
+                                                invoice_amnt: "".to_string(),
+                
+                                                customer_email: "".to_string(),
+                                                last_invoice_number: "".to_string(),
+                                                last_invoice_amount: "".to_string(),
+                                                total_invoice_count: "".to_string(),
+                
+                                                item_codes: "".to_string(),
+                                            */
+                                            let mut cust_code = &self.ticket_info.cust_code;
+                                            let mut doc_alias = &self.ticket_info.doc_alias;
+                                            let mut department = &self.ticket_info.department;
+                                            let mut juris = &self.ticket_info.jurisdiction;
+                                            let mut inv_amt = &self.ticket_info.invoice_amnt;
+                                            let mut cust_email = &self.ticket_info.customer_email;
+                                            let mut last_inv_num = &self.ticket_info.last_invoice_number;
+                                            let mut last_inv_amt = &self.ticket_info.last_invoice_amount;
+                                            let mut total_inv_num = &self.ticket_info.total_invoice_count;
 
+                                            let extra_customer_info = format!
+                                            ("
+                                            <ul>
+                                                <li>Customer Code: {cust_code}</li>
+                                                <li>Type of order: {doc_alias}</li>
+                                                <li>Department: : {department}</li>
+                                                <li>Jurisdiction: {juris}</li>
+                                                <li>Ticket Total: {inv_amt}</li>
+                                                <li>Customer Email: {cust_email}</li>
+                                                <li>Last Invoice#: {last_inv_num}</li>
+                                                <li>Last Invoice Amount: {last_inv_amt}</li>
+                                                <li>Total # of invoices: {total_inv_num}</li>
+                                            </ul>
+
+                                            ");
                                             if self.send_specs == true{
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
@@ -696,8 +734,8 @@ impl MastertechContext {
                                                         }
                                                     }
                                                 } // im going to just have to move this into the eframe::upate loop
+                                                self.output_text = new_out_text;
 
-                                                
                                                 for index in 0..self.disk_num{
                                                     if let Some(disk) = self.disks.get(index){
                                                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
@@ -735,14 +773,12 @@ impl MastertechContext {
 
                                                     }
                                                 }
-                                                
-                                                println!("{final_disk}");
+
                                                 let system_name = &self.system_name;
                                                 let cpu_name = &self.cpu_name;
                                                 let total_ram = &self.total_ram;
                                                 let gpu = &self.gpu.clone().unwrap_or("no gpu detected".to_string());
                                                 specs = format!("
-                                                <hr>
                                                 <strong><h2><code>           Computer Info            </code></h2></strong>
                                                 <table>
                                                     <tr>
@@ -783,12 +819,13 @@ impl MastertechContext {
                                                 <li><strong>Salesman:</strong>              {salesman}</li>
                                                 <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
                                                 <li><strong>Technician:</strong>            {technician}</li></ul>
+                                                {extra_customer_info}
                                                 {specs}
                                                 {final_disk}
-                                                <hr>
                                                 <ul><li><strong>SSD test:</strong>     {ssd_test}</li>
                                                 <li><strong>HDD test:</strong>     {hdd_test}</li>
                                                 <li><strong>RAM test:</strong>     {ram_test}</li></ul>
+                                                <hr>
                                                 <h2><strong><code>           Notes           </code></strong></h2><ul>
                                                 <li><strong>        Checkin Notes:      </strong>     {checkin_notes}</li>\n
                                                 <li><strong>        Recommendations:        </strong>     {recommendations}</li></ul></body>",
@@ -796,22 +833,7 @@ impl MastertechContext {
                                             // I think i should probably just pass send_ticket_request the
                                             // whole ticket_info struct
                 
-                                            /*
-                                                cust_code: "".to_string(),
-                                                user_id: "".to_string(),
-                                                terms: "".to_string(),
-                                                doc_alias: "".to_string(),
-                                                department: "".to_string(),
-                                                jurisdiction: "".to_string(),
-                                                invoice_amnt: "".to_string(),
-                
-                                                customer_email: "".to_string(),
-                                                last_invoice_number: "".to_string(),
-                                                last_invoice_amount: "".to_string(),
-                                                total_invoice_count: "".to_string(),
-                
-                                                item_codes: "".to_string(),
-                                            */
+
                 
                                             SendRequest::send_ticket_request(
                                                 self.scaffold_request.tx.clone(), 

@@ -254,6 +254,7 @@ impl SendRequest{
                 
             }
         });
+        
     }
     
     pub fn get_cps(so_number: String, tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
@@ -330,12 +331,12 @@ impl SendRequest{
         let mut assigned_salesman = "1202792432658520".to_string(); // Jake
         let mut assigned_tech = "1199992640930465".to_string(); // Logan
 
-        if assignees.0 == "JDH2"{ assigned_salesman = "1202792432658520".to_string(); }
-        else if assignees.0 == "DMK"{ assigned_salesman = "1202791016369879".to_string() }
+        if assignees.0 == "Jake"{ assigned_salesman = "1202792432658520".to_string(); }
+        else if assignees.0 == "Danny"{ assigned_salesman = "1202791016369879".to_string() }
 
-        if assignees.1 == "LL" { assigned_tech = "1199992640930465".to_string(); }
-        else if assignees.1 == "BLK" { assigned_tech = "1202792432421640".to_string(); }
-        else if assignees.1 == "TBN" { assigned_tech = "1202792432551073".to_string(); }
+        if assignees.1 == "Logan" { assigned_tech = "1199992640930465".to_string(); }
+        else if assignees.1 == "Bread" { assigned_tech = "1202792432421640".to_string(); }
+        else if assignees.1 == "Taco" { assigned_tech = "1202792432551073".to_string(); }
 
         let asana_response = AsanaResponse{
             gid: Some("".to_string()),
@@ -434,10 +435,6 @@ impl SendRequest{
                                                 println!("{resp:?}");
                                                 let asana_response: AsanaResponse = resp.json().await.unwrap(); 
                                                 println!("{asana_response:?}");
-                                                // let asana_response = {
-                                                //     response_text.
-                                                // }
-                                                //let resp = AsanaResponse{ gid: x.gid, status: x.status };
 
                                                 match sender.send(serde_json::to_string(&asana_response).unwrap()){
                                                     Ok(_) => println!("sent message ok"),
