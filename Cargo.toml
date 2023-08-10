@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.0.4"
+version = "4.0.5"
 edition = "2021"
 description = "Mastertech"
 build = "build.rs"
@@ -12,6 +12,7 @@ embed-resource = "2.2.0"
 [package.metadata]
 icon = ["src/assets/mastertechlogo.png"]
 resources = ["src/assets/**/*png"]
+
 
 [dependencies]
 chrono = "0.4.26"
@@ -54,7 +55,7 @@ LegalCopyright = "Copyright © 2023"
 
 
 [profile.dev]
-opt-level = 1
+opt-level = 2
 
 [profile.dev.package."*"]
 opt-level = 3

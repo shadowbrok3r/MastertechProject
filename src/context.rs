@@ -684,14 +684,14 @@ impl MastertechContext {
                                             ("
                                             <ul>
                                                 <li>Customer Code: {cust_code}</li>
+                                                <li>Customer Email: {cust_email}</li>
                                                 <li>Type of order: {doc_alias}</li>
-                                                <li>Department: : {department}</li>
+                                                <li>Department: {department}</li>
                                                 <li>Jurisdiction: {juris}</li>
                                                 <li>Ticket Total: ${inv_amt}</li>
-                                                <li>Customer Email: {cust_email}</li>
                                                 <li>Last Invoice#: {last_inv_num}</li>
                                                 <li>Last Invoice Amount: {last_inv_amt}</li>
-                                                <li>Total # of invoices: {total_inv_num}</li>
+                                                <li>Total# of invoices: {total_inv_num}</li>
                                             </ul>
                                             ");
                                             println!("{extra_customer_info}");
