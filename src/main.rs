@@ -55,7 +55,31 @@ impl eframe::App for MasterTechApp {
         if self.context.specs_first_run == true{
             let specs_sender = self.context.sysinfo_request.tx.clone();
             RetrieveSystemInfo::get_system_specs(specs_sender);
+            
+            #[cfg(target_os="windows")]
+            {
+                let mut cps = self.context.antivirus_installed.clone();
+                let mut new_out_text = String::new();
+
+                let installed_antivirus = RetrieveSystemInfo::get_antivirus()
+                .map_err(|e| 
+                    new_out_text = format!("Error checking antivirus: {e}\n")
+                ).unwrap();
+
+
+                for (name, is_installed) in installed_antivirus {
+                    match is_installed {
+                        Some(true) => {
+                            new_out_text += &format!("{name} detected");
+                            cps += "\n";
+                            cps += &format!("{name}");
+                        },
+                        _ => {},
+                    }
+                }
+            }
         }
+
         self.context.specs_first_run = false;
         let receiver = self.context.rx.as_ref().unwrap();
         
@@ -74,17 +98,23 @@ impl eframe::App for MasterTechApp {
                 self.context.ticket_info.customer_phone_1 = info.customer_phone_1;
                 self.context.ticket_info.customer_phone_2 = info.customer_phone_2;
                 self.context.ticket_info.checkin_notes = info.checkin_notes;
-                self.context.output_text += &format!(
-                    "Customer Code: {}
-Customer Email: {}
-Last Invoice Number: {}
-Last Invoice Amount: {}
-Department: {}
-Jurisdiction: {}
-Type of Order: {}
-Item Codes: \n{}",
-                &info.cust_code, &info.customer_email, &info.last_invoice_number, &info.last_invoice_amount,
-                &info.department, &info.jurisdiction, &info.doc_alias, &info.item_codes).as_str();
+
+                self.context.ticket_info.cust_code = info.cust_code;
+                self.context.ticket_info.doc_alias = info.doc_alias;
+                self.context.ticket_info.department = info.department;
+                self.context.ticket_info.jurisdiction = info.jurisdiction;
+                self.context.ticket_info.invoice_amnt = info.invoice_amnt;
+                self.context.ticket_info.customer_email = info.customer_email;
+                self.context.ticket_info.last_invoice_number = info.last_invoice_number;
+                self.context.ticket_info.last_invoice_amount = info.last_invoice_amount;
+                self.context.ticket_info.total_invoice_count = info.total_invoice_count;
+                self.context.ticket_info.item_codes = info.item_codes;
+
+                let code = self.context.ticket_info.cust_code.clone();
+                let email = self.context.ticket_info.customer_email.clone();
+                let codes = self.context.ticket_info.item_codes.clone();
+
+                self.context.output_text += &format!("Customer Code: {code}\nCustomer Email: {email}\n\nItem on order:\n{codes}");
                 self.context.spinner = false;
 
             }             

@@ -227,7 +227,6 @@ impl SendRequest{
                         //last_checkin_date: customer.LI_AMT.clone(),
                     };
                     
-
                     let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();
                     match tx.send(ticket_info_json) {
                         Ok(_) => {
