@@ -301,7 +301,7 @@ impl MastertechContext {
                 match run(){
                     Ok(response) => {
                         match tx.send((response.0, response.1)){
-                            Ok(_) => println!("send ok"),
+                            Ok(_) => drop(tx),
                             Err(e) => println!("{e}"),
                         }
                     },

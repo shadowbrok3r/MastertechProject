@@ -195,7 +195,7 @@ impl RetrieveSystemInfo{
                     gpu: Some(gpu_name)
                 };
                 let system_info_json = serde_json::to_string(&system_info).unwrap();
-                println!("system info json: {}", system_info_json);
+                //println!("system info json: {}", system_info_json);
                 match tx.send(system_info_json) {
                     Ok(_) => {
                         drop(tx);

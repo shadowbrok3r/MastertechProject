@@ -7,6 +7,7 @@ mod file_browser;
 mod scaffold;
 mod context;
 pub mod self_updater;
+use crate::self_updater::run;
 
 use context::MasterTechApp;
 
@@ -14,6 +15,7 @@ use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
+use self_update::cargo_crate_version;
 use system_info::RetrieveSystemInfo;
 
 
@@ -25,15 +27,17 @@ async fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "Mastertech",
+        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
         options,
         Box::new(|_cc| Box::<MasterTechApp>::default()),
     )
 }
+
 pub(crate) fn load_icon() -> eframe::IconData {
 	let (icon_rgba, icon_width, icon_height) = {
 		let icon = include_bytes!("assets/cpu.png");
-		let image = image::load_from_memory(icon)
+		let image
+         = image::load_from_memory(icon)
 			.expect("Failed to open icon path")
 			.into_rgba8();
 		let (width, height) = image.dimensions();
@@ -53,6 +57,22 @@ impl eframe::App for MasterTechApp {
         catppuccin_egui::set_theme(ctx, MOCHA);
 
         if self.context.specs_first_run == true{
+            let (tx, rx) = crossbeam::channel::bounded(1);
+
+            tokio::task::spawn_blocking(move || {
+                match run(){
+                    Ok(response) => {
+                        match tx.send((response.0, response.1)){
+                            Ok(_) => drop(tx),
+                            Err(e) => println!("{e}"),
+                        }
+                    },
+                    Err(e) => println!("err: {e}"),
+                }
+            });
+            if let Ok(res) = rx.recv(){
+                self.context.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
+            }
             let specs_sender = self.context.sysinfo_request.tx.clone();
             RetrieveSystemInfo::get_system_specs(specs_sender);
         }
@@ -60,9 +80,9 @@ impl eframe::App for MasterTechApp {
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            println!("reciever message: {message:?}");
+            // println!("reciever message: {message:?}");
             if let Ok(info) = serde_json::from_str::<scaffold::TicketInformation>(&message) {
-                println!("ticket information: {info:#?}");
+                // println!("ticket information: {info:#?}");
                 self.context.output_text.clear();
                 let checkin_rep = info.user_id;
                 self.context.ticket_info.user_id = checkin_rep.clone();
