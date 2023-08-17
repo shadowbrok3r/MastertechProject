@@ -215,7 +215,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                                 .cursor_at_end(true),
                         ).on_hover_text(&self.path_edit);
                        
-                        if response.lost_focus() && response.ctx.input(|state| state.key_pressed(Key::Enter)) {
+                        if response.lost_focus() {
                             let path = PathBuf::from(&self.path_edit);
 
                             match command_tx.try_send(Some(Command::OpenPath(path))){
@@ -228,10 +228,21 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             };
 
                         }
+                        /* 
+                        else if response.lost_focus() && response.ctx.input(|state| state.key_pressed(Key::Enter)){
+                            let path = PathBuf::from(&self.path_edit);
+
+                            match command_tx.try_send(Some(Command::OpenPath(path))){
+                                Ok(_) => {
+                                    println!("sent task successfully");
+                                },
+                                Err(e) => {
+                                    print!("{e}");
+                                }
+                            };
+                        } 
+                        */
                     });
-
-
-
                 });
             });
             
@@ -250,10 +261,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
             // let (progress_tx, progress_rx) = channel::unbounded::<u64>();
             // let src = PathBuf::new();
             // let source = src.join("D:\\Users\\Owner\\Desktop\\B.S.-10.5-Sized_B.S.-10.5.ctb");
-
             // let dest = PathBuf::new();
             // let destination = dest.join("D:\\Users\\Owner\\Desktop\\filestuff");
-
             // match command_tx.try_send(Some(
             //     Command::Copy(
             //         source, 
@@ -326,9 +335,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     );
 
                     if result.lost_focus()
-                    && result
-                        .ctx
-                        .input(|state| state.key_pressed(Key::Enter))
+                    //&& result.ctx.input(|state| state.key_pressed(Key::Enter))
                     && !self.filename_edit.is_empty(){
                         let path = self.path.join(&self.filename_edit);
 
@@ -404,7 +411,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         Refreshes current directory upon 
         changing directory, or double clicking
         a folder
-    */
+    */ 
     fn refresh_contents(&mut self) {
         let new_contents = read_folder(
             &self.path,
@@ -429,7 +436,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
         self.selected_item = Some(file.as_path().to_path_buf());
         self.selected_items.borrow_mut().insert(file);
     }
-
 
     fn deselect(&mut self, file: PathBuf) {
         self.selected_items.borrow_mut().remove(&file);
@@ -597,15 +603,17 @@ fn display_path(
 
     if path.is_dir() {
         let id = ui.make_persistent_id(path.as_path().to_string_lossy());
+        let command_sender = command_tx.clone();
+        let sender = command_tx.clone();
+        let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
 
-        
         let contents = match dir_contents.borrow().get(path) {
             Some(contents) => contents.clone(),
             None => {
                 // Contents are not cached, fetch in the background
                 let command = Command::ReadDirectory(path.clone());
-                match command_tx.try_send(Some(command)){
-                    Ok(_) => println!("sent successfully"),
+                match command_sender.try_send(Some(command)){
+                    Ok(_) => drop(command_sender),
                     Err(e) => println!("error: {e:?}")
                 }
                 vec![] // Return an empty Vec for now
@@ -614,6 +622,7 @@ fn display_path(
 
         CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
             .show_header(ui, |ui| {
+                
                 let is_selected = selected_items.borrow().contains(path);
                 let selectable_label = ui.selectable_label(is_selected, &label);
 
@@ -621,17 +630,23 @@ fn display_path(
                     if selected_items.borrow().contains(path) {
                         // If the item was already selected, deselect it
                         selected_items.borrow_mut().remove(path);
-                    } else {
-                        // If the item was not selected, select it
+                    } 
+                    if modifiers.ctrl {
+                        // If the control key is down and the item was not selected, select it
+                        selected_items.borrow_mut().insert(path.clone());
+                        //println!("{:?}", selected_items.borrow());
+                    } 
+                    else {
+                        // If the control key is not down, clear previous selection and select the current item
+                        selected_items.borrow_mut().clear();
                         selected_items.borrow_mut().insert(path.clone());
                     }
                 }
 
-                if selectable_label.double_clicked()
-                    || selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
-                {
-                    match command_tx.try_send(Some(Command::OpenPath(path.clone()))) {
-                        Ok(_) => println!("Success"),
+                if selectable_label.double_clicked() 
+                { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
+                    match sender.try_send(Some(Command::OpenPath(path.clone()))) {
+                        Ok(_) => drop(sender),
                         Err(e) => println!("error: {e:?}"),
                     }
                 }
@@ -651,16 +666,30 @@ fn display_path(
     } else {
         let is_selected = selected_items.borrow().contains(path);
         let selectable_label = ui.selectable_label(is_selected, &label);
+        let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+        
         if selectable_label.clicked() {
             match command_tx.try_send(Some(Command::Select(path.clone()))) {
-                Ok(_) => println!("Success"),
+                Ok(_) => drop(command_tx),
                 Err(e) => println!("error: {e:?}"),
+            }
+            if selected_items.borrow().contains(path) {
+                // If the item was already selected, deselect it
+                selected_items.borrow_mut().remove(path);
+            } 
+            if modifiers.ctrl {
+                // If the control key is down and the item was not selected, select it
+                selected_items.borrow_mut().insert(path.clone());
+                //println!("{:?}", selected_items.borrow());
+            } 
+            else {
+                // If the control key is not down, clear previous selection and select the current item
+                selected_items.borrow_mut().clear();
+                selected_items.borrow_mut().insert(path.clone());
             }
         }
     }
 }
-
-
 
 // TODO
 /* NOW i will need to find a way to keep track of the list of items being displayed

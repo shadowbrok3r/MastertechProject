@@ -440,7 +440,7 @@ impl SendRequest{
                                                 //let resp = AsanaResponse{ gid: x.gid, status: x.status };
 
                                                 match sender.send(serde_json::to_string(&asana_response).unwrap()){
-                                                    Ok(_) => println!("sent message ok"),
+                                                    Ok(_) => drop(sender),
                                                     Err(e) => println!("error sending message: {e}"),
                                                 }
                                             },
@@ -475,7 +475,7 @@ impl SendRequest{
                 let msg = message.clone();
                 
                 match send.send(msg){
-                    Ok(_) => println!("sent message ok"),
+                    Ok(_) => drop(send),
                     Err(e) => println!("{e}")
                 }
                 println!("received: {message}");
@@ -559,8 +559,6 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
                 Err(e) => Err(Box::new(e)),
             }
 }
-
-
 
 
 //pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
