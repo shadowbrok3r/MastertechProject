@@ -53,7 +53,7 @@ pub struct MastertechContext {
     pub client: reqwest::Client,
     scaffold_request: SendRequest,
     pub sysinfo_request: system_info::RetrieveSystemInfo,
-
+    pub antivirus_installed: String,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
     
@@ -148,7 +148,6 @@ impl TabViewer for MastertechContext {
         //self.open_tabs.add(tab)
     }
 }
-
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: Tree<String>,
@@ -223,7 +222,7 @@ impl Default for MasterTechApp {
             sysinfo_request,
             client,
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
-
+            antivirus_installed: "".to_string(),
             opened_file: None,
             open_file_dialog: None,
             // I should just make this section take
@@ -290,9 +289,9 @@ impl Default for MasterTechApp {
 
 impl MastertechContext {
     fn simple_demo_menu(&mut self, ui: &mut Ui) {
-        ui.label("Egui widget example");
+        ui.label("Secret menu... -.-");
         ui.menu_button("Sub menu", |ui| {
-            ui.label("hello :)");
+            ui.label("(.)(.)");
         });
         if ui.button("update").clicked(){
             let (tx, rx) = crossbeam::channel::bounded(1);
@@ -661,157 +660,161 @@ impl MastertechContext {
                                             let task_name = (cust, so_num);
                                             let assignees = (salesman, technician);
                                             let date = format!("{}", self.date.unwrap());
-
                                             let mut attached_file: Option<PathBuf> = None;
                                             if let Some(file) = &self.opened_file{
                                                 attached_file = Some(file.to_path_buf());
                                             }
-                                            //let mut new_out_text = String::new();
 
                                             let mut specs = String::new();
-                                            let mut cps = String::new();
+                                            let cps = self.antivirus_installed.clone();
                                             let mut final_disk = String::new();
                                             let mut each_disk = String::new();
+                                                                                    
+                                            let cust_code = &self.ticket_info.cust_code;
+                                            let doc_alias = &self.ticket_info.doc_alias;
+                                            let department = &self.ticket_info.department;
+                                            let juris = &self.ticket_info.jurisdiction;
+                                            let inv_amt = &self.ticket_info.invoice_amnt;
+                                            let cust_email = &self.ticket_info.customer_email;
+                                            let last_inv_num = &self.ticket_info.last_invoice_number;
+                                            let last_inv_amt = &self.ticket_info.last_invoice_amount;
+                                            let total_inv_num = &self.ticket_info.total_invoice_count;
 
+                                            let extra_customer_info = format!
+                                            ("
+                                            <ul>
+                                                <li>Customer Code: {cust_code}</li>
+                                                <li>Customer Email: {cust_email}</li>
+                                                <li>Type of order: {doc_alias}</li>
+                                                <li>Department: {department}</li>
+                                                <li>Jurisdiction: {juris}</li>
+                                                <li>Ticket Total: ${inv_amt}</li>
+                                                <li>Last Invoice#: {last_inv_num}</li>
+                                                <li>Last Invoice Amount: {last_inv_amt}</li>
+                                                <li>Total# of invoices: {total_inv_num}</li>
+                                            </ul>
+                                            ");
+                                            println!("{extra_customer_info}");
                                             if self.send_specs == true{
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
+                                                let system_name = &self.system_name;
+                                                let cpu_name = &self.cpu_name;
+                                                let total_ram = &self.total_ram;
+                                                let gpu = &self.gpu.clone().unwrap_or("no gpu detected".to_string());
 
-                                                #[cfg(target_os="windows")]
+                                                for index in 0..self.disk_num
                                                 {
-                                                    let installed_antivirus = RetrieveSystemInfo::get_antivirus()
-                                                    .map_err(|e| 
-                                                        new_out_text = format!("Error checking antivirus: {e}\n")
-                                                    ).unwrap();
-
-
-                                                    for (name, is_installed) in installed_antivirus {
-                                                        match is_installed {
-                                                            Some(true) => {
-                                                                self.output_text += &format!("{name} detected");
-                                                                cps += "\n";
-                                                                cps += &format!("{name}");
-                                                            },
-                                                            _ => {},
-                                                        }
-                                                    }
-                                                } // im going to just have to move this into the eframe::upate loop
-
-                                                
-                                                for index in 0..self.disk_num{
-                                                    if let Some(disk) = self.disks.get(index){
+                                                    if let Some(disk) = self.disks.get(index)
+                                                    {
                                                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
-                                                        let disk_available = format!(
+                                                        let disk_available = format!
+                                                        (
                                                             "{} Gb", disk.get("available space").and_then(Value::as_str).unwrap_or("")
                                                         );
-                                                        let disk_total = format!(
+                                                        let disk_total = format!
+                                                        (
                                                             "{} Gb", disk.get("total space").and_then(Value::as_str).unwrap_or("")
                                                         );
-                                                        
-                                                        
 
                                                         each_disk += &format!("
                                                         <tr>
-                                                        <td>{disk_letter}</td>
-                                                        <td>{disk_available}</td>
-                                                        <td>{disk_total}</td>
-                                                        <td></td>
+                                                        <td style=\"padding:1px 1px\">        {disk_letter}</td>
+                                                        <td style=\"padding:1px 1px\">        {disk_available}</td>
+                                                        <td style=\"padding:1px 1px\">        {disk_total}</td>
                                                         </tr>
                                                         ");
 
                                                         final_disk = format!
                                                             ("
-                                                            <table>
                                                             <tr>
-                                                                <td>Drive Letter</td>
-                                                                <td>Available Space</td>
-                                                                <td>Total Space</td>
-                                                                <td>S/N# (may be encoded)</td>
+                                                                <td style=\"padding:1px 4px\">Letter</td>
+                                                                <td style=\"padding:1px 4px\">Avail Space</td>
+                                                                <td style=\"padding:1px 4px\">Total Space</td>
                                                             </tr>
                                                             {each_disk}
-                                                            </table>
-
                                                         ");
 
                                                     }
                                                 }
-                                                
-                                                println!("{final_disk}");
-                                                let system_name = &self.system_name;
-                                                let cpu_name = &self.cpu_name;
-                                                let total_ram = &self.total_ram;
-                                                let gpu = &self.gpu.clone().unwrap_or("no gpu detected".to_string());
+
                                                 specs = format!("
-                                                <hr>
-                                                <strong><h2><code>           Computer Info            </code></h2></strong>
                                                 <table>
                                                     <tr>
-                                                        <td></td>
-                                                        <td data-cell-widths=\"480\" width=\"480\">Details</td>
+                                                        <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,200,200\" width=\"450\"
+                                                        >              <code>       Computer Info        </code></td>
                                                     </tr>
                                                     <tr>
                                                         <td>OS</td>
-                                                        <td>{system_name}</td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{system_name}</td>
                                                     </tr>
                                                     <tr>
                                                         <td>CPU</td>
-                                                        <td>{cpu_name}</td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{cpu_name}</td>
                                                     </tr>
                                                     <tr>
                                                         <td>RAM</td>
-                                                        <td>{total_ram} Gb</td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{total_ram} Gb</td>
                                                     </tr>
                                                     <tr>
                                                         <td>GPU</td>
-                                                        <td>{gpu}</td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{gpu}</td>
                                                     </tr>
                                                     <tr>
                                                         <td>Antivirus</td>
-                                                        <td>{cps}</td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{cps}</td>
                                                     </tr>
                                                     <tr>
                                                         <td>SEB</td>
-                                                        <td></td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\"></td>
                                                     </tr>
-                                                </table>
-                                                ");
+                                                    <tr>
+                                                    <td colspan=
+                                                    \"3\" data-cell-widths=\"100,200,200\" width=\"400\" style=\"text-align:center;\"
+                                                    >                <code>        HDD/SSD info        </code></td>
+                                                    </tr>
+                                                    {final_disk}
+                                                    </table>
+                                                ").trim().to_string();
                                             }else{
                                                 specs = "Computer information was not sent with ticket".to_string();
                                             }
-                                            let html_notes = format!( //52891684
-                                                "<body><h2><strong><code>           Ticket Info            </code></strong></h2><ul>
+                                            
+                                            let html_notes = format!(
+                                                "<body>
+                                                    <table>
+                                                        <tr>
+                                                        <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,130,130\" width=\"390\"
+                                                        >                <code>        Ticket Info        </code></td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td style=\"padding:1px 1px\">Salesman</td>
+                                                            <td style=\"padding:1px 1px\">Checkin Rep</td>
+                                                            <td style=\"padding:1px 1px\">Technician</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td style=\"padding:1px 4px\">     {salesman}</td>
+                                                            <td style=\"padding:1px 4px\">     {checkin_rep}</td>
+                                                            <td style=\"padding:1px 4px\">     {technician}</td>
+                                                        </tr>
+                                                    </table>
+                                                    {specs}
+                                                    <ul>
+                                                        <li><strong>SSD test:</strong>     {ssd_test}</li>
+                                                        <li><strong>HDD test:</strong>     {hdd_test}</li>
+                                                        <li><strong>RAM test:</strong>     {ram_test}</li></ul>
+                                                    <h2><strong><code>           Extra Customer Info           </code></strong></h2>
+                                                    {extra_customer_info}<hr>
+                                                    <h2><strong><code>           Notes           </code></strong></h2>
+                                                    <ul><li><strong>        Checkin Notes:      </strong>     \n{checkin_notes}</li>
+                                                        <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",
+                                            );
+                                                /*
+                                                <ul>
                                                 <li><strong>Salesman:</strong>              {salesman}</li>
                                                 <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
                                                 <li><strong>Technician:</strong>            {technician}</li></ul>
-                                                {specs}
-                                                {final_disk}
-                                                <hr>
-                                                <ul><li><strong>SSD test:</strong>     {ssd_test}</li>
-                                                <li><strong>HDD test:</strong>     {hdd_test}</li>
-                                                <li><strong>RAM test:</strong>     {ram_test}</li></ul>
-                                                <h2><strong><code>           Notes           </code></strong></h2><ul>
-                                                <li><strong>        Checkin Notes:      </strong>     {checkin_notes}</li>\n
-                                                <li><strong>        Recommendations:        </strong>     {recommendations}</li></ul></body>",
-                                            );
-                                            // I think i should probably just pass send_ticket_request the
-                                            // whole ticket_info struct
-                
-                                            /*
-                                                cust_code: "".to_string(),
-                                                user_id: "".to_string(),
-                                                terms: "".to_string(),
-                                                doc_alias: "".to_string(),
-                                                department: "".to_string(),
-                                                jurisdiction: "".to_string(),
-                                                invoice_amnt: "".to_string(),
-                
-                                                customer_email: "".to_string(),
-                                                last_invoice_number: "".to_string(),
-                                                last_invoice_amount: "".to_string(),
-                                                total_invoice_count: "".to_string(),
-                
-                                                item_codes: "".to_string(),
-                                            */
+                                                */
                 
                                             SendRequest::send_ticket_request(
                                                 self.scaffold_request.tx.clone(), 

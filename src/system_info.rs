@@ -132,6 +132,7 @@ impl RetrieveSystemInfo{
                 String::from_utf8(
                     tokio::process::Command::new("cmd")
                     .args(["/C", "wmic path win32_VideoController get name"])
+                    .creation_flags(CREATE_NO_WINDOW)
                     // "-Command {", 
                     //"(win32_videocontroller | select-object -property Name | ft -autosize -hidetableheaders | out-string).trim()}"
                     .output()
