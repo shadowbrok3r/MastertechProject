@@ -2,9 +2,12 @@
 // use std::io;
 // #[cfg(windows)]
 // use winres::WindowsResource;
+extern crate embed_resource;
 
 fn main() {
+    println!("cargo:rerun-if-changed=MasterTech.rc");
     static_vcruntime::metabuild();
+    embed_resource::compile("MasterTech.rc", embed_resource::NONE);
     // #[cfg(windows)]
     // if std::env::var("CARGO_CFG_TARGET_FAMILY").unwrap() == "windows" {
     //     let mut res = WindowsResource::new();
