@@ -71,22 +71,22 @@ impl eframe::App for MasterTechApp {
         }
 
         if self.context.specs_first_run == true{
-            let (tx, rx) = crossbeam::channel::bounded(1);
-
-            tokio::task::spawn_blocking(move || {
-                match run(){
-                    Ok(response) => {
-                        match tx.send((response.0, response.1)){
-                            Ok(_) => drop(tx),
-                            Err(e) => println!("{e}"),
-                        }
-                    },
-                    Err(e) => println!("err: {e}"),
-                }
-            });
-            if let Ok(res) = rx.recv(){
-                self.context.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
-            }
+            // let (tx, rx) = crossbeam::channel::bounded(1);
+            // tokio::task::spawn_blocking(move || {
+            //     match run(){
+            //         Ok(response) => {
+            //             match tx.send((response.0, response.1)){
+            //                 Ok(_) => drop(tx),
+            //                 Err(e) => println!("{e}"),
+            //             }
+            //         },
+            //         Err(e) => println!("err: {e}"),
+            //     }
+            // });
+            // if let Ok(res) = rx.recv(){
+            //     self.context.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
+            // }
+            
             let specs_sender = self.context.sysinfo_request.tx.clone();
             RetrieveSystemInfo::get_system_specs(specs_sender);
             
