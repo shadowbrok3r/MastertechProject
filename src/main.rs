@@ -35,7 +35,7 @@ async fn main() -> eframe::Result<()> {
 
 pub(crate) fn load_icon() -> eframe::IconData {
 	let (icon_rgba, icon_width, icon_height) = {
-		let icon = include_bytes!("assets/mastertechlogo.png");
+		let icon = include_bytes!("assets/masterlogoV2.ico");
 		let image = image::load_from_memory(icon)
 			.expect("Failed to open icon path")
 			.into_rgba8();
