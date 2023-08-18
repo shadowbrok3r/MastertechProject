@@ -6,6 +6,7 @@ use walkdir::WalkDir;
 use std::env;
 use pollster::block_on;
 use crossbeam::channel;
+use num_format::{Locale, ToFormattedString};
 
 /// Function that returns `true` if the path is accepted.
 pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
@@ -23,6 +24,8 @@ pub enum Command {
     UpDirectory,
     OpenPath(PathBuf),
     ReadDirectory(PathBuf),
+    ReadMetadata(PathBuf),
+
 }
 
 pub struct FileBrowser {
@@ -38,6 +41,8 @@ pub struct FileBrowser {
     dir_contents: RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
     filter: Option<Filter>,
     depth: usize,
+
+    path_size: u64,
 
     first_refresh_contents: bool,
 }
@@ -67,6 +72,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             show_hidden: false,
             first_refresh_contents: true,
             depth: 1,
+            path_size: 0,
             filter: None,
           }
     }
@@ -168,6 +174,31 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 self.dir_contents.borrow_mut().insert(path, new_contents);
             }
 
+            Command::ReadMetadata(path) => {
+                let (tx, mut rx) = crossbeam::channel::unbounded();
+                
+                let mut path_size = 0;
+                tokio::spawn(async move{
+                    match tx.try_send(tokio::fs::metadata(path).await.unwrap().len()){
+                        Ok(_) => drop(tx),
+                        Err(e) => println!("{e}")
+                    }
+                });
+
+                if let Ok(size) = rx.try_recv(){
+                    path_size = size;
+                    println!("{path_size}");
+                }
+
+                if path_size < (path_size / (1024*1024)){
+                    self.path_size = path_size;
+                    println!("bytes: {}", self.path_size);
+                }else{
+                    let converted_size = path_size / (1024*1024*1024);
+                    self.path_size = converted_size;
+                }
+                
+            }
         }
     }
 
@@ -368,7 +399,17 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     ui.with_layout(ui.layout().with_main_justify(true), |ui| {
                         ui.vertical(|ui|{
                             for path in files[range].iter() {
-                                display_path(ui, path, &self.selected_items, self.depth, command_tx.clone(), &self.dir_contents);
+                                display_path
+                                (
+                                    ui, 
+                                    path, 
+                                    &self.selected_items, 
+                                    self.depth, 
+                                    command_tx.clone(), 
+                                    &self.dir_contents, 
+                                    self.read_dirs_only,
+                                    &self.path_size,
+                                )
                             }
                         });
                     }).response
@@ -386,6 +427,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
         
         });
 
+        if self.path_size > 0{
+            println!("size: {}", self.path_size);
+        }
         if let Ok(Some(cmd)) = command_rx.try_recv(){
             block_on(async{self.run_command(cmd).await;});
         }
@@ -417,7 +461,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             &self.path,
             self.depth,
             self.filter.as_ref(),
-            self.show_hidden,
+            self.read_dirs_only,
         );
         self.dir_contents.borrow_mut().insert(self.path.clone(), new_contents);
         //self.select(None);
@@ -480,6 +524,10 @@ impl FileBrowser{ // sender: UnboundedSender<>
     &self.path // No selected file or it's not a folder, so use the current path.
     }
     
+    fn get_path_size(&self) -> String{
+        "".to_string()
+    }
+
     /// Set a function to filter shown files.
     pub fn filter(mut self, filter: Filter) -> Self {
         self.filter = Some(filter);
@@ -513,7 +561,7 @@ extern "C" {
 }
 
 /** Returns a Vec<PathBuf> of current directory contents and files. */
-fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, show_hidden: bool) -> Vec<PathBuf> {
+fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, read_dirs_only: bool) -> Vec<PathBuf> {
     //#[cfg(windows)]
     // let drives = {
     //   let mut drives = unsafe { GetLogicalDrives() };
@@ -533,6 +581,7 @@ fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, show_hidde
     let result: Vec<_> = WalkDir::new(path).min_depth(depth).max_depth(depth)
         .into_iter()
         .filter_map(|e| e.ok()) // Only retreive the resulted items
+        .filter(|entry| !read_dirs_only || entry.path().is_dir()) // Include only directories if read_dirs_only is true
         .map(|entry| entry.path().to_path_buf())// iterate through each direntry
         .collect();
     let mut result = result;
@@ -580,8 +629,6 @@ fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, show_hidde
     result
 }
 
-/** Returns a Receiver containing a Vec<PathBuf> of subcontents of a given directory. */
-
 /** 
     Handles displaying of subcontents of given directory by calling list_subfolders
     and makes only directories collapsible so we can see its subcontents 
@@ -593,6 +640,8 @@ fn display_path(
     depth: usize,
     command_tx: Sender<Option<Command>>,
     dir_contents: &RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
+    show_dirs_only: bool,
+    hover_text: &u64,
 ) {
     let label = match path.is_dir() {
         true => "🗀 ",
@@ -601,9 +650,11 @@ fn display_path(
     .to_string()
     + get_file_name(path);
 
-    if path.is_dir() {
+    if path.is_dir() 
+    {
         let id = ui.make_persistent_id(path.as_path().to_string_lossy());
         let command_sender = command_tx.clone();
+        
         let sender = command_tx.clone();
         let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
 
@@ -660,10 +711,13 @@ fn display_path(
                         depth + 1,
                         command_tx.clone(),
                         dir_contents,
+                        show_dirs_only,
+                        &hover_text
                     );
                 }
             });
-    } else {
+    } else if !path.is_dir() && show_dirs_only == false{
+        let command_sender = command_tx.clone();
         let is_selected = selected_items.borrow().contains(path);
         let selectable_label = ui.selectable_label(is_selected, &label);
         let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
@@ -688,62 +742,14 @@ fn display_path(
                 selected_items.borrow_mut().insert(path.clone());
             }
         }
+        if selectable_label.secondary_clicked(){
+            match command_sender.try_send(Some(Command::ReadMetadata(path.clone()))) {
+                Ok(_) => drop(command_sender),
+                Err(e) => println!("error: {e:?}"),
+            }
+        }
+        if hover_text > &0{
+            selectable_label.on_hover_text(&format!("File Size: {}", hover_text.to_formatted_string(&Locale::en)));
+        }
     }
 }
-
-// TODO
-/* NOW i will need to find a way to keep track of the list of items being displayed
- * so they only display one time, so threads are not spawning all the time
- * Gamplan: this function has a lot of recursiveness, because i run
- * display_path inside of the for loop for every subdir, which could be a lot.
- ****
- * Watch the one guy who talked about the select! macro, and look at how
- * he cloned that broadcast receiver
- ****
- * I need to utilize multi threading to compute the directories, the hashset
- * to store the items (Caching) ((This should be what i return from this fn,
- * or send through a channel)), the Arc<Mutex<T>> if needed for passing 
- * info into spawned threads, 
- ****
- * READ::CROSSBEAM ---v
- * like channels for communication between threads, scoped threads, and 
- * various LOCK-FREE data structures. It's great for tasks where you need 
- * fine control over threads and concurrent computations.
- ****/
-
-// if selectable_label.clicked() {
-//     if self.selected_items.contains(path) {
-//         self.selected_items.remove(path);
-//     } else {
-//         self.selected_items.insert(path.clone());
-//     }
-// }
-
-
-/* fn list_subfolders(path: &PathBuf, depth: usize) -> UnboundedReceiver<Vec<PathBuf>>{
-    // may need to create a channel of its own here to send and receive
-    // children_items
-    let (tx, rx) = unbounded_channel::<Vec<PathBuf>>();
-    let path = path.clone();
-
-    tokio::spawn(async move{
-        let mut children_items = Vec::new();
-        let children = WalkDir::new(path)
-        .min_depth(depth)
-        .max_depth(depth)
-        .into_iter()
-        .filter_map(|e| e.ok()); 
-    
-        for items in children {
-            let sub_items = items.path().to_path_buf();
-            children_items.push(sub_items);
-        }
-        match tx.send(children_items){
-            Ok(x) => println!("ok: {x:?}"),
-            Err(_) => println!("error")
-        }
-        
-    });
-    return rx;
-}
- */

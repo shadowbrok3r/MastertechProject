@@ -55,6 +55,21 @@ impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         catppuccin_egui::set_theme(ctx, MOCHA);
 
+        if self.context.spinner == true{
+            egui::Window::new("Spinner Window")
+            .title_bar(false)
+            .fixed_size(vec2(10.0,10.0))
+            .anchor(Align2::RIGHT_TOP, [2.0, 2.0])
+            .show(&ctx, |ui|{
+                ui.add(
+                    Spinner::new()
+                    .color(Color32::LIGHT_RED)
+                    .size(20.0)
+                );
+            });
+            
+        }
+
         if self.context.specs_first_run == true{
             let (tx, rx) = crossbeam::channel::bounded(1);
 
@@ -105,7 +120,7 @@ impl eframe::App for MasterTechApp {
         while let Ok(message) = receiver.try_recv() {
             // println!("reciever message: {message:?}");
             if let Ok(info) = serde_json::from_str::<scaffold::TicketInformation>(&message) {
-                // println!("ticket information: {info:#?}");
+                println!("ticket information: {info:#?}");
                 self.context.output_text.clear();
                 let checkin_rep = info.user_id;
                 self.context.ticket_info.user_id = checkin_rep.clone();
@@ -138,8 +153,10 @@ impl eframe::App for MasterTechApp {
 
             }             
             else if let Ok(info) = serde_json::from_str::<scaffold::PulledKeys>(&message) {
-                self.context.keys.webroot_key = info.webroot_key;
-                self.context.keys.superanti_key = info.superanti_key;
+                if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
+                    self.context.keys.webroot_key = info.webroot_key;
+                    self.context.keys.superanti_key = info.superanti_key;
+                }
                 self.context.spinner = false;
             }
             else if let Ok(info) = serde_json::from_str::<system_info::SystemInformation>(&message) {
