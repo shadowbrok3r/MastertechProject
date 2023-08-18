@@ -11,6 +11,10 @@ use num_format::{Locale, ToFormattedString};
 /// Function that returns `true` if the path is accepted.
 pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
 
+const KB_FROM_BYTES: u64 = 1024;
+const MB_FROM_BYTES: u64 = 1024*1024;
+const GB_FROM_BYTES: u64 = 1024*1024*1024;
+
 #[derive(Debug)]
 pub enum Command {
     Copy(PathBuf, PathBuf, channel::Sender<u64>),
@@ -41,10 +45,10 @@ pub struct FileBrowser {
     dir_contents: RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
     filter: Option<Filter>,
     depth: usize,
-
     path_size: u64,
-
     first_refresh_contents: bool,
+    metadata_tx: crossbeam::channel::Sender<u64>,
+    metadata_rx: crossbeam::channel::Receiver<u64>,
 }
 
 impl FileBrowser{ // sender: UnboundedSender<>
@@ -58,6 +62,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
             filename_edit = get_file_name(&path).to_string();
             path.pop();
         }
+        
+        let (metadata_tx, mut metadata_rx) = crossbeam::channel::unbounded();
 
         Self {
             path,
@@ -74,6 +80,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
             depth: 1,
             path_size: 0,
             filter: None,
+            metadata_tx,
+            metadata_rx,
           }
     }
     
@@ -175,29 +183,21 @@ impl FileBrowser{ // sender: UnboundedSender<>
             }
 
             Command::ReadMetadata(path) => {
-                let (tx, mut rx) = crossbeam::channel::unbounded();
-                
-                let mut path_size = 0;
-                tokio::spawn(async move{
-                    match tx.try_send(tokio::fs::metadata(path).await.unwrap().len()){
-                        Ok(_) => drop(tx),
+                let sender = self.metadata_tx.clone();
+                tokio::spawn(async move
+                {
+                    match sender.try_send(tokio::fs::metadata(path).await.unwrap().len())
+                    {
+                        Ok(_) => drop(sender),
                         Err(e) => println!("{e}")
                     }
                 });
 
-                if let Ok(size) = rx.try_recv(){
-                    path_size = size;
-                    println!("{path_size}");
-                }
-
-                if path_size < (path_size / (1024*1024)){
+                if let Ok(path_size) = self.metadata_rx.try_recv()
+                {
                     self.path_size = path_size;
-                    println!("bytes: {}", self.path_size);
-                }else{
-                    let converted_size = path_size / (1024*1024*1024);
-                    self.path_size = converted_size;
+                    println!("Bytes: {} B", self.path_size);
                 }
-                
             }
         }
     }
@@ -427,9 +427,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
         
         });
 
-        if self.path_size > 0{
-            println!("size: {}", self.path_size);
-        }
         if let Ok(Some(cmd)) = command_rx.try_recv(){
             block_on(async{self.run_command(cmd).await;});
         }
@@ -748,8 +745,29 @@ fn display_path(
                 Err(e) => println!("error: {e:?}"),
             }
         }
+        let mut path_size = 0;
+        let mut formatted_size = "".to_string();
+
         if hover_text > &0{
-            selectable_label.on_hover_text(&format!("File Size: {}", hover_text.to_formatted_string(&Locale::en)));
+            if hover_text > &KB_FROM_BYTES
+            {
+                path_size = hover_text / KB_FROM_BYTES;
+                formatted_size = format!("File Size: {} Kb", path_size.to_formatted_string(&Locale::en));
+            } 
+            if hover_text > &MB_FROM_BYTES
+            {
+                path_size = hover_text / MB_FROM_BYTES;
+                formatted_size = format!("File Size: {} Mb", path_size.to_formatted_string(&Locale::en));
+            } 
+            if hover_text > &GB_FROM_BYTES
+            {
+                path_size  = hover_text / GB_FROM_BYTES;
+                formatted_size = format!("File Size: {} Gb", path_size.to_formatted_string(&Locale::en));
+            }
         }
+
+        //if selectable_label.hovered(){
+            selectable_label.on_hover_text(formatted_size);
+        //}
     }
 }
