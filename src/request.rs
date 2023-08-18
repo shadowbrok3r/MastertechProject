@@ -27,7 +27,7 @@ pub struct GetTicketResponse {
     pub customer: Customer,
     //pub transactions: Transactions,
     pub addresses: Addresses,
-    pub items: Vec<Value>,
+    pub items: Vec<Option<Value>>,
 }
 
 pub struct GetKeysResponse{
@@ -98,12 +98,6 @@ pub struct AddressObject{
     pub TEL1: String, // "TEL1": "8018376254",
     pub TEL2: String, // "TEL2": "",
     pub EMAIL: String,
-}
-#[derive(Deserialize, Debug)]
-pub struct ItemsArray{ // number of items is the number of item codes you have on an order 
-    // this could also get srvc/etc
-   pub item_objects: Vec<Value>,
-
 }
 
 pub struct SendRequest {
@@ -182,11 +176,13 @@ impl SendRequest{
                     // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
                     
                     for object in items_objects{
-
+                        let x = object.clone();
                         // If i want to....
                         // "COST": "7.100000", this is our cost
                         // ITEM_PR_FEX is what we charge the customer, although AMOUNT is the same value
-                        object.get("NOTE")
+                        x
+                        .unwrap_or("".into())
+                        .get("NOTE")
                         .and_then(|v| v.as_str())
                         .map(|note| {
                             if note != "null" && !note.is_empty() {
@@ -197,8 +193,11 @@ impl SendRequest{
                                 }
                             }
                         });
+                        
 
-                        object.get("ITEM_CODE")
+                        object
+                        .unwrap_or("".into())
+                        .get("ITEM_CODE")
                         .and_then(|v| v.as_str())
                         .map(|item_code| {
                             itemcodes += &format!("{item_code}\n").to_string();
@@ -223,15 +222,11 @@ impl SendRequest{
                         last_invoice_number: li_doc,
                         item_codes: itemcodes.clone(),
                         total_invoice_count: num_inv,
-                        //last_tuneup_date: customer.LAST_TUNEUP_DATE.clone(),
-                        //last_checkin_date: customer.LI_AMT.clone(),
                     };
                     
                     let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();
                     match tx.send(ticket_info_json) {
-                        Ok(_) => {
-                            drop(tx)
-                        },
+                        Ok(_) => drop(tx),
                         Err(e) => {
                             eprintln!("Error while sending ticket information: {}", e.to_string());
                             drop(tx)
@@ -250,7 +245,6 @@ impl SendRequest{
                         }
                     }
                 }
-                
             }
         });
         
@@ -497,15 +491,35 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
 
     match response {
         Ok(res) => {
-            let json_response: GetTicketResponse = res.json().await?;
-            /*
-                let raw_response = res.text().await?;
-                println!("Server response: {}", raw_response);
-                let json_response: GetTicketResponse = serde_json::from_str(&raw_response).unwrap();
-            */
-           Ok(json_response)
+            if cfg!(debug_assertions){
+                
+                let raw_response: GetTicketResponse = res.json().await?;
+                println!("raw resp: {raw_response:?}");
+
+                for y in &raw_response.items{
+                    println!("{y:?}");
+                }
+
+                // let json_response: GetTicketResponse = serde_json::from_str(&raw_response)
+                // .map_err(|err| {
+                //     let error_position = err.column();
+                //     let start = error_position.saturating_sub(10);
+                //     let end = (error_position + 10).min(raw_response.len());
+                //     format!(
+                //         "Context: {:#?}                           JSON parse error: {:#?}",
+                //         &raw_response[start..end], err
+                //     )
+                // }).unwrap();
+                Ok(raw_response)
+            }else{
+                let json_response: GetTicketResponse = res.json().await?;
+                Ok(json_response)
+            }
         },
-        Err(e) => Err(Box::new(e)),
+        Err(e) => {
+            println!("Boxed error: {e:?}");
+            Err(Box::new(e))
+        },
     }
 }
 
@@ -548,14 +562,12 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
                         webroot_key: webroot_key.to_string(),
                         superanti_key: superanti_key.to_string(),
                     };
-
                     
                     Ok(response_keys)
                 },
                 Err(e) => Err(Box::new(e)),
             }
 }
-
 
 //pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
 

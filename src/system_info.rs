@@ -6,6 +6,8 @@ use serde_json::Value;
 use tokio::{io::{self, ErrorKind}, runtime::Handle};
 use crossbeam::channel;
 use regex::Regex;
+use num_format::{Locale, ToFormattedString};
+
 pub struct RetrieveSystemInfo {
     pub tx: std::sync::mpsc::Sender<String>,
 }
@@ -107,7 +109,7 @@ impl RetrieveSystemInfo{
             let sys = System::new_all(); // Create `System` struct.
 
             let cpu_brand = sys.cpus()[0].brand().to_string();
-            let ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_string();
+            let ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_formatted_string(&Locale::en);
             let system = sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
             let disks = sys.disks();
             let disks_clone = disks.clone();
@@ -120,8 +122,8 @@ impl RetrieveSystemInfo{
                     data.add_disk(serde_json::json!({
                         "name": disk.name(),
                         "letter": disk.mount_point().to_str(),
-                        "total space": (disk.total_space() / ( 1024 * 1024 * 1024)).to_string(),
-                        "available space": (disk.available_space() / ( 1024 * 1024 * 1024)).to_string(),
+                        "total space": (disk.total_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
+                        "available space": (disk.available_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
                     }));
                 }   
             }

@@ -556,13 +556,7 @@ impl MastertechContext {
                                         ui.end_row();
                                     }); // Grid   
                 
-                                    if self.spinner == true{
-                                        ui.add(
-                                            Spinner::new()
-                                            .color(Color32::LIGHT_RED)
-                                            .size(20.0)
-                                        );
-                                    }
+
 
                                     ui.vertical(|ui|{ui.add_space(6.0);});
 
