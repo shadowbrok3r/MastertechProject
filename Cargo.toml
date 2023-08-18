@@ -5,13 +5,13 @@ edition = "2021"
 description = "Mastertech"
 build = "build.rs"
 
-[build-dependencies]
+[target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "2.0"
 embed-resource = "2.2.0"
 
 [package.metadata]
-icon = ["src/assets/mastertechlogo.png"]
-resources = ["src/assets/**/*png"]
+icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
+resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 
 
 [dependencies]
@@ -40,16 +40,10 @@ self_update = "0.37.0"
 libatasmart-sys = "0.2.0"
 num-format = "0.4.4"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+libatasmart = "0.3.1"
 
-#libatasmart = "0.3.1"
-#winres = "0.1.12"
-#...
-#opener = "0.6.1"
-#directories = "5.0.1"
-#jwalk = "0.8.1"
-#[target.'cfg(unix)'.dep]
-# openssl = { version = "0.10", features = ["vendored"] } #Only on linux
-#egui_file = "0.9.0"
 
 [package.metadata.winres]
 OriginalFilename = "Mastertech.EXE"
@@ -65,4 +59,16 @@ opt-level = 3
 [profile.release]
 strip = "debuginfo"
 
+#winres = "0.1.12"
+#opener = "0.6.1"
+#directories = "5.0.1"
+#jwalk = "0.8.1"
+#egui_file = "0.9.0"
 
+#       Windows 7 x32      --   rustup target add i686-pc-windows-gnu
+#       Windows 7 x64      --   rustup target add x86_64-pc-windows-gnu
+#       PopOS x64          --   rustup target add x86_64-unknown-linux-gnu
+#       MacOS Silicon      --   rustup target add aarch64-apple-darwin
+#       MacOS Intel x64    --   rustup target add x86_64-apple-darwin
+
+#       cross build -r --target [target-triple]

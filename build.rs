@@ -1,10 +1,7 @@
-// #[cfg(windows)]
-// use std::io;
-// #[cfg(windows)]
-// use winres::WindowsResource;
 extern crate embed_resource;
 
 fn main() {
+    #[cfg(target_os = "windows")]
     println!("cargo:rerun-if-changed=MasterTech.rc");
     static_vcruntime::metabuild();
     embed_resource::compile("MasterTech.rc", embed_resource::NONE);
