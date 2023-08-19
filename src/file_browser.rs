@@ -338,7 +338,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     }
 
                     if self.rename {
-
                         ui.add_enabled_ui(self.can_rename(), |ui| {
                             if ui.button("Rename").clicked() {
                             if let Some(from) = self.selected_item.clone() {
@@ -740,34 +739,39 @@ fn display_path(
             }
         }
         if selectable_label.secondary_clicked(){
-            match command_sender.try_send(Some(Command::ReadMetadata(path.clone()))) {
-                Ok(_) => drop(command_sender),
-                Err(e) => println!("error: {e:?}"),
-            }
+            // match command_sender.try_send(Some(Command::ReadMetadata(path.clone()))) {
+            //     Ok(_) => drop(command_sender),
+            //     Err(e) => println!("secondary_click sender error: {e:?}"),
+            // }
         }
         let mut path_size = 0;
         let mut formatted_size = "".to_string();
 
-        if hover_text > &0{
-            if hover_text > &KB_FROM_BYTES
-            {
-                path_size = hover_text / KB_FROM_BYTES;
-                formatted_size = format!("File Size: {} Kb", path_size.to_formatted_string(&Locale::en));
-            } 
-            if hover_text > &MB_FROM_BYTES
-            {
-                path_size = hover_text / MB_FROM_BYTES;
-                formatted_size = format!("File Size: {} Mb", path_size.to_formatted_string(&Locale::en));
-            } 
-            if hover_text > &GB_FROM_BYTES
-            {
-                path_size  = hover_text / GB_FROM_BYTES;
-                formatted_size = format!("File Size: {} Gb", path_size.to_formatted_string(&Locale::en));
-            }
-        }
 
-        //if selectable_label.hovered(){
+
+        if selectable_label.hovered(){
+            match command_sender.try_send(Some(Command::ReadMetadata(path.clone()))) {
+                Ok(_) => drop(command_sender),
+                Err(e) => println!("secondary_click sender error: {e:?}"),
+            }
+            if hover_text > &0{
+                if hover_text > &KB_FROM_BYTES
+                {
+                    path_size = hover_text / KB_FROM_BYTES;
+                    formatted_size = format!("File Size: {} Kb", path_size.to_formatted_string(&Locale::en));
+                } 
+                if hover_text > &MB_FROM_BYTES
+                {
+                    path_size = hover_text / MB_FROM_BYTES;
+                    formatted_size = format!("File Size: {} Mb", path_size.to_formatted_string(&Locale::en));
+                } 
+                if hover_text > &GB_FROM_BYTES
+                {
+                    path_size  = hover_text / GB_FROM_BYTES;
+                    formatted_size = format!("File Size: {} Gb", path_size.to_formatted_string(&Locale::en));
+                }
+            }
             selectable_label.on_hover_text(formatted_size);
-        //}
+        }
     }
 }
