@@ -1,4 +1,4 @@
-use tokio::sync::mpsc::{Sender, Receiver};
+use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
 use eframe::egui::{*, collapsing_header::CollapsingState};
 use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
 use tokio::fs;
@@ -32,6 +32,10 @@ pub enum Command {
 
 }
 
+pub struct MetaData{
+    path_size: u64,
+}
+
 pub struct FileBrowser {
     path: PathBuf, /// Current opened path.
     path_edit: String, /// Editable field with path.
@@ -45,8 +49,8 @@ pub struct FileBrowser {
     dir_contents: RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
     filter: Option<Filter>,
     depth: usize,
-    path_size: u64,
     first_refresh_contents: bool,
+    file_metadata: RefCell<HashMap<PathBuf, MetaData>>,
     metadata_tx: crossbeam::channel::Sender<u64>,
     metadata_rx: crossbeam::channel::Receiver<u64>,
 }
@@ -78,7 +82,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             show_hidden: false,
             first_refresh_contents: true,
             depth: 1,
-            path_size: 0,
+            file_metadata: RefCell::new(HashMap::new()),
             filter: None,
             metadata_tx,
             metadata_rx,
@@ -184,9 +188,11 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
             Command::ReadMetadata(path) => {
                 let sender = self.metadata_tx.clone();
+                let cloned_path = path.clone();
+                //let metadata = fs::metadata(path).expect("Failed to retrieve metadata");
                 tokio::spawn(async move
                 {
-                    match sender.try_send(tokio::fs::metadata(path).await.unwrap().len())
+                    match sender.try_send(tokio::fs::metadata(&path).await.unwrap().len())
                     {
                         Ok(_) => drop(sender),
                         Err(e) => println!("{e}")
@@ -195,8 +201,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
                 if let Ok(path_size) = self.metadata_rx.try_recv()
                 {
-                    self.path_size = path_size;
-                    println!("Bytes: {} B", self.path_size);
+                    self.file_metadata.borrow_mut().insert(cloned_path.clone(), MetaData{path_size});
+                    //self.path_size = path_size;
                 }
             }
         }
@@ -206,15 +212,15 @@ impl FileBrowser{ // sender: UnboundedSender<>
         &mut self, 
         ui: &mut Ui,
         ctx:&Context,
-        command_tx: Sender<Option<Command>>,
-        mut command_rx: Receiver<Option<Command>>
+        command_tx: UnboundedSender<Option<Command>>,
+        mut command_rx: UnboundedReceiver<Option<Command>>
     ) {     
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
-                        match command_tx.try_send(Some(Command::UpDirectory)){
+                        match command_tx.send(Some(Command::UpDirectory)){
                             Ok(_) => {
                                 println!("sent task successfully");
                             },
@@ -229,7 +235,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 
                     let response = ui.button("⟲").on_hover_text("Refresh"); //
                     if response.clicked() {
-                        match command_tx.try_send(Some(Command::Refresh)){
+                        match command_tx.send(Some(Command::Refresh)){
                             Ok(_) => {
                                 println!("sent task successfully");
                             },
@@ -249,7 +255,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                         if response.lost_focus() {
                             let path = PathBuf::from(&self.path_edit);
 
-                            match command_tx.try_send(Some(Command::OpenPath(path))){
+                            match command_tx.send(Some(Command::OpenPath(path))){
                                 Ok(_) => {
                                     println!("sent task successfully");
                                 },
@@ -263,7 +269,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                         else if response.lost_focus() && response.ctx.input(|state| state.key_pressed(Key::Enter)){
                             let path = PathBuf::from(&self.path_edit);
 
-                            match command_tx.try_send(Some(Command::OpenPath(path))){
+                            match command_tx.send(Some(Command::OpenPath(path))){
                                 Ok(_) => {
                                     println!("sent task successfully");
                                 },
@@ -294,7 +300,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             // let source = src.join("D:\\Users\\Owner\\Desktop\\B.S.-10.5-Sized_B.S.-10.5.ctb");
             // let dest = PathBuf::new();
             // let destination = dest.join("D:\\Users\\Owner\\Desktop\\filestuff");
-            // match command_tx.try_send(Some(
+            // match command_tx.send(Some(
             //     Command::Copy(
             //         source, 
             //         destination, 
@@ -330,7 +336,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if self.new_folder && ui.button("New Folder").clicked() {
-                        match command_tx.try_send(Some(Command::CreateDirectory)){
+                        match command_tx.send(Some(Command::CreateDirectory)){
                             Ok(_) => println!("ok"),
                             Err(e) => print!("{e}")
                         }
@@ -343,7 +349,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             if let Some(from) = self.selected_item.clone() {
                                 let to = from.with_file_name(&self.filename_edit);
                                 
-                                match command_tx.try_send(Some(Command::Rename(from, to))){
+                                match command_tx.send(Some(Command::Rename(from, to))){
                                     Ok(_) => {
                                         println!("ok");
                                     },
@@ -407,7 +413,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                                     command_tx.clone(), 
                                     &self.dir_contents, 
                                     self.read_dirs_only,
-                                    &self.path_size,
+                                    &self.file_metadata,
                                 )
                             }
                         });
@@ -417,7 +423,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     // There was an error fetching the directory contents
                     // Send a command to fetch them in the background
                     let command = Command::ReadDirectory(self.path.clone());
-                    command_tx.try_send(Some(command)).unwrap();
+                    command_tx.send(Some(command)).unwrap();
                     ui.label("Loading...")
                 },
             },
@@ -634,10 +640,11 @@ fn display_path(
     path: &PathBuf,
     selected_items: &RefCell<HashSet<PathBuf>>,
     depth: usize,
-    command_tx: Sender<Option<Command>>,
+    command_tx: UnboundedSender<Option<Command>>,
     dir_contents: &RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
     show_dirs_only: bool,
-    hover_text: &u64,
+    //hover_text: &u64,
+    file_metadata: &RefCell<HashMap<PathBuf, MetaData>>,
 ) {
     let label = match path.is_dir() {
         true => "🗀 ",
@@ -650,8 +657,8 @@ fn display_path(
     {
         let id = ui.make_persistent_id(path.as_path().to_string_lossy());
         let command_sender = command_tx.clone();
-        
         let sender = command_tx.clone();
+        
         let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
 
         let contents = match dir_contents.borrow().get(path) {
@@ -659,7 +666,7 @@ fn display_path(
             None => {
                 // Contents are not cached, fetch in the background
                 let command = Command::ReadDirectory(path.clone());
-                match command_sender.try_send(Some(command)){
+                match command_sender.send(Some(command)){
                     Ok(_) => drop(command_sender),
                     Err(e) => println!("error: {e:?}")
                 }
@@ -692,7 +699,7 @@ fn display_path(
 
                 if selectable_label.double_clicked() 
                 { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
-                    match sender.try_send(Some(Command::OpenPath(path.clone()))) {
+                    match sender.send(Some(Command::OpenPath(path.clone()))) {
                         Ok(_) => drop(sender),
                         Err(e) => println!("error: {e:?}"),
                     }
@@ -708,7 +715,7 @@ fn display_path(
                         command_tx.clone(),
                         dir_contents,
                         show_dirs_only,
-                        &hover_text
+                        &file_metadata
                     );
                 }
             });
@@ -719,7 +726,7 @@ fn display_path(
         let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
         
         if selectable_label.clicked() {
-            match command_tx.try_send(Some(Command::Select(path.clone()))) {
+            match command_tx.send(Some(Command::Select(path.clone()))) {
                 Ok(_) => drop(command_tx),
                 Err(e) => println!("error: {e:?}"),
             }
@@ -744,32 +751,41 @@ fn display_path(
             //     Err(e) => println!("secondary_click sender error: {e:?}"),
             // }
         }
-        let mut path_size = 0;
+        // let mut path_size = 0;
         let mut formatted_size = "".to_string();
 
-
-
         if selectable_label.hovered(){
-            match command_sender.try_send(Some(Command::ReadMetadata(path.clone()))) {
+
+            match command_sender.send(Some(Command::ReadMetadata(path.clone()))) {
                 Ok(_) => drop(command_sender),
                 Err(e) => println!("secondary_click sender error: {e:?}"),
             }
-            if hover_text > &0{
-                if hover_text > &KB_FROM_BYTES
+            
+            if let Some(metadata) = file_metadata.borrow_mut().get(path){
+                let mut path_size = metadata.path_size;
+                // 
+                
+                println!("File: {path:?}\n Size: {path_size}");
+
+                if metadata.path_size > GB_FROM_BYTES
                 {
-                    path_size = hover_text / KB_FROM_BYTES;
-                    formatted_size = format!("File Size: {} Kb", path_size.to_formatted_string(&Locale::en));
-                } 
-                if hover_text > &MB_FROM_BYTES
+                    let mut x = path_size as f32;
+                    x  = x / GB_FROM_BYTES as f32;
+                    let x_as_string = x.to_string().split(".").collect();
+                    let new_string = x_as_string[0];
+                    
+                    formatted_size = format!("File Size: {} Gb", x.to_formatted_string(&Locale::en));
+                }
+                else if metadata.path_size > MB_FROM_BYTES
                 {
-                    path_size = hover_text / MB_FROM_BYTES;
+                    path_size = path_size / MB_FROM_BYTES;
                     formatted_size = format!("File Size: {} Mb", path_size.to_formatted_string(&Locale::en));
                 } 
-                if hover_text > &GB_FROM_BYTES
+                else if metadata.path_size > KB_FROM_BYTES
                 {
-                    path_size  = hover_text / GB_FROM_BYTES;
-                    formatted_size = format!("File Size: {} Gb", path_size.to_formatted_string(&Locale::en));
-                }
+                    path_size = path_size / KB_FROM_BYTES;
+                    formatted_size = format!("File Size: {} Kb", path_size.to_formatted_string(&Locale::en));
+                } 
             }
             selectable_label.on_hover_text(formatted_size);
         }
