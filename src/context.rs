@@ -6,7 +6,7 @@ use eframe::egui;
 use egui::*;
 use egui_dock::{Node, NodeIndex, Tree, TabViewer};
 use scaffold::PulledKeys;
-use tokio::{sync::mpsc::channel, runtime::Handle};
+use tokio::{sync::mpsc::{channel, unbounded_channel}, runtime::Handle};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use crate::self_updater::run;
@@ -1025,7 +1025,7 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-        let (command_tx, command_rx) = channel(4);
+        let (command_tx, command_rx) = unbounded_channel();
         // Lock the Mutex and show the GUI
         let file_browser_clone = Arc::clone(&self.file_browser);
         let mut file_browser = file_browser_clone.lock().unwrap();
