@@ -1,12 +1,11 @@
-use std::{sync::{Arc, Mutex}, collections::HashSet, path::{PathBuf, Path}};
-use chrono::format;
-use crossbeam::{scope, channel::TryRecvError};
+use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
+//use crossbeam::{scope, channel::TryRecvError};
 use serde_json::Value;
 use eframe::egui;
 use egui::*;
 use egui_dock::{Node, NodeIndex, Tree, TabViewer};
 use scaffold::PulledKeys;
-use tokio::{sync::mpsc::{channel, unbounded_channel}, runtime::Handle};
+use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use crate::self_updater::run;
@@ -561,7 +560,7 @@ impl MastertechContext {
                                     ui.vertical(|ui|{ui.add_space(6.0);});
 
                                     ui.horizontal_top(|ui|{
-                                        Grid::new("othershit")
+                                        Grid::new("other_buttons")
                                         .spacing(vec2(4.0, 3.0))
                                         .min_col_width(self.widget_size)
                                         .num_columns(2)
