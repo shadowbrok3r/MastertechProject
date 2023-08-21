@@ -383,10 +383,10 @@ impl FileBrowser{ // sender: UnboundedSender<>
         });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            //ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
+            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
             //ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
             ui.shrink_width_to_current();ui.shrink_height_to_current();
-            //ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
+            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
             //ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)));
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
@@ -395,109 +395,34 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 self.refresh_contents();
             }
             
-            let mut formatted_size = "".to_string();
-            
-            Grid::new("filebrowser_columns")
-            .spacing(vec2(4.0, 3.0))
-            .min_col_width(150.0)
-            .num_columns(2)
-            .striped(true)
-            .with_row_color(|row_idx, _| {
-                println!("{row_idx}");
-                if row_idx % 2 == 0 {
-                    Some(Color32::from_rgb(255, 0, 0)) // Even rows
-                } else {
-                    Some(Color32::from_rgb(20, 255, 20)) // Odd rows
-                }
-            })
-            .show(ui, |ui| 
+            match self.dir_contents.borrow().get(&self.path) 
             {
-                
-                match self.dir_contents.borrow().get(&self.path) 
+                Some(files) => 
                 {
-                    Some(files) => 
+                    ui.with_layout(ui.layout().with_main_justify(true), |ui| 
                     {
-                        ui.with_layout(ui.layout().with_main_justify(true), |ui| 
-                        {
-                            ui.vertical_centered_justified(|ui: &mut Ui|
-                            {
-                                for path in files.iter() 
-                                {
-                                    
-                                    ui.horizontal(|ui|{
-                                        let command_sender = command_tx.clone();
-                                        if !self.file_metadata.borrow().contains_key(path){
-                                            match command_sender.send(Some(Command::ReadMetadata(path.clone()))) {
-                                                Ok(_) => drop(command_sender),
-                                                Err(e) => println!("hovered sender error: {e:?}"),
-                                            }
-                                        }
-                                    
-                                        display_path
-                                        (
-                                            ui, 
-                                            path, 
-                                            &self.selected_items, 
-                                            self.depth, 
-                                            command_tx.clone(), 
-                                            &self.dir_contents, 
-                                            self.read_dirs_only,
-                                            &self.file_metadata,
-                                        );
-                                       
-                                        if path.is_file()
-                                        {
-                                            if let Some(metadata) = self.file_metadata.borrow_mut().get(path)
-                                            {
-                                                let mut path_size = metadata.path_size;
-                                                if path_size > 0
-                                                {
-                                                    if path_size > GB_FROM_BYTES
-                                                    {
-                                                        let mut x = path_size as f32;
-                                                        x  = &x / GB_FROM_BYTES as f32;
-                                                        let two_decimal_places = (x*100.0).round() / 100.0;
-                                                        let x_as_string = two_decimal_places.to_string();
-                                                        let y: Vec<&str> = x_as_string.split(".").collect();
-                                                        let decimal = y[1].as_str();
-                                                        let new_path_size = x.clone() as u64;
-                                    
-                                                        formatted_size = format!("{}.{decimal} Gb", new_path_size.to_formatted_string(&Locale::en));
-                                                    }
-                                                    else if path_size > MB_FROM_BYTES
-                                                    {
-                                                        path_size = path_size / MB_FROM_BYTES;
-                                                        formatted_size = format!("{} Mb", path_size.to_formatted_string(&Locale::en));
-                                                    } 
-                                                    else if path_size > KB_FROM_BYTES
-                                                    {
-                                                        path_size = path_size / KB_FROM_BYTES;
-                                                        formatted_size = format!("{} Kb", path_size.to_formatted_string(&Locale::en));
-                                                    }
-                                                    else{
-                                                        formatted_size = format!("{} bytes", path_size.to_formatted_string(&Locale::en));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        
-                                        ui.label(&formatted_size);
-                                    
-                                    });
-                                    ui.end_row();
-                                }
-                            });
-                        }).response
-                    }
-                    None => {
-                        // There was an error fetching the directory contents
-                        // Send a command to fetch them in the background
-                        let command = Command::ReadDirectory(self.path.clone());
-                        command_tx.send(Some(command)).unwrap();
-                        ui.label("Loading...")
-                    },
-                };
-            });
+                        display_path
+                        (
+                            ui, 
+                            files, 
+                            &self.selected_items, 
+                            self.depth, 
+                            command_tx.clone(), 
+                            &self.dir_contents, 
+                            self.read_dirs_only,
+                            &self.file_metadata,
+                        );
+                        
+                    }).response
+                }
+                None => {
+                    // There was an error fetching the directory contents
+                    // Send a command to fetch them in the background
+                    let command = Command::ReadDirectory(self.path.clone());
+                    command_tx.send(Some(command)).unwrap();
+                    ui.label("Loading...")
+                },
+            };
         });
         if let Ok(Some(cmd)) = command_rx.try_recv(){
             // tokio::spawn(async move{
@@ -707,176 +632,214 @@ fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, read_dirs_
  */
 fn display_path(
     ui: &mut Ui,
-    path: &PathBuf,
+    files: &Vec<PathBuf>,
     selected_items: &RefCell<HashSet<PathBuf>>,
     depth: usize,
     command_tx: UnboundedSender<Option<Command>>,
     dir_contents: &RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
     show_dirs_only: bool,
-    //hover_text: &u64,
     file_metadata: &RefCell<HashMap<PathBuf, MetaData>>,
 ) {
-    let label = match path.is_dir() {
-        true => "🗀 ",
-        false => "🗋 ",
-    }
-    .to_string()
-    + get_file_name(path);
-    let x = false;
-    if path.is_dir() 
-    {
-        let id = ui.make_persistent_id(path.as_path().to_string_lossy());
-        
-        let command_sender = command_tx.clone();
-        let command_sender2 = command_tx.clone();
-        //let command_sender3 = command_tx.clone();
-        
-        let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
-
-        let contents = match dir_contents.borrow().get(path) {
-            Some(contents) => contents.clone(),
-            None => {
-                // Contents are not cached, fetch in the background
-                let command = Command::ReadDirectory(path.clone());
-                match command_sender.send(Some(command)){
-                    Ok(_) => drop(command_sender),
-                    Err(e) => println!("error: {e:?}")
-                }
-                vec![] // Return an empty Vec for now
-            }
-        };
-        ui.vertical(|ui|{
-            CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
-            .show_header(ui, |ui| 
+    ui.vertical_centered_justified(|ui: &mut Ui|
+        {
+            ui.vertical(|ui|
             {
+                Grid::new("filebrowser_columns")
+                //.spacing(vec2(4.0, 3.0))
+                //.min_col_width(ui.available_size_before_wrap().x/3.0)
+                .max_col_width(500.0)
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| 
+                {
+                    for path in files.iter(){
+                        let command_sender = command_tx.clone();
+                        let command_sender2 = command_tx.clone();
+                        let command_sender3 = command_tx.clone();
+                        let command_sender4 = command_tx.clone();
                 
-                let is_selected = selected_items.borrow().contains(path);
-                let selectable_label = ui.selectable_label(is_selected, &label);
-
-                if selectable_label.clicked() {
-                    if selected_items.borrow().contains(path) {
-                        // If the item was already selected, deselect it
-                        selected_items.borrow_mut().remove(path);
-                    } 
-                    if modifiers.ctrl {
-                        // If the control key is down and the item was not selected, select it
-                        selected_items.borrow_mut().insert(path.clone());
-                        //println!("{:?}", selected_items.borrow());
-                    } 
-                    else {
-                        // If the control key is not down, clear previous selection and select the current item
-                        selected_items.borrow_mut().clear();
-                        selected_items.borrow_mut().insert(path.clone());
+                        let label = match path.is_dir() {true => "🗀 ", false => "🗋 "}.to_string() + get_file_name(path);
+                
+            
+                        if path.is_dir() 
+                        {
+                            let id = ui.make_persistent_id(path.as_path().to_string_lossy());
+                            let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+                    
+                            let contents = match dir_contents.borrow().get(path) 
+                            {
+                                Some(contents) => contents.clone(),
+                                None => {
+                                    let command = Command::ReadDirectory(path.clone()); // Contents are not cached, fetch in the background
+                                    match command_sender.send(Some(command)){
+                                        Ok(_) => drop(command_sender),
+                                        Err(e) => println!("error: {e:?}")
+                                    }
+                                    vec![] // Return an empty Vec for now
+                                }
+                            };
+                            
+                            ui.vertical(|ui|
+                            {
+                                CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
+                                .show_header(ui, |ui| 
+                                {
+                                    let is_selected = selected_items.borrow().contains(path);
+                                    let selectable_label = ui.selectable_label(is_selected, &label);
+                                    
+                                    if selectable_label.clicked() 
+                                    { // If the item was already selected, deselect it
+                                        if selected_items.borrow().contains(path) { selected_items.borrow_mut().remove(path); } 
+                                        // If the control key is down and the item was not selected, select it
+                                        if modifiers.ctrl { selected_items.borrow_mut().insert(path.clone()); } 
+                                        else 
+                                        {// If the control key is not down, clear previous selection and select the current item
+                                            selected_items.borrow_mut().clear();
+                                            selected_items.borrow_mut().insert(path.clone());
+                                        }
+                                    }
+                        
+                                    if selectable_label.double_clicked() 
+                                    { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
+                                        match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
+                                            Ok(_) => drop(command_sender2),
+                                            Err(e) => println!("error: {e:?}"),
+                                        }
+                                    }
+                                }).body(|ui| 
+                                {
+                                    display_path(
+                                        ui,
+                                        &contents,
+                                        selected_items,
+                                        depth + 1,
+                                        command_tx.clone(),
+                                        dir_contents,
+                                        show_dirs_only,
+                                        &file_metadata
+                                    );
+                                    //
+                                });
+                                ui.end_row();
+                            });
+                        } 
+                        else if !path.is_dir() && show_dirs_only == false{
+                            let is_selected = selected_items.borrow().contains(path);
+                            let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+                    
+                            let selectable_label = ui.selectable_label(is_selected, &label);
+                            if selectable_label.clicked() {
+                                match command_sender3.send(Some(Command::Select(path.clone()))) {
+                                    Ok(_) => drop(command_sender3),
+                                    Err(e) => println!("error: {e:?}"),
+                                }
+                                // If the control key is down and the item was not selected, select it 
+                                if modifiers.ctrl { selected_items.borrow_mut().insert(path.clone());} 
+                                if selected_items.borrow().contains(path) {
+                                    // If the item was already selected, deselect it
+                                    selected_items.borrow_mut().remove(path);
+                                } 
+                                else { // If the control key is not down, clear previous selection and select the current item
+                                    selected_items.borrow_mut().clear();
+                                    selected_items.borrow_mut().insert(path.clone());
+                                }
+                            }
+                            if !file_metadata.borrow().contains_key(path){
+                                match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
+                                    Ok(_) => drop(command_sender4),
+                                    Err(e) => println!("hovered sender error: {e:?}"),
+                                }
+                            }
+                            if let Some(metadata) = file_metadata.borrow_mut().get(path)
+                            {
+                                let path_size = metadata.path_size;
+                                let formatted_size = format_path_metadata(path_size);
+                                ui.label(&formatted_size);
+                            }
+                        }
+                        //ui.end_row();
                     }
-                }
-
-                if selectable_label.double_clicked() 
-                { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
-                    match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
-                        Ok(_) => drop(command_sender2),
-                        Err(e) => println!("error: {e:?}"),
-                    }
-                }
-                let mut formatted_size = "".to_string();
-
-                // if selectable_label.hovered(){
-        
-                    // match command_sender3.send(Some(Command::ReadMetadata(path.clone()))) {
-                    //     Ok(_) => drop(command_sender3),
-                    //     Err(e) => println!("hovered sender error: {e:?}"),
-                    // }
-
-
-                                    // The below works, but it will get extremely resource heavy when hovering.. i may 
-                                    // need to spawn another thread and only read the directories sizes once,
-                                    // and display them all in the same line
-
-
-                // let mut folder_size: u64 = get_size(path).unwrap();
-                // let folder_name = path.file_name();
-                // println!("File: {folder_name:?}\n ---- 🗀 {folder_size}\n");
-                // if folder_size > 0{
-                //     if folder_size > GB_FROM_BYTES
-                //     {
-                //         let mut x = folder_size as f32;
-                //         x  = &x / GB_FROM_BYTES as f32;
-                //         let two_decimal_places = (x*100.0).round() / 100.0;
-                //         let x_as_string = two_decimal_places.to_string();
-                //         let y: Vec<&str> = x_as_string.split(".").collect();
-                //         let decimal = y[1].as_str();
-                //         let new_folder_size = x.clone() as u64;
-
-                //         formatted_size = format!("🗀 {}.{decimal} Gb", new_folder_size.to_formatted_string(&Locale::en));
-                //     }
-                //     else if folder_size > MB_FROM_BYTES
-                //     {
-                //         folder_size = folder_size / MB_FROM_BYTES;
-                //         formatted_size = format!("🗀 {} Mb", folder_size.to_formatted_string(&Locale::en));
-                //     } 
-                //     else if folder_size > KB_FROM_BYTES
-                //     {
-                //         folder_size = folder_size / KB_FROM_BYTES;
-                //         formatted_size = format!("🗀 {} Kb", folder_size.to_formatted_string(&Locale::en));
-                //         println!("kb from bytes: {folder_size}");
-                //     }
-                //     else{
-                //         formatted_size = format!("🗀 {} bytes", folder_size.to_formatted_string(&Locale::en));
-                //     }
-                // }
-                
-                
-                // selectable_label.on_hover_text(formatted_size);
-            // }
-        })
-        .body(|ui| {
-            for sub_path in &contents {
-                display_path(
-                    ui,
-                    sub_path,
-                    selected_items,
-                    depth + 1,
-                    command_tx.clone(),
-                    dir_contents,
-                    show_dirs_only,
-                    &file_metadata
-                );
-            }
+                    //ui.end_row();
+                });
+            });
         });
-        });
-        
-    } else if !path.is_dir() && show_dirs_only == false{
-        let is_selected = selected_items.borrow().contains(path);
-        let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
 
-        let selectable_label = ui.selectable_label(is_selected, &label);
-        if selectable_label.clicked() {
-            match command_tx.send(Some(Command::Select(path.clone()))) {
-                Ok(_) => drop(command_tx),
-                Err(e) => println!("error: {e:?}"),
-            }
-            if selected_items.borrow().contains(path) {
-                // If the item was already selected, deselect it
-                selected_items.borrow_mut().remove(path);
-            } 
-            if modifiers.ctrl {
-                // If the control key is down and the item was not selected, select it
-                selected_items.borrow_mut().insert(path.clone());
-                //println!("{:?}", selected_items.borrow());
-            } 
-            else {
-                // If the control key is not down, clear previous selection and select the current item
-                selected_items.borrow_mut().clear();
-                selected_items.borrow_mut().insert(path.clone());
-            }
-        }
-        if selectable_label.secondary_clicked(){
-                // match command_sender.try_send(Some(Command::ReadMetadata(path.clone()))) {
-                //     Ok(_) => drop(command_sender),
-                //     Err(e) => println!("secondary_click sender error: {e:?}"),
-                // }
-            }   
-
-        
-
-    }
 }
+
+fn format_path_metadata(mut path_size: u64) -> String{
+    let mut formatted_size = "".to_string();
+    if path_size > 0
+    {
+        if path_size > GB_FROM_BYTES
+        {
+            let mut x = path_size as f32;
+            x  = &x / GB_FROM_BYTES as f32;
+            let two_decimal_places = (x*100.0).round() / 100.0;
+            let x_as_string = two_decimal_places.to_string();
+            let y: Vec<&str> = x_as_string.split(".").collect();
+            let decimal = y[1].as_str();
+            let new_path_size = x.clone() as u64;
+            formatted_size = format!("{}.{decimal} Gb", new_path_size.to_formatted_string(&Locale::en));
+        }
+        else if path_size > MB_FROM_BYTES
+        {
+            path_size = path_size / MB_FROM_BYTES;
+            formatted_size = format!("{} Mb", path_size.to_formatted_string(&Locale::en));
+        } 
+        else if path_size > KB_FROM_BYTES
+        {
+            path_size = path_size / KB_FROM_BYTES;
+            formatted_size = format!("{} Kb", path_size.to_formatted_string(&Locale::en));
+        }
+        else{
+            formatted_size = format!("{} bytes", path_size.to_formatted_string(&Locale::en));
+        }
+        format!("{formatted_size}")
+    }
+    else {
+        format!("Nothing returned")
+    }
+
+}
+
+
+// if selectable_label.hovered(){     
+    // match command_sender3.send(Some(Command::ReadMetadata(path.clone()))) {
+    //     Ok(_) => drop(command_sender3),
+    //     Err(e) => println!("hovered sender error: {e:?}"),
+    // }
+                    // The below works, but it will get extremely resource heavy when hovering.. i may 
+                    // need to spawn another thread and only read the directories sizes once,
+                    // and display them all in the same line
+// let mut folder_size: u64 = get_size(path).unwrap();
+// let folder_name = path.file_name();
+// println!("File: {folder_name:?}\n ---- 🗀 {folder_size}\n");
+// if folder_size > 0{
+//     if folder_size > GB_FROM_BYTES
+//     {
+//         let mut x = folder_size as f32;
+//         x  = &x / GB_FROM_BYTES as f32;
+//         let two_decimal_places = (x*100.0).round() / 100.0;
+//         let x_as_string = two_decimal_places.to_string();
+//         let y: Vec<&str> = x_as_string.split(".").collect();
+//         let decimal = y[1].as_str();
+//         let new_folder_size = x.clone() as u64;
+//         formatted_size = format!("🗀 {}.{decimal} Gb", new_folder_size.to_formatted_string(&Locale::en));
+//     }
+//     else if folder_size > MB_FROM_BYTES
+//     {
+//         folder_size = folder_size / MB_FROM_BYTES;
+//         formatted_size = format!("🗀 {} Mb", folder_size.to_formatted_string(&Locale::en));
+//     } 
+//     else if folder_size > KB_FROM_BYTES
+//     {
+//         folder_size = folder_size / KB_FROM_BYTES;
+//         formatted_size = format!("🗀 {} Kb", folder_size.to_formatted_string(&Locale::en));
+//         println!("kb from bytes: {folder_size}");
+//     }
+//     else{
+//         formatted_size = format!("🗀 {} bytes", folder_size.to_formatted_string(&Locale::en));
+//     }
+// }
+// selectable_label.on_hover_text(formatted_size);
+// }
