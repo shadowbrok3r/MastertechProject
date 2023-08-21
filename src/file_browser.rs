@@ -412,7 +412,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             })
             .show(ui, |ui| 
             {
-                ui.end_row();
+                
                 match self.dir_contents.borrow().get(&self.path) 
                 {
                     Some(files) => 
