@@ -1,12 +1,14 @@
+use egui_extras::{TableBuilder, Column};
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
 use eframe::egui::{*, collapsing_header::CollapsingState};
-use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
+use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell, ops::Range};
 use tokio::fs;
 use walkdir::WalkDir;
 use std::env;
 use pollster::block_on;
 use crossbeam::channel;
 use num_format::{Locale, ToFormattedString};
+use fs_extra::dir::get_size;
 
 /// Function that returns `true` if the path is accepted.
 pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
@@ -381,58 +383,126 @@ impl FileBrowser{ // sender: UnboundedSender<>
         });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
+            //ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
             //ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
             ui.shrink_width_to_current();ui.shrink_height_to_current();
-            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
-            ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)));
+            //ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
+            //ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)));
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
             if self.first_refresh_contents == true{
                 self.refresh_contents();
             }
-
-            ScrollArea::new([true, true])
-            .id_source("file_browser_scroll")
-            .auto_shrink([false, false])
-            .show_rows(ui,
-            ui.text_style_height(&TextStyle::Body),
-            self.dir_contents.borrow().get(&self.path).map_or(0, |files| files.len()),
-            |ui, range| match self.dir_contents.borrow().get(&self.path) {
-                Some(files) => {
-                    ui.with_layout(ui.layout().with_main_justify(true), |ui| {
-                        ui.vertical(|ui|{
-                            for path in files[range].iter() {
-                                display_path
-                                (
-                                    ui, 
-                                    path, 
-                                    &self.selected_items, 
-                                    self.depth, 
-                                    command_tx.clone(), 
-                                    &self.dir_contents, 
-                                    self.read_dirs_only,
-                                    &self.file_metadata,
-                                )
-                            }
-                        });
-                    }).response
+            
+            let mut formatted_size = "".to_string();
+            
+            Grid::new("filebrowser_columns")
+            .spacing(vec2(4.0, 3.0))
+            .min_col_width(150.0)
+            .num_columns(2)
+            .striped(true)
+            .with_row_color(|row_idx, _| {
+                println!("{row_idx}");
+                if row_idx % 2 == 0 {
+                    Some(Color32::from_rgb(255, 0, 0)) // Even rows
+                } else {
+                    Some(Color32::from_rgb(20, 255, 20)) // Odd rows
                 }
-                None => {
-                    // There was an error fetching the directory contents
-                    // Send a command to fetch them in the background
-                    let command = Command::ReadDirectory(self.path.clone());
-                    command_tx.send(Some(command)).unwrap();
-                    ui.label("Loading...")
-                },
-            },
-        );
-        
-        
+            })
+            .show(ui, |ui| 
+            {
+                ui.end_row();
+                match self.dir_contents.borrow().get(&self.path) 
+                {
+                    Some(files) => 
+                    {
+                        ui.with_layout(ui.layout().with_main_justify(true), |ui| 
+                        {
+                            ui.vertical_centered_justified(|ui: &mut Ui|
+                            {
+                                for path in files.iter() 
+                                {
+                                    
+                                    ui.horizontal(|ui|{
+                                        let command_sender = command_tx.clone();
+                                        if !self.file_metadata.borrow().contains_key(path){
+                                            match command_sender.send(Some(Command::ReadMetadata(path.clone()))) {
+                                                Ok(_) => drop(command_sender),
+                                                Err(e) => println!("hovered sender error: {e:?}"),
+                                            }
+                                        }
+                                    
+                                        display_path
+                                        (
+                                            ui, 
+                                            path, 
+                                            &self.selected_items, 
+                                            self.depth, 
+                                            command_tx.clone(), 
+                                            &self.dir_contents, 
+                                            self.read_dirs_only,
+                                            &self.file_metadata,
+                                        );
+                                       
+                                        if path.is_file()
+                                        {
+                                            if let Some(metadata) = self.file_metadata.borrow_mut().get(path)
+                                            {
+                                                let mut path_size = metadata.path_size;
+                                                if path_size > 0
+                                                {
+                                                    if path_size > GB_FROM_BYTES
+                                                    {
+                                                        let mut x = path_size as f32;
+                                                        x  = &x / GB_FROM_BYTES as f32;
+                                                        let two_decimal_places = (x*100.0).round() / 100.0;
+                                                        let x_as_string = two_decimal_places.to_string();
+                                                        let y: Vec<&str> = x_as_string.split(".").collect();
+                                                        let decimal = y[1].as_str();
+                                                        let new_path_size = x.clone() as u64;
+                                    
+                                                        formatted_size = format!("{}.{decimal} Gb", new_path_size.to_formatted_string(&Locale::en));
+                                                    }
+                                                    else if path_size > MB_FROM_BYTES
+                                                    {
+                                                        path_size = path_size / MB_FROM_BYTES;
+                                                        formatted_size = format!("{} Mb", path_size.to_formatted_string(&Locale::en));
+                                                    } 
+                                                    else if path_size > KB_FROM_BYTES
+                                                    {
+                                                        path_size = path_size / KB_FROM_BYTES;
+                                                        formatted_size = format!("{} Kb", path_size.to_formatted_string(&Locale::en));
+                                                    }
+                                                    else{
+                                                        formatted_size = format!("{} bytes", path_size.to_formatted_string(&Locale::en));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        ui.label(&formatted_size);
+                                    
+                                    });
+                                    ui.end_row();
+                                }
+                            });
+                        }).response
+                    }
+                    None => {
+                        // There was an error fetching the directory contents
+                        // Send a command to fetch them in the background
+                        let command = Command::ReadDirectory(self.path.clone());
+                        command_tx.send(Some(command)).unwrap();
+                        ui.label("Loading...")
+                    },
+                };
+            });
         });
-
         if let Ok(Some(cmd)) = command_rx.try_recv(){
+            // tokio::spawn(async move{
+            //     self.run_command(cmd).await;
+            // });
             block_on(async{self.run_command(cmd).await;});
         }
     }
@@ -652,12 +722,14 @@ fn display_path(
     }
     .to_string()
     + get_file_name(path);
-
+    let x = false;
     if path.is_dir() 
     {
         let id = ui.make_persistent_id(path.as_path().to_string_lossy());
+        
         let command_sender = command_tx.clone();
-        let sender = command_tx.clone();
+        let command_sender2 = command_tx.clone();
+        //let command_sender3 = command_tx.clone();
         
         let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
 
@@ -673,9 +745,10 @@ fn display_path(
                 vec![] // Return an empty Vec for now
             }
         };
-
-        CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
-            .show_header(ui, |ui| {
+        ui.vertical(|ui|{
+            CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
+            .show_header(ui, |ui| 
+            {
                 
                 let is_selected = selected_items.borrow().contains(path);
                 let selectable_label = ui.selectable_label(is_selected, &label);
@@ -699,32 +772,83 @@ fn display_path(
 
                 if selectable_label.double_clicked() 
                 { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
-                    match sender.send(Some(Command::OpenPath(path.clone()))) {
-                        Ok(_) => drop(sender),
+                    match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
+                        Ok(_) => drop(command_sender2),
                         Err(e) => println!("error: {e:?}"),
                     }
                 }
-            })
-            .body(|ui| {
-                for sub_path in &contents {
-                    display_path(
-                        ui,
-                        sub_path,
-                        selected_items,
-                        depth + 1,
-                        command_tx.clone(),
-                        dir_contents,
-                        show_dirs_only,
-                        &file_metadata
-                    );
-                }
-            });
-    } else if !path.is_dir() && show_dirs_only == false{
-        let command_sender = command_tx.clone();
-        let is_selected = selected_items.borrow().contains(path);
-        let selectable_label = ui.selectable_label(is_selected, &label);
-        let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+                let mut formatted_size = "".to_string();
+
+                // if selectable_label.hovered(){
         
+                    // match command_sender3.send(Some(Command::ReadMetadata(path.clone()))) {
+                    //     Ok(_) => drop(command_sender3),
+                    //     Err(e) => println!("hovered sender error: {e:?}"),
+                    // }
+
+
+                                    // The below works, but it will get extremely resource heavy when hovering.. i may 
+                                    // need to spawn another thread and only read the directories sizes once,
+                                    // and display them all in the same line
+
+
+                // let mut folder_size: u64 = get_size(path).unwrap();
+                // let folder_name = path.file_name();
+                // println!("File: {folder_name:?}\n ---- 🗀 {folder_size}\n");
+                // if folder_size > 0{
+                //     if folder_size > GB_FROM_BYTES
+                //     {
+                //         let mut x = folder_size as f32;
+                //         x  = &x / GB_FROM_BYTES as f32;
+                //         let two_decimal_places = (x*100.0).round() / 100.0;
+                //         let x_as_string = two_decimal_places.to_string();
+                //         let y: Vec<&str> = x_as_string.split(".").collect();
+                //         let decimal = y[1].as_str();
+                //         let new_folder_size = x.clone() as u64;
+
+                //         formatted_size = format!("🗀 {}.{decimal} Gb", new_folder_size.to_formatted_string(&Locale::en));
+                //     }
+                //     else if folder_size > MB_FROM_BYTES
+                //     {
+                //         folder_size = folder_size / MB_FROM_BYTES;
+                //         formatted_size = format!("🗀 {} Mb", folder_size.to_formatted_string(&Locale::en));
+                //     } 
+                //     else if folder_size > KB_FROM_BYTES
+                //     {
+                //         folder_size = folder_size / KB_FROM_BYTES;
+                //         formatted_size = format!("🗀 {} Kb", folder_size.to_formatted_string(&Locale::en));
+                //         println!("kb from bytes: {folder_size}");
+                //     }
+                //     else{
+                //         formatted_size = format!("🗀 {} bytes", folder_size.to_formatted_string(&Locale::en));
+                //     }
+                // }
+                
+                
+                // selectable_label.on_hover_text(formatted_size);
+            // }
+        })
+        .body(|ui| {
+            for sub_path in &contents {
+                display_path(
+                    ui,
+                    sub_path,
+                    selected_items,
+                    depth + 1,
+                    command_tx.clone(),
+                    dir_contents,
+                    show_dirs_only,
+                    &file_metadata
+                );
+            }
+        });
+        });
+        
+    } else if !path.is_dir() && show_dirs_only == false{
+        let is_selected = selected_items.borrow().contains(path);
+        let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+
+        let selectable_label = ui.selectable_label(is_selected, &label);
         if selectable_label.clicked() {
             match command_tx.send(Some(Command::Select(path.clone()))) {
                 Ok(_) => drop(command_tx),
@@ -746,48 +870,13 @@ fn display_path(
             }
         }
         if selectable_label.secondary_clicked(){
-            // match command_sender.try_send(Some(Command::ReadMetadata(path.clone()))) {
-            //     Ok(_) => drop(command_sender),
-            //     Err(e) => println!("secondary_click sender error: {e:?}"),
-            // }
-        }
-        // let mut path_size = 0;
-        let mut formatted_size = "".to_string();
+                // match command_sender.try_send(Some(Command::ReadMetadata(path.clone()))) {
+                //     Ok(_) => drop(command_sender),
+                //     Err(e) => println!("secondary_click sender error: {e:?}"),
+                // }
+            }   
 
-        if selectable_label.hovered(){
+        
 
-            match command_sender.send(Some(Command::ReadMetadata(path.clone()))) {
-                Ok(_) => drop(command_sender),
-                Err(e) => println!("secondary_click sender error: {e:?}"),
-            }
-            
-            if let Some(metadata) = file_metadata.borrow_mut().get(path){
-                let mut path_size = metadata.path_size;
-                // 
-                
-                println!("File: {path:?}\n Size: {path_size}");
-
-                if metadata.path_size > GB_FROM_BYTES
-                {
-                    let mut x = path_size as f32;
-                    x  = x / GB_FROM_BYTES as f32;
-                    let x_as_string = x.to_string().split(".").collect();
-                    let new_string = x_as_string[0];
-                    
-                    formatted_size = format!("File Size: {} Gb", x.to_formatted_string(&Locale::en));
-                }
-                else if metadata.path_size > MB_FROM_BYTES
-                {
-                    path_size = path_size / MB_FROM_BYTES;
-                    formatted_size = format!("File Size: {} Mb", path_size.to_formatted_string(&Locale::en));
-                } 
-                else if metadata.path_size > KB_FROM_BYTES
-                {
-                    path_size = path_size / KB_FROM_BYTES;
-                    formatted_size = format!("File Size: {} Kb", path_size.to_formatted_string(&Locale::en));
-                } 
-            }
-            selectable_label.on_hover_text(formatted_size);
-        }
     }
 }
