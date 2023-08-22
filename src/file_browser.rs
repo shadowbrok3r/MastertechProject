@@ -640,7 +640,7 @@ fn display_path(
     ui.vertical_centered_justified(|ui| {
         for path in files.iter()
         {
-
+            ui.separator();
             let command_sender = command_tx.clone();
             let command_sender2 = command_tx.clone();
             let command_sender3 = command_tx.clone();
