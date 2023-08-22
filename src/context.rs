@@ -916,6 +916,7 @@ impl MastertechContext {
                 .column(Column::initial(100.0).range(50.0..=300.0).clip(true))
                 .column(Column::remainder())
                 .min_scrolled_height(0.0);
+
             table
             .header(20.0, |mut header|{
                 header.col(|ui| {
@@ -965,15 +966,16 @@ impl MastertechContext {
         ui.vertical(|ui|{ui.add_space(20.0)});
         ui.indent("indented_disks",|ui|{
             let disks_table = TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .cell_layout(Layout::left_to_right(Align::Center))
-            .column(Column::exact(15.0))
-            .column(Column::exact(150.0))
-            .columns(Column::remainder(), 2);
+                .striped(true)
+                .resizable(true)
+                .cell_layout(Layout::left_to_right(Align::Center))
+                .column(Column::exact(15.0))
+                .column(Column::exact(150.0))
+                .columns(Column::remainder(), 2);
             
             disks_table
-            .header(20.0, |mut header|{
+                .header(20.0, |mut header|
+            {
                 header.col(|ui|{
                     ui.label("#");
                 });
@@ -993,7 +995,7 @@ impl MastertechContext {
                 20.0,  // Replace with your desired row height
                 self.disk_num,
                 |disk_index, mut row| 
-            {                                                           // this is stupid..
+                {                                                           // this is stupid..
                     if let Some(disk) = self.disks.get(disk_index){
                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
 
