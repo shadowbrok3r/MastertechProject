@@ -521,10 +521,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
     &self.path // No selected file or it's not a folder, so use the current path.
     }
     
-    fn get_path_size(&self) -> String{
-        "".to_string()
-    }
-
     /// Set a function to filter shown files.
     pub fn filter(mut self, filter: Filter) -> Self {
         self.filter = Some(filter);
@@ -644,123 +640,125 @@ fn display_path(
         {
             ui.vertical(|ui|
             {
-                Grid::new("filebrowser_columns")
-                //.spacing(vec2(4.0, 3.0))
-                //.min_col_width(ui.available_size_before_wrap().x/3.0)
-                .max_col_width(500.0)
-                .num_columns(2)
-                .striped(true)
-                .show(ui, |ui| 
-                {
-                    for path in files.iter(){
-                        let command_sender = command_tx.clone();
-                        let command_sender2 = command_tx.clone();
-                        let command_sender3 = command_tx.clone();
-                        let command_sender4 = command_tx.clone();
-                
-                        let label = match path.is_dir() {true => "🗀 ", false => "🗋 "}.to_string() + get_file_name(path);
-                
-            
-                        if path.is_dir() 
-                        {
-                            let id = ui.make_persistent_id(path.as_path().to_string_lossy());
-                            let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+                ScrollArea::new([false, true])
+                .stick_to_bottom(true)
+                .auto_shrink([true, true])
+                .show(ui, |ui| {
+                    Grid::new("filebrowser_columns")
+                    .max_col_width(500.0)
+                    .num_columns(2)
+                    .striped(true)
+                    .show(ui, |ui| 
+                    {
+                        for path in files.iter(){
+                            let command_sender = command_tx.clone();
+                            let command_sender2 = command_tx.clone();
+                            let command_sender3 = command_tx.clone();
+                            let command_sender4 = command_tx.clone();
                     
-                            let contents = match dir_contents.borrow().get(path) 
+                            let label = match path.is_dir() {true => "🗀 ", false => "🗋 "}.to_string() + get_file_name(path);
+                
+                            if path.is_dir() 
                             {
-                                Some(contents) => contents.clone(),
-                                None => {
-                                    let command = Command::ReadDirectory(path.clone()); // Contents are not cached, fetch in the background
-                                    match command_sender.send(Some(command)){
-                                        Ok(_) => drop(command_sender),
-                                        Err(e) => println!("error: {e:?}")
-                                    }
-                                    vec![] // Return an empty Vec for now
-                                }
-                            };
-                            
-                            ui.vertical(|ui|
-                            {
-                                CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
-                                .show_header(ui, |ui| 
-                                {
-                                    let is_selected = selected_items.borrow().contains(path);
-                                    let selectable_label = ui.selectable_label(is_selected, &label);
-                                    
-                                    if selectable_label.clicked() 
-                                    { // If the item was already selected, deselect it
-                                        if selected_items.borrow().contains(path) { selected_items.borrow_mut().remove(path); } 
-                                        // If the control key is down and the item was not selected, select it
-                                        if modifiers.ctrl { selected_items.borrow_mut().insert(path.clone()); } 
-                                        else 
-                                        {// If the control key is not down, clear previous selection and select the current item
-                                            selected_items.borrow_mut().clear();
-                                            selected_items.borrow_mut().insert(path.clone());
-                                        }
-                                    }
+                                let id = ui.make_persistent_id(path.as_path().to_string_lossy());
+                                let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
                         
-                                    if selectable_label.double_clicked() 
-                                    { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
-                                        match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
-                                            Ok(_) => drop(command_sender2),
-                                            Err(e) => println!("error: {e:?}"),
-                                        }
-                                    }
-                                }).body(|ui| 
+                                let contents = match dir_contents.borrow().get(path) 
                                 {
-                                    display_path(
-                                        ui,
-                                        &contents,
-                                        selected_items,
-                                        depth + 1,
-                                        command_tx.clone(),
-                                        dir_contents,
-                                        show_dirs_only,
-                                        &file_metadata
-                                    );
-                                    //
+                                    Some(contents) => contents.clone(),
+                                    None => {
+                                        let command = Command::ReadDirectory(path.clone()); // Contents are not cached, fetch in the background
+                                        match command_sender.send(Some(command)){
+                                            Ok(_) => drop(command_sender),
+                                            Err(e) => println!("error: {e:?}")
+                                        }
+                                        vec![] // Return an empty Vec for now
+                                    }
+                                };
+                                
+                                ui.vertical(|ui|
+                                {
+                                    CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
+                                    .show_header(ui, |ui| 
+                                    {
+                                        let is_selected = selected_items.borrow().contains(path);
+                                        let selectable_label = ui.selectable_label(is_selected, &label);
+                                        
+                                        if selectable_label.clicked() 
+                                        { // If the item was already selected, deselect it
+                                            if selected_items.borrow().contains(path) { selected_items.borrow_mut().remove(path); } 
+                                            // If the control key is down and the item was not selected, select it
+                                            if modifiers.ctrl { selected_items.borrow_mut().insert(path.clone()); } 
+                                            else 
+                                            {// If the control key is not down, clear previous selection and select the current item
+                                                selected_items.borrow_mut().clear();
+                                                selected_items.borrow_mut().insert(path.clone());
+                                            }
+                                        }
+                            
+                                        if selectable_label.double_clicked() 
+                                        { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
+                                            match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
+                                                Ok(_) => drop(command_sender2),
+                                                Err(e) => println!("error: {e:?}"),
+                                            }
+                                        }
+                                    }).body(|ui| 
+                                    {
+                                        display_path(
+                                            ui,
+                                            &contents,
+                                            selected_items,
+                                            depth + 1,
+                                            command_tx.clone(),
+                                            dir_contents,
+                                            show_dirs_only,
+                                            &file_metadata
+                                        );
+                                        //
+                                    });
                                 });
-                                ui.end_row();
-                            });
-                        } 
-                        else if !path.is_dir() && show_dirs_only == false{
-                            let is_selected = selected_items.borrow().contains(path);
-                            let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
-                    
-                            let selectable_label = ui.selectable_label(is_selected, &label);
-                            if selectable_label.clicked() {
-                                match command_sender3.send(Some(Command::Select(path.clone()))) {
-                                    Ok(_) => drop(command_sender3),
-                                    Err(e) => println!("error: {e:?}"),
+                            } 
+                            else if !path.is_dir() && show_dirs_only == false{
+                                let is_selected = selected_items.borrow().contains(path);
+                                let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+                        
+                                let selectable_label = ui.selectable_label(is_selected, &label);
+                                if selectable_label.clicked() {
+                                    match command_sender3.send(Some(Command::Select(path.clone()))) {
+                                        Ok(_) => drop(command_sender3),
+                                        Err(e) => println!("error: {e:?}"),
+                                    }
+                                    // If the control key is down and the item was not selected, select it 
+                                    if modifiers.ctrl { selected_items.borrow_mut().insert(path.clone());} 
+                                    if selected_items.borrow().contains(path) {
+                                        // If the item was already selected, deselect it
+                                        selected_items.borrow_mut().remove(path);
+                                    } 
+                                    else { // If the control key is not down, clear previous selection and select the current item
+                                        selected_items.borrow_mut().clear();
+                                        selected_items.borrow_mut().insert(path.clone());
+                                    }
                                 }
-                                // If the control key is down and the item was not selected, select it 
-                                if modifiers.ctrl { selected_items.borrow_mut().insert(path.clone());} 
-                                if selected_items.borrow().contains(path) {
-                                    // If the item was already selected, deselect it
-                                    selected_items.borrow_mut().remove(path);
-                                } 
-                                else { // If the control key is not down, clear previous selection and select the current item
-                                    selected_items.borrow_mut().clear();
-                                    selected_items.borrow_mut().insert(path.clone());
+                                if !file_metadata.borrow().contains_key(path){
+                                    match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
+                                        Ok(_) => drop(command_sender4),
+                                        Err(e) => println!("hovered sender error: {e:?}"),
+                                    }
+                                }
+                                if let Some(metadata) = file_metadata.borrow_mut().get(path)
+                                {
+                                    let path_size = metadata.path_size;
+                                    let formatted_size = format_path_metadata(path_size);
+                                    ui.label(&formatted_size);
                                 }
                             }
-                            if !file_metadata.borrow().contains_key(path){
-                                match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
-                                    Ok(_) => drop(command_sender4),
-                                    Err(e) => println!("hovered sender error: {e:?}"),
-                                }
-                            }
-                            if let Some(metadata) = file_metadata.borrow_mut().get(path)
-                            {
-                                let path_size = metadata.path_size;
-                                let formatted_size = format_path_metadata(path_size);
-                                ui.label(&formatted_size);
-                            }
+                            ui.end_row();
                         }
                         //ui.end_row();
-                    }
-                    //ui.end_row();
+                    });
                 });
+
             });
         });
 
