@@ -1,6 +1,6 @@
 use egui::text::LayoutJob;
 use egui_extras::{TableBuilder, Column};
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver};
+use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, self};
 use eframe::egui::{*, collapsing_header::CollapsingState};
 use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell, ops::Range};
 use tokio::fs;
@@ -11,9 +11,6 @@ use crossbeam::channel;
 use num_format::{Locale, ToFormattedString};
 use fs_extra::dir::get_size;
 use cached::proc_macro::{io_cached, cached};
-
-/// Function that returns `true` if the path is accepted.
-pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
 
 const KB_FROM_BYTES: u64 = 1024;
 const MB_FROM_BYTES: u64 = 1024*1024;
@@ -33,7 +30,6 @@ pub enum Command {
     OpenPath(PathBuf),
     ReadDirectory(PathBuf),
     ReadMetadata(PathBuf),
-
 }
 #[derive(Debug)]
 pub struct MetaData{
@@ -51,7 +47,6 @@ pub struct FileBrowser {
     new_folder: bool,
     selected_items: RefCell<HashSet<PathBuf>>,
     dir_contents: RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
-    filter: Option<Filter>,
     depth: usize,
     first_refresh_contents: bool,
     file_metadata: RefCell<HashMap<PathBuf, MetaData>>,
@@ -89,7 +84,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
             depth: 1,
             file_metadata: RefCell::new(HashMap::new()),
             folder_metadata: RefCell::new(HashMap::new()),
-            filter: None,
             metadata_tx,
             metadata_rx,
           }
@@ -99,22 +93,13 @@ impl FileBrowser{ // sender: UnboundedSender<>
         match command{
             Command::Select(file) => self.select(file),
 
-            Command::Folder => {
-                println!("Command::Folder");
-                self.selected_item = Some(self.get_folder().to_owned());
-            },
+            Command::Folder => self.selected_item = Some(self.get_folder().to_owned()),
             
             Command::Refresh => self.refresh_contents(),
 
-            Command::UpDirectory => {
-                println!("Command::UpDirectory");
-                if self.path.pop() {
-                    self.refresh_contents();
-                }
-            },
+            Command::UpDirectory => {if self.path.pop() {self.refresh_contents()}},
 
             Command::CreateDirectory => {
-                println!("Command::CreateDirectory");
                 let mut path = self.path.clone();
                 let name = match self.filename_edit.is_empty() {
                     true => "New folder",
@@ -126,25 +111,18 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     Ok(_) => {
                         self.refresh_contents();
                         self.select(path);
-                        // TODO: scroll to selected?
                     }
                     Err(err) => println!("Error while creating directory: {err}"),
                 }
-
-
             },
 
             Command::Copy(source, destination, progress_tx) => {
-                println!("Command::copy");
-                
                 tokio::spawn(async move{
                     match fs::copy(&source, &destination).await {
                         Ok(bytes_copied) => progress_tx.send(bytes_copied).unwrap(),
                         Err(e) => println!("{e:?}")
                     }
                 });
-
-            
             },
 
             Command::Move(source, destination) => {
@@ -167,7 +145,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
             },
 
             Command::Rename(from, to) => {
-                println!("Command::Rename");
                 match fs::rename(from, &to).await {
                     Ok(_) => {
                         self.refresh_contents();
@@ -186,46 +163,47 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 let new_contents = read_folder(
                     &path,
                     self.depth,
-                    self.filter.as_ref(),
                     self.show_hidden,
                 );
                 self.dir_contents.borrow_mut().insert(path, new_contents);
             }
 
             Command::ReadMetadata(path) => {
-                if path.is_dir(){
-                    let sender = self.metadata_tx.clone();
-                    let cloned_path = path.clone();
-                    tokio::spawn(async move
-                    {
-                        
-                        match sender.try_send(get_size(path).unwrap_or(0))
-                        {
-                            Ok(_) => drop(sender),
-                            Err(e) => println!("{e}")
+                let sender = self.metadata_tx.clone();
+                let cloned_path = path.clone();
+                let clone_path1 = path.clone();
+                // Spawn the appropriate async task depending on whether the path is a directory or a file.
+                let read_metadata_task = if path.is_dir() {
+                    tokio::spawn(async move {
+                        get_size(cloned_path).unwrap_or(0)
+                    })
+                } else if path.is_file() {
+                    tokio::spawn(async move {
+                        tokio::fs::metadata(&cloned_path).await.unwrap().len()
+                    })
+                } else {
+                    // Handle the case where the path is neither a directory nor a file.
+                    return;
+                };
+                // Use tokio::select! to wait for the metadata task to complete.
+                tokio::select! {
+                    result = read_metadata_task => {
+                        match result {
+                            Ok(path_size) => {
+                                // Send the result through the channel.
+                                if sender.try_send(path_size).is_err() {
+                                    println!("Error sending metadata");
+                                }
+                                
+                                // Insert the metadata into the appropriate HashMap.
+                                if path.is_dir() {
+                                    self.folder_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
+                                } else {
+                                    self.file_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
+                                }
+                            },
+                            Err(e) => println!("Error reading metadata: {:?}", e),
                         }
-                    });
-    
-                    if let Ok(path_size) = self.metadata_rx.try_recv()
-                    {
-                        self.folder_metadata.borrow_mut().insert(cloned_path.clone(), MetaData{path_size});
-                    }
-                }
-                else if path.is_file(){
-                    let sender = self.metadata_tx.clone();
-                    let cloned_path = path.clone();
-                    tokio::spawn(async move
-                    {
-                        match sender.try_send(tokio::fs::metadata(&path).await.unwrap().len())
-                        {
-                            Ok(_) => drop(sender),
-                            Err(e) => println!("{e}")
-                        }
-                    });
-    
-                    if let Ok(path_size) = self.metadata_rx.try_recv()
-                    {
-                        self.file_metadata.borrow_mut().insert(cloned_path.clone(), MetaData{path_size});
                     }
                 }
             }
@@ -235,7 +213,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
     pub fn show(
         &mut self, 
         ui: &mut Ui,
-        ctx:&Context,
         command_tx: UnboundedSender<Option<Command>>,
         mut command_rx: UnboundedReceiver<Option<Command>>
     ) {     
@@ -245,12 +222,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
                         match command_tx.send(Some(Command::UpDirectory)){
-                            Ok(_) => {
-                                println!("sent task successfully");
-                            },
-                            Err(e) => {
-                                print!("{e}");
-                            }
+                            Ok(_) => println!("UpDirectory"),
+                            Err(e) => println!("{e}"),
                         }
                     }
                 });
@@ -260,14 +233,11 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     let response = ui.button("⟲").on_hover_text("Refresh"); //
                     if response.clicked() {
                         match command_tx.send(Some(Command::Refresh)){
-                            Ok(_) => {
-                                println!("sent task successfully");
-                            },
-                            Err(e) => {
-                                print!("{e}");
-                            }
+                            Ok(_) => println!("sent task successfully"),
+                            Err(e) => println!("{e}")
                         }
                     }
+
                     ScrollArea::new([false, false]).auto_shrink([false, false]).show(ui, |ui| {
                         let response = ui.add_sized(
                             ui.available_size_before_wrap(),
@@ -280,44 +250,44 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             let path = PathBuf::from(&self.path_edit);
 
                             match command_tx.send(Some(Command::OpenPath(path))){
-                                Ok(_) => {
-                                    println!("sent task successfully");
-                                },
-                                Err(e) => {
-                                    print!("{e}");
-                                }
+                                Ok(_) => println!("sent task successfully"),
+                                Err(e) => println!("{e}")
                             };
 
                         }
-                        /* 
-                        else if response.lost_focus() && response.ctx.input(|state| state.key_pressed(Key::Enter)){
-                            let path = PathBuf::from(&self.path_edit);
-
-                            match command_tx.send(Some(Command::OpenPath(path))){
-                                Ok(_) => {
-                                    println!("sent task successfully");
-                                },
-                                Err(e) => {
-                                    print!("{e}");
-                                }
-                            };
-                        } 
-                        */
                     });
                 });
             });
             
             ui.horizontal_top(|ui| {
                 ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
-                if ui.checkbox(&mut self.show_hidden, "Show Hidden").changed() {
-                    self.refresh_contents();
-                }
+                ui.checkbox(&mut self.show_hidden, "Show Hidden");
             });
             ui.add_space(ui.spacing().item_spacing.y);
         });
 
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
+            let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
+
+            if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
+            {
+                println!("shortcut pressed!");
+                for selected_paths in self.selected_items.borrow().get(&self.path){
+                    // now i will need to store them in a separate variable maybe? so it doesnt
+                    // get reset when i change directories
+                }
+            }
+
+            
+            //if x.modifiers.ctrl  { self.selected_items.borrow_mut().insert(path.clone()); } 
+
+            ui.add
+            (
+                ProgressBar::new(100.0)
+                .show_percentage()
+                .animate(true)
+            );
 
             // let (progress_tx, progress_rx) = channel::unbounded::<u64>();
             // let src = PathBuf::new();
@@ -415,25 +385,30 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 self.refresh_contents();
             }
             
-            match self.dir_contents.borrow().get(&self.path) 
+            ScrollArea::new([true, true])
+            .id_source("file_browser_scroll")
+            .auto_shrink([false, false])
+            .show_rows(ui,
+            ui.text_style_height(&TextStyle::Body),
+            self.dir_contents.borrow().get(&self.path).map_or(0, |files| files.len()),
+            |ui, range| match self.dir_contents.borrow().get(&self.path) //borrow().get(&self.path) 
             {
                 Some(files) => 
                 {
                     ui.with_layout(ui.layout().with_main_justify(true), |ui| 
                     {
-                        display_path
-                        (
-                            ui, 
-                            files, 
-                            &self.selected_items, 
-                            self.depth, 
-                            command_tx.clone(), 
-                            &self.dir_contents, 
-                            self.read_dirs_only,
-                            &self.file_metadata,
-                            &self.folder_metadata,
-                        );
-                        
+                        ui.vertical(|ui|{
+
+                            for path in files[range].iter()
+                            {
+                                self.display_path
+                                (
+                                    ui, 
+                                    path, 
+                                    command_tx.clone(),
+                                );
+                            }
+                        });
                     }).response
                 }
                 None => {
@@ -443,28 +418,196 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     command_tx.send(Some(command)).unwrap();
                     ui.label("Loading...")
                 },
-            };
+            });
         });
-        if let Ok(Some(cmd)) = command_rx.try_recv(){
-            // tokio::spawn(async move{
-            //     self.run_command(cmd).await;
-            // });
-            block_on(async{self.run_command(cmd).await;});
-        }
+        if let Ok(Some(cmd)) = command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
     }
     
-    pub fn default_filename(mut self, filename: impl Into<String>) -> Self {
+    /** 
+        Handles displaying of subcontents of given directory by calling list_subfolders
+        and makes only directories collapsible so we can see its subcontents 
+    */
+    fn display_path(
+        &self,
+        ui: &mut Ui,
+        path: &PathBuf,
+        command_tx: UnboundedSender<Option<Command>>,
+    ){
+
+        ui.separator();
+        let command_sender = command_tx.clone();
+        let command_sender2 = command_tx.clone();
+        let command_sender3 = command_tx.clone();
+        let command_sender4 = command_tx.clone();
+        let command_sender5 = command_tx.clone();
+
+        let label = match path.is_dir() {true => "🗀 ", false => "🗋 "}.to_string() + get_file_name(path);
+        let mut formatted_size = "".to_string();            
+        ui.horizontal_top(|ui| 
+        {
+            if path.is_dir() 
+            {
+                let id = ui.make_persistent_id(path.as_path().to_string_lossy());
+                let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+        
+                let contents = match self.dir_contents.borrow().get(path) 
+                {
+                    Some(contents) => contents.clone(),
+                    None => {
+                        let command = Command::ReadDirectory(path.clone()); // Contents are not cached, fetch in the background
+                        match command_sender.send(Some(command)){
+                            Ok(_) => drop(command_sender),
+                            Err(e) => println!("error: {e:?}")
+                        }
+                        vec![] // Return an empty Vec for now
+                    }
+                };
+
+                ui.vertical_centered_justified(|ui| {
+                    CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
+                    .show_header(ui, |ui| 
+                    {
+                        let is_selected = self.selected_items.borrow().contains(path);
+                        let selectable_label = ui.selectable_label(is_selected, &label);
+                    
+                        if !self.folder_metadata.borrow().contains_key(path){
+                            match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
+                                Ok(_) => drop(command_sender5),
+                                Err(e) => println!("hovered sender error: {e:?}"),
+                            }
+                        } 
+                        if let Some(metadata) = self.folder_metadata.borrow_mut().get(path)
+                        {
+                            let path_size = metadata.path_size;
+                            formatted_size = format_path_metadata(path_size);
+                            let mut job = LayoutJob::default();
+                            let mut text_formatting = TextFormat::default();
+                            text_formatting.color = Color32::DARK_GRAY;
+                            text_formatting.italics = true;
+                            job.halign = Align::RIGHT;
+                            job.justify = true;
+                            
+                            let text = format!("{}", formatted_size.as_str());
+                            job.append(&text, 30.0, text_formatting);
+                            
+                            let x = WidgetText::LayoutJob(job).small().background_color(Color32::RED);
+                            ui.add_space(ui.available_size_before_wrap().x - 100.0);
+                            ui.add(Label::new(x));
+                        }
+
+                        if selectable_label.clicked() 
+                        { // If the item was already selected, deselect it
+                            if self.selected_items.borrow().contains(path) { self.selected_items.borrow_mut().remove(path); } 
+                            // If the control key is down and the item was not selected, select it
+                            if modifiers.ctrl { self.selected_items.borrow_mut().insert(path.clone()); } 
+                            else 
+                            {// If the control key is not down, clear previous selection and select the current item
+                                self.selected_items.borrow_mut().clear();
+                                self.selected_items.borrow_mut().insert(path.clone());
+                            }
+                        }
+            
+                        if selectable_label.double_clicked() 
+                        { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
+                            match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
+                                Ok(_) => drop(command_sender2),
+                                Err(e) => println!("error: {e:?}"),
+                            }
+                        }
+
+                    }).body(|ui| 
+                    {
+                        for sub_path in &contents {
+                            self.display_path(
+                                ui,
+                                &sub_path,
+                                command_tx.clone()
+                            );
+                        }
+                    });
+                });
+
+            } 
+            else if !path.is_dir() && self.read_dirs_only == false{
+                if !self.file_metadata.borrow().contains_key(path){
+                    match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
+                        Ok(_) => drop(command_sender4),
+                        Err(e) => println!("hovered sender error: {e:?}"),
+                    }
+                } 
+                let is_selected = self.selected_items.borrow().contains(path);
+                let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+                
+                let selectable_label = ui.selectable_label(is_selected, &label);
+                if selectable_label.clicked() {
+                    match command_sender3.send(Some(Command::Select(path.clone()))) {
+                        Ok(_) => drop(command_sender3),
+                        Err(e) => println!("error: {e:?}"),
+                    }
+                    // If the control key is down and the item was not selected, select it 
+                    if modifiers.ctrl { self.selected_items.borrow_mut().insert(path.clone());} 
+                    if self.selected_items.borrow().contains(path) {
+                        // If the item was already selected, deselect it
+                        self.selected_items.borrow_mut().remove(path);
+                    } 
+                    else { // If the control key is not down, clear previous selection and select the current item
+                        self.selected_items.borrow_mut().clear();
+                        self.selected_items.borrow_mut().insert(path.clone());
+                    }
+                }
+                
+                if let Some(metadata) = self.file_metadata.borrow_mut().get(path)
+                {
+                    let path_size = metadata.path_size;
+                    formatted_size = format_path_metadata(path_size);
+                    let mut job = LayoutJob::default();
+                    let mut text_formatting = TextFormat::default();
+                    text_formatting.color = Color32::DARK_GRAY;
+                    text_formatting.italics = true;
+                    job.halign = Align::RIGHT;
+                    job.justify = true;
+                    
+                    let text = format!("{}", formatted_size.as_str());
+                    job.append(&text, 30.0, text_formatting);
+                    
+                    let x = WidgetText::LayoutJob(job).small().background_color(Color32::RED);
+                    ui.add_space(ui.available_size_before_wrap().x - 100.0);
+                    ui.add(Label::new(x));
+                }
+            }
+        });
+
+    }
+
+    async fn copy_selected_files(&self, destination_dir: PathBuf, progress_tx: mpsc::Sender<f64>) -> Result<(), Box<dyn std::error::Error>> {
+        // Get the selected files
+        let selected_files: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
+        let total_files = selected_files.len() as f64;
+
+        // Iterate over each selected file and copy it to the destination directory
+        for (index, file) in selected_files.iter().enumerate() {
+            let destination = destination_dir.join(file.file_name().unwrap());
+            fs::copy(file, &destination).await?;
+
+            // Calculate and send the progress percentage
+            let progress = (index as f64 + 1.0) / total_files * 100.0;
+            progress_tx.send(progress).await?;
+        }
+
+        Ok(())
+    }
+    fn default_filename(mut self, filename: impl Into<String>) -> Self {
         self.filename_edit = filename.into();
         self
     }
 
     /**  Resulting file path. */
-    pub fn path(&self) -> Option<PathBuf> {
+    fn path(&self) -> Option<PathBuf> {
         self.selected_item.clone()
     }
 
     /** Set the dialog's current opened path */
-    pub fn set_path(&mut self, path: impl Into<PathBuf>) {
+    fn set_path(&mut self, path: impl Into<PathBuf>) {
         self.path = path.into();
         self.refresh_contents();
     }
@@ -478,10 +621,10 @@ impl FileBrowser{ // sender: UnboundedSender<>
         let new_contents = read_folder(
             &self.path,
             self.depth,
-            self.filter.as_ref(),
             self.read_dirs_only,
         );
         self.dir_contents.borrow_mut().insert(self.path.clone(), new_contents);
+        self.path_edit = self.path.to_string_lossy().to_string();
         //self.select(None);
     }
 
@@ -539,13 +682,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 return file.as_path();
             }
         }
-    &self.path // No selected file or it's not a folder, so use the current path.
-    }
-    
-    /// Set a function to filter shown files.
-    pub fn filter(mut self, filter: Filter) -> Self {
-        self.filter = Some(filter);
-        self
+        // No selected file or it's not a folder, 
+        // so use the current path.
+        &self.path 
     }
 }
 
@@ -575,7 +714,7 @@ extern "C" {
 }
 
 /** Returns a Vec<PathBuf> of current directory contents and files. */
-fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, read_dirs_only: bool) -> Vec<PathBuf> {
+fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
     //#[cfg(windows)]
     // let drives = {
     //   let mut drives = unsafe { GetLogicalDrives() };
@@ -641,177 +780,6 @@ fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, read_dirs_
     .collect();
 
     result
-}
-
-/** 
-    Handles displaying of subcontents of given directory by calling list_subfolders
-    and makes only directories collapsible so we can see its subcontents 
- */
-
-fn display_path(
-    ui: &mut Ui,
-    files: &Vec<PathBuf>,
-    selected_items: &RefCell<HashSet<PathBuf>>,
-    depth: usize,
-    command_tx: UnboundedSender<Option<Command>>,
-    dir_contents: &RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
-    show_dirs_only: bool,
-    file_metadata: &RefCell<HashMap<PathBuf, MetaData>>,
-    folder_metadata: &RefCell<HashMap<PathBuf, MetaData>>,
-) {
-    ui.vertical(|ui| {
-        for path in files.iter()
-        {
-            ui.separator();
-            let command_sender = command_tx.clone();
-            let command_sender2 = command_tx.clone();
-            let command_sender3 = command_tx.clone();
-            let command_sender4 = command_tx.clone();
-            let command_sender5 = command_tx.clone();
-
-            let label = match path.is_dir() {true => "🗀 ", false => "🗋 "}.to_string() + get_file_name(path);
-            let mut formatted_size = "".to_string();            
-            ui.horizontal_top(|ui| 
-            {
-                
-                if path.is_dir() 
-                {
-                    let id = ui.make_persistent_id(path.as_path().to_string_lossy());
-                    let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
-            
-                    let contents = match dir_contents.borrow().get(path) 
-                    {
-                        Some(contents) => contents.clone(),
-                        None => {
-                            let command = Command::ReadDirectory(path.clone()); // Contents are not cached, fetch in the background
-                            match command_sender.send(Some(command)){
-                                Ok(_) => drop(command_sender),
-                                Err(e) => println!("error: {e:?}")
-                            }
-                            vec![] // Return an empty Vec for now
-                        }
-                    };
-
-                    ui.vertical_centered_justified(|ui| {
-                        CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
-                        .show_header(ui, |ui| 
-                        {
-                            let is_selected = selected_items.borrow().contains(path);
-                            let selectable_label = ui.selectable_label(is_selected, &label);
-                        
-                            if !folder_metadata.borrow().contains_key(path){
-                                match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
-                                    Ok(_) => drop(command_sender5),
-                                    Err(e) => println!("hovered sender error: {e:?}"),
-                                }
-                            } 
-                            if let Some(metadata) = folder_metadata.borrow_mut().get(path)
-                            {
-                                let path_size = metadata.path_size;
-                                formatted_size = format_path_metadata(path_size);
-                                let mut job = LayoutJob::default();
-                                let mut text_formatting = TextFormat::default();
-                                text_formatting.color = Color32::DARK_GRAY;
-                                text_formatting.italics = true;
-                                job.halign = Align::RIGHT;
-                                job.justify = true;
-                                
-                                let text = format!("{}", formatted_size.as_str());
-                                job.append(&text, 30.0, text_formatting);
-                                
-                                let x = WidgetText::LayoutJob(job).small().background_color(Color32::RED);
-                                ui.add_space(ui.available_size_before_wrap().x - 100.0);
-                                ui.add(Label::new(x));
-                            }
-
-                            if selectable_label.clicked() 
-                            { // If the item was already selected, deselect it
-                                if selected_items.borrow().contains(path) { selected_items.borrow_mut().remove(path); } 
-                                // If the control key is down and the item was not selected, select it
-                                if modifiers.ctrl { selected_items.borrow_mut().insert(path.clone()); } 
-                                else 
-                                {// If the control key is not down, clear previous selection and select the current item
-                                    selected_items.borrow_mut().clear();
-                                    selected_items.borrow_mut().insert(path.clone());
-                                }
-                            }
-                
-                            if selectable_label.double_clicked() 
-                            { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
-                                match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
-                                    Ok(_) => drop(command_sender2),
-                                    Err(e) => println!("error: {e:?}"),
-                                }
-                            }
-
-                        }).body(|ui| 
-                        {
-                            display_path(
-                                ui,
-                                &contents,
-                                selected_items,
-                                depth + 1,
-                                command_tx.clone(),
-                                dir_contents,
-                                show_dirs_only,
-                                &file_metadata,
-                                &folder_metadata
-                            );
-                        });
-                    });
-
-                } 
-                else if !path.is_dir() && show_dirs_only == false{
-                    if !file_metadata.borrow().contains_key(path){
-                        match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
-                            Ok(_) => drop(command_sender4),
-                            Err(e) => println!("hovered sender error: {e:?}"),
-                        }
-                    } 
-                    let is_selected = selected_items.borrow().contains(path);
-                    let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
-                    
-                    let selectable_label = ui.selectable_label(is_selected, &label);
-                    if selectable_label.clicked() {
-                        match command_sender3.send(Some(Command::Select(path.clone()))) {
-                            Ok(_) => drop(command_sender3),
-                            Err(e) => println!("error: {e:?}"),
-                        }
-                        // If the control key is down and the item was not selected, select it 
-                        if modifiers.ctrl { selected_items.borrow_mut().insert(path.clone());} 
-                        if selected_items.borrow().contains(path) {
-                            // If the item was already selected, deselect it
-                            selected_items.borrow_mut().remove(path);
-                        } 
-                        else { // If the control key is not down, clear previous selection and select the current item
-                            selected_items.borrow_mut().clear();
-                            selected_items.borrow_mut().insert(path.clone());
-                        }
-                    }
-                    
-                    if let Some(metadata) = file_metadata.borrow_mut().get(path)
-                    {
-                        let path_size = metadata.path_size;
-                        formatted_size = format_path_metadata(path_size);
-                        let mut job = LayoutJob::default();
-                        let mut text_formatting = TextFormat::default();
-                        text_formatting.color = Color32::DARK_GRAY;
-                        text_formatting.italics = true;
-                        job.halign = Align::RIGHT;
-                        job.justify = true;
-                        
-                        let text = format!("{}", formatted_size.as_str());
-                        job.append(&text, 30.0, text_formatting);
-                        
-                        let x = WidgetText::LayoutJob(job).small().background_color(Color32::RED);
-                        ui.add_space(ui.available_size_before_wrap().x - 100.0);
-                        ui.add(Label::new(x));
-                    }
-                }
-            });
-        }
-    });
-
 }
 
 //#[cached]

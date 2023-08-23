@@ -89,7 +89,6 @@ pub struct MastertechContext {
 
     pub date: Option<chrono::NaiveDate>,
     
-    
     pub reader_bytes: u32,
 
     pub animate_progress_bar: bool,
@@ -1030,7 +1029,7 @@ impl MastertechContext {
         // Lock the Mutex and show the GUI
         let file_browser_clone = Arc::clone(&self.file_browser);
         let mut file_browser = file_browser_clone.lock().unwrap();
-        file_browser.show(ui, &self.ctx.clone(), command_tx, command_rx);
+        file_browser.show(ui, command_tx, command_rx);
     }
     
     fn scripts(&mut self, _ui: &mut Ui){ }
