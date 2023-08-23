@@ -10,6 +10,7 @@ use pollster::block_on;
 use crossbeam::channel;
 use num_format::{Locale, ToFormattedString};
 use fs_extra::dir::get_size;
+use cached::proc_macro::{io_cached, cached};
 
 /// Function that returns `true` if the path is accepted.
 pub type Filter = Box<dyn Fn(&PathBuf) -> bool + Send + Sync + 'static>;
@@ -34,7 +35,7 @@ pub enum Command {
     ReadMetadata(PathBuf),
 
 }
-
+#[derive(Debug)]
 pub struct MetaData{
     path_size: u64,
 }
@@ -54,6 +55,7 @@ pub struct FileBrowser {
     depth: usize,
     first_refresh_contents: bool,
     file_metadata: RefCell<HashMap<PathBuf, MetaData>>,
+    folder_metadata: RefCell<HashMap<PathBuf, MetaData>>,
     metadata_tx: crossbeam::channel::Sender<u64>,
     metadata_rx: crossbeam::channel::Receiver<u64>,
 }
@@ -86,6 +88,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             first_refresh_contents: true,
             depth: 1,
             file_metadata: RefCell::new(HashMap::new()),
+            folder_metadata: RefCell::new(HashMap::new()),
             filter: None,
             metadata_tx,
             metadata_rx,
@@ -190,22 +193,40 @@ impl FileBrowser{ // sender: UnboundedSender<>
             }
 
             Command::ReadMetadata(path) => {
-                let sender = self.metadata_tx.clone();
-                let cloned_path = path.clone();
-                //let metadata = fs::metadata(path).expect("Failed to retrieve metadata");
-                tokio::spawn(async move
-                {
-                    match sender.try_send(tokio::fs::metadata(&path).await.unwrap().len())
+                if path.is_dir(){
+                    let sender = self.metadata_tx.clone();
+                    let cloned_path = path.clone();
+                    tokio::spawn(async move
                     {
-                        Ok(_) => drop(sender),
-                        Err(e) => println!("{e}")
+                        
+                        match sender.try_send(get_size(path).unwrap_or(0))
+                        {
+                            Ok(_) => drop(sender),
+                            Err(e) => println!("{e}")
+                        }
+                    });
+    
+                    if let Ok(path_size) = self.metadata_rx.try_recv()
+                    {
+                        self.folder_metadata.borrow_mut().insert(cloned_path.clone(), MetaData{path_size});
                     }
-                });
-
-                if let Ok(path_size) = self.metadata_rx.try_recv()
-                {
-                    self.file_metadata.borrow_mut().insert(cloned_path.clone(), MetaData{path_size});
-                    //self.path_size = path_size;
+                }
+                else if path.is_file(){
+                    let sender = self.metadata_tx.clone();
+                    let cloned_path = path.clone();
+                    tokio::spawn(async move
+                    {
+                        match sender.try_send(tokio::fs::metadata(&path).await.unwrap().len())
+                        {
+                            Ok(_) => drop(sender),
+                            Err(e) => println!("{e}")
+                        }
+                    });
+    
+                    if let Ok(path_size) = self.metadata_rx.try_recv()
+                    {
+                        self.file_metadata.borrow_mut().insert(cloned_path.clone(), MetaData{path_size});
+                    }
                 }
             }
         }
@@ -385,10 +406,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
         CentralPanel::default().show_inside(ui, |ui| {
             ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
-            //ui.style_mut().spacing.button_padding = (4.0, 5.0).into();
             ui.shrink_width_to_current();ui.shrink_height_to_current();
             ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
-            //ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)));
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
@@ -412,6 +431,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             &self.dir_contents, 
                             self.read_dirs_only,
                             &self.file_metadata,
+                            &self.folder_metadata,
                         );
                         
                     }).response
@@ -627,6 +647,7 @@ fn read_folder(path: &PathBuf, depth: usize, filter: Option<&Filter>, read_dirs_
     Handles displaying of subcontents of given directory by calling list_subfolders
     and makes only directories collapsible so we can see its subcontents 
  */
+
 fn display_path(
     ui: &mut Ui,
     files: &Vec<PathBuf>,
@@ -636,8 +657,9 @@ fn display_path(
     dir_contents: &RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
     show_dirs_only: bool,
     file_metadata: &RefCell<HashMap<PathBuf, MetaData>>,
+    folder_metadata: &RefCell<HashMap<PathBuf, MetaData>>,
 ) {
-    ui.vertical_centered_justified(|ui| {
+    ui.vertical(|ui| {
         for path in files.iter()
         {
             ui.separator();
@@ -645,18 +667,13 @@ fn display_path(
             let command_sender2 = command_tx.clone();
             let command_sender3 = command_tx.clone();
             let command_sender4 = command_tx.clone();
+            let command_sender5 = command_tx.clone();
 
             let label = match path.is_dir() {true => "🗀 ", false => "🗋 "}.to_string() + get_file_name(path);
-            let mut formatted_size = "".to_string();
-
-            if !file_metadata.borrow().contains_key(path){
-                match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
-                    Ok(_) => drop(command_sender4),
-                    Err(e) => println!("hovered sender error: {e:?}"),
-                }
-            } 
-            
-            ui.horizontal_top(|ui| {
+            let mut formatted_size = "".to_string();            
+            ui.horizontal_top(|ui| 
+            {
+                
                 if path.is_dir() 
                 {
                     let id = ui.make_persistent_id(path.as_path().to_string_lossy());
@@ -675,13 +692,38 @@ fn display_path(
                         }
                     };
 
-                    ui.vertical(|ui| {
+                    ui.vertical_centered_justified(|ui| {
                         CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
                         .show_header(ui, |ui| 
                         {
                             let is_selected = selected_items.borrow().contains(path);
                             let selectable_label = ui.selectable_label(is_selected, &label);
-                            
+                        
+                            if !folder_metadata.borrow().contains_key(path){
+                                match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
+                                    Ok(_) => drop(command_sender5),
+                                    Err(e) => println!("hovered sender error: {e:?}"),
+                                }
+                            } 
+                            if let Some(metadata) = folder_metadata.borrow_mut().get(path)
+                            {
+                                let path_size = metadata.path_size;
+                                formatted_size = format_path_metadata(path_size);
+                                let mut job = LayoutJob::default();
+                                let mut text_formatting = TextFormat::default();
+                                text_formatting.color = Color32::DARK_GRAY;
+                                text_formatting.italics = true;
+                                job.halign = Align::RIGHT;
+                                job.justify = true;
+                                
+                                let text = format!("{}", formatted_size.as_str());
+                                job.append(&text, 30.0, text_formatting);
+                                
+                                let x = WidgetText::LayoutJob(job).small().background_color(Color32::RED);
+                                ui.add_space(ui.available_size_before_wrap().x - 100.0);
+                                ui.add(Label::new(x));
+                            }
+
                             if selectable_label.clicked() 
                             { // If the item was already selected, deselect it
                                 if selected_items.borrow().contains(path) { selected_items.borrow_mut().remove(path); } 
@@ -701,6 +743,7 @@ fn display_path(
                                     Err(e) => println!("error: {e:?}"),
                                 }
                             }
+
                         }).body(|ui| 
                         {
                             display_path(
@@ -711,13 +754,20 @@ fn display_path(
                                 command_tx.clone(),
                                 dir_contents,
                                 show_dirs_only,
-                                &file_metadata
+                                &file_metadata,
+                                &folder_metadata
                             );
                         });
                     });
 
                 } 
                 else if !path.is_dir() && show_dirs_only == false{
+                    if !file_metadata.borrow().contains_key(path){
+                        match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
+                            Ok(_) => drop(command_sender4),
+                            Err(e) => println!("hovered sender error: {e:?}"),
+                        }
+                    } 
                     let is_selected = selected_items.borrow().contains(path);
                     let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
                     
@@ -738,22 +788,33 @@ fn display_path(
                             selected_items.borrow_mut().insert(path.clone());
                         }
                     }
+                    
                     if let Some(metadata) = file_metadata.borrow_mut().get(path)
                     {
                         let path_size = metadata.path_size;
                         formatted_size = format_path_metadata(path_size);
-
-                        ui.label(&formatted_size).highlight();
+                        let mut job = LayoutJob::default();
+                        let mut text_formatting = TextFormat::default();
+                        text_formatting.color = Color32::DARK_GRAY;
+                        text_formatting.italics = true;
+                        job.halign = Align::RIGHT;
+                        job.justify = true;
+                        
+                        let text = format!("{}", formatted_size.as_str());
+                        job.append(&text, 30.0, text_formatting);
+                        
+                        let x = WidgetText::LayoutJob(job).small().background_color(Color32::RED);
+                        ui.add_space(ui.available_size_before_wrap().x - 100.0);
+                        ui.add(Label::new(x));
                     }
                 }
-                
-
             });
         }
     });
 
 }
 
+//#[cached]
 fn format_path_metadata(mut path_size: u64) -> String{
     let mut formatted_size = "".to_string();
     if path_size > 0
@@ -782,14 +843,10 @@ fn format_path_metadata(mut path_size: u64) -> String{
         else{
             formatted_size = format!("{} bytes", path_size.to_formatted_string(&Locale::en));
         }
-        let mut job = LayoutJob::default();
-        let mut text_formatting = TextFormat::default();
-        text_formatting.color = Color32::RED;
-        text_formatting.valign = Align::RIGHT;
-        text_formatting.italics = true;
-        job.append(&formatted_size.as_str(), 30.0, text_formatting);
-        let text = job.text;
-        format!("{text}")
+        
+
+        
+        formatted_size
     }
     else {
         format!("0b")
