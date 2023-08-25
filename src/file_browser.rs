@@ -3,7 +3,7 @@ use egui_extras::{TableBuilder, Column};
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, self};
 use eframe::egui::{*, collapsing_header::CollapsingState};
 use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell, ops::Range};
-use tokio::fs;
+use tokio::{fs, sync::RwLock};
 use walkdir::WalkDir;
 use std::env;
 use pollster::block_on;
@@ -11,6 +11,7 @@ use crossbeam::channel;
 use num_format::{Locale, ToFormattedString};
 use fs_extra::dir::get_size;
 use cached::proc_macro::{io_cached, cached};
+
 
 const KB_FROM_BYTES: u64 = 1024;
 const MB_FROM_BYTES: u64 = 1024*1024;
@@ -268,19 +269,20 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
+                
+            let (progress_tx, progress_rx) = mpsc::channel::<f64>(20); // Create a synchronous channel for progress reporting
             let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
-
-            if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
-            {
-                println!("shortcut pressed!");
-                for selected_paths in self.selected_items.borrow().get(&self.path){
                     // now i will need to store them in a separate variable maybe? so it doesnt
                     // get reset when i change directories
+            if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
+            {
+                //let selected_items = self.selected_items.borrow().iter().cloned().collect();
+                // let lock = RwLock::new(selected_paths);
+                if let Some(selected_paths) = self.selected_items.borrow().get(&self.path){
+                    
+                    self.copy_selected_files(selected_paths.as_path(), progress_tx.clone());
                 }
             }
-
-            
-            //if x.modifiers.ctrl  { self.selected_items.borrow_mut().insert(path.clone()); } 
 
             ui.add
             (
@@ -579,22 +581,27 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
     }
 
-    async fn copy_selected_files(&self, destination_dir: PathBuf, progress_tx: mpsc::Sender<f64>) -> Result<(), Box<dyn std::error::Error>> {
-        // Get the selected files
-        let selected_files: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
-        let total_files = selected_files.len() as f64;
-
-        // Iterate over each selected file and copy it to the destination directory
-        for (index, file) in selected_files.iter().enumerate() {
-            let destination = destination_dir.join(file.file_name().unwrap());
-            fs::copy(file, &destination).await?;
-
-            // Calculate and send the progress percentage
-            let progress = (index as f64 + 1.0) / total_files * 100.0;
-            progress_tx.send(progress).await?;
+    async fn copy_selected_files(mut self, paths: &Path, progress_tx: mpsc::Sender<f64>){
+        for x in paths{
+            
+            tokio::spawn(async move{  
+                //fs::copy(, to)
+            });// Spawn the async copy_selected_files function
+        }
         }
 
-        Ok(())
+
+        //let total_files = selected_files.len() as f64;
+
+        // Iterate over each selected file and copy it to the destination directory
+        // for (index, file) in selected_files.iter().enumerate() {
+        //     let destination = destination_dir.join(file.file_name().unwrap());
+        //     fs::copy(file, &destination).await;
+
+        //     // Calculate and send the progress percentage
+        //     let progress = (index as f64 + 1.0) / total_files * 100.0;
+        //     progress_tx.send(progress).await;
+        // }
     }
     fn default_filename(mut self, filename: impl Into<String>) -> Self {
         self.filename_edit = filename.into();
@@ -675,7 +682,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
         false
     }
     
-    /** Returns the path of the folder or file */
+    /** Returns the path of the folder or file 
+    */
     fn get_folder(&self) -> &std::path::Path {
         if let Some(file) = &self.selected_item {
             if file.is_dir() {

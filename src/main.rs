@@ -8,8 +8,11 @@ mod scaffold;
 mod context;
 pub mod self_updater;
 use crate::self_updater::run;
-
+// use env_logger::Builder;
+use log::{info, error};
 use context::MasterTechApp;
+use std::fs::File;
+use simplelog::{WriteLogger, Config, LevelFilter};
 
 use eframe::egui;
 use egui::*;
@@ -21,6 +24,13 @@ use system_info::RetrieveSystemInfo;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
+    // Configure log level and log file
+    let log_level = LevelFilter::Trace;
+    let log_file = File::create("output.log").unwrap();
+    // Initialize logger
+    WriteLogger::init(log_level, Config::default(), log_file).unwrap();
+    log::trace!("Application starting...");
+
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(925.0, 740.0)),
         icon_data: Some(load_icon()),
@@ -53,6 +63,7 @@ pub(crate) fn load_icon() -> eframe::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        log::info!("eframe update fn running...");
         catppuccin_egui::set_theme(ctx, MOCHA);
 
         if self.context.spinner == true{
