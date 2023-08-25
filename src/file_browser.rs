@@ -764,12 +764,6 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
             if !path.is_file() {
                 return false;
             }
-            // Filter.
-            if let Some(filter) = filter.as_ref() {
-                if !filter(path) {
-                    return false;
-                }
-            }
         }
         #[cfg(unix)]
         if !show_hidden && get_file_name(path).starts_with('.') {
