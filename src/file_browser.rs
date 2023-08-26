@@ -2,7 +2,7 @@ use egui::text::LayoutJob;
 use egui_extras::{TableBuilder, Column};
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, self};
 use eframe::egui::{*, collapsing_header::CollapsingState};
-use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell, ops::Range};
+use std::{path::{PathBuf, Path}, collections::{HashSet, HashMap}, cell::RefCell, ops::Range};
 use tokio::{fs, sync::RwLock};
 use walkdir::WalkDir;
 use std::env;
@@ -271,17 +271,35 @@ impl FileBrowser{ // sender: UnboundedSender<>
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
                 
             let (progress_tx, progress_rx) = mpsc::channel::<f64>(20); // Create a synchronous channel for progress reporting
+            let (path_sender,path_receiver) = mpsc::unbounded_channel::<PathBuf>();
+
             let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
-                    // now i will need to store them in a separate variable maybe? so it doesnt
-                    // get reset when i change directories
+
             if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
             {
-                //let selected_items = self.selected_items.borrow().iter().cloned().collect();
-                // let lock = RwLock::new(selected_paths);
-                if let Some(selected_paths) = self.selected_items.borrow().get(&self.path){
-                    
-                    self.copy_selected_files(selected_paths.as_path(), progress_tx.clone());
+            // Spawn the async copy_selected_files function
+            let copy_task = tokio::spawn(async move {
+                match self.copy_selected_files(destination_dir, progress_tx).await {
+                    Ok(_) => println!("Copy completed successfully!"),
+                    Err(e) => println!("Error copying files: {:?}", e),
                 }
+            });
+
+            // Listen for progress updates and update the egui progress bar
+            loop {
+                match progress_rx.try_recv() {
+                    Ok(progress) => {
+                        // Update the egui progress bar with the current progress
+                        // egui::ProgressBar::new(progress / 100.0).show(ui);
+                        println!("Progress: {:.2}%", progress);
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => break, // Channel closed, copy operation finished
+                    _ => {} // No update yet, continue waiting
+                }
+            }
+
+            // Wait for the copy task to complete
+            let _ = tokio::try_join!(copy_task);
             }
 
             ui.add
@@ -325,7 +343,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
             //         println!("File copying finished");
             //     }
             // }
-
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
@@ -581,28 +598,34 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
     }
 
-    async fn copy_selected_files(mut self, paths: &Path, progress_tx: mpsc::Sender<f64>){
-        for x in paths{
-            
-            tokio::spawn(async move{  
-                //fs::copy(, to)
-            });// Spawn the async copy_selected_files function
-        }
-        }
+    fn copy_selected_files(&self, destination_dir: PathBuf, progress_tx: mpsc::Sender<f64>) {
+        // Get the selected files
+        let selected_files: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
+        let total_files = selected_files.len() as f64;
 
+        // Spawn a Tokio task to perform the copy operation asynchronously
+        tokio::spawn(async move {
+            for (index, file) in selected_files.iter().enumerate() {
+                let destination = destination_dir.join(file.file_name().unwrap());
 
-        //let total_files = selected_files.len() as f64;
+                // Perform the copy operation asynchronously
+                if let Err(e) = fs::copy(file, &destination).await {
+                    // Handle error here, possibly sending it back through the channel
+                    println!("Error copying file: {:?}", e);
+                    return;
+                }
 
-        // Iterate over each selected file and copy it to the destination directory
-        // for (index, file) in selected_files.iter().enumerate() {
-        //     let destination = destination_dir.join(file.file_name().unwrap());
-        //     fs::copy(file, &destination).await;
-
-        //     // Calculate and send the progress percentage
-        //     let progress = (index as f64 + 1.0) / total_files * 100.0;
-        //     progress_tx.send(progress).await;
-        // }
+                // Calculate and send the progress percentage
+                let progress = (index as f64 + 1.0) / total_files * 100.0;
+                if let Err(e) = progress_tx.send(progress).await {
+                    // Handle error here, possibly terminating the operation
+                    println!("Error sending progress: {:?}", e);
+                    return;
+                }
+            }
+        });
     }
+
     fn default_filename(mut self, filename: impl Into<String>) -> Self {
         self.filename_edit = filename.into();
         self
