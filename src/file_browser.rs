@@ -270,41 +270,45 @@ impl FileBrowser{ // sender: UnboundedSender<>
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
                 
-            let (progress_tx, progress_rx) = mpsc::channel::<f64>(20); // Create a synchronous channel for progress reporting
-            let (path_sender,path_receiver) = mpsc::unbounded_channel::<PathBuf>();
-
+            let (progress_tx, mut progress_rx) = mpsc::channel::<f64>(20); // Create a synchronous channel for progress reporting
             let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
-
+            let mut progress_value = 0.0; // Initialize progress value for the ProgressBar
             if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
             {
-            // Spawn the async copy_selected_files function
-            let copy_task = tokio::spawn(async move {
-                match self.copy_selected_files(destination_dir, progress_tx).await {
-                    Ok(_) => println!("Copy completed successfully!"),
-                    Err(e) => println!("Error copying files: {:?}", e),
-                }
-            });
+                // Paths to the destination directory
+                let destination_dir = PathBuf::from("/home/shadowbroker/Desktop/Test/Destination/");
 
-            // Listen for progress updates and update the egui progress bar
-            loop {
-                match progress_rx.try_recv() {
-                    Ok(progress) => {
-                        // Update the egui progress bar with the current progress
-                        // egui::ProgressBar::new(progress / 100.0).show(ui);
-                        println!("Progress: {:.2}%", progress);
+                self.copy_selected_files(destination_dir, progress_tx);
+
+                
+                
+                loop 
+                { // Listen for progress updates and update the egui progress bar
+                    match progress_rx.try_recv() 
+                    {
+                        Ok(prog) => 
+                        {
+                            println!("{prog}");
+                            if prog == -1.0 
+                            {
+                                // Special value received, exit the loop
+                                break;
+                            }
+                            println!("{prog}");
+                            progress_value = prog;
+                        },
+                        Err(e) => 
+                        {
+                            println!("{e}");
+                            break;
+                        }
                     }
-                    Err(mpsc::error::TryRecvError::Disconnected) => break, // Channel closed, copy operation finished
-                    _ => {} // No update yet, continue waiting
                 }
-            }
-
-            // Wait for the copy task to complete
-            let _ = tokio::try_join!(copy_task);
             }
 
             ui.add
             (
-                ProgressBar::new(100.0)
+                ProgressBar::new(progress_value as f32)
                 .show_percentage()
                 .animate(true)
             );
@@ -619,7 +623,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 let progress = (index as f64 + 1.0) / total_files * 100.0;
                 if let Err(e) = progress_tx.send(progress).await {
                     // Handle error here, possibly terminating the operation
-                    println!("Error sending progress: {:?}", e);
+                    println!("Error sending progress: {:?}", e.0);
                     return;
                 }
             }
