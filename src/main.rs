@@ -6,7 +6,9 @@ mod request;
 mod file_browser;
 mod scaffold;
 mod context;
+mod io;
 pub mod self_updater;
+
 use crate::self_updater::run;
 // use env_logger::Builder;
 use log::{info, error};

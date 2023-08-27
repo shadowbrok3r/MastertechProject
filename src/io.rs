@@ -1,0 +1,198 @@
+use fs_extra::dir::get_size;
+use tokio::{fs, sync::mpsc::{UnboundedSender, self}};
+use num_format::{Locale, ToFormattedString};
+use eframe::egui::widgets::text_edit::*;
+use std::path::PathBuf;
+
+const KB_FROM_BYTES: u64 = 1024;
+const MB_FROM_BYTES: u64 = 1024*1024;
+const GB_FROM_BYTES: u64 = 1024*1024*1024;
+
+pub struct TransferOptions{
+    /// Sets the option true for overwrite existing files.
+    pub overwrite: bool,
+    /// Sets the option true for skip existing files.
+    pub skip_exist: bool,
+    /// Sets buffer size for copy/move work only with receipt information about process work.
+    pub buffer_size: usize,
+}
+
+impl TransferOptions{
+    /// Initialize struct CopyOptions with default value.
+    ///
+    /// ```rust,ignore
+    ///
+    /// overwrite: false
+    ///
+    /// skip_exist: false
+    ///
+    /// buffer_size: 64000 //64kb
+    /// ```
+    pub fn new() -> TransferOptions {
+        TransferOptions {
+            overwrite: false,
+            skip_exist: false,
+            buffer_size: 64000, //64kb
+        }
+    }
+
+    /// Sets the option true for overwrite existing files.
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+
+    /// Sets the option true for skip existing files.
+    pub fn skip_exist(mut self, skip_exist: bool) -> Self {
+        self.skip_exist = skip_exist;
+        self
+    }
+
+    /// Sets buffer size for copy/move work only with receipt information about process work.
+    pub fn buffer_size(mut self, buffer_size: usize) -> Self {
+        self.buffer_size = buffer_size;
+        self
+    }
+}
+
+impl Default for TransferOptions {
+    fn default() -> Self {
+        TransferOptions::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct MetaData{
+    pub path_size: u64,
+}
+
+/// A structure which stores information about the current status of a file that's copied or moved.
+pub struct Progress {
+    /// Copied bytes on this time.
+    pub copied_bytes: u64,
+    /// All the bytes which should to copy or move.
+    pub total_bytes: u64,
+}
+
+pub fn copy_selected_items(
+    selected_files: Vec<PathBuf>, 
+    destination_dir: PathBuf, 
+    progress_tx: UnboundedSender<f64>,
+){
+    // Spawn a Tokio task to perform the copy operation asynchronously
+    tokio::spawn(async move {
+        // Calculate total size of all selected files
+        let total_size: f64 = futures::future::join_all(selected_files.iter().map(|file| {
+            async move {
+                fs::metadata(file).await.map(|meta| meta.len() as f64).unwrap_or(0.0)
+            }
+        })).await.into_iter().sum();
+
+        let mut copied_size = 0.0;
+
+        for file in selected_files.iter() {
+            let destination = destination_dir.join(file.file_name().unwrap());
+
+            // Get the size of the current file
+            let file_size = fs::metadata(file).await.unwrap().len();
+
+            // Perform the copy operation asynchronously
+            match fs::copy(file, &destination).await {
+                Ok(_) => println!("data copy successful"),
+                Err(e) => println!("Error copying file: {:?}", e),
+            }
+
+            copied_size += file_size as f64; // Update the copied size
+            let progress = (copied_size / total_size) * 100.0;
+            println!("progress: {progress}");
+            match progress_tx.send(progress) {
+                Ok(_) => println!("sent progress"),
+                Err(e) => println!("Error: {e}"),
+            }       
+        }
+        match progress_tx.send(-1.0) {
+            Ok(_) => println!("finished"),
+            Err(e) => println!("Error: {e}"),
+        }
+    });
+}
+
+pub fn format_path_metadata(mut path_size: u64) -> String{
+    let mut formatted_size = "".to_string();
+    if path_size > 0
+    {
+        if path_size > GB_FROM_BYTES
+        {
+            let mut x = path_size as f32;
+            x  = &x / GB_FROM_BYTES as f32;
+            let two_decimal_places = (x*100.0).round() / 100.0;
+            let x_as_string = two_decimal_places.to_string();
+            let y: Vec<&str> = x_as_string.split(".").collect();
+            let decimal = y[1].as_str();
+            let new_path_size = x.clone() as u64;
+            formatted_size = format!("{}.{decimal} Gb", new_path_size.to_formatted_string(&Locale::en));
+        }
+        else if path_size > MB_FROM_BYTES
+        {
+            path_size = path_size / MB_FROM_BYTES;
+            formatted_size = format!("{} Mb", path_size.to_formatted_string(&Locale::en));
+        } 
+        else if path_size > KB_FROM_BYTES
+        {
+            path_size = path_size / KB_FROM_BYTES;
+            formatted_size = format!("{} Kb", path_size.to_formatted_string(&Locale::en));
+        }
+        else{
+            formatted_size = format!("{} bytes", path_size.to_formatted_string(&Locale::en));
+        }
+        
+
+        
+        formatted_size
+    }
+    else {
+        format!("0b")
+    }
+
+}
+
+// https://github.com/acidnik/ppcp/blob/master/src/copy.rs#L48
+
+// pub async fn retrieve_metadata(path: PathBuf){
+//     let sender = self.metadata_tx.clone();
+//     let cloned_path = path.clone();
+//     let clone_path1 = path.clone();
+//     // Spawn the appropriate async task depending on whether the path is a directory or a file.
+//     let read_metadata_task = if path.is_dir() {
+//         tokio::spawn(async move {
+//             get_size(cloned_path).unwrap_or(0)
+//         })
+//     } else if path.is_file() {
+//         tokio::spawn(async move {
+//             tokio::fs::metadata(&cloned_path).await.unwrap().len()
+//         })
+//     } else {
+//         // Handle the case where the path is neither a directory nor a file.
+//         return;
+//     };
+//     // Use tokio::select! to wait for the metadata task to complete.
+//     tokio::select! {
+//         result = read_metadata_task => {
+//             match result {
+//                 Ok(path_size) => {
+//                     // Send the result through the channel.
+//                     if sender.try_send(path_size).is_err() {
+//                         println!("Error sending metadata");
+//                     }   
+//                     // Insert the metadata into the appropriate HashMap.
+//                     if path.is_dir() {
+//                         self.folder_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
+//                     } else {
+//                         self.file_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
+//                     }
+//                 },
+//                 Err(e) => println!("Error reading metadata: {:?}", e),
+//             }
+//         }
+//     }
+// }
