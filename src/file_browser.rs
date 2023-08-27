@@ -1,17 +1,23 @@
 use egui::text::LayoutJob;
-use egui_extras::{TableBuilder, Column};
 use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, self};
 use eframe::egui::{*, collapsing_header::CollapsingState};
-use std::{path::{PathBuf, Path}, collections::{HashSet, HashMap}, cell::RefCell, ops::Range};
-use tokio::{fs, sync::RwLock};
+use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
+use num_format::{Locale, ToFormattedString};
+use tokio::fs;
 use walkdir::WalkDir;
 use std::env;
 use pollster::block_on;
 use crossbeam::channel;
-use num_format::{Locale, ToFormattedString};
+
 use fs_extra::dir::get_size;
 use cached::proc_macro::{io_cached, cached};
-
+use crate::io::{
+    copy_selected_items, 
+    format_path_metadata, 
+    MetaData,
+    TransferOptions,
+    Progress
+};
 
 const KB_FROM_BYTES: u64 = 1024;
 const MB_FROM_BYTES: u64 = 1024*1024;
@@ -32,10 +38,7 @@ pub enum Command {
     ReadDirectory(PathBuf),
     ReadMetadata(PathBuf),
 }
-#[derive(Debug)]
-pub struct MetaData{
-    path_size: u64,
-}
+
 
 pub struct FileBrowser {
     path: PathBuf, /// Current opened path.
@@ -51,7 +54,7 @@ pub struct FileBrowser {
     depth: usize,
     first_refresh_contents: bool,
     file_metadata: RefCell<HashMap<PathBuf, MetaData>>,
-    folder_metadata: RefCell<HashMap<PathBuf, MetaData>>,
+    folder_metadata: RefCell<HashMap<PathBuf, MetaData>>, // these should be in their own struct
     metadata_tx: crossbeam::channel::Sender<u64>,
     metadata_rx: crossbeam::channel::Receiver<u64>,
 }
@@ -270,83 +273,34 @@ impl FileBrowser{ // sender: UnboundedSender<>
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
                 
-            let (progress_tx, mut progress_rx) = mpsc::channel::<f64>(20); // Create a synchronous channel for progress reporting
+            let (progress_tx, mut progress_rx) = mpsc::unbounded_channel::<f64>(); // Create a synchronous channel for progress reporting
             let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
-            let mut progress_value = 0.0; // Initialize progress value for the ProgressBar
+
             if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
             {
-                // Paths to the destination directory
-                let destination_dir = PathBuf::from("/home/shadowbroker/Desktop/Test/Destination/");
-
-                self.copy_selected_files(destination_dir, progress_tx);
-
+                // temporary destination for testing
+                let destination_dir = PathBuf::from("/home/shadowbroker/Desktop/testcopy/Destination/");
+                // Get the selected files
+                let selected_files: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
                 
-                
-                loop 
-                { // Listen for progress updates and update the egui progress bar
-                    match progress_rx.try_recv() 
-                    {
-                        Ok(prog) => 
-                        {
-                            println!("{prog}");
-                            if prog == -1.0 
-                            {
-                                // Special value received, exit the loop
-                                break;
-                            }
-                            println!("{prog}");
-                            progress_value = prog;
-                        },
-                        Err(e) => 
-                        {
-                            println!("{e}");
-                            break;
-                        }
-                    }
-                }
+                // let options = TransferOptions::new();
+                // let handle = | progress: Progress| {
+                //     println!("{}", progress.total_bytes);
+                //  };
+
+                copy_selected_items(selected_files, destination_dir, progress_tx.clone());
             }
+            while let Ok(progress) = progress_rx.try_recv() {
+                // Update the progress bar
+                ui.add
+                (
+                    ProgressBar::new(progress as f32)
+                    .show_percentage()
+                    .animate(true)
+                );
+            }
+            println!("how many times was this hit?");
 
-            ui.add
-            (
-                ProgressBar::new(progress_value as f32)
-                .show_percentage()
-                .animate(true)
-            );
-
-            // let (progress_tx, progress_rx) = channel::unbounded::<u64>();
-            // let src = PathBuf::new();
-            // let source = src.join("D:\\Users\\Owner\\Desktop\\B.S.-10.5-Sized_B.S.-10.5.ctb");
-            // let dest = PathBuf::new();
-            // let destination = dest.join("D:\\Users\\Owner\\Desktop\\filestuff");
-            // match command_tx.send(Some(
-            //     Command::Copy(
-            //         source, 
-            //         destination, 
-            //         progress_tx.clone()
-            //     )
-            // )){
-            //     Ok(_) => println!("ok"),
-            //     Err(e) => print!("{e}")
-            // }
-            // match progress_rx.try_recv() {
-            //     Ok(bytes_copied) => {
-            //         // Update the progress bar
-            //         ui.add(
-            //             ProgressBar::new(bytes_copied as f32)
-            //             .show_percentage()
-            //             .animate(true)
-            //             .fill(Color32::from_rgb(255, 255, 255))
-            //         );
-            //         println!("Copied {bytes_copied} bytes", );
-            //     }
-            //     Err(channel::TryRecvError::Empty) => {
-            //         // No progress update yet, do nothing
-            //     }
-            //     Err(channel::TryRecvError::Disconnected) => {
-            //         // The file copying thread has finished
-            //         println!("File copying finished");
-            //     }
-            // }
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
@@ -602,34 +556,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
     }
 
-    fn copy_selected_files(&self, destination_dir: PathBuf, progress_tx: mpsc::Sender<f64>) {
-        // Get the selected files
-        let selected_files: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
-        let total_files = selected_files.len() as f64;
-
-        // Spawn a Tokio task to perform the copy operation asynchronously
-        tokio::spawn(async move {
-            for (index, file) in selected_files.iter().enumerate() {
-                let destination = destination_dir.join(file.file_name().unwrap());
-
-                // Perform the copy operation asynchronously
-                if let Err(e) = fs::copy(file, &destination).await {
-                    // Handle error here, possibly sending it back through the channel
-                    println!("Error copying file: {:?}", e);
-                    return;
-                }
-
-                // Calculate and send the progress percentage
-                let progress = (index as f64 + 1.0) / total_files * 100.0;
-                if let Err(e) = progress_tx.send(progress).await {
-                    // Handle error here, possibly terminating the operation
-                    println!("Error sending progress: {:?}", e.0);
-                    return;
-                }
-            }
-        });
-    }
-
     fn default_filename(mut self, filename: impl Into<String>) -> Self {
         self.filename_edit = filename.into();
         self
@@ -811,42 +737,3 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
     result
 }
 
-//#[cached]
-fn format_path_metadata(mut path_size: u64) -> String{
-    let mut formatted_size = "".to_string();
-    if path_size > 0
-    {
-        if path_size > GB_FROM_BYTES
-        {
-            let mut x = path_size as f32;
-            x  = &x / GB_FROM_BYTES as f32;
-            let two_decimal_places = (x*100.0).round() / 100.0;
-            let x_as_string = two_decimal_places.to_string();
-            let y: Vec<&str> = x_as_string.split(".").collect();
-            let decimal = y[1].as_str();
-            let new_path_size = x.clone() as u64;
-            formatted_size = format!("{}.{decimal} Gb", new_path_size.to_formatted_string(&Locale::en));
-        }
-        else if path_size > MB_FROM_BYTES
-        {
-            path_size = path_size / MB_FROM_BYTES;
-            formatted_size = format!("{} Mb", path_size.to_formatted_string(&Locale::en));
-        } 
-        else if path_size > KB_FROM_BYTES
-        {
-            path_size = path_size / KB_FROM_BYTES;
-            formatted_size = format!("{} Kb", path_size.to_formatted_string(&Locale::en));
-        }
-        else{
-            formatted_size = format!("{} bytes", path_size.to_formatted_string(&Locale::en));
-        }
-        
-
-        
-        formatted_size
-    }
-    else {
-        format!("0b")
-    }
-
-}
