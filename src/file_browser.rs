@@ -37,6 +37,7 @@ pub enum Command {
     OpenPath(PathBuf),
     ReadDirectory(PathBuf),
     ReadMetadata(PathBuf),
+    Home,
 }
 
 
@@ -102,6 +103,11 @@ impl FileBrowser{ // sender: UnboundedSender<>
             Command::Refresh => self.refresh_contents(),
 
             Command::UpDirectory => {if self.path.pop() {self.refresh_contents()}},
+
+            Command::Home => {
+                self.path = env::current_dir().unwrap_or_default();
+                self.refresh_contents();
+            },
 
             Command::CreateDirectory => {
                 let mut path = self.path.clone();
@@ -222,6 +228,19 @@ impl FileBrowser{ // sender: UnboundedSender<>
     ) {     
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
+
+                ui.add_enabled_ui(
+                    self.path != env::current_dir().unwrap_or_default(),
+                    |ui | {
+                        let response = ui.button("🏠").on_hover_text("Home");
+                        if response.clicked(){
+                            match command_tx.send(Some(Command::Home)){
+                                Ok(_) => println!("Home"),
+                                Err(e) => println!("{e}"),
+                            }
+                        }
+                    }
+                );
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
@@ -299,7 +318,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     .animate(true)
                 );
             }
-            println!("how many times was this hit?");
 
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
