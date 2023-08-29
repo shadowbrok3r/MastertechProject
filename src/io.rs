@@ -101,7 +101,10 @@ pub fn copy_selected_items(
                 Ok(_) => println!("data copy successful"),
                 Err(e) => println!("Error copying file: {:?}", e),
             }
-
+            // this copied size needs to not add file_size as one big chunk
+            // i may need to spawn ANOTHER thread... to report size as its being
+            // copied.. this may be easier with tokio::select or maybe crossbeam
+            // has something worth while?
             copied_size += file_size as f64; // Update the copied size
             let progress = (copied_size / total_size) * 100.0;
             println!("progress: {progress}");
