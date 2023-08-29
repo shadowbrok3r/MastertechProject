@@ -1,124 +1,107 @@
 use fs_extra::dir::get_size;
-use tokio::{fs, sync::mpsc::{UnboundedSender, self}};
+use futures_util::future::join_all;
+use tokio::{fs, sync::mpsc::{error::SendError, UnboundedSender, self}, task::spawn_blocking};
 use num_format::{Locale, ToFormattedString};
 use eframe::egui::widgets::text_edit::*;
-use std::path::PathBuf;
+use std::{io::Error, sync::{Arc, Mutex}, path::PathBuf};
+use rayon::prelude::*;
 
 const KB_FROM_BYTES: u64 = 1024;
-const MB_FROM_BYTES: u64 = 1024*1024;
-const GB_FROM_BYTES: u64 = 1024*1024*1024;
-
-pub struct TransferOptions{
-    /// Sets the option true for overwrite existing files.
-    pub overwrite: bool,
-    /// Sets the option true for skip existing files.
-    pub skip_exist: bool,
-    /// Sets buffer size for copy/move work only with receipt information about process work.
-    pub buffer_size: usize,
-}
-
-impl TransferOptions{
-    /// Initialize struct CopyOptions with default value.
-    ///
-    /// ```rust,ignore
-    ///
-    /// overwrite: false
-    ///
-    /// skip_exist: false
-    ///
-    /// buffer_size: 64000 //64kb
-    /// ```
-    pub fn new() -> TransferOptions {
-        TransferOptions {
-            overwrite: false,
-            skip_exist: false,
-            buffer_size: 64000, //64kb
-        }
-    }
-
-    /// Sets the option true for overwrite existing files.
-    pub fn overwrite(mut self, overwrite: bool) -> Self {
-        self.overwrite = overwrite;
-        self
-    }
-
-    /// Sets the option true for skip existing files.
-    pub fn skip_exist(mut self, skip_exist: bool) -> Self {
-        self.skip_exist = skip_exist;
-        self
-    }
-
-    /// Sets buffer size for copy/move work only with receipt information about process work.
-    pub fn buffer_size(mut self, buffer_size: usize) -> Self {
-        self.buffer_size = buffer_size;
-        self
-    }
-}
-
-impl Default for TransferOptions {
-    fn default() -> Self {
-        TransferOptions::new()
-    }
-}
+const MB_FROM_BYTES: u64 = 1024 * 1024;
+const GB_FROM_BYTES: u64 = 1024 * 1024 * 1024;
 
 #[derive(Debug)]
-pub struct MetaData{
+pub struct MetaData {
     pub path_size: u64,
 }
-
-/// A structure which stores information about the current status of a file that's copied or moved.
-pub struct Progress {
-    /// Copied bytes on this time.
-    pub copied_bytes: u64,
-    /// All the bytes which should to copy or move.
-    pub total_bytes: u64,
+#[derive(Debug)]
+pub enum CopyError {
+    IoError(Error),
+    SendError(SendError<f64>),
+    // Add other types of errors if needed
 }
 
-pub fn copy_selected_items(
+impl From<Error> for CopyError {
+    fn from(err: Error) -> CopyError {
+        CopyError::IoError(err)
+    }
+}
+
+impl From<SendError<f64>> for CopyError {
+    fn from(err: SendError<f64>) -> CopyError {
+        CopyError::SendError(err)
+    }
+}
+
+pub async fn copy_selected_items(
     selected_files: Vec<PathBuf>, 
     destination_dir: PathBuf, 
     progress_tx: UnboundedSender<f64>,
-){
-    // Spawn a Tokio task to perform the copy operation asynchronously
-    tokio::spawn(async move {
-        // Calculate total size of all selected files
-        let total_size: f64 = futures::future::join_all(selected_files.iter().map(|file| {
-            async move {
-                fs::metadata(file).await.map(|meta| meta.len() as f64).unwrap_or(0.0)
+) -> Result<(), CopyError>{
+    let total_size_futures = 
+        selected_files
+        .iter()
+        .map(|path| 
+            async move { 
+                fs::metadata(path)
+                .await
+                .unwrap()
+                .len() 
             }
-        })).await.into_iter().sum();
+        );
+    let total_sizes: Vec<u64> = join_all(total_size_futures).await;
+    let total_size: u64 = total_sizes.iter().sum();
+    
+    let copied_size = Arc::new(Mutex::new(0u64));
+    // Prepare a vector to hold the futures
+    let mut copy_futures = Vec::new();
 
-        let mut copied_size = 0.0;
+    //let mut prepared_files = Vec::new();
+    
+    // Prepare the source-destination pairs using Rayon
+    let prepared_files: Vec<_> = selected_files.par_iter().map(|src_path| {
+        let dest_path = destination_dir.join(src_path.file_name().unwrap());
+        (src_path.clone(), dest_path)
+    }).collect();
+    
+    // Generate the async copy tasks and collect them into copy_futures
+    for (src_path, dest_path) in prepared_files.iter() {
+        let copied_size = copied_size.clone();
+        let progress_tx = progress_tx.clone();
+        let src_path = src_path.clone();
+        let dest_path = dest_path.clone();
+        
+        let copy_future = async move {
+            let _ = match fs::copy(&src_path, &dest_path).await{
+                Ok(size_copied) => {
+                    println!("{size_copied}");
+                    // Update the shared counter
+                    let mut copied = copied_size.lock().unwrap();
+                    *copied += size_copied;
 
-        for file in selected_files.iter() {
-            let destination = destination_dir.join(file.file_name().unwrap());
+                    // Send the progress
+                    let progress = (*copied as f64 / total_size as f64) * 100.0;
+                    match progress_tx.send(progress){
+                        Ok(_) => println!("sent ok"),
+                        Err(e) => println!("progress_tx send error: {e}"),
+                    }
+                    Ok(())
+                },
+                Err(e) => Err(CopyError::IoError(e))
+            };
 
-            // Get the size of the current file
-            let file_size = fs::metadata(file).await.unwrap().len();
+        };
+        
+        copy_futures.push(copy_future);
+    }
 
-            // Perform the copy operation asynchronously
-            match fs::copy(file, &destination).await {
-                Ok(_) => println!("data copy successful"),
-                Err(e) => println!("Error copying file: {:?}", e),
-            }
-            // this copied size needs to not add file_size as one big chunk
-            // i may need to spawn ANOTHER thread... to report size as its being
-            // copied.. this may be easier with tokio::select or maybe crossbeam
-            // has something worth while?
-            copied_size += file_size as f64; // Update the copied size
-            let progress = (copied_size / total_size) * 100.0;
-            println!("progress: {progress}");
-            match progress_tx.send(progress) {
-                Ok(_) => println!("sent progress"),
-                Err(e) => println!("Error: {e}"),
-            }       
-        }
-        match progress_tx.send(-1.0) {
-            Ok(_) => println!("finished"),
-            Err(e) => println!("Error: {e}"),
-        }
-    });
+    // Await all the copy operations to complete
+    for future in copy_futures {
+        future.await;
+    }
+    Ok(())
 }
+
 
 pub fn format_path_metadata(mut path_size: u64) -> String{
     let mut formatted_size = "".to_string();
@@ -199,3 +182,67 @@ pub fn format_path_metadata(mut path_size: u64) -> String{
 //         }
 //     }
 // }
+
+/*
+pub struct TransferOptions{
+    /// Sets the option true for overwrite existing files.
+    pub overwrite: bool,
+    /// Sets the option true for skip existing files.
+    pub skip_exist: bool,
+    /// Sets buffer size for copy/move work only with receipt information about process work.
+    pub buffer_size: usize,
+}
+
+impl TransferOptions{
+    /// Initialize struct CopyOptions with default value.
+    ///
+    /// ```rust,ignore
+    ///
+    /// overwrite: false
+    ///
+    /// skip_exist: false
+    ///
+    /// buffer_size: 64000 //64kb
+    /// ```
+    pub fn new() -> TransferOptions {
+        TransferOptions {
+            overwrite: false,
+            skip_exist: false,
+            buffer_size: 64000, //64kb
+        }
+    }
+
+    /// Sets the option true for overwrite existing files.
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+
+    /// Sets the option true for skip existing files.
+    pub fn skip_exist(mut self, skip_exist: bool) -> Self {
+        self.skip_exist = skip_exist;
+        self
+    }
+
+    /// Sets buffer size for copy/move work only with receipt information about process work.
+    pub fn buffer_size(mut self, buffer_size: usize) -> Self {
+        self.buffer_size = buffer_size;
+        self
+    }
+}
+
+impl Default for TransferOptions {
+    fn default() -> Self {
+        TransferOptions::new()
+    }
+}
+
+
+/// A structure which stores information about the current status of a file that's copied or moved.
+pub struct Progress {
+    /// Copied bytes on this time.
+    pub copied_bytes: u64,
+    /// All the bytes which should to copy or move.
+    pub total_bytes: u64,
+}
+*/

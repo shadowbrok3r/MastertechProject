@@ -28,6 +28,7 @@ dependencies = [
  "num-format",
  "openssl",
  "pollster",
+ "rayon",
  "regex",
  "reqwest",
  "self_update",

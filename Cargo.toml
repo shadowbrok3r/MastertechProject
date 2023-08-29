@@ -44,6 +44,7 @@ cached = "0.44.0"
 log = "0.4.20"
 # env_logger = "0.10.0"
 simplelog = "0.12.1"
+rayon = "1.7.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }

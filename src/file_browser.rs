@@ -1,5 +1,5 @@
 use egui::text::LayoutJob;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, self};
+use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, self, unbounded_channel};
 use eframe::egui::{*, collapsing_header::CollapsingState};
 use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
 use num_format::{Locale, ToFormattedString};
@@ -15,8 +15,8 @@ use crate::io::{
     copy_selected_items, 
     format_path_metadata, 
     MetaData,
-    TransferOptions,
-    Progress
+    //TransferOptions,
+    //Progress
 };
 
 const KB_FROM_BYTES: u64 = 1024;
@@ -58,6 +58,9 @@ pub struct FileBrowser {
     folder_metadata: RefCell<HashMap<PathBuf, MetaData>>, // these should be in their own struct
     metadata_tx: crossbeam::channel::Sender<u64>,
     metadata_rx: crossbeam::channel::Receiver<u64>,
+    progress: f64,
+    progress_tx: UnboundedSender<f64>, 
+    progress_rx: UnboundedReceiver<f64>, // for progress reporting
 }
 
 impl FileBrowser{ // sender: UnboundedSender<>
@@ -71,7 +74,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             filename_edit = get_file_name(&path).to_string();
             path.pop();
         }
-        
+        let (progress_tx, mut progress_rx) = unbounded_channel();
         let (metadata_tx, mut metadata_rx) = crossbeam::channel::unbounded();
 
         Self {
@@ -91,6 +94,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
             folder_metadata: RefCell::new(HashMap::new()),
             metadata_tx,
             metadata_rx,
+            progress: 0.0,
+            progress_tx,
+            progress_rx,
           }
     }
     
@@ -129,7 +135,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             Command::Copy(source, destination, progress_tx) => {
                 tokio::spawn(async move{
                     match fs::copy(&source, &destination).await {
-                        Ok(bytes_copied) => progress_tx.send(bytes_copied).unwrap(),
+                        Ok(bytes_copied) => progress_tx.try_send(bytes_copied).unwrap(),
                         Err(e) => println!("{e:?}")
                     }
                 });
@@ -138,9 +144,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
             Command::Move(source, destination) => {
                 println!("Command::Move");
                 if let Err(err) = fs::rename(&source, &destination).await {
-                    //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
+                    //let _ = response_sender.try_send(Response::Error(FileBrowserError::Io(err)));
                 } else {
-                    //let _ = response_sender.send(Response::Success(format!("Successfully moved from {:?} to {:?}", source, destination)));
+                    //let _ = response_sender.try_send(Response::Success(format!("Successfully moved from {:?} to {:?}", source, destination)));
                 }
             
             },
@@ -148,9 +154,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
             Command::Delete(path) => {
                 println!("Command::Delete");
                 if let Err(err) = fs::remove_dir_all(&path).await {
-                    //let _ = response_sender.send(Response::Error(FileBrowserError::Io(err)));
+                    //let _ = response_sender.try_send(Response::Error(FileBrowserError::Io(err)));
                 } else {
-                    //let _ = response_sender.send(Response::Success(format!("Successfully deleted {:?}", path)));
+                    //let _ = response_sender.try_send(Response::Success(format!("Successfully deleted {:?}", path)));
                 }
             },
 
@@ -292,33 +298,34 @@ impl FileBrowser{ // sender: UnboundedSender<>
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
                 
-            let (progress_tx, mut progress_rx) = mpsc::unbounded_channel::<f64>(); // Create a synchronous channel for progress reporting
+            
             let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
 
             if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
             {
-                // temporary destination for testing
-                let destination_dir = PathBuf::from("/home/shadowbroker/Desktop/testcopy/Destination/");
-                // Get the selected files
-                let selected_files: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect();
+                let destination_dir = PathBuf::from("/home/shadowbroker/Desktop/testcopy/Destination/"); // tmp dir for testing
+                let selected_files: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
+                let progress_tx = self.progress_tx.clone();
+                tokio::spawn(async move{
+                    let _ = match copy_selected_items(selected_files, destination_dir, progress_tx.clone()).await{
+                        Ok(_) => println!("copy_selected_items ran successfully"),
+                        Err(e) => println!("copy_selected_items failed: {e:?}"),
+                    };
+                });
                 
-                // let options = TransferOptions::new();
-                // let handle = | progress: Progress| {
-                //     println!("{}", progress.total_bytes);
-                //  };
-
-                copy_selected_items(selected_files, destination_dir, progress_tx.clone());
             }
-            while let Ok(progress) = progress_rx.try_recv() {
-                // Update the progress bar
-                ui.add
-                (
-                    ProgressBar::new(progress as f32)
-                    .show_percentage()
-                    .animate(true)
-                );
+            if let Ok(progress) = self.progress_rx.try_recv() {
+                println!("{progress}");
+                self.progress += progress;
             }
 
+            // Update the progress bar
+            ui.add
+            (
+                ProgressBar::new(self.progress as f32)
+                .show_percentage()
+                .animate(true)
+            );
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
