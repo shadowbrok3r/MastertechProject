@@ -2,14 +2,14 @@
 //#![allow(unused_imports)] //it thinks im not using catppuccin_egui
 
 mod system_info;
-mod request;
 mod file_browser;
-mod scaffold;
+mod scaffold_calls;
 mod context;
 mod io;
-pub mod self_updater;
+pub mod github;
 
-use crate::self_updater::run;
+use github::self_updater;
+use crate::{self_updater::run, scaffold_calls::{scaffold, request}};
 // use env_logger::Builder;
 use log::{info, error};
 use context::MasterTechApp;

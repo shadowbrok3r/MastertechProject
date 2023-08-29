@@ -8,16 +8,16 @@ use scaffold::PulledKeys;
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
-use crate::self_updater::run;
+use crate::{self_updater::run, scaffold_calls::scaffold};
 // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 
 use crate::{
-    scaffold::{self, TicketInformation}, 
     file_browser::FileBrowser, 
     system_info, 
-    request::SendRequest,
+    scaffold_calls::request::SendRequest,
     system_info::RetrieveSystemInfo
 };
+use scaffold::TicketInformation;
 
 /** 
 TODO, dont make all of these public, maybe we
