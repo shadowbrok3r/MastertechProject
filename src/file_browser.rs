@@ -8,7 +8,12 @@ use walkdir::WalkDir;
 use std::env;
 use pollster::block_on;
 use crossbeam::channel;
-
+/**
+ * TODO:
+ * 1. need to make metadata update once we do a data copy or hit the refresh button
+ * 2. Need to move commands away from using channels, just make more fn's that impl self
+ * 3. when copying data, have it pull the metadata from the already existing 
+ */
 use fs_extra::dir::get_size;
 use cached::proc_macro::{io_cached, cached};
 use crate::io::{
@@ -42,25 +47,51 @@ pub enum Command {
 
 
 pub struct FileBrowser {
-    path: PathBuf, /// Current opened path.
-    path_edit: String, /// Editable field with path.
-    selected_item: Option<PathBuf>, /// Selected file path
-    filename_edit: String, /// Editable field with filename.
-    read_dirs_only: bool,
-    show_hidden: bool,
-    rename: bool,
-    new_folder: bool,
-    selected_items: RefCell<HashSet<PathBuf>>,
-    dir_contents: RefCell<HashMap<PathBuf, Vec<PathBuf>>>,
-    depth: usize,
-    first_refresh_contents: bool,
-    file_metadata: RefCell<HashMap<PathBuf, MetaData>>,
-    folder_metadata: RefCell<HashMap<PathBuf, MetaData>>, // these should be in their own struct
-    metadata_tx: crossbeam::channel::Sender<u64>,
-    metadata_rx: crossbeam::channel::Receiver<u64>,
-    progress: f64,
+    /// Current opened path.
+    path: PathBuf, 
+    /// Editable field with path.
+    path_edit: String, 
+    /// Selected file path
+    selected_item: Option<PathBuf>, 
+    /// Editable field with filename.
+    filename_edit: String, 
+    /// Show directories only
+    read_dirs_only: bool, 
+    /// Show hidden files
+    show_hidden: bool, 
+    /// rename folder/file
+    rename: bool, 
+    /// Create new folder
+    new_folder: bool, 
+    /// HashSet of selected files (hold CTRL key to select multiple)
+    selected_items: RefCell<HashSet<PathBuf>>, 
+    /// HashMap of subcontents of a given dir
+    dir_contents: RefCell<HashMap<PathBuf, Vec<PathBuf>>>, 
+    /// How many subfolders to retrieve contents from
+    depth: usize, 
+    /// Update directory contents once displayed 
+    first_refresh_contents: bool, 
+    /// Metadata of each file
+    file_metadata: RefCell<HashMap<PathBuf, MetaData>>, 
+    /// MetaData of each folder
+    folder_metadata: RefCell<HashMap<PathBuf, MetaData>>, 
+    /// Send size of file in bytes
+    metadata_tx: crossbeam::channel::Sender<u64>, 
+    /// Send size of folder in bytes
+    metadata_rx: crossbeam::channel::Receiver<u64>, 
+    
+    /// Progress percentage
+    progress: f64, 
+    /// Send progress 
     progress_tx: UnboundedSender<f64>, 
-    progress_rx: UnboundedReceiver<f64>, // for progress reporting
+    /// Retrieve progress 
+    progress_rx: UnboundedReceiver<f64>, 
+    /// Animate the progress bar
+    animated_progress: bool, 
+    /// When CTRL+C is hit, get the selected files to be copied
+    copied_items_src: Vec<PathBuf>, 
+    /// When CTRL+V is hit, paste files in the current 'path_edit' directory
+    copied_items_dest: PathBuf, 
 }
 
 impl FileBrowser{ // sender: UnboundedSender<>
@@ -97,6 +128,10 @@ impl FileBrowser{ // sender: UnboundedSender<>
             progress: 0.0,
             progress_tx,
             progress_rx,
+
+            animated_progress: false,
+            copied_items_src: Vec::new(),
+            copied_items_dest: PathBuf::new(),
           }
     }
     
@@ -297,41 +332,47 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
-                
-            
             let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
+            let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::V);
 
             if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
+            { 
+                self.copied_items_src = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
+            }
+            if ui.input_mut(|i| i.consume_shortcut(&paste_shortcut))
             {
-                let destination_dir = PathBuf::from("/home/shadowbroker/Desktop/testcopy/Destination/"); // tmp dir for testing
-                let selected_files: Vec<PathBuf> = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
+                self.animated_progress = true;
+                self.copied_items_dest = PathBuf::from(&self.path_edit);
+                let cloned_dest = self.copied_items_dest.clone();
+                let cloned_src = self.copied_items_src.clone();
                 let progress_tx = self.progress_tx.clone();
+
                 tokio::spawn(async move{
-                    let _ = match copy_selected_items(selected_files, destination_dir, progress_tx.clone()).await{
+                    let _ = match copy_selected_items(cloned_src, cloned_dest, progress_tx.clone()).await{
                         Ok(_) => println!("copy_selected_items ran successfully"),
                         Err(e) => println!("copy_selected_items failed: {e:?}"),
                     };
                 });
-                
             }
-            if let Ok(progress) = self.progress_rx.try_recv() {
-                println!("{progress}");
+
+            while let Ok(progress) = self.progress_rx.try_recv() {
+                // println!("progress_bar: {progress}");
                 self.progress += progress;
             }
 
-            // Update the progress bar
             ui.add
-            (
+            ( // Update the progress bar
                 ProgressBar::new(self.progress as f32)
                 .show_percentage()
-                .animate(true)
+                .fill(Color32::from_rgb(255, 77, 210))
+                .animate(self.animated_progress)
             );
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if self.new_folder && ui.button("New Folder").clicked() {
+                    if self.new_folder && ui.button("📁 New Folder").clicked() {
                         match command_tx.send(Some(Command::CreateDirectory)){
                             Ok(_) => println!("ok"),
                             Err(e) => print!("{e}")
@@ -342,19 +383,19 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     if self.rename {
                         ui.add_enabled_ui(self.can_rename(), |ui| {
                             if ui.button("Rename").clicked() {
-                            if let Some(from) = self.selected_item.clone() {
-                                let to = from.with_file_name(&self.filename_edit);
-                                
-                                match command_tx.send(Some(Command::Rename(from, to))){
-                                    Ok(_) => {
-                                        println!("ok");
-                                    },
-                                    Err(e) => {
-                                        print!("{e}");
+                                if let Some(from) = self.selected_item.clone() {
+                                    let to = from.with_file_name(&self.filename_edit);
+                                    
+                                    match command_tx.send(Some(Command::Rename(from, to))){
+                                        Ok(_) => {
+                                            println!("ok");
+                                        },
+                                        Err(e) => {
+                                            print!("{e}");
+                                        }
                                     }
+                                    
                                 }
-                                
-                            }
                             }
                         });
                     }

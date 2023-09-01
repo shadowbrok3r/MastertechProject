@@ -53,16 +53,14 @@ pub async fn copy_selected_items(
     let total_size: u64 = total_sizes.iter().sum();
     
     let copied_size = Arc::new(Mutex::new(0u64));
-    // Prepare a vector to hold the futures
-    let mut copy_futures = Vec::new();
 
-    //let mut prepared_files = Vec::new();
-    
     // Prepare the source-destination pairs using Rayon
     let prepared_files: Vec<_> = selected_files.par_iter().map(|src_path| {
         let dest_path = destination_dir.join(src_path.file_name().unwrap());
         (src_path.clone(), dest_path)
     }).collect();
+    
+    let mut task_handles = Vec::new();  // To keep track of spawned tasks
     
     // Generate the async copy tasks and collect them into copy_futures
     for (src_path, dest_path) in prepared_files.iter() {
@@ -71,14 +69,19 @@ pub async fn copy_selected_items(
         let src_path = src_path.clone();
         let dest_path = dest_path.clone();
         
-        let copy_future = async move {
+        let start_time = std::time::Instant::now();  // Record start time
+        
+        let task_handle = tokio::spawn(async move {
             let _ = match fs::copy(&src_path, &dest_path).await{
                 Ok(size_copied) => {
-                    println!("{size_copied}");
+                    let elapsed_time = start_time.elapsed().as_secs_f64();  // Time elapsed in seconds
                     // Update the shared counter
                     let mut copied = copied_size.lock().unwrap();
                     *copied += size_copied;
 
+                        // Calculate the speed in MB/s
+                    let speed_mbps = (*copied as f64 / 1_000_000.0) / elapsed_time;
+                    println!("Speed: {:.2} MB/s", speed_mbps);
                     // Send the progress
                     let progress = (*copied as f64 / total_size as f64) * 100.0;
                     match progress_tx.send(progress){
@@ -90,15 +93,16 @@ pub async fn copy_selected_items(
                 Err(e) => Err(CopyError::IoError(e))
             };
 
-        };
+        });
         
-        copy_futures.push(copy_future);
+        task_handles.push(task_handle);
     }
 
-    // Await all the copy operations to complete
-    for future in copy_futures {
-        future.await;
+    // Await all the spawned tasks to complete
+    for handle in task_handles {
+        handle.await.unwrap();
     }
+    
     Ok(())
 }
 

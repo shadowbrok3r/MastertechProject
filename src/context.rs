@@ -577,7 +577,20 @@ impl MastertechContext {
                                     ui.vertical(|ui|{ui.add_space(6.0);});
 
                                     let mut attached_file = PathBuf::new();
-
+                                    let mut hovered_file_txt = "";
+                                    // let hovered_files = ui.input_mut(|i| i.raw.take().hovered_files);
+                                    // for hovered_file in hovered_files{
+                                    //     if let Some(files) = hovered_file.path{
+                                    //         hovered_file_txt = files.file_name().unwrap().to_str().unwrap();
+                                    //     }
+                                    // }
+                                    let dropped_files = ui.input_mut(|i| i.raw.take().dropped_files);
+                                    for dropped_file in dropped_files{
+                                        if let Some(dropped_files) = dropped_file.path{
+                                            self.opened_file = Some(dropped_files);
+                                        }
+                                    }
+                                    
                                     if let Some(file) = &self.opened_file{
                                         attached_file = file.to_path_buf();
                                     }
@@ -587,16 +600,15 @@ impl MastertechContext {
                                     .and_then(|name| name.to_str())
                                     .unwrap_or("");
 
-                                    if ui
-                                    .add(Button::new
-                                        (
-                                            RichText::new(
+                                    let upload_button = ui.add(Button::new(
+                                        RichText::new(
                                                 format!("Upload 🗋 {{ {} }}", file_name)
-                                        )
+                                            )
                                         )
                                         .min_size(vec2(self.widget_size, 8.0))
-                                        
-                                    )
+                                    ); //.on_hover_text(format!("{}", &hovered_file_txt));
+
+                                    if upload_button
                                     .clicked()
                                     {
                                         let mut dialog = FileDialog::open_file(self.opened_file.clone())
@@ -604,6 +616,7 @@ impl MastertechContext {
                                         dialog.open();
                                         self.open_file_dialog = Some(dialog);
                                     };
+
 
                                 }); // group
 
@@ -664,29 +677,60 @@ impl MastertechContext {
                                                                                     
                                             let cust_code = &self.ticket_info.cust_code;
                                             let doc_alias = &self.ticket_info.doc_alias;
-                                            let department = &self.ticket_info.department;
-                                            let juris = &self.ticket_info.jurisdiction;
+                                            //let department = &self.ticket_info.department;
+                                            //let juris = &self.ticket_info.jurisdiction;
                                             let inv_amt = &self.ticket_info.invoice_amnt;
                                             let cust_email = &self.ticket_info.customer_email;
                                             let last_inv_num = &self.ticket_info.last_invoice_number;
                                             let last_inv_amt = &self.ticket_info.last_invoice_amount;
                                             let total_inv_num = &self.ticket_info.total_invoice_count;
-
+                                            let phone1 = &self.ticket_info.customer_phone_1;
+                                            let phone2 = &self.ticket_info.customer_phone_2;
+                                            let mut phone_2 = String::new();
+                                            if !phone2.is_empty(){
+                                                phone_2 = format!("<tr>
+                                                <td style=\"padding:1px 1px\">Phone #2</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{phone2}</td>
+                                                </tr>");
+                                            }
+                                            /*      
+                                            <tr>
+                                                <td style=\"padding:1px 1px\">Depart/Juris</td>
+                                                <td style=\"padding:1px 1px\">{department}/{juris}</td>
+                                            </tr>
+                                            */
                                             let extra_customer_info = format!
                                             ("
-                                            <ul>
-                                                <li>Customer Code: {cust_code}</li>
-                                                <li>Customer Email: {cust_email}</li>
-                                                <li>Type of order: {doc_alias}</li>
-                                                <li>Department: {department}</li>
-                                                <li>Jurisdiction: {juris}</li>
-                                                <li>Ticket Total: ${inv_amt}</li>
-                                                <li>Last Invoice#: {last_inv_num}</li>
-                                                <li>Last Invoice Amount: {last_inv_amt}</li>
-                                                <li>Total# of invoices: {total_inv_num}</li>
-                                            </ul>
+                                            <tr>
+                                                <td style=\"padding:1px 1px\">Customer Code</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{cust_code}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style=\"padding:1px 1px\">Phone #</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\"><strong>{phone1}</strong></td>
+                                            </tr>
+                                            {phone_2}
+                                            <tr>
+                                                <td style=\"padding:1px 1px\">Customer Email</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{cust_email}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style=\"padding:1px 1px\">Current Total</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">${inv_amt}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style=\"padding:1px 1px\">Last SI#</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{last_inv_num}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style=\"padding:1px 1px\">Last Invoice Total</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{last_inv_amt}</td>
+                                            </tr>
+                                            <tr>
+                                                <td style=\"padding:1px 1px\"># of SI's</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{total_inv_num}</td>
+                                            </tr>
                                             ");
-                                            println!("{extra_customer_info}");
                                             if self.send_specs == true{
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
@@ -776,8 +820,9 @@ impl MastertechContext {
                                                 "<body>
                                                     <table>
                                                         <tr>
-                                                        <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,130,130\" width=\"390\"
-                                                        >                <code>        Ticket Info        </code></td>
+                                                            <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,130,130\" width=\"390\"
+                                                            >                <code>        {doc_alias} Info        </code>
+                                                            </td>
                                                         </tr>
                                                         <tr>
                                                             <td style=\"padding:1px 1px\">Salesman</td>
@@ -789,14 +834,19 @@ impl MastertechContext {
                                                             <td style=\"padding:1px 4px\">     {checkin_rep}</td>
                                                             <td style=\"padding:1px 4px\">     {technician}</td>
                                                         </tr>
+                                                        <tr>
+                                                            <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,130,130\" width=\"390\"
+                                                            >                <code>           Customer           </code>
+                                                            </td>
+                                                        </tr>
+                                                        {extra_customer_info}
                                                     </table>
                                                     {specs}
                                                     <ul>
                                                         <li><strong>SSD test:</strong>     {ssd_test}</li>
                                                         <li><strong>HDD test:</strong>     {hdd_test}</li>
-                                                        <li><strong>RAM test:</strong>     {ram_test}</li></ul>
-                                                    <h2><strong><code>           Extra Customer Info           </code></strong></h2>
-                                                    {extra_customer_info}<hr>
+                                                        <li><strong>RAM test:</strong>     {ram_test}</li>
+                                                    </ul>
                                                     <h2><strong><code>           Notes           </code></strong></h2>
                                                     <ul><li><strong>        Checkin Notes:      </strong>     \n{checkin_notes}</li>
                                                         <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",

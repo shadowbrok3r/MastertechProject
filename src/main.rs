@@ -36,6 +36,7 @@ async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(925.0, 740.0)),
         icon_data: Some(load_icon()),
+        drag_and_drop_support: true,
         ..Default::default()
     };
     eframe::run_native(
@@ -65,7 +66,7 @@ pub(crate) fn load_icon() -> eframe::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        log::info!("eframe update fn running...");
+        // log::info!("eframe update fn running...");
         catppuccin_egui::set_theme(ctx, MOCHA);
 
         if self.context.spinner == true{
