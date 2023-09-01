@@ -425,9 +425,9 @@ impl SendRequest{
                                         {
                                             Ok(resp) => 
                                             {
-                                                println!("{resp:?}");
+                                                // println!("{resp:?}");
                                                 let asana_response: AsanaResponse = resp.json().await.unwrap(); 
-                                                println!("{asana_response:?}");
+                                                // println!("{asana_response:?}");
 
                                                 match sender.send(serde_json::to_string(&asana_response).unwrap()){
                                                     Ok(_) => drop(sender),
