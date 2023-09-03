@@ -32,6 +32,7 @@ dependencies = [
  "minidump",
  "minidump-common",
  "minidump-processor",
+ "minidump-unwind",
  "num-format",
  "num-traits",
  "openssl",

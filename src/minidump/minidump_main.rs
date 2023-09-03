@@ -1,46 +1,49 @@
 use clap::Parser;
 use eframe::egui;
 use egui::{Color32, Ui, Vec2};
-use egui_extras::{Size, TableBuilder};
-use logger::MapLogger;
+use egui_extras::{Size, TableBuilder, Column};
+use crate::minidump::logger::MapLogger;
 use memmap2::Mmap;
 use minidump::{format::MINIDUMP_STREAM_TYPE, system_info::PointerWidth, Minidump, Module};
 use minidump_common::utils::basename;
-use minidump_processor::{CallStack, ProcessState, StackFrame};
-use processor::{
-    MaybeMinidump, MaybeProcessed, MinidumpAnalysis, ProcessDump, ProcessingStatus, ProcessorTask,
-};
+use minidump_processor::{CallStack , ProcessState, StackFrame };
+use crate::minidump::processor::{MaybeMinidump, MaybeProcessed, MinidumpAnalysis, ProcessDump, ProcessingStatus, ProcessorTask, };
+use super::processor;
+
 use std::{
     cmp::Ordering,
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
 };
 use tracing_subscriber::prelude::*;
-use ui_logs::LogUiState;
-use ui_processed::ProcessedUiState;
-use ui_raw_dump::RawDumpUiState;
+use crate::minidump::ui_logs::LogUiState;
+use crate::minidump::ui_processed::ProcessedUiState;
+use crate::minidump::ui_raw_dump::RawDumpUiState;
 
-pub mod logger;
+
+
+//pub mod logger;
+/* 
 pub mod processor;
 mod ui_logs;
 mod ui_processed;
 mod ui_raw_dump;
-mod ui_settings;
+mod ui_settings; */
 
-struct MiniDump {
-    logger: MapLogger,
-    settings: Settings,
-    tab: Tab,
-    raw_dump_ui_state: RawDumpUiState,
-    processed_ui_state: ProcessedUiState,
-    log_ui_state: LogUiState,
-    cur_status: ProcessingStatus,
-    last_status: ProcessingStatus,
-    minidump: MaybeMinidump,
-    processed: MaybeProcessed,
-    pointer_width: PointerWidth,
-    task_sender: Arc<(Mutex<Option<ProcessorTask>>, Condvar)>,
-    analysis_state: Arc<MinidumpAnalysis>,
+pub struct MiniDumpApp {
+    pub logger: MapLogger,
+    pub settings: Settings,
+    pub tab: Tab,
+    pub raw_dump_ui_state: RawDumpUiState,
+    pub processed_ui_state: ProcessedUiState,
+    pub log_ui_state: LogUiState,
+    pub cur_status: ProcessingStatus,
+    pub last_status: ProcessingStatus,
+    pub minidump: MaybeMinidump,
+    pub processed: MaybeProcessed,
+    pub pointer_width: PointerWidth,
+    pub task_sender: Arc<(Mutex<Option<ProcessorTask>>, Condvar)>,
+    pub analysis_state: Arc<MinidumpAnalysis>,
 }
 
 struct Settings {
@@ -54,7 +57,7 @@ struct Settings {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum Tab {
+pub enum Tab {
     Settings,
     Processed,
     RawDump,
@@ -73,7 +76,7 @@ struct Cli {
 
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 1000;
 
-impl Default for MiniDump{
+impl Default for MiniDumpApp{
     fn default() -> Self{
         let cli = Cli::parse();
         let available_paths = cli.minidumps;
@@ -139,6 +142,7 @@ impl Default for MiniDump{
             },
             cur_status: ProcessingStatus::NoDump,
             last_status: ProcessingStatus::NoDump,
+            
             minidump: None,
             processed: None,
             pointer_width: PointerWidth::Unknown,
@@ -150,7 +154,7 @@ impl Default for MiniDump{
 }
 
 // The main even loop
-impl eframe::App for MiniDump {
+impl eframe::App for MiniDumpApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_processor_state();
         self.update_ui(ctx);
@@ -159,7 +163,7 @@ impl eframe::App for MiniDump {
 }
 
 // Core State Updating
-impl MiniDump {
+impl MiniDumpApp {
     fn poll_processor_state(&mut self) {
         // Fetch updates from processing thread
         let new_minidump = self.analysis_state.minidump.lock().unwrap().take();
@@ -222,7 +226,7 @@ impl MiniDump {
         }
     }
 
-    fn set_path(&mut self, idx: usize) {
+    pub fn set_path(&mut self, idx: usize) {
         let path = self.settings.available_paths[idx].clone();
         self.cur_status = ProcessingStatus::ReadingDump;
         self.settings.picked_path = Some(path.display().to_string());
@@ -235,7 +239,7 @@ impl MiniDump {
         condvar.notify_one();
     }
 
-    fn process_dump(&mut self, dump: Arc<Minidump<'static, Mmap>>) {
+    pub fn process_dump(&mut self, dump: Arc<Minidump<'static, Mmap>>) {
         let (lock, condvar) = &*self.task_sender;
         let mut new_task = lock.lock().unwrap();
         self.cur_status = ProcessingStatus::RawProcessing;
@@ -273,7 +277,7 @@ impl MiniDump {
         condvar.notify_one();
     }
 
-    fn cancel_processing(&mut self) {
+    pub fn cancel_processing(&mut self) {
         let (lock, condvar) = &*self.task_sender;
         let mut new_task = lock.lock().unwrap();
         *new_task = Some(ProcessorTask::Cancel);
@@ -286,7 +290,7 @@ impl MiniDump {
 // All the different views have been split off into different files
 // because they don't care about eachother and things were getting way
 // out of control with all these unrelated UIs together!
-impl MiniDump {
+impl MiniDumpApp {
     fn update_ui(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("tab bar")
             .resizable(false)
@@ -321,7 +325,7 @@ impl MiniDump {
     }
 }
 
-fn listing(
+pub fn listing(
     ui: &mut Ui,
     ctx: &egui::Context,
     id: u64,
@@ -332,9 +336,9 @@ fn listing(
         let body_font = egui::style::TextStyle::Body.resolve(ui.style());
         TableBuilder::new(ui)
             .striped(true)
-            .cell_layout(egui::Layout::left_to_right().with_cross_align(egui::Align::Center))
-            .column(Size::initial(120.0).at_least(40.0))
-            .column(Size::remainder().at_least(60.0))
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center).with_cross_align(egui::Align::Center))
+            .column(Column::initial(120.0).at_least(40.0))// Size::initial(120.0).at_least(40.0))
+            .column(Column::remainder().at_least(60.0))
             .clip(false)
             .resizable(true)
             .scroll(false)
@@ -344,7 +348,7 @@ fn listing(
                 let col2_width = widths[1];
                 for (lhs, rhs) in items {
                     let (col1, col2, row_height) = {
-                        let fonts = ctx.fonts();
+                        let fonts = ctx.fonts(|font_reader| font_reader);
                         let col1 = fonts.layout(lhs, body_font.clone(), Color32::BLACK, col1_width);
                         let col2 = fonts.layout(rhs, mono_font.clone(), Color32::BLACK, col2_width);
                         let row_height = col1.rect.height().max(col2.rect.height()) + 6.0;
@@ -363,7 +367,7 @@ fn listing(
     });
 }
 
-fn threadname(stack: &CallStack) -> String {
+pub fn threadname(stack: &CallStack) -> String {
     if let Some(name) = &stack.thread_name {
         format!("{} ({})", name, stack.thread_id)
     } else {
@@ -371,7 +375,7 @@ fn threadname(stack: &CallStack) -> String {
     }
 }
 
-fn sourcename(file: &str) -> &str {
+pub fn sourcename(file: &str) -> &str {
     let base = basename(file);
     match base.rsplit_once(':') {
         Some((lhs, _rhs)) => lhs,
@@ -379,7 +383,7 @@ fn sourcename(file: &str) -> &str {
     }
 }
 
-fn stream_vendor(stream_type: u32) -> &'static str {
+pub fn stream_vendor(stream_type: u32) -> &'static str {
     if stream_type <= MINIDUMP_STREAM_TYPE::LastReservedStream as u32 {
         "Official"
     } else {
@@ -391,7 +395,7 @@ fn stream_vendor(stream_type: u32) -> &'static str {
     }
 }
 
-fn frame_source(f: &mut impl std::fmt::Write, frame: &StackFrame) -> Result<(), std::fmt::Error> {
+pub fn frame_source(f: &mut impl std::fmt::Write, frame: &StackFrame) -> Result<(), std::fmt::Error> {
     let addr = frame.instruction;
     if let Some(ref module) = frame.module {
         if let (Some(source_file), Some(source_line), Some(_source_line_base)) = (
@@ -412,7 +416,7 @@ fn frame_source(f: &mut impl std::fmt::Write, frame: &StackFrame) -> Result<(), 
     Ok(())
 }
 
-fn frame_signature_from_indices(
+pub fn frame_signature_from_indices(
     state: &ProcessState,
     thread_idx: Option<usize>,
     frame_idx: Option<usize>,
@@ -441,7 +445,7 @@ fn frame_signature_from_indices(
     buf
 }
 
-fn frame_signature(
+pub fn frame_signature(
     f: &mut impl std::fmt::Write,
     frame: &StackFrame,
 ) -> Result<(), std::fmt::Error> {

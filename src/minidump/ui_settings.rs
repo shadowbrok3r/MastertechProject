@@ -1,10 +1,9 @@
 use eframe::egui;
 use egui::Ui;
 
-use crate::processor::ProcessingStatus;
-use crate::MyApp;
+use crate::minidump::{processor::ProcessingStatus, minidump_main::MiniDumpApp};
 
-impl MyApp {
+impl MiniDumpApp {
     pub fn ui_settings(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         ui.add_space(20.0);
         ui.heading("choose minidump");

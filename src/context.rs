@@ -8,14 +8,18 @@ use scaffold::PulledKeys;
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
-use crate::{self_updater::run, scaffold_calls::scaffold};
 // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 
 use crate::{
     file_browser::FileBrowser, 
     system_info, 
-    scaffold_calls::request::SendRequest,
-    system_info::RetrieveSystemInfo
+    scaffold_calls::{
+        request::SendRequest,
+        scaffold
+    },
+    system_info::RetrieveSystemInfo,
+    self_updater::run,
+    minidump,
 };
 use scaffold::TicketInformation;
 
@@ -115,6 +119,7 @@ impl TabViewer for MastertechContext {
             "Scripts" => self.scripts(ui),
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
+            "Minidump Analysis" => self.mini_dump(ui),
             _ => {
                 let sysinfo_tab = &self.system_info_tab.to_string();
                 if ui.label(tab.as_str()).clicked(){
@@ -1083,4 +1088,8 @@ impl MastertechContext {
     }
     
     fn scripts(&mut self, _ui: &mut Ui){ }
+
+    fn mini_dump(&mut self, _ui: &mut Ui){ 
+        
+    }
 }

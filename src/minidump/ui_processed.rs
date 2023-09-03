@@ -1,12 +1,13 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::processor::ProcessingStatus;
-use crate::{MyApp, Tab};
+use crate::minidump::processor::ProcessingStatus;
+use crate::minidump::minidump_main::{MiniDumpApp, Tab};
 use eframe::egui;
 use egui::{Color32, ComboBox, Context, FontId, Frame, ScrollArea, Ui};
 use egui_extras::{Size, TableBody, TableBuilder};
 use minidump_common::utils::basename;
 use minidump_processor::{CallStack, ProcessState, StackFrame};
+use crate::minidump::minidump_main::threadname;
 
 pub struct ProcessedUiState {
     pub cur_thread: usize,
@@ -25,7 +26,7 @@ mod inline_shim {
 
 #[cfg(not(feature = "inline"))]
 mod inline_shim {
-    use minidump_processor::StackFrame;
+    use crate::minidump::ui_processed::StackFrame;
 
     /// A stack frame in an inlined function.
     #[derive(Debug, Clone)]
@@ -43,7 +44,7 @@ mod inline_shim {
     }
 }
 
-impl MyApp {
+impl MiniDumpApp {
     pub fn ui_processed(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         if let Some(Err(e)) = &self.minidump {
             ui.label("Minidump couldn't be read!");
@@ -122,7 +123,7 @@ impl MyApp {
         let cur_threadname = state
             .threads
             .get(self.processed_ui_state.cur_thread)
-            .map(crate::threadname)
+            .map(threadname)
             .unwrap_or_default();
         egui::SidePanel::left("overall info")
             .default_width((ui.available_width() / 2.0).round())
@@ -187,7 +188,7 @@ impl MyApp {
                             state
                                 .threads
                                 .get(self.processed_ui_state.cur_thread)
-                                .map(crate::threadname)
+                                .map(threadname)
                                 .unwrap_or_default(),
                         )
                         .show_ui(ui, |ui| {
@@ -196,7 +197,7 @@ impl MyApp {
                                     .selectable_value(
                                         &mut self.processed_ui_state.cur_thread,
                                         idx,
-                                        crate::threadname(stack),
+                                        threadname(stack),
                                     )
                                     .changed()
                                 {
