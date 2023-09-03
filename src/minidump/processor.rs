@@ -6,9 +6,11 @@ use std::{
 use memmap2::Mmap;
 use minidump::Minidump;
 use minidump_processor::{
-    http_symbol_supplier, PendingProcessorStatSubscriptions, PendingProcessorStats,
-    PendingSymbolStats, ProcessState, ProcessorOptions, Symbolizer,
+    PendingProcessorStatSubscriptions, PendingProcessorStats, 
+    ProcessState, ProcessorOptions
 };
+use minidump_unwind::http_symbol_supplier;
+use breakpad_symbols::{PendingSymbolStats, Symbolizer}; //, HttpSymbolSupplier};
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProcessingStatus {
@@ -69,7 +71,7 @@ pub struct ProcessDump {
 pub fn run_processor(
     task_receiver: std::sync::Arc<(std::sync::Mutex<Option<ProcessorTask>>, std::sync::Condvar)>,
     analysis_sender: std::sync::Arc<MinidumpAnalysis>,
-    logger: crate::logger::MapLogger,
+    logger: crate::minidump::logger::MapLogger,
 ) {
     loop {
         let (lock, condvar) = &*task_receiver;

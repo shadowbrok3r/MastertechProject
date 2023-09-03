@@ -1,13 +1,14 @@
-use crate::MyApp;
 use eframe::egui;
 use egui::{ComboBox, TextStyle, Ui};
+use crate::minidump::minidump_main::threadname;
+use super::minidump_main::{MiniDumpApp, frame_signature_from_indices};
 
 pub struct LogUiState {
     pub cur_thread: Option<usize>,
     pub cur_frame: Option<usize>,
 }
 
-impl MyApp {
+impl MiniDumpApp {
     pub fn ui_logs(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
         let ui_state = &mut self.log_ui_state;
         if let Some(Ok(state)) = &self.processed {
@@ -18,7 +19,7 @@ impl MyApp {
                     .selected_text(
                         ui_state
                             .cur_thread
-                            .and_then(|thread| state.threads.get(thread).map(crate::threadname))
+                            .and_then(|thread| state.threads.get(thread).map(threadname))
                             .unwrap_or_else(|| "<no thread>".to_owned()),
                     )
                     .show_ui(ui, |ui| {
@@ -33,7 +34,7 @@ impl MyApp {
                                 .selectable_value(
                                     &mut ui_state.cur_thread,
                                     Some(idx),
-                                    crate::threadname(stack),
+                                    threadname(stack),
                                 )
                                 .changed()
                             {
@@ -46,20 +47,20 @@ impl MyApp {
                     ui.label("Frame: ");
                     ComboBox::from_label("")
                         .width(400.0)
-                        .selected_text(crate::frame_signature_from_indices(
+                        .selected_text(frame_signature_from_indices(
                             state,
                             ui_state.cur_thread,
                             ui_state.cur_frame,
                         ))
                         .show_ui(ui, |ui| {
-                            let no_name = crate::frame_signature_from_indices(
+                            let no_name = frame_signature_from_indices(
                                 state,
                                 ui_state.cur_thread,
                                 None,
                             );
                             ui.selectable_value(&mut ui_state.cur_frame, None, no_name);
                             for (idx, _stack) in thread.frames.iter().enumerate() {
-                                let name = crate::frame_signature_from_indices(
+                                let name = frame_signature_from_indices(
                                     state,
                                     ui_state.cur_thread,
                                     Some(idx),

@@ -7,6 +7,7 @@ mod scaffold_calls;
 mod context;
 mod io;
 pub mod github;
+mod minidump;
 
 use github::self_updater;
 use crate::{self_updater::run, scaffold_calls::{scaffold, request}};

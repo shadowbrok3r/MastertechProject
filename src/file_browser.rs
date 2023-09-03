@@ -1,9 +1,15 @@
 use egui::text::LayoutJob;
-use tokio::sync::mpsc::{UnboundedSender, UnboundedReceiver, self, unbounded_channel};
+use tokio::{
+    fs, 
+    sync::mpsc::{
+        UnboundedSender, 
+        UnboundedReceiver,
+        unbounded_channel
+    }
+};
 use eframe::egui::{*, collapsing_header::CollapsingState};
 use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
 use num_format::{Locale, ToFormattedString};
-use tokio::fs;
 use walkdir::WalkDir;
 use std::env;
 use pollster::block_on;

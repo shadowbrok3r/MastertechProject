@@ -1,4 +1,4 @@
-use crate::MyApp;
+use crate::minidump::minidump_main::MiniDumpApp;
 use eframe::egui;
 use egui::{Frame, TextStyle, Ui};
 use egui_extras::{Size, TableBuilder};
@@ -10,7 +10,7 @@ pub struct RawDumpUiState {
     pub cur_stream: usize,
 }
 
-impl MyApp {
+impl MiniDumpApp {
     pub fn ui_raw_dump(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
         if let Some(minidump) = &self.minidump {
             match minidump {
