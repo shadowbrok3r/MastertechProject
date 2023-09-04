@@ -44,11 +44,13 @@ cached = "0.44.0"
 log = "0.4.20"
 simplelog = "0.12.1"
 rayon = "1.7.0"
-memmap2 = "0.7.1"
+
+memmap2 = "0.5.10"
 breakpad-symbols = { version = "0.17.0" }
 minidump = { version = "0.17.0" }
 minidump-common = { version = "0.17.0" }
 minidump-processor = { version = "0.17.0", features = ["http", "dump_syms"] }
+
 num-traits = "0.2.15"
 rfd = "0.11.4"
 tempfile = "3.3.0"

@@ -89,8 +89,8 @@ pub fn run_processor(
             }
             ProcessorTask::ReadDump(path) => {
                 // Read the dump
-                let dump = Minidump::read_path(path).map(Arc::new);
-                *analysis_sender.minidump.lock().unwrap() = Some(dump);
+                let dump = Some(Minidump::read_path(path).map(Arc::new));
+                *analysis_sender.minidump.lock().unwrap() = dump; // expected enum `std::option::Option<Result<Arc<Minidump<'static, Mmap>>, minidump::Error>>`
             }
             ProcessorTask::ProcessDump(settings) => {
                 // Reset all stats

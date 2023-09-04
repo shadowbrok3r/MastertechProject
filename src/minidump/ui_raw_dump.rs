@@ -1,10 +1,12 @@
 use crate::minidump::minidump_main::MiniDumpApp;
 use eframe::egui;
-use egui::{Frame, TextStyle, Ui};
-use egui_extras::{Size, TableBuilder};
+use egui::{Frame, TextStyle, Ui, Align, Layout};
+use egui_extras::{Size, TableBuilder, Column};
 use memmap2::Mmap;
 use minidump::{format::MINIDUMP_STREAM_TYPE, Minidump};
 use num_traits::FromPrimitive;
+
+use super::minidump_main::stream_vendor;
 
 pub struct RawDumpUiState {
     pub cur_stream: usize,
@@ -126,11 +128,11 @@ impl MiniDumpApp {
         let row_height = 18.0;
         TableBuilder::new(ui)
             .striped(true)
-            .cell_layout(egui::Layout::left_to_right().with_cross_align(egui::Align::Center))
-            .column(Size::initial(40.0).at_least(40.0))
-            .column(Size::initial(80.0).at_least(40.0))
-            .column(Size::initial(80.0).at_least(40.0))
-            .column(Size::remainder().at_least(60.0))
+            .cell_layout(Layout::left_to_right(Align::LEFT).with_cross_align(Align::Center))
+            .column(Column::initial(40.0).at_least(40.0))
+            .column(Column::initial(80.0).at_least(40.0))
+            .column(Column::initial(80.0).at_least(40.0))
+            .column(Column::remainder().at_least(60.0))
             .resizable(true)
             .header(20.0, |mut header| {
                 header.col(|ui| {
@@ -161,7 +163,7 @@ impl MiniDumpApp {
                         });
                         row.col(|ui| {
                             ui.centered_and_justified(|ui| {
-                                ui.label(crate::stream_vendor(stream.stream_type));
+                                ui.label(stream_vendor(stream.stream_type));
                             });
                         });
                         row.col(|ui| {
@@ -298,7 +300,8 @@ impl MiniDumpApp {
     fn update_raw_dump_thread_list(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let brief = self.settings.raw_dump_brief;
         let stream = dump.get_stream::<minidump::MinidumpThreadList>();
-        let memory = dump.get_stream::<minidump::MinidumpMemoryList>();
+        //let memory = dump.get_stream::<minidump::MinidumpMemoryList>();
+        let memory_type = dump.get_memory();
         let system = dump.get_stream::<minidump::MinidumpSystemInfo>();
         let misc = dump.get_stream::<minidump::MinidumpMiscInfo>();
         if let Err(e) = &stream {
@@ -311,7 +314,7 @@ impl MiniDumpApp {
         stream
             .print(
                 &mut bytes,
-                memory.as_ref().ok(),
+                memory_type.as_ref(),
                 system.as_ref().ok(),
                 misc.as_ref().ok(),
                 brief,

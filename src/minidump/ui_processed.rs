@@ -1,13 +1,12 @@
 #![allow(clippy::too_many_arguments)]
 
-use crate::minidump::processor::ProcessingStatus;
-use crate::minidump::minidump_main::{MiniDumpApp, Tab};
+use crate::minidump::{processor::ProcessingStatus, minidump_main::{MiniDumpApp, Tab, threadname, frame_signature}};
 use eframe::egui;
-use egui::{Color32, ComboBox, Context, FontId, Frame, ScrollArea, Ui};
-use egui_extras::{Size, TableBody, TableBuilder};
+use egui::{Color32, ComboBox, Context, FontId, Frame, ScrollArea, Ui, Align, FontDefinitions, text::Fonts};
+use egui_extras::{Size, TableBody, TableBuilder, Column};
 use minidump_common::utils::basename;
-use minidump_processor::{CallStack, ProcessState, StackFrame};
-use crate::minidump::minidump_main::threadname;
+use minidump_processor::ProcessState;
+use minidump_unwind::{CallStack, StackFrame, FrameTrust};
 
 pub struct ProcessedUiState {
     pub cur_thread: usize,
@@ -15,6 +14,8 @@ pub struct ProcessedUiState {
 }
 
 use inline_shim::*;
+
+use super::minidump_main::{listing, frame_source};
 #[cfg(feature = "inline")]
 mod inline_shim {
     pub use minidump_processor::InlineFrame;
@@ -133,7 +134,7 @@ impl MiniDumpApp {
                     ui.heading("Process");
                     ui.separator();
 
-                    crate::listing(
+                    listing(
                         ui,
                         ctx,
                         1,
@@ -157,8 +158,8 @@ impl MiniDumpApp {
                             (
                                 "Crash Reason".to_owned(),
                                 state
-                                    .crash_reason
-                                    .map(|r| r.to_string())
+                                    .exception_info.as_ref() //.crash_reason
+                                    .map(|r| r.reason.to_string())
                                     .unwrap_or_default(),
                             ),
                             (
@@ -168,8 +169,8 @@ impl MiniDumpApp {
                             (
                                 "Crash Address".to_owned(),
                                 state
-                                    .crash_address
-                                    .map(|addr| self.format_addr(addr))
+                                    .exception_info .as_ref()// .crash_address
+                                    .map(|addr| self.format_addr(addr.address.0))
                                     .unwrap_or_default(),
                             ),
                             ("Crashing Thread".to_owned(), cur_threadname.clone()),
@@ -209,7 +210,7 @@ impl MiniDumpApp {
                 ui.separator();
                 ScrollArea::vertical().show(ui, |ui| {
                     if let Some(thread) = state.threads.get(self.processed_ui_state.cur_thread) {
-                        crate::listing(
+                        listing(
                             ui,
                             ctx,
                             2,
@@ -228,7 +229,7 @@ impl MiniDumpApp {
                                 let mut label = String::new();
                                 write!(&mut label, "{:02} - ", self.processed_ui_state.cur_frame)
                                     .unwrap();
-                                crate::frame_signature(&mut label, frame).unwrap();
+                                frame_signature(&mut label, frame).unwrap();
                                 ui.heading("Frame ");
 
                                 ComboBox::from_label(" ")
@@ -238,7 +239,7 @@ impl MiniDumpApp {
                                         for (idx, frame) in thread.frames.iter().enumerate() {
                                             let mut label = String::new();
                                             write!(&mut label, "{idx:02} - ").unwrap();
-                                            crate::frame_signature(&mut label, frame).unwrap();
+                                            frame_signature(&mut label, frame).unwrap();
                                             ui.selectable_value(
                                                 &mut self.processed_ui_state.cur_frame,
                                                 idx,
@@ -252,7 +253,7 @@ impl MiniDumpApp {
                                 .context
                                 .valid_registers()
                                 .map(|(name, val)| (name.to_owned(), self.format_addr(val)));
-                            crate::listing(ui, ctx, 3, regs);
+                            listing(ui, ctx, 3, regs);
                         }
                     }
                 })
@@ -263,14 +264,13 @@ impl MiniDumpApp {
         let font = egui::style::TextStyle::Body.resolve(ui.style());
         TableBuilder::new(ui)
             .striped(true)
-            .cell_layout(egui::Layout::left_to_right().with_cross_align(egui::Align::Center))
-            .column(Size::initial(60.0).at_least(40.0))
-            .column(Size::initial(80.0).at_least(40.0))
-            .column(Size::initial(160.0).at_least(40.0))
-            .column(Size::initial(160.0).at_least(40.0))
-            .column(Size::remainder().at_least(60.0))
+            .cell_layout(egui::Layout::left_to_right(Align::LEFT).with_cross_align(Align::Center))
+            .column(Column::initial(60.0).at_least(40.0))
+            .column(Column::initial(80.0).at_least(40.0))
+            .column(Column::initial(160.0).at_least(40.0))
+            .column(Column::initial(160.0).at_least(40.0))
+            .column(Column::remainder().at_least(60.0))
             .resizable(true)
-            .clip(false)
             .header(20.0, |mut header| {
                 header.col(|ui| {
                     ui.heading("Frame");
@@ -325,7 +325,7 @@ impl MiniDumpApp {
         let col5_width = widths[4];
 
         let (col1, col2, col3, col4, col5, row_height) = {
-            let fonts = ctx.fonts();
+            let fonts = Fonts::new(8.0, 5, FontDefinitions::default()); // ctx.fonts(|font_reader| font_reader);
             let col1 = {
                 fonts.layout(
                     frame_num.to_string(),
@@ -336,13 +336,13 @@ impl MiniDumpApp {
             };
             let col2 = {
                 let trust = match frame.trust {
-                    minidump_processor::FrameTrust::None => "none",
-                    minidump_processor::FrameTrust::Scan => "scan",
-                    minidump_processor::FrameTrust::CfiScan => "cfi scan",
-                    minidump_processor::FrameTrust::FramePointer => "frame pointer",
-                    minidump_processor::FrameTrust::CallFrameInfo => "cfi",
-                    minidump_processor::FrameTrust::PreWalked => "prewalked",
-                    minidump_processor::FrameTrust::Context => "context",
+                    FrameTrust::None => "none",
+                    FrameTrust::Scan => "scan",
+                    FrameTrust::CfiScan => "cfi scan",
+                    FrameTrust::FramePointer => "frame pointer",
+                    FrameTrust::CallFrameInfo => "cfi",
+                    FrameTrust::PreWalked => "prewalked",
+                    FrameTrust::Context => "context",
                 };
                 fonts.layout(trust.to_owned(), font.clone(), Color32::BLACK, col2_width)
             };
@@ -356,12 +356,12 @@ impl MiniDumpApp {
             };
             let col4 = {
                 let mut label = String::new();
-                crate::frame_source(&mut label, frame).unwrap();
+                frame_source(&mut label, frame).unwrap();
                 fonts.layout(label, font.clone(), Color32::BLACK, col4_width)
             };
             let col5 = {
                 let mut label = String::new();
-                crate::frame_signature(&mut label, frame).unwrap();
+                frame_signature(&mut label, frame).unwrap();
                 fonts.layout(label, font.clone(), Color32::BLACK, col5_width)
             };
 
@@ -423,7 +423,7 @@ impl MiniDumpApp {
         let col4_width = widths[3];
         let col5_width = widths[4];
         let (col1, col2, col3, col4, col5, row_height) = {
-            let fonts = ctx.fonts();
+            let fonts = Fonts::new(8.0, 5, FontDefinitions::default()); // ctx.fonts(|font_reader| font_reader);
             let col1 = {
                 fonts.layout(
                     frame_num.to_string(),

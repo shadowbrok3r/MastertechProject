@@ -28,11 +28,11 @@ use system_info::RetrieveSystemInfo;
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     // Configure log level and log file
-    let log_level = LevelFilter::Trace;
-    let log_file = File::create("output.log").unwrap();
+    //let log_level = LevelFilter::Trace;
+    //let log_file = File::create("output.log").unwrap();
     // Initialize logger
-    WriteLogger::init(log_level, Config::default(), log_file).unwrap();
-    log::trace!("Application starting...");
+    //WriteLogger::init(log_level, Config::default(), log_file).unwrap();
+    //log::trace!("Application starting...");
 
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(925.0, 740.0)),
@@ -220,7 +220,14 @@ impl eframe::App for MasterTechApp {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
-                    for tab in &[&self.context.tur_sheet_tab, &self.context.scripts_tab, &self.context.output_console_tab, &self.context.system_info_tab, &self.context.file_browser_tab] {
+                    for tab in &[
+                        &self.context.tur_sheet_tab, 
+                        &self.context.scripts_tab, 
+                        &self.context.output_console_tab, 
+                        &self.context.system_info_tab, 
+                        &self.context.file_browser_tab,
+                        &"Minidump Analysis".to_string()
+                    ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)
                             .clicked()

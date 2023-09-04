@@ -28,7 +28,7 @@ dependencies = [
  "libatasmart-sys",
  "linked-hash-map",
  "log",
- "memmap2 0.7.1",
+ "memmap2",
  "minidump",
  "minidump-common",
  "minidump-processor",
@@ -2455,15 +2455,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "memmap2"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f49388d20533534cd19360ad3d6a7dadc885944aa802ba3995040c5ec11288c6"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "memoffset"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2514,7 +2505,7 @@ checksum = "ae58b2a19e3bac45c7fbf0dcd674534664a00c84ca103d6561b1bf678bd4c4ef"
 dependencies = [
  "debugid",
  "encoding_rs",
- "memmap2 0.5.10",
+ "memmap2",
  "minidump-common",
  "num-traits",
  "range-map",
@@ -2550,7 +2541,7 @@ dependencies = [
  "breakpad-symbols",
  "debugid",
  "futures-util",
- "memmap2 0.5.10",
+ "memmap2",
  "minidump",
  "minidump-common",
  "minidump-unwind",
@@ -3673,7 +3664,7 @@ checksum = "cda4e97be1fd174ccc2aae81c8b694e803fa99b34e8fd0f057a9d70698e3ed09"
 dependencies = [
  "ab_glyph",
  "log",
- "memmap2 0.5.10",
+ "memmap2",
  "smithay-client-toolkit",
  "tiny-skia",
 ]
@@ -3908,7 +3899,7 @@ dependencies = [
  "dlib",
  "lazy_static",
  "log",
- "memmap2 0.5.10",
+ "memmap2",
  "nix 0.24.3",
  "pkg-config",
  "wayland-client",
@@ -4041,7 +4032,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "167a4ffd7c35c143fd1030aa3c2caf76ba42220bd5a6b5f4781896434723b8c3"
 dependencies = [
  "debugid",
- "memmap2 0.5.10",
+ "memmap2",
  "stable_deref_trait",
  "uuid",
 ]

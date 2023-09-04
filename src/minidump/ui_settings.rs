@@ -135,7 +135,7 @@ impl MiniDumpApp {
 
         // Collect dropped files:
         let mut pushed_path = false;
-        for file in &ctx.input().raw.dropped_files {
+        for file in &ctx.input_mut(|i| i.raw.take().dropped_files) {
             if let Some(path) = &file.path {
                 pushed_path = true;
                 self.settings.available_paths.push(path.clone());
@@ -152,9 +152,9 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
     use egui::*;
     use std::fmt::Write as _;
 
-    if !ctx.input().raw.hovered_files.is_empty() {
+    if !ctx.input(|i: &InputState| i.raw.hovered_files.is_empty()) {
         let mut text = "Dropping files:\n".to_owned();
-        for file in &ctx.input().raw.hovered_files {
+        for file in &ctx.input_mut(|i| i.raw.take().hovered_files) {
             if let Some(path) = &file.path {
                 write!(text, "\n{}", path.display()).ok();
             } else if !file.mime.is_empty() {
@@ -167,7 +167,7 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
         let painter =
             ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
 
-        let screen_rect = ctx.input().screen_rect();
+        let screen_rect = ctx.input(|i| i.screen_rect());
         painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
         painter.text(
             screen_rect.center(),
