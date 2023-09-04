@@ -19,7 +19,7 @@ use crate::{
     },
     system_info::RetrieveSystemInfo,
     self_updater::run,
-    minidump,
+    minidump::{self, minidump_main::MiniDumpApp},
 };
 use scaffold::TicketInformation;
 
@@ -59,6 +59,7 @@ pub struct MastertechContext {
     pub antivirus_installed: String,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
+    pub minidump_app: MiniDumpApp,
     
     //pub system_information: SystemInformation,
     pub salesman_cbox: scaffold::Salesman,
@@ -191,6 +192,8 @@ impl Default for MasterTechApp {
             tx: tx_scaffold,
         };
 
+        let minidump_app = MiniDumpApp::default();
+
         let ticket_information = TicketInformation {
             cust_code: "".to_string(),
             user_id: "".to_string(),
@@ -235,7 +238,7 @@ impl Default for MasterTechApp {
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
-
+            minidump_app,
             output_text: "".to_string(),
 
             
@@ -1089,7 +1092,10 @@ impl MastertechContext {
     
     fn scripts(&mut self, _ui: &mut Ui){ }
 
-    fn mini_dump(&mut self, _ui: &mut Ui){ 
-        
+    fn mini_dump(&mut self, ui: &mut Ui){ 
+        //let mut minidump = self.minidump_app;
+        self.minidump_app.poll_processor_state();
+        self.minidump_app.update_ui(&self.ctx, ui);
+        self.minidump_app.last_status = self.minidump_app.cur_status;
     }
 }

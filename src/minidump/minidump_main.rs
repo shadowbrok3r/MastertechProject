@@ -1,12 +1,13 @@
 use clap::Parser;
 use eframe::egui;
-use egui::{Color32, Ui, Vec2};
+use egui::{Color32, Ui, Vec2, text::Fonts, FontDefinitions};
 use egui_extras::{Size, TableBuilder, Column};
 use crate::minidump::logger::MapLogger;
 use memmap2::Mmap;
 use minidump::{format::MINIDUMP_STREAM_TYPE, system_info::PointerWidth, Minidump, Module};
 use minidump_common::utils::basename;
-use minidump_processor::{CallStack , ProcessState, StackFrame };
+use minidump_processor::ProcessState;
+use minidump_unwind::{CallStack, StackFrame};
 use crate::minidump::processor::{MaybeMinidump, MaybeProcessed, MinidumpAnalysis, ProcessDump, ProcessingStatus, ProcessorTask, };
 use super::processor;
 
@@ -46,14 +47,14 @@ pub struct MiniDumpApp {
     pub analysis_state: Arc<MinidumpAnalysis>,
 }
 
-struct Settings {
-    available_paths: Vec<PathBuf>,
-    picked_path: Option<String>,
-    symbol_paths: Vec<(String, bool)>,
-    symbol_urls: Vec<(String, bool)>,
-    symbol_cache: (String, bool),
-    http_timeout_secs: String,
-    raw_dump_brief: bool,
+pub struct Settings {
+    pub available_paths: Vec<PathBuf>,
+    pub picked_path: Option<String>,
+    pub symbol_paths: Vec<(String, bool)>,
+    pub symbol_urls: Vec<(String, bool)>,
+    pub symbol_cache: (String, bool),
+    pub http_timeout_secs: String,
+    pub raw_dump_brief: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -154,17 +155,17 @@ impl Default for MiniDumpApp{
 }
 
 // The main even loop
-impl eframe::App for MiniDumpApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.poll_processor_state();
-        self.update_ui(ctx);
-        self.last_status = self.cur_status;
-    }
-}
+// impl eframe::App for MiniDumpApp {
+//     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+//         self.poll_processor_state();
+//         self.update_ui(ctx);
+//         self.last_status = self.cur_status;
+//     }
+// }
 
 // Core State Updating
 impl MiniDumpApp {
-    fn poll_processor_state(&mut self) {
+    pub fn poll_processor_state(&mut self) {
         // Fetch updates from processing thread
         let new_minidump = self.analysis_state.minidump.lock().unwrap().take();
         if let Some(dump) = new_minidump {
@@ -291,7 +292,7 @@ impl MiniDumpApp {
 // because they don't care about eachother and things were getting way
 // out of control with all these unrelated UIs together!
 impl MiniDumpApp {
-    fn update_ui(&mut self, ctx: &egui::Context) {
+    pub fn update_ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         egui::TopBottomPanel::top("tab bar")
             .resizable(false)
             .show_inside(ui, |ui| {
@@ -316,7 +317,7 @@ impl MiniDumpApp {
         });
     }
 
-    fn format_addr(&self, addr: u64) -> String {
+    pub fn format_addr(&self, addr: u64) -> String {
         match self.pointer_width {
             minidump::system_info::PointerWidth::Bits32 => format!("0x{addr:08x}"),
             minidump::system_info::PointerWidth::Bits64 => format!("0x{addr:016x}"),
@@ -339,16 +340,15 @@ pub fn listing(
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center).with_cross_align(egui::Align::Center))
             .column(Column::initial(120.0).at_least(40.0))// Size::initial(120.0).at_least(40.0))
             .column(Column::remainder().at_least(60.0))
-            .clip(false)
             .resizable(true)
-            .scroll(false)
+            //.scroll(false)
             .body(|mut body| {
                 let widths = body.widths();
                 let col1_width = widths[0];
                 let col2_width = widths[1];
                 for (lhs, rhs) in items {
                     let (col1, col2, row_height) = {
-                        let fonts = ctx.fonts(|font_reader| font_reader);
+                        let fonts = Fonts::new(8.0, 5, FontDefinitions::default()); // ctx.fonts(|font_reader| font_reader);
                         let col1 = fonts.layout(lhs, body_font.clone(), Color32::BLACK, col1_width);
                         let col2 = fonts.layout(rhs, mono_font.clone(), Color32::BLACK, col2_width);
                         let row_height = col1.rect.height().max(col2.rect.height()) + 6.0;
