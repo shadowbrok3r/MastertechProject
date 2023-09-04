@@ -66,7 +66,7 @@ impl MiniDumpApp {
     }
 
     fn ui_processed_good(&mut self, ui: &mut Ui, ctx: &Context, state: &ProcessState) {
-        // let is_symbolicated = self.cur_status == ProcessingStatus::Done;
+        //let is_symbolicated = self.cur_status == ProcessingStatus::Done;
         egui::TopBottomPanel::top("info")
             .resizable(true)
             .default_height((ui.available_height() / 2.0).round())
