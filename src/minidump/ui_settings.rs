@@ -39,12 +39,14 @@ impl MiniDumpApp {
                 | ProcessingStatus::RawProcessing
                 | ProcessingStatus::Symbolicating => true,
             };
+
             ui.add_enabled_ui(cancellable, |ui| {
                 if ui.button("❌ cancel").clicked() {
                     self.cancel_processing();
                 }
             });
             let reprocessable = matches!(&self.minidump, Some(Ok(_)));
+            println!("reprocessable? {reprocessable}");
             ui.add_enabled_ui(reprocessable, |ui| {
                 if ui.button("💫 reprocess").clicked() {
                     self.process_dump(self.minidump.as_ref().unwrap().as_ref().unwrap().clone());
