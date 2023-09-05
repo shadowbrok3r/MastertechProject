@@ -1,5 +1,4 @@
 #![allow(clippy::too_many_arguments)]
-
 use crate::minidump::{processor::ProcessingStatus, minidump_main::{MiniDumpApp, Tab, threadname, frame_signature}};
 use eframe::egui;
 use egui::{Color32, ComboBox, Context, FontId, Frame, ScrollArea, Ui, Align, FontDefinitions, text::Fonts};
@@ -48,6 +47,7 @@ mod inline_shim {
 impl MiniDumpApp {
     pub fn ui_processed(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         if let Some(Err(e)) = &self.minidump {
+            println!("minidump couldnt be read: {e:?}");
             ui.label("Minidump couldn't be read!");
             ui.label(e.to_string());
             return;
@@ -58,6 +58,7 @@ impl MiniDumpApp {
                     self.ui_processed_good(ui, ctx, &state.clone());
                 }
                 Err(e) => {
+                    println!("minidump couldnt be read: {e:?}");
                     ui.label("Minidump couldn't be processed!");
                     ui.label(e.to_string());
                 }

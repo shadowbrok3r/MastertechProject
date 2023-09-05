@@ -21,16 +21,6 @@ use crate::minidump::ui_logs::LogUiState;
 use crate::minidump::ui_processed::ProcessedUiState;
 use crate::minidump::ui_raw_dump::RawDumpUiState;
 
-
-
-//pub mod logger;
-/* 
-pub mod processor;
-mod ui_logs;
-mod ui_processed;
-mod ui_raw_dump;
-mod ui_settings; */
-
 pub struct MiniDumpApp {
     pub logger: MapLogger,
     pub settings: Settings,
@@ -82,7 +72,7 @@ impl Default for MiniDumpApp{
         let cli = Cli::parse();
         let available_paths = cli.minidumps;
         let symbol_paths = if cli.symbols_path.is_empty() {
-            vec![(String::new(), true)]
+            vec![(String::new(), true)] // C:\ProgramData\dbg\sym
         } else {
             cli.symbols_path.into_iter().map(|p| (p, true)).collect()
         };
@@ -154,22 +144,15 @@ impl Default for MiniDumpApp{
     }
 }
 
-// The main even loop
-// impl eframe::App for MiniDumpApp {
-//     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-//         self.poll_processor_state();
-//         self.update_ui(ctx);
-//         self.last_status = self.cur_status;
-//     }
-// }
-
 // Core State Updating
 impl MiniDumpApp {
     pub fn poll_processor_state(&mut self) {
         // Fetch updates from processing thread
         let new_minidump = self.analysis_state.minidump.lock().unwrap().take();
         if let Some(dump) = new_minidump {
+            println!("There IS Some(dump) in new_minidump");
             if let Ok(dump) = &dump {
+                println!("Got dump ok");
                 self.process_dump(dump.clone());
             }
             self.minidump = Some(dump);
@@ -186,6 +169,7 @@ impl MiniDumpApp {
                 self.cur_status = ProcessingStatus::Symbolicating;
 
                 if let Some(crashed_thread) = state.requesting_thread {
+                    println!("crashed thread: {crashed_thread}");
                     self.processed_ui_state.cur_thread = crashed_thread;
                 }
                 self.processed = Some(Ok(Arc::new(state)));
@@ -231,6 +215,7 @@ impl MiniDumpApp {
         let path = self.settings.available_paths[idx].clone();
         self.cur_status = ProcessingStatus::ReadingDump;
         self.settings.picked_path = Some(path.display().to_string());
+        // println!("picked path {:?}", &self.settings.picked_path);
         let (lock, condvar) = &*self.task_sender;
         let mut new_task = lock.lock().unwrap();
         *new_task = Some(ProcessorTask::ReadDump(path));
@@ -244,6 +229,7 @@ impl MiniDumpApp {
         let (lock, condvar) = &*self.task_sender;
         let mut new_task = lock.lock().unwrap();
         self.cur_status = ProcessingStatus::RawProcessing;
+        println!("Status is Raw Processing");
 
         let symbol_paths = self
             .settings
