@@ -1,7 +1,7 @@
 use clap::Parser;
 use eframe::egui;
-use egui::{Color32, Ui, Vec2, text::Fonts, FontDefinitions};
-use egui_extras::{Size, TableBuilder, Column};
+use egui::{Color32, Ui, text::Fonts, FontDefinitions};
+use egui_extras::{TableBuilder, Column};
 use crate::minidump::logger::MapLogger;
 use memmap2::Mmap;
 use minidump::{format::MINIDUMP_STREAM_TYPE, system_info::PointerWidth, Minidump, Module};
