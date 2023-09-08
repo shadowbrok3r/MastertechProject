@@ -11,28 +11,28 @@ mod minidump;
 
 use github::self_updater;
 use crate::{self_updater::run, scaffold_calls::{scaffold, request}};
-// use env_logger::Builder;
-use log::{info, error};
 use context::MasterTechApp;
-use std::fs::File;
-use simplelog::{WriteLogger, Config, LevelFilter};
-
+// use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
 use self_update::cargo_crate_version;
 use system_info::RetrieveSystemInfo;
-
+use win_dbg_logger::DEBUGGER_LOGGER;
+use log::{info, error};
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
+    // cannot run this logger because the minidump module already uses a logger
     // Configure log level and log file
-    //let log_level = LevelFilter::Trace;
-    //let log_file = File::create("output.log").unwrap();
+    // let log_level = LevelFilter::Trace;
+    // let log_file = File::create("output.log").unwrap();
     // Initialize logger
-    //WriteLogger::init(log_level, Config::default(), log_file).unwrap();
-    //log::trace!("Application starting...");
+    // WriteLogger::init(log_level, Config::default(), log_file).unwrap();
+    // log::trace!("Application starting...");
+    log::set_logger(&win_dbg_logger::DEBUGGER_LOGGER).unwrap();
+    log::set_max_level(log::LevelFilter::max());
 
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(925.0, 740.0)),
