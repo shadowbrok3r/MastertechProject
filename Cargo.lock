@@ -52,6 +52,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "walkdir",
+ "win_dbg_logger",
 ]
 
 [[package]]
@@ -4891,6 +4892,15 @@ name = "weezl"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9193164d4de03a926d909d3bc7c30543cecb35400c02114792c2cae20d5e2dbb"
+
+[[package]]
+name = "win_dbg_logger"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d1b4c22244dc27534d81e2f6fc3efd6b20e50c010f177efc20b719ec759a779"
+dependencies = [
+ "log",
+]
 
 [[package]]
 name = "winapi"
