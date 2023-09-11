@@ -91,7 +91,7 @@ impl Default for MiniDumpApp{
     
         let logger = MapLogger::new();
     
-        tracing_subscriber::registry().with(logger.clone()).init();
+        // tracing_subscriber::registry().with(logger.clone()).init();
     
         let task_sender = Arc::new((Mutex::new(None::<ProcessorTask>), Condvar::new()));
         let task_receiver = task_sender.clone();

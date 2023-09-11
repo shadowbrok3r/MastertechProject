@@ -16,11 +16,11 @@ resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 
 [dependencies]
 chrono = "0.4.26"
-eframe = "0.22.0"
+eframe = { version="0.22.0", features=["persistence"] } #"wgpu"
 egui = "0.22.0"
 egui_dock = "0.6.3"
-egui_extras = {version = "0.22.0", features = ["datepicker"]}
-reqwest = {version = "0.11.18", features = ["json", "stream", "blocking"] }
+egui_extras = { version = "0.22.0", features = ["datepicker"]}
+reqwest = { version = "0.11.18", features = ["json", "stream", "blocking"] }
 sysinfo = "0.29.2"
 tokio = { version = "1.32.0", features = ["full"] }
 serde = { version = "1.0.164", features = ["derive"] }

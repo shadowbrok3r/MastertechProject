@@ -2,14 +2,14 @@
 target = [
     "x86_64-pc-windows-msvc", # windows 11 64
     # "x86_64-pc-windows-gnu", # Windows 7 64
-    "x86_64-unknown-linux-gnu", # Linux 64
+    # "x86_64-unknown-linux-gnu", # Linux 64
     # "x86_64-apple-darwin", # MacOS 64
 ]
 
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 
-[target.x86_64-unknown-linux-gnu]
+#[target.x86_64-unknown-linux-gnu]
 # OPENSSL_DIR = { value = "vendor/openssl", relative = true } # for linux
 
 #       Windows 7 x32      --   rustup target add i686-pc-windows-gnu
