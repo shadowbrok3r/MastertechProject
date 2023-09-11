@@ -1,4 +1,5 @@
 use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
+use std::collections::HashMap;
 //use crossbeam::{scope, channel::TryRecvError};
 use serde_json::Value;
 use eframe::egui;
@@ -661,10 +662,22 @@ impl MastertechContext {
                                                     .size(20.0)
                                                 );
                                             }
+                                            let mut salesman_map = HashMap::new();
+                                            let mut tech_map = HashMap::new();
 
                                             let salesman = &format!("{:?}", &self.salesman_cbox);
                                             let checkin_rep = &self.ticket_info.user_id;
                                             let technician = &format!("{:?}", &self.techs_cbox);
+
+                                            salesman_map.insert("Jake", "1202792432658520");
+                                            salesman_map.insert("Danny", "1202791016369879");
+                                            tech_map.insert("Logan", "1199992640930465");
+                                            tech_map.insert("Bread", "1202792432421640");
+                                            tech_map.insert("Taco", "1202792432551073");
+
+                                            //let assigned_salesman = salesman_map.get(salesman.as_str()).unwrap_or(&"1202792432658520").to_string();
+                                            //let assigned_tech = tech_map.get(technician.as_str()).unwrap_or(&"1199992640930465").to_string();
+
                                             let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
                                             let ram_test = &format!("{:?}", &self.ram_test_cbox);
                                             let ssd_test = &format!("{:?}", &self.ssd_test_cbox);

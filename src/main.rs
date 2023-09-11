@@ -9,10 +9,11 @@ mod io;
 pub mod github;
 mod minidump;
 
+use std::fs::File;
 use github::self_updater;
 use crate::{self_updater::run, scaffold_calls::{scaffold, request}};
 use context::MasterTechApp;
-// use simplelog::{WriteLogger, Config, LevelFilter};
+use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui;
 use egui::*;
 use egui_dock::{DockArea, Style};
@@ -26,20 +27,24 @@ use log::{info, error};
 async fn main() -> eframe::Result<()> {
     // cannot run this logger because the minidump module already uses a logger
     // Configure log level and log file
-    // let log_level = LevelFilter::Trace;
-    // let log_file = File::create("output.log").unwrap();
+    let log_level = LevelFilter::Trace;
+    let log_file = File::create("output.log").unwrap();
     // Initialize logger
-    // WriteLogger::init(log_level, Config::default(), log_file).unwrap();
-    // log::trace!("Application starting...");
-    log::set_logger(&win_dbg_logger::DEBUGGER_LOGGER).unwrap();
-    log::set_max_level(log::LevelFilter::max());
+    WriteLogger::init(log_level, Config::default(), log_file).unwrap();
+    //log::trace!("Application starting...");
+
+    //log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
+    //log::set_max_level(log::LevelFilter::max());
 
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(925.0, 740.0)),
+        // renderer: eframe::Renderer::Wgpu,
+        shader_version: Some(eframe::egui_glow::ShaderVersion::Es300),// vsync: false,
         icon_data: Some(load_icon()),
         drag_and_drop_support: true,
         ..Default::default()
     };
+
     eframe::run_native(
         format!("Mastertech-{}",cargo_crate_version!()).as_str(),
         options,

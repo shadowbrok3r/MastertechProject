@@ -20,6 +20,7 @@ use asana::{
         InlineObject35, TaskResponse
     }
 };
+use log::{error, info};
 
 #[derive(Debug, Deserialize)]
 pub struct GetTicketResponse {
@@ -374,7 +375,6 @@ impl SendRequest{
             // Serialize the html_notes to a JSON string and calculate its length
             let html_notes_json = serde_json::to_string(&asana_task).unwrap();
             let content_length = html_notes_json.len();
-            println!("Content length: {}", content_length);
             
             match create_task(&asana_config, 
                 asana_task, 
@@ -425,36 +425,36 @@ impl SendRequest{
                                         {
                                             Ok(resp) => 
                                             {
-                                                // println!("{resp:?}");
+                                                // error!("{resp:?}");
                                                 let asana_response: AsanaResponse = resp.json().await.unwrap(); 
-                                                // println!("{asana_response:?}");
+                                                // error!("{asana_response:?}");
 
                                                 match sender.send(serde_json::to_string(&asana_response).unwrap()){
                                                     Ok(_) => drop(sender),
-                                                    Err(e) => println!("error sending message: {e}"),
+                                                    Err(e) => error!("error sending message: {e}"),
                                                 }
                                             },
-                                            Err(e) => println!("{e:?}") 
+                                            Err(e) => error!("{e:?}") 
                                         }
                                     }, 
-                                    None => println!("no gid received")
+                                    None => error!("no gid received")
                                     
                                 }
                             }
 
-                        }, None => println!("no data")
+                        }, None => error!("no data")
                     }               
                 },
                 Err(e) => {
                     match e{
-                        asana::apis::Error::Reqwest(e) => println!("reqwest error: {e}"),
-                        asana::apis::Error::Serde(e) => println!("Serde error: {e}"),
-                        asana::apis::Error::Io(e) => println!("IO error: {e}"),
+                        asana::apis::Error::Reqwest(e) => error!("reqwest error: {e}"),
+                        asana::apis::Error::Serde(e) => error!("Serde error: {e}"),
+                        asana::apis::Error::Io(e) => error!("IO error: {e}"),
                         asana::apis::Error::ResponseError(e) => {
                             let send_tx = tx.clone();
                             match send_tx.send(e.content){
-                                Ok(_) => { println!("sent error successfully"); drop(send_tx); },
-                                Err(e) => println!("send error: {e}")
+                                Ok(_) => { info!("sent error successfully"); drop(send_tx); },
+                                Err(e) => error!("send error: {e}")
                             };
                         }
                     }
@@ -466,12 +466,13 @@ impl SendRequest{
                 
                 match send.send(msg){
                     Ok(_) => drop(send),
-                    Err(e) => println!("{e}")
+                    Err(e) => error!("{e}")
                 }
-                println!("received: {message}");
+                info!("received: {message}");
             }
 
         });
+
     }
 }
 
