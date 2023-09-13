@@ -27,7 +27,7 @@ use log::{info, error};
 async fn main() -> eframe::Result<()> {
     // cannot run this logger because the minidump module already uses a logger
     // Configure log level and log file
-    let log_level = LevelFilter::Trace;
+    let log_level = LevelFilter::Error;
     let log_file = File::create("output.log").unwrap();
     // Initialize logger
     WriteLogger::init(log_level, Config::default(), log_file).unwrap();
@@ -39,7 +39,7 @@ async fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(925.0, 740.0)),
         // renderer: eframe::Renderer::Wgpu,
-        shader_version: Some(eframe::egui_glow::ShaderVersion::Es300),// vsync: false,
+        shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
         icon_data: Some(load_icon()),
         drag_and_drop_support: true,
         ..Default::default()

@@ -2,3 +2,7 @@
 /dist
 Cargo.lock
 output.log
+.idea/.gitignore
+.idea/Mastertech4.0.iml
+.idea/modules.xml
+.idea/vcs.xml

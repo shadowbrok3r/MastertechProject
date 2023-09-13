@@ -20,7 +20,7 @@ use asana::{
         InlineObject35, TaskResponse
     }
 };
-use log::{error, info};
+use log::{error, info, trace};
 
 #[derive(Debug, Deserialize)]
 pub struct GetTicketResponse {
@@ -318,7 +318,7 @@ impl SendRequest{
     ) 
     {
         let (sender, receiver) = channel::bounded::<String>(5);
-        
+        let send = tx.clone();
         let cust = task_name.0.clone();
         let so_num = task_name.1.clone();
 
@@ -460,19 +460,17 @@ impl SendRequest{
                     }
                 }
             }
-            let send = tx.clone();
-            if let Ok(message) = receiver.recv(){
-                let msg = message.clone();
-                
-                match send.send(msg){
-                    Ok(_) => drop(send),
-                    Err(e) => error!("{e}")
-                }
-                info!("received: {message}");
-            }
-
         });
 
+        if let Ok(message) = receiver.recv(){
+            let msg = message.clone();
+            trace!("message: {msg}");
+            match send.send(msg){
+                Ok(_) => drop(send),
+                Err(e) => error!("{e}")
+            }
+            info!("received: {message}");
+        }
     }
 }
 
