@@ -308,7 +308,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
                         }
                     }
 
-                    ScrollArea::new([false, false]).auto_shrink([false, false]).show(ui, |ui| {
+                    ScrollArea::new([false, false])
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                         let response = ui.add_sized(
                             ui.available_size_before_wrap(),
                             TextEdit::singleline(&mut self.path_edit)
@@ -318,7 +320,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                        
                         if response.lost_focus() {
                             let path = PathBuf::from(&self.path_edit);
-
+                            println!("Lost focus on self.path_edit");
                             match command_tx.send(Some(Command::OpenPath(path))){
                                 Ok(_) => println!("sent task successfully"),
                                 Err(e) => println!("{e}")
@@ -338,33 +340,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
-            let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
-            let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::V);
-
-            if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
-            { 
-                self.copied_items_src = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
-            }
-            if ui.input_mut(|i| i.consume_shortcut(&paste_shortcut))
-            {
-                self.animated_progress = true;
-                self.copied_items_dest = PathBuf::from(&self.path_edit);
-                let cloned_dest = self.copied_items_dest.clone();
-                let cloned_src = self.copied_items_src.clone();
-                let progress_tx = self.progress_tx.clone();
-
-                tokio::spawn(async move{
-                    let _ = match copy_selected_items(cloned_src, cloned_dest, progress_tx.clone()).await{
-                        Ok(_) => println!("copy_selected_items ran successfully"),
-                        Err(e) => println!("copy_selected_items failed: {e:?}"),
-                    };
-                });
-            }
-
-            while let Ok(progress) = self.progress_rx.try_recv() {
-                // println!("progress_bar: {progress}");
-                self.progress += progress;
-            }
 
             ui.add
             ( // Update the progress bar
@@ -434,7 +409,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 self.refresh_contents();
             }
             
-            ScrollArea::new([true, true])
+            let file_browser_area = ScrollArea::new([true, true])
             .id_source("file_browser_scroll")
             .auto_shrink([false, false])
             .show_rows(ui,
@@ -467,7 +442,39 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     command_tx.send(Some(command)).unwrap();
                     ui.label("Loading...")
                 },
-            });
+            }).inner_rect;
+            if ui.rect_contains_pointer(file_browser_area){ // || ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
+                let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
+                let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::V);
+    
+                if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
+                { 
+                    self.copied_items_src = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
+                    println!("CTRL+C pressed");
+                }
+                if ui.input_mut(|i| i.consume_shortcut(&paste_shortcut))
+                {
+                    println!("CTRL+V pressed");
+                    self.animated_progress = true;
+                    self.copied_items_dest = PathBuf::from(&self.path_edit);
+                    let cloned_dest = self.copied_items_dest.clone();
+                    let cloned_src = self.copied_items_src.clone();
+                    let progress_tx = self.progress_tx.clone();
+                    {
+                        puffin::profile_scope!("Copying_items");
+                        tokio::spawn(async move{
+                            let _ = match copy_selected_items(cloned_src, cloned_dest, progress_tx.clone()).await{
+                                Ok(_) => println!("copy_selected_items ran successfully"),
+                                Err(e) => println!("copy_selected_items failed: {e:?}"),
+                            };
+                        });
+                    }
+                }
+            }
+            while let Ok(progress) = self.progress_rx.try_recv() {
+                // println!("progress_bar: {progress}");
+                self.progress += progress;
+            }
         });
         if let Ok(Some(cmd)) = command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
     }
@@ -482,7 +489,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         path: &PathBuf,
         command_tx: UnboundedSender<Option<Command>>,
     ){
-
+        puffin::profile_scope!("display_path");
         ui.separator();
         let command_sender = command_tx.clone();
         let command_sender2 = command_tx.clone();
@@ -748,6 +755,7 @@ extern "C" {
 
 /** Returns a Vec<PathBuf> of current directory contents and files. */
 fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
+    puffin::profile_scope!("read_folder");
     //#[cfg(windows)]
     // let drives = {
     //   let mut drives = unsafe { GetLogicalDrives() };

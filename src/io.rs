@@ -38,6 +38,7 @@ pub async fn copy_selected_items(
     destination_dir: PathBuf, 
     progress_tx: UnboundedSender<f64>,
 ) -> Result<(), CopyError>{
+    
     let total_size_futures = 
         selected_files
         .iter()
