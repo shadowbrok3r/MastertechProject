@@ -9,6 +9,7 @@ use scaffold::PulledKeys;
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
+use puffin_egui;
 // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 
 use crate::{
@@ -20,7 +21,8 @@ use crate::{
     },
     system_info::RetrieveSystemInfo,
     self_updater::run,
-    minidump::{self, minidump_main::MiniDumpApp},
+    minidump::minidump_main::MiniDumpApp,
+    // puffin_profiler::start_puffin_server,
 };
 use scaffold::TicketInformation;
 
@@ -107,7 +109,8 @@ pub struct MastertechContext {
     pub style: Option<egui_dock::Style>,
     pub text_color: Color32,
     pub border_stroke_color: Stroke,
-    pub bg_color: Color32
+    pub bg_color: Color32,
+    pub frame_counter: u64,
 }
 
 impl TabViewer for MastertechContext {
@@ -122,6 +125,7 @@ impl TabViewer for MastertechContext {
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
             "Minidump Analysis" => self.mini_dump(ui),
+            "Profiler" => self.puffin_profiler(ui),
             _ => {
                 let sysinfo_tab = &self.system_info_tab.to_string();
                 if ui.label(tab.as_str()).clicked(){
@@ -287,7 +291,9 @@ impl Default for MasterTechApp {
             style: None,
             text_color: Color32::from_rgb(255, 204, 230),//(200,200,200),
             bg_color: Color32::from_rgb(28,30,36),
-            border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124))
+            border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
+
+            frame_counter: 0,
         };
 
         Self { context, tree }
@@ -1105,10 +1111,29 @@ impl MastertechContext {
     
     fn scripts(&mut self, _ui: &mut Ui){ }
 
+    fn puffin_profiler(&mut self, ui: &mut Ui){
+        puffin::profile_function!();
+        puffin::GlobalProfiler::lock().new_frame(); // call once per frame!
+
+        puffin_egui::profiler_ui(ui);
+    }
+
     fn mini_dump(&mut self, ui: &mut Ui){ 
         //let mut minidump = self.minidump_app;
         // self.minidump_app.poll_processor_state();
         // self.minidump_app.update_ui(&self.ctx, ui);
         // self.minidump_app.last_status = self.minidump_app.cur_status;
+    }
+}
+
+fn sleep_ms(ms: usize) {
+    puffin::profile_function!();
+    match ms {
+        0 => {}
+        1 => std::thread::sleep(std::time::Duration::from_millis(1)),
+        _ => {
+            sleep_ms(ms / 2);
+            sleep_ms(ms - (ms / 2));
+        }
     }
 }

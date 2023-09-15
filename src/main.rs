@@ -25,6 +25,7 @@ use log::{info, error};
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
+    puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
     // cannot run this logger because the minidump module already uses a logger
     // Configure log level and log file
     let log_level = LevelFilter::Error;
@@ -72,8 +73,8 @@ pub(crate) fn load_icon() -> eframe::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // log::info!("eframe update fn running...");
         catppuccin_egui::set_theme(ctx, MOCHA);
+        
 
         if self.context.spinner == true{
             egui::Window::new("Spinner Window")
@@ -231,7 +232,8 @@ impl eframe::App for MasterTechApp {
                         &self.context.output_console_tab, 
                         &self.context.system_info_tab, 
                         &self.context.file_browser_tab,
-                        &"Minidump Analysis".to_string()
+                        &"Minidump Analysis".to_string(),
+                        &"Profiler".to_string(),
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)
