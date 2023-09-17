@@ -1125,15 +1125,3 @@ impl MastertechContext {
         // self.minidump_app.last_status = self.minidump_app.cur_status;
     }
 }
-
-fn sleep_ms(ms: usize) {
-    puffin::profile_function!();
-    match ms {
-        0 => {}
-        1 => std::thread::sleep(std::time::Duration::from_millis(1)),
-        _ => {
-            sleep_ms(ms / 2);
-            sleep_ms(ms - (ms / 2));
-        }
-    }
-}

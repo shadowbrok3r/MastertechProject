@@ -11,7 +11,7 @@ mod minidump;
 
 use std::fs::File;
 use github::self_updater;
-use crate::{self_updater::run, scaffold_calls::{scaffold, request}};
+use crate::scaffold_calls::{scaffold, request};
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui;
@@ -20,59 +20,46 @@ use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
 use self_update::cargo_crate_version;
 use system_info::RetrieveSystemInfo;
-use win_dbg_logger::DEBUGGER_LOGGER;
+// use win_dbg_logger::DEBUGGER_LOGGER;
 use log::{info, error};
 
 #[tokio::main]
-async fn main() -> eframe::Result<()> {
+async fn main()  { //-> eframe::Result<()>
     puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
+
     // cannot run this logger because the minidump module already uses a logger
     // Configure log level and log file
     let log_level = LevelFilter::Error;
     let log_file = File::create("output.log").unwrap();
+
     // Initialize logger
     WriteLogger::init(log_level, Config::default(), log_file).unwrap();
-    //log::trace!("Application starting...");
 
     //log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
     //log::set_max_level(log::LevelFilter::max());
 
-    let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(925.0, 740.0)),
-        // renderer: eframe::Renderer::Wgpu,
-        shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
-        icon_data: Some(load_icon()),
-        drag_and_drop_support: true,
-        ..Default::default()
-    };
+    // let options = eframe::NativeOptions {
+    //     initial_window_size: Some(egui::vec2(925.0, 740.0)),
+    //     renderer: eframe::Renderer::Wgpu,
 
-    eframe::run_native(
-        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
-        options,
-        Box::new(|_cc| Box::<MasterTechApp>::default()),
-    )
-}
+    //     // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
+    //     icon_data: Some(load_icon()),
+    //     drag_and_drop_support: true,
+    //     ..Default::default()
+    // };
 
-pub(crate) fn load_icon() -> eframe::IconData {
-	let (icon_rgba, icon_width, icon_height) = {
-		let icon = include_bytes!("assets/masterlogoV2.ico");
-		let image = image::load_from_memory(icon)
-			.expect("Failed to open icon path")
-			.into_rgba8();
-		let (width, height) = image.dimensions();
-		let rgba = image.into_raw();
-		(rgba, width, height)
-	};
-	
-	eframe::IconData {
-		rgba: icon_rgba,
-		width: icon_width,
-		height: icon_height,
-	}
-}
+    // eframe::run_native(
+    //     format!("Mastertech-{}",cargo_crate_version!()).as_str(),
+    //     options,
+    //     Box::new(|_cc| Box::<MasterTechApp>::default()),
+    // )
+    use std::sync::Arc;
 
-impl eframe::App for MasterTechApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    use egui::ScrollArea;
+    use skia_safe::{Paint, Point};
+
+    use egui_skia::EguiSkiaPaintCallback;
+    run_software(move |ctx| {
         catppuccin_egui::set_theme(ctx, MOCHA);
         
 
@@ -139,7 +126,6 @@ impl eframe::App for MasterTechApp {
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            // println!("reciever message: {message:?}");
             if let Ok(info) = serde_json::from_str::<scaffold::TicketInformation>(&message) {
                 println!("ticket information: {info:#?}");
                 self.context.output_text.clear();
@@ -277,5 +263,128 @@ impl eframe::App for MasterTechApp {
                     .show_tab_name_on_hover(self.context.show_tab_name_on_hover)
                     .show_inside(ui, &mut self.context);
             });
-    }
+    });
+}
+
+pub(crate) fn load_icon() -> eframe::IconData {
+	let (icon_rgba, icon_width, icon_height) = {
+		let icon = include_bytes!("assets/masterlogoV2.ico");
+		let image = image::load_from_memory(icon)
+			.expect("Failed to open icon path")
+			.into_rgba8();
+		let (width, height) = image.dimensions();
+		let rgba = image.into_raw();
+		(rgba, width, height)
+	};
+	
+	eframe::IconData {
+		rgba: icon_rgba,
+		width: icon_width,
+		height: icon_height,
+	}
+}
+
+// impl eframe::App for MasterTechApp {
+//     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        
+//     }
+// }
+
+fn run_software(mut ui: impl FnMut(&Context) + 'static) {
+    use skia_safe::{Paint, Surface};
+
+    use egui_skia::EguiSkiaWinit;
+    use egui_winit::winit::dpi::LogicalSize;
+    use egui_winit::winit::event::{Event, WindowEvent};
+    use egui_winit::winit::event_loop::{ControlFlow, EventLoop};
+    use egui_winit::winit::window::WindowBuilder;
+
+    let ev_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("Test Render")
+        .with_inner_size(LogicalSize::new(1024.0, 768.0))
+        .build(&ev_loop)
+        .unwrap();
+
+    let mut gc = unsafe { softbuffer::Context::new(&window) }.unwrap();
+    let mut softbuffer_surface = unsafe { softbuffer::Surface::new(&gc, &window).unwrap() };
+    let mut egui_skia = EguiSkiaWinit::new(&ev_loop);
+
+    egui_skia
+        .egui_winit
+        .set_pixels_per_point(window.scale_factor() as f32);
+
+    let size = window.inner_size();
+    let size = size.to_logical::<i32>(window.scale_factor());
+    let mut surface =
+        Surface::new_raster_n32_premul((size.width as i32, size.height as i32)).unwrap();
+
+    ev_loop.run(move |ev, _, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
+        match ev {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::WindowEvent {
+                event: WindowEvent::Resized(size),
+                ..
+            } => {
+                surface = Surface::new_raster_n32_premul((size.width as i32, size.height as i32))
+                    .unwrap();
+                window.request_redraw();
+            }
+            Event::WindowEvent { event, .. } => {
+                let response = egui_skia.on_event(&event);
+                if response.repaint {
+                    window.request_redraw();
+                }
+            }
+            Event::RedrawRequested(_) => {
+                let canvas = surface.canvas();
+                canvas.clear(skia_safe::Color::TRANSPARENT);
+
+                let repaint_after = egui_skia.run(&window, &mut ui);
+
+                *control_flow = if repaint_after.is_zero() {
+                    window.request_redraw();
+                    ControlFlow::Poll
+                } else if let Some(repaint_after_instant) =
+                    std::time::Instant::now().checked_add(repaint_after)
+                {
+                    ControlFlow::WaitUntil(repaint_after_instant)
+                } else {
+                    ControlFlow::Wait
+                };
+
+                egui_skia.paint(canvas);
+
+                let snapshot = surface.image_snapshot();
+
+                let peek = snapshot.peek_pixels().unwrap();
+                let pixels: &[u32] = peek.pixels().unwrap();
+
+                // No idea why R and B have to be swapped
+                let transformed = pixels
+                    .iter()
+                    .map(|x| {
+                        (x & 0xFF000000)
+                            | ((x & 0x00FF0000) >> 16)
+                            | (x & 0x0000FF00)
+                            | ((x & 0x000000FF) << 16)
+                    })
+                    .collect::<Vec<u32>>();
+
+                softbuffer_surface.set_buffer(
+                    &transformed,
+                    surface.width() as u16,
+                    surface.height() as u16,
+                );
+            }
+            _ => {}
+        }
+    })
 }
