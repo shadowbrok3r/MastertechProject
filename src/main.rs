@@ -15,54 +15,76 @@ use crate::scaffold_calls::{scaffold, request};
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui;
-use egui::*;
+use egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame};
 use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
 use self_update::cargo_crate_version;
 use system_info::RetrieveSystemInfo;
-// use win_dbg_logger::DEBUGGER_LOGGER;
 use log::{info, error};
+// use win_dbg_logger::DEBUGGER_LOGGER;
+// use skia_safe::{Paint, Point}; use egui_skia::EguiSkiaPaintCallback;
 
 #[tokio::main]
 async fn main()  { //-> eframe::Result<()>
     puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
-
     // cannot run this logger because the minidump module already uses a logger
-    // Configure log level and log file
-    let log_level = LevelFilter::Error;
+    
+    let log_level = LevelFilter::Error; // Configure log level and log file
     let log_file = File::create("output.log").unwrap();
 
-    // Initialize logger
-    WriteLogger::init(log_level, Config::default(), log_file).unwrap();
+    WriteLogger::init( // Init the logger
+        log_level, 
+        Config::default(), 
+        log_file
+    ).unwrap(); 
 
     //log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
     //log::set_max_level(log::LevelFilter::max());
+/* 
+    let options = eframe::NativeOptions {
+        initial_window_size: Some(egui::vec2(925.0, 740.0)),
+        renderer: eframe::Renderer::Wgpu,
 
-    // let options = eframe::NativeOptions {
-    //     initial_window_size: Some(egui::vec2(925.0, 740.0)),
-    //     renderer: eframe::Renderer::Wgpu,
+        // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
+        icon_data: Some(load_icon()),
+        drag_and_drop_support: true,
+        ..Default::default()
+    };
 
-    //     // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
-    //     icon_data: Some(load_icon()),
-    //     drag_and_drop_support: true,
-    //     ..Default::default()
-    // };
+    eframe::run_native(
+        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
+        options,
+        Box::new(|_cc| Box::<MasterTechApp>::default()),
+    ) 
+    */
 
-    // eframe::run_native(
-    //     format!("Mastertech-{}",cargo_crate_version!()).as_str(),
-    //     options,
-    //     Box::new(|_cc| Box::<MasterTechApp>::default()),
-    // )
-    use std::sync::Arc;
-
-    use egui::ScrollArea;
-    use skia_safe::{Paint, Point};
-
-    use egui_skia::EguiSkiaPaintCallback;
     run_software(move |ctx| {
-        catppuccin_egui::set_theme(ctx, MOCHA);
-        
+        let app = MasterTechApp::default();
+        app.update(&ctx);
+    });
+}
 
+pub(crate) fn load_icon() -> eframe::IconData {
+	let (icon_rgba, icon_width, icon_height) = {
+		let icon = include_bytes!("assets/masterlogoV2.ico");
+		let image = image::load_from_memory(icon)
+			.expect("Failed to open icon path")
+			.into_rgba8();
+		let (width, height) = image.dimensions();
+		let rgba = image.into_raw();
+		(rgba, width, height)
+	};
+	
+	eframe::IconData {
+		rgba: icon_rgba,
+		width: icon_width,
+		height: icon_height,
+	}
+}
+
+impl MasterTechApp{
+    fn update(&mut self, ctx: &Context){
+        catppuccin_egui::set_theme(ctx, MOCHA);
         if self.context.spinner == true{
             egui::Window::new("Spinner Window")
             .title_bar(false)
@@ -77,24 +99,25 @@ async fn main()  { //-> eframe::Result<()>
             });
             
         }
-
+    
         if self.context.specs_first_run == true{
-            // let (tx, rx) = crossbeam::channel::bounded(1);
-            // tokio::task::spawn_blocking(move || {
-            //     match run(){
-            //         Ok(response) => {
-            //             match tx.send((response.0, response.1)){
-            //                 Ok(_) => drop(tx),
-            //                 Err(e) => println!("{e}"),
-            //             }
-            //         },
-            //         Err(e) => println!("err: {e}"),
-            //     }
-            // });
-            // if let Ok(res) = rx.recv(){
-            //     self.context.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
-            // }
-            
+            /*             
+            let (tx, rx) = crossbeam::channel::bounded(1);
+            tokio::task::spawn_blocking(move || {
+                match run(){
+                    Ok(response) => {
+                        match tx.send((response.0, response.1)){
+                            Ok(_) => drop(tx),
+                            Err(e) => println!("{e}"),
+                        }
+                    },
+                    Err(e) => println!("err: {e}"),
+                }
+            });
+            if let Ok(res) = rx.recv(){
+                self.context.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
+            } */
+    
             let specs_sender = self.context.sysinfo_request.tx.clone();
             RetrieveSystemInfo::get_system_specs(specs_sender);
             
@@ -102,13 +125,13 @@ async fn main()  { //-> eframe::Result<()>
             {
                 let mut cps = self.context.antivirus_installed.clone();
                 let mut new_out_text = String::new();
-
+    
                 let installed_antivirus = RetrieveSystemInfo::get_antivirus()
                 .map_err(|e| 
                     new_out_text = format!("Error checking antivirus: {e}\n")
                 ).unwrap();
-
-
+    
+    
                 for (name, is_installed) in installed_antivirus {
                     match is_installed {
                         Some(true) => {
@@ -121,7 +144,7 @@ async fn main()  { //-> eframe::Result<()>
                 }
             }
         }
-
+    
         self.context.specs_first_run = false;
         let receiver = self.context.rx.as_ref().unwrap();
         
@@ -133,13 +156,13 @@ async fn main()  { //-> eframe::Result<()>
                 self.context.ticket_info.user_id = checkin_rep.clone();
                 if checkin_rep == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
                 else if checkin_rep == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
-
+    
                 // Handle TicketInformation
                 self.context.ticket_info.customer_name = info.customer_name;
                 self.context.ticket_info.customer_phone_1 = info.customer_phone_1;
                 self.context.ticket_info.customer_phone_2 = info.customer_phone_2;
                 self.context.ticket_info.checkin_notes = info.checkin_notes;
-
+    
                 self.context.ticket_info.cust_code = info.cust_code;
                 self.context.ticket_info.doc_alias = info.doc_alias;
                 self.context.ticket_info.department = info.department;
@@ -150,14 +173,14 @@ async fn main()  { //-> eframe::Result<()>
                 self.context.ticket_info.last_invoice_amount = info.last_invoice_amount;
                 self.context.ticket_info.total_invoice_count = info.total_invoice_count;
                 self.context.ticket_info.item_codes = info.item_codes;
-
+    
                 let code = self.context.ticket_info.cust_code.clone();
                 let email = self.context.ticket_info.customer_email.clone();
                 let codes = self.context.ticket_info.item_codes.clone();
-
+    
                 self.context.output_text += &format!("Customer Code: {code}\nCustomer Email: {email}\n\nItem on order:\n{codes}");
                 self.context.spinner = false;
-
+    
             }             
             else if let Ok(info) = serde_json::from_str::<scaffold::PulledKeys>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
@@ -174,7 +197,7 @@ async fn main()  { //-> eframe::Result<()>
                 for disk in info.disks.disks{
                     
                     self.context.disk_num += 1;
-
+    
                     if let Some(disks_arr) = self.context.disks.as_array_mut() {
                         // Convert `disk` to a serde_json::Value
                         let disk_json = serde_json::to_value(&disk).unwrap();
@@ -207,7 +230,7 @@ async fn main()  { //-> eframe::Result<()>
                 }
             }
         }
-
+    
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
@@ -237,7 +260,7 @@ async fn main()  { //-> eframe::Result<()>
                 });
             })
         });
-
+    
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
             .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
             .show(ctx, |ui| {
@@ -253,7 +276,7 @@ async fn main()  { //-> eframe::Result<()>
                 style.tabs.text_color_active_unfocused = Color32::from_rgba_premultiplied(0, 255, 255, 255);
                 style.tabs.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
-
+    
                 DockArea::new(&mut self.tree)
                     .style(style)
                     .show_close_buttons(self.context.show_close_buttons)
@@ -263,35 +286,12 @@ async fn main()  { //-> eframe::Result<()>
                     .show_tab_name_on_hover(self.context.show_tab_name_on_hover)
                     .show_inside(ui, &mut self.context);
             });
-    });
+    }
+    
 }
-
-pub(crate) fn load_icon() -> eframe::IconData {
-	let (icon_rgba, icon_width, icon_height) = {
-		let icon = include_bytes!("assets/masterlogoV2.ico");
-		let image = image::load_from_memory(icon)
-			.expect("Failed to open icon path")
-			.into_rgba8();
-		let (width, height) = image.dimensions();
-		let rgba = image.into_raw();
-		(rgba, width, height)
-	};
-	
-	eframe::IconData {
-		rgba: icon_rgba,
-		width: icon_width,
-		height: icon_height,
-	}
-}
-
-// impl eframe::App for MasterTechApp {
-//     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        
-//     }
-// }
 
 fn run_software(mut ui: impl FnMut(&Context) + 'static) {
-    use skia_safe::{Paint, Surface};
+    use skia_safe::{Paint, Surface, surfaces};
 
     use egui_skia::EguiSkiaWinit;
     use egui_winit::winit::dpi::LogicalSize;
@@ -317,7 +317,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
     let size = window.inner_size();
     let size = size.to_logical::<i32>(window.scale_factor());
     let mut surface =
-        Surface::new_raster_n32_premul((size.width as i32, size.height as i32)).unwrap();
+        surfaces::raster_n32_premul((size.width as i32, size.height as i32)).unwrap();
 
     ev_loop.run(move |ev, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -333,7 +333,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                 event: WindowEvent::Resized(size),
                 ..
             } => {
-                surface = Surface::new_raster_n32_premul((size.width as i32, size.height as i32))
+                surface = surfaces::raster_n32_premul((size.width as i32, size.height as i32))
                     .unwrap();
                 window.request_redraw();
             }
@@ -377,6 +377,9 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                             | ((x & 0x000000FF) << 16)
                     })
                     .collect::<Vec<u32>>();
+                // let buffer = softbuffer_surface.buffer_mut().unwrap();
+                // let x = surface.width() as usize;
+                // buffer.present().unwrap();
 
                 softbuffer_surface.set_buffer(
                     &transformed,
@@ -388,3 +391,8 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
         }
     })
 }
+
+// impl eframe::App for MasterTechApp {
+//     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {      
+//     }
+// }
