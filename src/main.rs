@@ -26,20 +26,20 @@ use log::{info, error};
 
 #[tokio::main]
 async fn main()  { //-> eframe::Result<()>
-    puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
-    // cannot run this logger because the minidump module already uses a logger
+    // puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
+    // // cannot run this logger because the minidump module already uses a logger
     
-    let log_level = LevelFilter::Error; // Configure log level and log file
-    let log_file = File::create("output.log").unwrap();
+    // let log_level = LevelFilter::Error; // Configure log level and log file
+    // let log_file = File::create("output.log").unwrap();
 
-    WriteLogger::init( // Init the logger
-        log_level, 
-        Config::default(), 
-        log_file
-    ).unwrap(); 
-    println!("Does this run many times?");
+    // WriteLogger::init( // Init the logger
+    //     log_level, 
+    //     Config::default(), 
+    //     log_file
+    // ).unwrap(); 
+    
+    let mut app = MasterTechApp::default();
     run_software(move |ctx| {
-        let mut app = MasterTechApp::default();
         app.update(&ctx);
     });
 }
@@ -270,6 +270,7 @@ impl MasterTechApp{
     
 }
 
+#[cfg(feature = "winit")]
 fn run_software(mut ui: impl FnMut(&Context) + 'static) {
     use skia_safe::{Paint, Surface, surfaces};
 
@@ -326,7 +327,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
             }
             Event::RedrawRequested(_) => {
                 let canvas = surface.canvas();
-                //canvas.clear(skia_safe::Color::TRANSPARENT);
+                canvas.clear(skia_safe::Color::TRANSPARENT);
 
                 let repaint_after = egui_skia.run(&window, &mut ui);
 
