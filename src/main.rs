@@ -37,29 +37,9 @@ async fn main()  { //-> eframe::Result<()>
         Config::default(), 
         log_file
     ).unwrap(); 
-
-    //log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
-    //log::set_max_level(log::LevelFilter::max());
-/* 
-    let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(925.0, 740.0)),
-        renderer: eframe::Renderer::Wgpu,
-
-        // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
-        icon_data: Some(load_icon()),
-        drag_and_drop_support: true,
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
-        options,
-        Box::new(|_cc| Box::<MasterTechApp>::default()),
-    ) 
-    */
-
+    println!("Does this run many times?");
     run_software(move |ctx| {
-        let app = MasterTechApp::default();
+        let mut app = MasterTechApp::default();
         app.update(&ctx);
     });
 }
@@ -301,13 +281,14 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
 
     let ev_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        .with_title("Test Render")
-        .with_inner_size(LogicalSize::new(1024.0, 768.0))
+        .with_title(format!("Mastertech-{}",cargo_crate_version!()).as_str())
+        .with_inner_size(LogicalSize::new(925.0, 740.0))
         .build(&ev_loop)
         .unwrap();
 
-    let mut gc = unsafe { softbuffer::Context::new(&window) }.unwrap();
-    let mut softbuffer_surface = unsafe { softbuffer::Surface::new(&gc, &window).unwrap() };
+    // let mut gc = unsafe { softbuffer::Context::new(&window) }.unwrap();
+    // let mut softbuffer_surface = unsafe { softbuffer::Surface::new(&gc, &window).unwrap() };
+    let mut graphics_context = unsafe { softbuffer::GraphicsContext::new(&window, &window) }.unwrap();
     let mut egui_skia = EguiSkiaWinit::new(&ev_loop);
 
     egui_skia
@@ -345,7 +326,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
             }
             Event::RedrawRequested(_) => {
                 let canvas = surface.canvas();
-                canvas.clear(skia_safe::Color::TRANSPARENT);
+                //canvas.clear(skia_safe::Color::TRANSPARENT);
 
                 let repaint_after = egui_skia.run(&window, &mut ui);
 
@@ -381,7 +362,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                 // let x = surface.width() as usize;
                 // buffer.present().unwrap();
 
-                softbuffer_surface.set_buffer(
+                graphics_context.set_buffer(
                     &transformed,
                     surface.width() as u16,
                     surface.height() as u16,
@@ -391,6 +372,27 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
         }
     })
 }
+
+
+    //log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
+    //log::set_max_level(log::LevelFilter::max());
+/* 
+    let options = eframe::NativeOptions {
+        initial_window_size: Some(egui::vec2(925.0, 740.0)),
+        renderer: eframe::Renderer::Wgpu,
+
+        // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
+        icon_data: Some(load_icon()),
+        drag_and_drop_support: true,
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
+        options,
+        Box::new(|_cc| Box::<MasterTechApp>::default()),
+    ) 
+    */
 
 // impl eframe::App for MasterTechApp {
 //     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {      
