@@ -28,10 +28,8 @@ use log::{info, error};
 async fn main()  { //-> eframe::Result<()>
     // puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
     // // cannot run this logger because the minidump module already uses a logger
-    
     // let log_level = LevelFilter::Error; // Configure log level and log file
     // let log_file = File::create("output.log").unwrap();
-
     // WriteLogger::init( // Init the logger
     //     log_level, 
     //     Config::default(), 
