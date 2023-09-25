@@ -509,6 +509,7 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
                 //         &raw_response[start..end], err
                 //     )
                 // }).unwrap();
+
                 Ok(raw_response)
             }else{
                 let json_response: GetTicketResponse = res.json().await?;

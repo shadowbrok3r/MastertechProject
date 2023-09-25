@@ -14,27 +14,27 @@ icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.i
 resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 
 [dependencies]
-chrono = "0.4.26"
+chrono = "0.4.31"
 eframe = { version="0.22.0", features=["persistence", "puffin", "wgpu"] } #
 egui = "0.22.0"
 egui_dock = "0.6.3"
 egui_extras = { version = "0.22.0", features = ["datepicker"]}
-reqwest = { version = "0.11.18", features = ["json", "stream", "blocking"] }
-sysinfo = "0.29.2"
+reqwest = { version = "0.11.20", features = ["json", "stream", "blocking"] }
+sysinfo = "0.29.10"
 tokio = { version = "1.32.0", features = ["full"] }
-serde = { version = "1.0.164", features = ["derive"] }
-serde_json = "1.0"
-catppuccin-egui = "3.0.0"
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+catppuccin-egui = "3.1.0"
 futures-util = "0.3.28"
-bytes = "1.4.0"
-walkdir = "2.3.3"
+bytes = "1.5.0"
+walkdir = "2.4.0"
 futures = "0.3.28"
 pollster = "0.3.0"
 crossbeam = "0.8.2"
 asana = "0.1.1"
-regex = "1.9.1"
-image = "0.24.6"
-egui_file = "0.10.0"
+regex = "1.9.5"
+image = "0.24.7"
+egui_file = "0.10.2"
 self_update = "0.38.0"
 puffin = { version = "0.16.0", features = ["packing"] }
 
@@ -43,7 +43,7 @@ fs_extra = "1.3.0"
 cached = "0.45.1"
 log = "0.4.20"
 simplelog = "0.12.1"
-rayon = "1.7.0"
+rayon = "1.8.0"
 
 memmap2 = "0.5.10"
 breakpad-symbols = { version = "0.18.0" }
@@ -51,20 +51,20 @@ minidump = { version = "0.18.0" }
 minidump-common = { version = "0.18.0" }
 minidump-processor = { version = "0.18.0", features = ["http", "dump_syms"] }
 
-num-traits = "0.2.15"
+num-traits = "0.2.16"
 rfd = "0.12.0"
-tempfile = "3.3.0"
-tracing = { version = "0.1.34", features = ["log"] }
+tempfile = "3.8.0"
+tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = "0.3.14"
 linked-hash-map = "0.5.6"
-clap = { version = "4.4.2", features = ["derive"] }
+clap = { version = "4.4.4", features = ["derive"] }
 minidump-unwind = "0.18.0"
 win_dbg_logger = "0.1.0"
 puffin_egui = "0.22.0"
 
 egui_skia = { version = "0.3.0", features = ["winit", "cpu_fix"] }
 egui-winit = { version = "0.22", optional = true, default-features = false }
-softbuffer = "0.2.1"
+softbuffer = "0.3.1"
 skia-safe = "0.66.2"
 
 [features]

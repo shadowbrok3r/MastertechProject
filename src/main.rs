@@ -26,16 +26,16 @@ use log::{info, error};
 
 #[tokio::main]
 async fn main()  { //-> eframe::Result<()>
-    // puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
-    // // cannot run this logger because the minidump module already uses a logger
-    // let log_level = LevelFilter::Error; // Configure log level and log file
-    // let log_file = File::create("output.log").unwrap();
-    // WriteLogger::init( // Init the logger
-    //     log_level, 
-    //     Config::default(), 
-    //     log_file
-    // ).unwrap(); 
-    
+    puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
+    /* // cannot run this logger because the minidump module already uses a logger
+    let log_level = LevelFilter::Error; // Configure log level and log file
+    let log_file = File::create("output.log").unwrap();
+    WriteLogger::init( // Init the logger
+        log_level,
+        Config::default(),
+        log_file
+    ).unwrap();
+    */
     let mut app = MasterTechApp::default();
     run_software(move |ctx| {
         app.update(&ctx);
@@ -271,9 +271,7 @@ impl MasterTechApp{
 #[cfg(feature = "winit")]
 fn run_software(mut ui: impl FnMut(&Context) + 'static) {
     use std::num::NonZeroU32;
-
-    use skia_safe::{Paint, Surface, surfaces};
-
+    use skia_safe::{Surface, surfaces};
     use egui_skia::EguiSkiaWinit;
     use egui_winit::winit::dpi::LogicalSize;
     use egui_winit::winit::event::{Event, WindowEvent};
@@ -287,10 +285,10 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
         .build(&ev_loop)
         .unwrap();
 
-        let context = unsafe { softbuffer::Context::new(&window) }.unwrap();
-        let mut surface = unsafe { softbuffer::Surface::new(&context, &window) }.unwrap();
-
-    // let mut graphics_context = unsafe { softbuffer::GraphicsContext::new(&window, &window) }.unwrap();
+    let context = unsafe { softbuffer::Context::new(&window) }.unwrap();
+    let mut softbuffer_surface = unsafe {
+        softbuffer::Surface::new(&context, &window)
+    }.unwrap();
     let mut egui_skia = EguiSkiaWinit::new(&ev_loop);
 
     egui_skia
@@ -299,7 +297,9 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
 
     let size = window.inner_size();
     let size = size.to_logical::<i32>(window.scale_factor());
-    // let mut surface = surfaces::raster_n32_premul((size.width as i32, size.height as i32)).unwrap();
+    let mut surface = surfaces::raster_n32_premul(
+        (size.width, size.height)
+    ).unwrap();
 
     ev_loop.run(move |ev, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -315,7 +315,9 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                 event: WindowEvent::Resized(size),
                 ..
             } => {
-                //surface = surfaces::raster_n32_premul((size.width as i32, size.height as i32)).unwrap();
+                surface = surfaces::raster_n32_premul(
+                    (size.width as i32, size.height as i32)
+                ).unwrap();
                 window.request_redraw();
             }
             Event::WindowEvent { event, .. } => {
@@ -325,32 +327,11 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                 }
             }
             Event::RedrawRequested(window_id) if window_id == window.id() => {
-                let (width, height) = {
-                    let size = window.inner_size();
-                    (size.width, size.height)
-                };
-                surface
-                    .resize(
-                        NonZeroU32::new(width).unwrap(),
-                        NonZeroU32::new(height).unwrap(),
-                    )
-                    .unwrap();
-
-                let mut buffer = surface.buffer_mut().unwrap();
-                buffer.present().unwrap();
-                /*for index in 0..(width * height) {
-                    let y = index / width;
-                    let x = index % width;
-                    let red = x % 255;
-                    let green = y % 255;
-                    let blue = (x * y) % 255;
-
-                    buffer[index as usize] = blue | (green << 8) | (red << 16);
-                }*/
-                /*
                 let canvas = surface.canvas();
                 canvas.clear(skia_safe::Color::TRANSPARENT);
+
                 let repaint_after = egui_skia.run(&window, &mut ui);
+
                 *control_flow = if repaint_after.is_zero() {
                     window.request_redraw();
                     ControlFlow::Poll
@@ -361,34 +342,35 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                 } else {
                     ControlFlow::Wait
                 };
+                
                 egui_skia.paint(canvas);
+                
                 let snapshot = surface.image_snapshot();
                 let peek = snapshot.peek_pixels().unwrap();
                 let pixels: &[u32] = peek.pixels().unwrap();
-                // No idea why R and B have to be swapped
-                let transformed = pixels
-                    .iter()
-                    .map(|x| {
-                        (x & 0xFF000000)
-                            | ((x & 0x00FF0000) >> 16)
-                            | (x & 0x0000FF00)
-                            | ((x & 0x000000FF) << 16)
-                    })
-                    .collect::<Vec<u32>>();
-                graphics_context.set_buffer(
-                    &transformed,
-                    surface.width() as u16,
-                    surface.height() as u16,
-                );
-                */
+
+                let (width, height) = {
+                    let size = window.inner_size();
+                    (size.width, size.height)
+                };
+                softbuffer_surface
+                    .resize(
+                        NonZeroU32::new(width).unwrap(),
+                        NonZeroU32::new(height).unwrap(),
+                    )
+                    .unwrap();
+
+                let mut buffer = softbuffer_surface.buffer_mut().unwrap();
+                buffer.copy_from_slice(pixels);  // Copy Skia pixels to Softbuffer surface
+                buffer.present().unwrap();
             }
             _ => {}
         }
     })
 }
-    //log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
-    //log::set_max_level(log::LevelFilter::max());
-/* 
+/*
+    log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
+    log::set_max_level(log::LevelFilter::max());
     let options = eframe::NativeOptions {
         initial_window_size: Some(egui::vec2(925.0, 740.0)),
         renderer: eframe::Renderer::Wgpu,
@@ -403,10 +385,9 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
         format!("Mastertech-{}",cargo_crate_version!()).as_str(),
         options,
         Box::new(|_cc| Box::<MasterTechApp>::default()),
-    ) 
-    */
-
+    )
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
     }
 }
+*/
