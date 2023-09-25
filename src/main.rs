@@ -270,6 +270,8 @@ impl MasterTechApp{
 
 #[cfg(feature = "winit")]
 fn run_software(mut ui: impl FnMut(&Context) + 'static) {
+    use std::num::NonZeroU32;
+
     use skia_safe::{Paint, Surface, surfaces};
 
     use egui_skia::EguiSkiaWinit;
@@ -285,9 +287,10 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
         .build(&ev_loop)
         .unwrap();
 
-    // let mut gc = unsafe { softbuffer::Context::new(&window) }.unwrap();
-    // let mut softbuffer_surface = unsafe { softbuffer::Surface::new(&gc, &window).unwrap() };
-    let mut graphics_context = unsafe { softbuffer::GraphicsContext::new(&window, &window) }.unwrap();
+        let context = unsafe { softbuffer::Context::new(&window) }.unwrap();
+        let mut surface = unsafe { softbuffer::Surface::new(&context, &window) }.unwrap();
+
+    // let mut graphics_context = unsafe { softbuffer::GraphicsContext::new(&window, &window) }.unwrap();
     let mut egui_skia = EguiSkiaWinit::new(&ev_loop);
 
     egui_skia
@@ -296,8 +299,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
 
     let size = window.inner_size();
     let size = size.to_logical::<i32>(window.scale_factor());
-    let mut surface =
-        surfaces::raster_n32_premul((size.width as i32, size.height as i32)).unwrap();
+    // let mut surface = surfaces::raster_n32_premul((size.width as i32, size.height as i32)).unwrap();
 
     ev_loop.run(move |ev, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -313,8 +315,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                 event: WindowEvent::Resized(size),
                 ..
             } => {
-                surface = surfaces::raster_n32_premul((size.width as i32, size.height as i32))
-                    .unwrap();
+                //surface = surfaces::raster_n32_premul((size.width as i32, size.height as i32)).unwrap();
                 window.request_redraw();
             }
             Event::WindowEvent { event, .. } => {
@@ -323,12 +324,33 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                     window.request_redraw();
                 }
             }
-            Event::RedrawRequested(_) => {
+            Event::RedrawRequested(window_id) if window_id == window.id() => {
+                let (width, height) = {
+                    let size = window.inner_size();
+                    (size.width, size.height)
+                };
+                surface
+                    .resize(
+                        NonZeroU32::new(width).unwrap(),
+                        NonZeroU32::new(height).unwrap(),
+                    )
+                    .unwrap();
+
+                let mut buffer = surface.buffer_mut().unwrap();
+                buffer.present().unwrap();
+                /*for index in 0..(width * height) {
+                    let y = index / width;
+                    let x = index % width;
+                    let red = x % 255;
+                    let green = y % 255;
+                    let blue = (x * y) % 255;
+
+                    buffer[index as usize] = blue | (green << 8) | (red << 16);
+                }*/
+                /*
                 let canvas = surface.canvas();
                 canvas.clear(skia_safe::Color::TRANSPARENT);
-
                 let repaint_after = egui_skia.run(&window, &mut ui);
-
                 *control_flow = if repaint_after.is_zero() {
                     window.request_redraw();
                     ControlFlow::Poll
@@ -339,14 +361,10 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                 } else {
                     ControlFlow::Wait
                 };
-
                 egui_skia.paint(canvas);
-
                 let snapshot = surface.image_snapshot();
-
                 let peek = snapshot.peek_pixels().unwrap();
                 let pixels: &[u32] = peek.pixels().unwrap();
-
                 // No idea why R and B have to be swapped
                 let transformed = pixels
                     .iter()
@@ -357,22 +375,17 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
                             | ((x & 0x000000FF) << 16)
                     })
                     .collect::<Vec<u32>>();
-                // let buffer = softbuffer_surface.buffer_mut().unwrap();
-                // let x = surface.width() as usize;
-                // buffer.present().unwrap();
-
                 graphics_context.set_buffer(
                     &transformed,
                     surface.width() as u16,
                     surface.height() as u16,
                 );
+                */
             }
             _ => {}
         }
     })
 }
-
-
     //log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
     //log::set_max_level(log::LevelFilter::max());
 /* 
@@ -393,7 +406,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
     ) 
     */
 
-// impl eframe::App for MasterTechApp {
-//     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {      
-//     }
-// }
+impl eframe::App for MasterTechApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    }
+}
