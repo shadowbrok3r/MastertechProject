@@ -51,7 +51,6 @@ pub enum Command {
     Home,
 }
 
-
 pub struct FileBrowser {
     /// Current opened path.
     path: PathBuf, 
@@ -106,7 +105,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         let mut filename_edit = String::new();
 
         let path_edit = path.to_str().unwrap_or_default().to_string();
-
+    println!("filebrowser::new() {}", &path_edit);
         if path.is_file() {
             filename_edit = get_file_name(&path).to_string();
             path.pop();
@@ -142,6 +141,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
     }
     
     pub async fn run_command(&mut self, command: Command) {
+        puffin::profile_scope!("run_command");
         match command{
             Command::Select(file) => self.select(file),
 
@@ -217,6 +217,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             },
 
             Command::ReadDirectory(path) => {
+                puffin::profile_scope!("Command::ReadDirectory");
                 let new_contents = read_folder(
                     &path,
                     self.depth,
@@ -226,6 +227,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             }
 
             Command::ReadMetadata(path) => {
+                puffin::profile_scope!("Command::ReadMetadata");
                 let sender = self.metadata_tx.clone();
                 let cloned_path = path.clone();
                 let clone_path1 = path.clone();
@@ -254,9 +256,11 @@ impl FileBrowser{ // sender: UnboundedSender<>
                                 
                                 // Insert the metadata into the appropriate HashMap.
                                 if path.is_dir() {
-                                    self.folder_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
+                                    self.folder_metadata.borrow_mut().insert(clone_path1.clone(),
+                                        MetaData { path_size });
                                 } else {
-                                    self.file_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
+                                    self.file_metadata.borrow_mut().insert(clone_path1.clone(),
+                                        MetaData { path_size });
                                 }
                             },
                             Err(e) => println!("Error reading metadata: {:?}", e),
@@ -275,7 +279,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
     ) {     
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-
                 ui.add_enabled_ui(
                     self.path != env::current_dir().unwrap_or_default(),
                     |ui | {
@@ -317,7 +320,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                                 .id(Id::new("path_edit"))
                                 .cursor_at_end(true),
                         ).on_hover_text(&self.path_edit);
-                       
+
                         if response.lost_focus() {
                             let path = PathBuf::from(&self.path_edit);
                             println!("Lost focus on self.path_edit");
@@ -327,7 +330,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             };
 
                         }
-                    });
+
+                    }); //.inner_rect;
+                    // if ui.rect_contains_pointer(top_bar){}
                 });
             });
             
@@ -405,8 +410,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
-            if self.first_refresh_contents == true{
+            if self.first_refresh_contents{
                 self.refresh_contents();
+                self.first_refresh_contents = false;
             }
             
             let file_browser_area = ScrollArea::new([true, true])
@@ -446,7 +452,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             if ui.rect_contains_pointer(file_browser_area){ // || ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
                 let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
                 let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::V);
-    
+                
                 if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
                 { 
                     self.copied_items_src = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
@@ -520,13 +526,13 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 };
 
                 ui.vertical_centered_justified(|ui| {
-                    CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
+                    CollapsingState::load_with_default_open(ui.ctx(), id, false)
                     .show_header(ui, |ui| 
                     {
                         let is_selected = self.selected_items.borrow().contains(path);
                         let selectable_label = ui.selectable_label(is_selected, &label);
                     
-                        if !self.folder_metadata.borrow().contains_key(path){
+                        if selectable_label.secondary_clicked() && !self.folder_metadata.borrow().contains_key(path){
                             match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
                                 Ok(_) => drop(command_sender5),
                                 Err(e) => println!("hovered sender error: {e:?}"),
@@ -543,7 +549,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             job.halign = Align::RIGHT;
                             job.justify = true;
                             
-                            let text = format!("{}", formatted_size.as_str());
+                            let text = formatted_size.to_string();
                             job.append(&text, 30.0, text_formatting);
                             
                             let x = WidgetText::LayoutJob(job).small().background_color(Color32::RED);
@@ -584,13 +590,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 });
 
             } 
-            else if !path.is_dir() && self.read_dirs_only == false{
-                if !self.file_metadata.borrow().contains_key(path){
-                    match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
-                        Ok(_) => drop(command_sender4),
-                        Err(e) => println!("hovered sender error: {e:?}"),
-                    }
-                } 
+            else if !path.is_dir() && !self.read_dirs_only{
                 let is_selected = self.selected_items.borrow().contains(path);
                 let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
                 
@@ -610,6 +610,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
                         self.selected_items.borrow_mut().clear();
                         self.selected_items.borrow_mut().insert(path.clone());
                     }
+                }else if selectable_label.secondary_clicked() {
+
                 }
                 
                 if let Some(metadata) = self.file_metadata.borrow_mut().get(path)
@@ -657,6 +659,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         a folder
     */ 
     fn refresh_contents(&mut self) {
+        puffin::profile_scope!("refresh_contents");
         let new_contents = read_folder(
             &self.path,
             self.depth,

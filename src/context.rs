@@ -968,14 +968,14 @@ impl MastertechContext {
         ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
-        if self.specs_first_run == true{
+        if self.specs_first_run{
             self.spinner = true;
             let specs_sender = self.sysinfo_request.tx.clone();
             RetrieveSystemInfo::get_system_specs(specs_sender);
         }
         self.specs_first_run = false;
         
-        if self.spinner == true{
+        if self.spinner{
             ui.vertical_centered(|ui|{
                 ui.add(Spinner::new());
             }); 
@@ -1114,7 +1114,6 @@ impl MastertechContext {
     fn puffin_profiler(&mut self, ui: &mut Ui){
         puffin::profile_function!();
         puffin::GlobalProfiler::lock().new_frame(); // call once per frame!
-
         puffin_egui::profiler_ui(ui);
     }
 
