@@ -36,6 +36,30 @@ async fn main()  { //-> eframe::Result<()>
         log_file
     ).unwrap();
     */
+    
+    /*
+    log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
+    log::set_max_level(log::LevelFilter::max());
+    let options = eframe::NativeOptions {
+        initial_window_size: Some(egui::vec2(925.0, 740.0)),
+        renderer: eframe::Renderer::Wgpu,
+
+        // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
+        icon_data: Some(load_icon()),
+        drag_and_drop_support: true,
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
+        options,
+        Box::new(|_cc| Box::<MasterTechApp>::default()),
+    )
+impl eframe::App for MasterTechApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    }
+}
+*/
     let mut app = MasterTechApp::default();
     run_software(move |ctx| {
         app.update(&ctx);
@@ -368,26 +392,3 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
         }
     })
 }
-/*
-    log::set_logger(&DEBUGGER_LOGGER).unwrap(); // For Windbg
-    log::set_max_level(log::LevelFilter::max());
-    let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(925.0, 740.0)),
-        renderer: eframe::Renderer::Wgpu,
-
-        // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),// vsync: false,
-        icon_data: Some(load_icon()),
-        drag_and_drop_support: true,
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
-        options,
-        Box::new(|_cc| Box::<MasterTechApp>::default()),
-    )
-impl eframe::App for MasterTechApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-    }
-}
-*/
