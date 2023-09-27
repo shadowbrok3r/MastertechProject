@@ -13,6 +13,19 @@ embed-resource = "2.2.0"
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
 resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 
+[package.metadata.winres]
+OriginalFilename = "Mastertech.EXE"
+LegalCopyright = "Copyright © 2023"
+
+[profile.release]
+strip = "debuginfo"
+
+[features]
+default=["winit", "cpu_fix"]
+winit = ["dep:egui-winit"]
+compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
+cpu_fix = []
+
 [dependencies]
 chrono = "0.4.31"
 eframe = { version="0.22.0", features=["persistence", "puffin", "wgpu"] } #
@@ -37,12 +50,12 @@ image = "0.24.7"
 egui_file = "0.10.2"
 self_update = "0.38.0"
 puffin = { version = "0.16.0", features = ["packing"] }
+puffin_egui = "0.22.0"
 
 num-format = "0.4.4"
 fs_extra = "1.3.0"
-cached = "0.45.1"
-log = "0.4.20"
 simplelog = "0.12.1"
+log = "0.4.20"
 rayon = "1.8.0"
 
 memmap2 = "0.5.10"
@@ -53,53 +66,25 @@ minidump-processor = { version = "0.18.0", features = ["http", "dump_syms"] }
 
 num-traits = "0.2.16"
 rfd = "0.12.0"
-tempfile = "3.8.0"
 tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = "0.3.14"
 linked-hash-map = "0.5.6"
 clap = { version = "4.4.4", features = ["derive"] }
 minidump-unwind = "0.18.0"
-win_dbg_logger = "0.1.0"
-puffin_egui = "0.22.0"
 
-egui_skia = { version = "0.3.0", features = ["winit", "cpu_fix"] }
+egui_skia = { version = "0.3.0", features = ["winit", "cpu_fix"], optional = true}
 egui-winit = { version = "0.22", optional = true, default-features = false }
-softbuffer = "0.3.1"
-skia-safe = "0.66.2"
+softbuffer = {version = "0.3.1", optional = true}
+skia-safe = {version = "0.66.2", optional = true}
 
-[features]
-default=["winit", "cpu_fix"]
-winit = ["dep:egui-winit"]
-cpu_fix = []
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
 libatasmart = "0.3.1"
-
-
-[package.metadata.winres]
-OriginalFilename = "Mastertech.EXE"
-LegalCopyright = "Copyright © 2023"
-
-[profile.release]
-strip = "debuginfo"
 
 # [profile.dev]
 # opt-level = 2
 
 # [profile.dev.package."*"]
 # opt-level = 3
-
-
-
-#default = ["winit"]
-#winit = []
-
-# winres = "0.1.12"
-# opener = "0.6.1"
-# directories = "5.0.1"
-# jwalk = "0.8.1"
-# egui_file = "0.9.0"
-# libatasmart-sys = "0.2.0"
-# env_logger = "0.10.0"
 

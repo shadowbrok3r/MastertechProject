@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::*;
 use tokio::io::AsyncWriteExt;
 use std::{error::Error, path::PathBuf};
+use log::*;
+use simplelog::*; //::{error, debug, info};
 use crate::scaffold::*;
 use asana::{
     apis::{
@@ -20,7 +22,7 @@ use asana::{
         InlineObject35, TaskResponse
     }
 };
-use log::{error, info, trace};
+// use log::{error, info, trace};
 
 #[derive(Debug, Deserialize)]
 pub struct GetTicketResponse {
