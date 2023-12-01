@@ -105,7 +105,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         let mut filename_edit = String::new();
 
         let path_edit = path.to_str().unwrap_or_default().to_string();
-    println!("filebrowser::new() {}", &path_edit);
+        println!("filebrowser::new() {}", &path_edit);
         if path.is_file() {
             filename_edit = get_file_name(&path).to_string();
             path.pop();

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 use eframe::egui;
 use egui::*;
-use egui_dock::{Node, NodeIndex, Tree, TabViewer};
+use egui_dock::{Node, NodeIndex, Tree, TabViewer, SurfaceIndex, DockState};
 use scaffold::PulledKeys;
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
@@ -21,7 +21,7 @@ use crate::{
     },
     system_info::RetrieveSystemInfo,
     self_updater::run,
-    minidump::minidump_main::MiniDumpApp,
+    // minidump::minidump_main::MiniDumpApp,
     // puffin_profiler::start_puffin_server,
 };
 use scaffold::TicketInformation;
@@ -62,7 +62,7 @@ pub struct MastertechContext {
     pub antivirus_installed: String,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
-    pub minidump_app: MiniDumpApp,
+    // pub minidump_app: MiniDumpApp,
     
     //pub system_information: SystemInformation,
     pub salesman_cbox: scaffold::Salesman,
@@ -137,7 +137,7 @@ impl TabViewer for MastertechContext {
         }
     }
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut <Self as TabViewer>::Tab, surface_index: SurfaceIndex, node_index: NodeIndex) {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
             _ => {
@@ -153,13 +153,14 @@ impl TabViewer for MastertechContext {
         self.open_tabs.remove(tab);
         true
     }
-    fn on_add(&mut self, _node: NodeIndex) {
+    fn on_add(&mut self, surface_index: SurfaceIndex, _node_index: NodeIndex) {
         //self.open_tabs.add(tab)
     }
 }
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: Tree<String>,
+    pub dock_state: DockState<Tab>
 }
 
 impl Default for MasterTechApp {
@@ -197,7 +198,7 @@ impl Default for MasterTechApp {
             tx: tx_scaffold,
         };
 
-        let minidump_app = MiniDumpApp::default();
+        // let minidump_app = MiniDumpApp::default();
 
         let ticket_information = TicketInformation {
             cust_code: "".to_string(),
@@ -243,7 +244,7 @@ impl Default for MasterTechApp {
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
-            minidump_app,
+            // minidump_app,
             output_text: "".to_string(),
 
             
