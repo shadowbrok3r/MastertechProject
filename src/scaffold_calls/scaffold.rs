@@ -1,6 +1,7 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 use serde::{Deserialize, Serialize};
 use serde_json::*;
+use dotenv::*;
 
 #[derive(Debug, PartialEq)]
 pub enum Salesman {
@@ -51,8 +52,8 @@ struct ScaffoldAuth{
 
 impl Default for ScaffoldAuth{
     fn default() -> Self {
-        let user =  "logan.lees@pclaptops.com".to_string();
-        let password = "Poolparty1".to_string();
+        let user =  dotenv::var("SCAFFOLD_USER").unwrap();
+        let password = dotenv::var("SCAFFOLD_PASS").unwrap();
         
         Self { user, password }
     } 
@@ -255,8 +256,8 @@ impl ScaffoldRequestBuilder {
         let company = "pcl".to_string();
         
         let mut scaffold_call = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com".to_string(),
-            "user_password": "Poolparty1".to_string(),
+            "user_email": dotenv::var("SCAFFOLD_USER").unwrap(), 
+            "user_password": dotenv::var("SCAFFOLD_PASS").unwrap(),
             "action": self.action.as_str().to_string(),
             //"call": self.call.as_str().to_string(), 
             "application": self.app.as_str().to_string(), 

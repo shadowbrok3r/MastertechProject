@@ -6,16 +6,21 @@ use self_update::{
         Update,
     }
 };
+use dotenv::*;
 
-const TOKEN: &str = "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";
 
-pub fn run() -> Result<(String, String), Box<dyn ::std::error::Error>> {
+
+pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Error>> {
+
+    let token: &str = dotenv::var("GITHUB_KEY").unwrap().as_str();
+
     let releases = ReleaseList::configure()
         .repo_owner("shadowbrok3r")
         .repo_name("Mastertech4.0")
-        .auth_token(TOKEN)
+        .auth_token(token)
         .build()?
         .fetch()?;
+
     println!("{releases:#?}\n");
 
     let status = Update::configure()
@@ -26,10 +31,11 @@ pub fn run() -> Result<(String, String), Box<dyn ::std::error::Error>> {
         .target("Mastertech")
         //.bin_install_path(bin_install_path)
         .no_confirm(true)
-        .auth_token(TOKEN)
+        .auth_token(token)
         .current_version(cargo_crate_version!())
         .build()?
         .update()?;
+
     println!("Update status: `{}`!", status.version());
     let update_status = format!("{}", status.version());
     let release_versions = format!("{releases:#?}");

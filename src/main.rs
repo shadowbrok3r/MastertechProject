@@ -13,7 +13,7 @@ use crate::scaffold_calls::{scaffold, request};
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui;
-use egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame};
+use egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
 use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
 use self_update::cargo_crate_version;
@@ -33,11 +33,12 @@ async fn main() -> eframe::Result<()> {
     ).unwrap();
     
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(925.0, 740.0)),
+        viewport: ViewportBuilder::default()
+            .with_inner_size([925.0, 740.0])
+            .with_drag_and_drop(true)
+            .with_icon(load_icon()),
         // renderer: eframe::Renderer::Wgpu,
         // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),
-        icon_data: Some(load_icon()),
-        drag_and_drop_support: true,
         ..Default::default()
     };
 
@@ -67,7 +68,7 @@ async fn main(){
     });
 }
 
-pub(crate) fn load_icon() -> eframe::IconData {
+pub(crate) fn load_icon() -> egui::IconData {
 	let (icon_rgba, icon_width, icon_height) = {
 		let icon = include_bytes!("assets/masterlogoV2.ico");
 		let image = image::load_from_memory(icon)
@@ -78,7 +79,7 @@ pub(crate) fn load_icon() -> eframe::IconData {
 		(rgba, width, height)
 	};
 	
-	eframe::IconData {
+	egui::IconData {
 		rgba: icon_rgba,
 		width: icon_width,
 		height: icon_height,
@@ -268,16 +269,16 @@ impl eframe::App for MasterTechApp {
             .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
             .show(ctx, |ui| {
                 let mut style = self.context.style.get_or_insert(Style::from_egui(ui.style())).clone();
-                style.selection_color = Color32::from_rgb(92,0,87);
+                // style.selection_color = Color32::from_rgb(92,0,87);
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
                 style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
                 style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
                 style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
-                style.tabs.rounding.nw = 15.0;
-                style.tabs.rounding.ne = 15.0;
-                style.tabs.text_color_active_focused = Color32::from_rgba_premultiplied(0, 254, 158, 255);
-                style.tabs.text_color_active_unfocused = Color32::from_rgba_premultiplied(0, 255, 255, 255);
-                style.tabs.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
+                // style.tab.rounding.nw = 15.0;
+                // style.tab.rounding.ne = 15.0;
+                // style.tab.text_color_active_focused = Color32::from_rgba_premultiplied(0, 254, 158, 255);
+                // style.tab.text_color_active_unfocused = Color32::from_rgba_premultiplied(0, 255, 255, 255);
+                // style.tab.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
     
                 DockArea::new(&mut self.tree)

@@ -9,7 +9,7 @@ use minidump_processor::{
     PendingProcessorStatSubscriptions, PendingProcessorStats, 
     ProcessState, ProcessorOptions
 };
-use minidump_unwind::http_symbol_supplier;
+use minidump_unwind::simple_symbol_supplier;
 use breakpad_symbols::{PendingSymbolStats, Symbolizer}; //, HttpSymbolSupplier};
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -138,12 +138,12 @@ fn process_minidump(
     options.stat_reporter = Some(&stat_reporter);
 
     // Specify a symbol supplier (here we're using the most powerful one, the http supplier)
-    let provider = Symbolizer::new(http_symbol_supplier(
+    let provider = Symbolizer::new(simple_symbol_supplier(
         symbol_paths,
-        symbol_urls,
-        symbols_cache,
-        symbols_tmp,
-        timeout,
+        // symbol_urls,
+        // symbols_cache,
+        // symbols_tmp,
+        // timeout,
     ));
 
     let runtime = tokio::runtime::Builder::new_current_thread()
