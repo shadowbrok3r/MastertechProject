@@ -1,10 +1,9 @@
 use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
 use std::collections::HashMap;
-//use crossbeam::{scope, channel::TryRecvError};
 use serde_json::Value;
 use eframe::egui;
 use egui::*;
-use egui_dock::{Node, NodeIndex, Tree, TabViewer, SurfaceIndex, DockState};
+use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use scaffold::PulledKeys;
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
@@ -137,7 +136,7 @@ impl TabViewer for MastertechContext {
         }
     }
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut <Self as TabViewer>::Tab, surface_index: SurfaceIndex, node_index: NodeIndex) {
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, surface_index: SurfaceIndex, node_index: NodeIndex) {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
             _ => {
@@ -159,15 +158,16 @@ impl TabViewer for MastertechContext {
 }
 pub struct MasterTechApp {
     pub context: MastertechContext,
-    pub tree: Tree<String>,
-    pub dock_state: DockState<Tab>
+    pub tree: DockState<String>,
 }
 
 impl Default for MasterTechApp {
     fn default() -> Self {
-        let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
-        let [a, _] = tree.split_left(NodeIndex::root(), 0.3, vec!["File Browser 📂".to_owned(), "Scripts".to_owned()]);
-        let [_, _] = tree.split_below(
+        let mut tree = DockState::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
+        tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+
+        let [a, _] = tree.main_surface_mut().split_left(NodeIndex::root(), 0.3, vec!["File Browser 📂".to_owned(), "Scripts".to_owned()]);
+        let [_, _] = tree.main_surface_mut().split_below(
             a,
             0.72,
             vec!["Console".to_owned()],
@@ -175,7 +175,7 @@ impl Default for MasterTechApp {
 
         let mut open_tabs = HashSet::new();
 
-        for node in tree.iter() {
+        for node in tree[SurfaceIndex::main()].iter() {
             if let Node::Leaf { tabs, .. } = node {
                 for tab in tabs {
                     open_tabs.insert(tab.clone());
@@ -200,24 +200,7 @@ impl Default for MasterTechApp {
 
         // let minidump_app = MiniDumpApp::default();
 
-        let ticket_information = TicketInformation {
-            cust_code: "".to_string(),
-            user_id: "".to_string(),
-            terms: "".to_string(),
-            doc_alias: "".to_string(),
-            department: "".to_string(),
-            jurisdiction: "".to_string(),
-            invoice_amnt: "".to_string(),
-            customer_name: "".to_string(),
-            customer_phone_1: "".to_string(),
-            customer_phone_2: "".to_string(),
-            customer_email: "".to_string(),
-            last_invoice_number: "".to_string(),
-            last_invoice_amount: "".to_string(),
-            total_invoice_count: "".to_string(),
-            checkin_notes: "".to_string(),
-            item_codes: "".to_string(),
-        };
+        let ticket_information = TicketInformation {..Default::default()};
         
         //let system_information = SystemInformation {};
 
