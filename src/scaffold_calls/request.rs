@@ -40,13 +40,13 @@ pub struct GetKeysResponse{
 
 #[derive(Deserialize, Debug)]
 pub struct Header {
-    pub CUST_CODE: String,
-    pub USER_ID: String, // "USER_ID": "BP3", //checkin rep
-    pub TERMS: String, // "TERMS": "CC",
-    pub DOC_ALIAS: String, // "DOC_ALIAS": "SERVICE ORDER",
-    pub DEP: String, // "DEP": "LTN"
-    pub JURISCODE: String, //"JURISCODE": "LTN",
-    pub COG: String, // "COG": "7.1000", //Cost of goods?
+    pub CUST_CODE: Option<String>,
+    pub USER_ID: Option<String>, // "USER_ID": "BP3", //checkin rep
+    pub TERMS: Option<String>, // "TERMS": "CC",
+    pub DOC_ALIAS: Option<String>, // "DOC_ALIAS": "SERVICE ORDER",
+    pub DEP: Option<String>, // "DEP": "LTN"
+    pub JURISCODE: Option<String>, //"JURISCODE": "LTN",
+    pub COG: Option<String>, // "COG": "7.1000", //Cost of goods?
     pub INV_AMOUNT: Option<String>, // "INV_AMOUNT": "53.6100",
 }
 
@@ -57,7 +57,7 @@ pub struct Customer {
     pub LI_DOC: Option<String>, //"LI_DOC": "53745333",
     pub LI_AMT: Option<String>,  //"LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
     //pub LAST_TUNEUP_DATE: String, // <-- HERE
-    pub DW_UPDATE_DATE: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
+    pub DW_UPDATE_DATE: Option<String>, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
     pub NUM_INV: Option<String>, // "NUM_INV": "21",
 /*		"LP_AMT": "-53.6100",
 		"LP_DOC": "52883815",
@@ -141,40 +141,15 @@ impl SendRequest{
                 Ok(get_ticket_response) => {
                     
                     // You can now use fields of get_ticket_response
-                    let header = &get_ticket_response.header;
-                    let customer = &get_ticket_response.customer;
-                    let addresses = &get_ticket_response.addresses.address_object;
+                    let header = get_ticket_response.header;
+                    let customer = get_ticket_response.customer;
+                    let addresses = get_ticket_response.addresses.address_object;
                     let items_objects = get_ticket_response.items;
                     //let transactions = &get_ticket_response.transactions;
 
                     let mut checkin_note = "".to_string();
                     let mut itemcodes = "".to_string();
 
-                    let mut li_amt = "".to_string();
-                    let mut li_doc = "".to_string();
-                    let mut inv_amnt = "".to_string();
-                    let mut num_inv = "".to_string();
-
-                    if customer.LI_AMT.is_some() { 
-                        li_amt = customer.LI_AMT.clone().unwrap_or_else(||{
-                            "null value".to_string()
-                        }) 
-                    }
-                    if customer.LI_DOC.is_some() { 
-                        li_doc = customer.LI_DOC.clone().unwrap_or_else(||{
-                            "null value".to_string()
-                        }) 
-                    }
-                    if header.INV_AMOUNT.is_some() { 
-                        inv_amnt = header.INV_AMOUNT.clone().unwrap_or_else(||{
-                            "null value".to_string()
-                        }) 
-                    }
-                    if customer.NUM_INV.is_some() { 
-                        num_inv = customer.NUM_INV.clone().unwrap_or_else(||{
-                            "null value".to_string()
-                        }) 
-                    }
                     // DW_UPDATE_DATE is the exact time that the line item (AKA 'items') was added.
                     // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
                     
@@ -209,22 +184,22 @@ impl SendRequest{
 
 
                     let ticket_information = TicketInformation{
-                        cust_code: header.CUST_CODE.clone(),
-                        user_id: header.USER_ID.clone(),
+                        cust_code: header.CUST_CODE.unwrap_or("empty".to_string()),
+                        user_id: header.USER_ID.unwrap_or("empty".to_string()),
                         customer_phone_1: addresses.TEL1.clone(),
                         customer_phone_2: addresses.TEL2.clone(),
                         customer_email: addresses.EMAIL.clone(),
-                        last_invoice_amount: li_amt,
-                        terms: header.TERMS.clone(),
-                        doc_alias: header.DOC_ALIAS.clone(),
-                        department: header.DEP.clone(),
-                        jurisdiction: header.JURISCODE.clone(),
-                        invoice_amnt: inv_amnt,
+                        last_invoice_amount: customer.LI_AMT.unwrap_or("empty".to_string()),
+                        terms: header.TERMS.unwrap_or("empty".to_string()),
+                        doc_alias: header.DOC_ALIAS.unwrap_or("empty".to_string()),
+                        department: header.DEP.unwrap_or("empty".to_string()),
+                        jurisdiction: header.JURISCODE.unwrap_or("empty".to_string()),
+                        invoice_amnt: header.INV_AMOUNT.unwrap_or("empty".to_string()),
                         customer_name: customer.NAME.clone(),
                         checkin_notes: checkin_note.clone(),
-                        last_invoice_number: li_doc,
+                        last_invoice_number: customer.LI_DOC.unwrap_or("empty".to_string()),
                         item_codes: itemcodes.clone(),
-                        total_invoice_count: num_inv,
+                        total_invoice_count: customer.NUM_INV.unwrap_or("empty".to_string()),
                     };
                     
                     let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();

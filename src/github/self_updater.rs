@@ -6,18 +6,18 @@ use self_update::{
         Update,
     }
 };
-use dotenv::*;
+use dotenv::var;
 
 
 
 pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Error>> {
 
-    let token: &str = dotenv::var("GITHUB_KEY").unwrap().as_str();
+    let token = var("GITHUB_KEY").unwrap();
 
     let releases = ReleaseList::configure()
         .repo_owner("shadowbrok3r")
         .repo_name("Mastertech4.0")
-        .auth_token(token)
+        .auth_token(token.as_str())
         .build()?
         .fetch()?;
 
@@ -31,7 +31,7 @@ pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Err
         .target("Mastertech")
         //.bin_install_path(bin_install_path)
         .no_confirm(true)
-        .auth_token(token)
+        .auth_token(token.as_str())
         .current_version(cargo_crate_version!())
         .build()?
         .update()?;

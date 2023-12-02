@@ -12,8 +12,8 @@ use github::self_updater;
 use crate::scaffold_calls::{scaffold, request};
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui;
-use egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
+use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
+// use egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
 use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
 use self_update::cargo_crate_version;
@@ -21,32 +21,33 @@ use system_info::RetrieveSystemInfo;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
-    puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
+    let app = eframe::run_native(
+        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
+        eframe::NativeOptions {
+            viewport: ViewportBuilder::default()
+                .with_inner_size([925.0, 740.0])
+                .with_drag_and_drop(true)
+                .with_icon(load_icon())
+                .with_always_on_top(),
+            ..Default::default()
+        },
+        Box::new(|_cc| Box::<MasterTechApp>::default()),
+    );
+
+    puffin::set_scopes_on(true);
+
     // Configure log level and log file
     let log_level = LevelFilter::Error; 
     let log_file = File::create("output.log").unwrap();
+
     // Init the logger
     WriteLogger::init( 
         log_level,
         Config::default(),
         log_file
     ).unwrap();
-    
-    let options = eframe::NativeOptions {
-        viewport: ViewportBuilder::default()
-            .with_inner_size([925.0, 740.0])
-            .with_drag_and_drop(true)
-            .with_icon(load_icon()),
-        // renderer: eframe::Renderer::Wgpu,
-        // shader_version: Some(eframe::egui_glow::ShaderVersion::Gl120),
-        ..Default::default()
-    };
 
-    eframe::run_native(
-        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
-        options,
-        Box::new(|_cc| Box::<MasterTechApp>::default()),
-    )
+    app
 }
 
 #[cfg(feature = "compat_mode")]
@@ -88,7 +89,8 @@ pub(crate) fn load_icon() -> egui::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        catppuccin_egui::set_theme(ctx, MOCHA);
+        //catppuccin_egui::set_theme(ctx, MOCHA);
+
         if self.context.spinner == true{
             egui::Window::new("Spinner Window")
             .title_bar(false)
@@ -154,33 +156,22 @@ impl eframe::App for MasterTechApp {
         
         while let Ok(message) = receiver.try_recv() {
             if let Ok(info) = serde_json::from_str::<scaffold::TicketInformation>(&message) {
-                println!("ticket information: {info:#?}");
+                
                 self.context.output_text.clear();
-                let checkin_rep = info.user_id;
-                self.context.ticket_info.user_id = checkin_rep.clone();
-                if checkin_rep == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
-                else if checkin_rep == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
+
+
+                println!("ticket information: {:#?}", info);
     
                 // Handle TicketInformation
-                self.context.ticket_info.customer_name = info.customer_name;
-                self.context.ticket_info.customer_phone_1 = info.customer_phone_1;
-                self.context.ticket_info.customer_phone_2 = info.customer_phone_2;
-                self.context.ticket_info.checkin_notes = info.checkin_notes;
+                self.context.ticket_info = info;
+                println!("ticket information: {:#?}", self.context.ticket_info);
+
+                if self.context.ticket_info.user_id  == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
+                else if self.context.ticket_info.user_id  == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
     
-                self.context.ticket_info.cust_code = info.cust_code;
-                self.context.ticket_info.doc_alias = info.doc_alias;
-                self.context.ticket_info.department = info.department;
-                self.context.ticket_info.jurisdiction = info.jurisdiction;
-                self.context.ticket_info.invoice_amnt = info.invoice_amnt;
-                self.context.ticket_info.customer_email = info.customer_email;
-                self.context.ticket_info.last_invoice_number = info.last_invoice_number;
-                self.context.ticket_info.last_invoice_amount = info.last_invoice_amount;
-                self.context.ticket_info.total_invoice_count = info.total_invoice_count;
-                self.context.ticket_info.item_codes = info.item_codes;
-    
-                let code = self.context.ticket_info.cust_code.clone();
-                let email = self.context.ticket_info.customer_email.clone();
-                let codes = self.context.ticket_info.item_codes.clone();
+                let code = &self.context.ticket_info.cust_code;
+                let email = &self.context.ticket_info.customer_email;
+                let codes = &self.context.ticket_info.item_codes;
     
                 self.context.output_text += &format!("Customer Code: {code}\nCustomer Email: {email}\n\nItem on order:\n{codes}");
                 self.context.spinner = false;
@@ -269,13 +260,14 @@ impl eframe::App for MasterTechApp {
             .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
             .show(ctx, |ui| {
                 let mut style = self.context.style.get_or_insert(Style::from_egui(ui.style())).clone();
-                // style.selection_color = Color32::from_rgb(92,0,87);
+                style.overlay.selection_color = Color32::from_rgb(92,0,87);
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
                 style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
                 style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
                 style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
-                // style.tab.rounding.nw = 15.0;
-                // style.tab.rounding.ne = 15.0;
+                style.main_surface_border_rounding.nw = 15.0;
+                style.main_surface_border_rounding.ne = 15.0;
+                // style.
                 // style.tab.text_color_active_focused = Color32::from_rgba_premultiplied(0, 254, 158, 255);
                 // style.tab.text_color_active_unfocused = Color32::from_rgba_premultiplied(0, 255, 255, 255);
                 // style.tab.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
