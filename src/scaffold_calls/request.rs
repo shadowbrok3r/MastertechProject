@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports, unused_variables))]
 use crossbeam::channel;
+use async_trait::async_trait;
 use reqwest::{header::{CONTENT_TYPE, ACCEPT}, multipart::{Form, Part}};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
@@ -106,6 +107,26 @@ pub struct AddressObject{
 pub struct SendRequest {
     pub tx: std::sync::mpsc::Sender<String>,
 }
+
+#[async_trait]
+pub trait SendReq<T>{
+    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> core::result::Result<T, Box<dyn Error>>;
+}
+
+#[async_trait]
+impl SendReq<GetTicketResponse> for SendRequest{
+    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
+        todo!()
+    }
+}
+
+#[async_trait]
+impl SendReq<GetKeysResponse> for SendRequest{
+    async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
+        todo!()
+    }
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AsanaResponse{
