@@ -22,7 +22,7 @@ use crossbeam::channel;
  */
 use fs_extra::dir::get_size;
 //use cached::proc_macro::{io_cached, cached};
-use crate::io::{
+use crate::filesystem::io::{
     copy_selected_items, 
     format_path_metadata, 
     MetaData,

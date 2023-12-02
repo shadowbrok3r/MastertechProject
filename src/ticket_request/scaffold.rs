@@ -7,14 +7,15 @@ pub enum Salesman {
     Jake,
     Danny
 }
+
 #[derive(Debug, PartialEq)]
 pub enum Techs{
     Logan,
     Bread,
     Taco
 }
-#[derive(Debug, PartialEq)]
 
+#[derive(Debug, PartialEq)]
 pub enum HardwareTest{
     RamPass,
     RamFail,

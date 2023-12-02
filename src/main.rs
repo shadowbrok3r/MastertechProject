@@ -1,15 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-mod system_info;
-mod file_browser;
-mod scaffold_calls;
+mod filesystem;
+mod ticket_request;
 mod context;
-mod io;
 pub mod github;
 mod minidump;
 
 use std::fs::File;
 use github::self_updater;
-use crate::scaffold_calls::{scaffold, request};
+use crate::ticket_request::{scaffold, request};
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
@@ -17,10 +15,11 @@ use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel,
 use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
 use self_update::cargo_crate_version;
-use system_info::RetrieveSystemInfo;
+use filesystem::system_info::{RetrieveSystemInfo, SystemInformation};
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
+    puffin::set_scopes_on(true);
     let app = eframe::run_native(
         format!("Mastertech-{}",cargo_crate_version!()).as_str(),
         eframe::NativeOptions {
@@ -33,8 +32,6 @@ async fn main() -> eframe::Result<()> {
         },
         Box::new(|_cc| Box::<MasterTechApp>::default()),
     );
-
-    puffin::set_scopes_on(true);
 
     // Configure log level and log file
     let log_level = LevelFilter::Error; 
@@ -50,24 +47,7 @@ async fn main() -> eframe::Result<()> {
     app
 }
 
-#[cfg(feature = "compat_mode")]
-#[tokio::main]
-async fn main(){
-    puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
-    // cannot run this logger because the minidump module already uses a logger
-    let log_level = LevelFilter::Error; // Configure log level and log file
-    let log_file = File::create("output.log").unwrap();
-    WriteLogger::init( // Init the logger
-        log_level,
-        Config::default(),
-        log_file
-    ).unwrap();
 
-    let mut app = MasterTechApp::default();
-    run_software(move |ctx| {
-        app.update(&ctx);
-    });
-}
 
 pub(crate) fn load_icon() -> egui::IconData {
 	let (icon_rgba, icon_width, icon_height) = {
@@ -122,7 +102,8 @@ impl eframe::App for MasterTechApp {
             });
             if let Ok(res) = rx.recv(){
                 self.context.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
-            } */
+            } 
+            */
     
             let specs_sender = self.context.sysinfo_request.tx.clone();
             RetrieveSystemInfo::get_system_specs(specs_sender);
@@ -184,7 +165,7 @@ impl eframe::App for MasterTechApp {
                 }
                 self.context.spinner = false;
             }
-            else if let Ok(info) = serde_json::from_str::<system_info::SystemInformation>(&message) {
+            else if let Ok(info) = serde_json::from_str::<SystemInformation>(&message) {
                 self.context.system_name = info.system_name;
                 self.context.cpu_name = info.cpu_name;
                 self.context.total_ram = info.total_ram;
@@ -205,7 +186,7 @@ impl eframe::App for MasterTechApp {
                 }
                 
             }
-            else if let Ok(info) = serde_json::from_str::<request::AsanaResponse>(&message) { 
+            else if let Ok(info) = serde_json::from_str::<crate::ticket_request::AsanaResponse>(&message) { 
                 if let Some(e) = info.status{
                     self.context.output_text = format!("Status Code: {e:#?}");
                 };
@@ -283,6 +264,25 @@ impl eframe::App for MasterTechApp {
                     .show_inside(ui, &mut self.context);
             });
     }
+}
+
+#[cfg(feature = "compat_mode")]
+#[tokio::main]
+async fn main(){
+    puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
+    // cannot run this logger because the minidump module already uses a logger
+    let log_level = LevelFilter::Error; // Configure log level and log file
+    let log_file = File::create("output.log").unwrap();
+    WriteLogger::init( // Init the logger
+        log_level,
+        Config::default(),
+        log_file
+    ).unwrap();
+
+    let mut app = MasterTechApp::default();
+    run_software(move |ctx| {
+        app.update(&ctx);
+    });
 }
 
 #[cfg(feature = "compat_mode")]

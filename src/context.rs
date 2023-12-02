@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
+use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
 use serde_json::Value;
 use eframe::egui;
@@ -9,45 +9,22 @@ use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
-// use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
-
+use scaffold::TicketInformation;
 use crate::{
-    file_browser::FileBrowser, 
-    system_info, 
-    scaffold_calls::{
+    filesystem::{
+        file_browser::FileBrowser,
+        system_info::RetrieveSystemInfo
+    }, 
+    ticket_request::{
         request::SendRequest,
         scaffold
     },
-    system_info::RetrieveSystemInfo,
     self_updater::run,
     // minidump::minidump_main::MiniDumpApp,
     // puffin_profiler::start_puffin_server,
 };
-use scaffold::TicketInformation;
 
-/** 
-TODO, dont make all of these public, maybe we
-need a getter/setter, or use some Higher-level Methods: 
-Instead of manipulating the fields of your struct directly, 
-consider whether you can introduce higher-level methods that 
-perform the operations you need.
 
-For example, instead of getting a Vec field and pushing an 
-element to it, you might introduce a add_element method:
-
-pub struct MyStruct {
-    vec_field: Vec<i32>,
-    // other fields...
-}
-
-impl MyStruct {
-    pub fn add_element(&mut self, element: i32) {
-        self.vec_field.push(element);
-    }
-    // other methods...
-}
-
-*/
 pub struct MastertechContext { 
     pub so_number: String,
     pub recommendations: String,
@@ -57,7 +34,7 @@ pub struct MastertechContext {
     pub file_browser: Arc<Mutex<FileBrowser>>,
     pub client: reqwest::Client,
     scaffold_request: SendRequest,
-    pub sysinfo_request: system_info::RetrieveSystemInfo,
+    pub sysinfo_request: RetrieveSystemInfo,
     pub antivirus_installed: String,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
@@ -145,6 +122,7 @@ impl TabViewer for MastertechContext {
             }
         }
     }
+    
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
         tab.as_str().into()
     }
@@ -190,7 +168,7 @@ impl Default for MasterTechApp {
         let tx_scaffold = tx.clone();
         let tx_sysinfo = tx.clone();
 
-        let sysinfo_request = system_info::RetrieveSystemInfo{
+        let sysinfo_request = RetrieveSystemInfo{
             tx: tx_sysinfo,
         };
 
