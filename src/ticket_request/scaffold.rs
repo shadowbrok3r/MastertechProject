@@ -206,36 +206,10 @@ impl ScaffoldCalls {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct TicketInformation{
-    pub cust_code: String,
-    pub user_id: String, // "USER_ID": "BP3", //checkin rep
-    pub terms: String, // "TERMS": "CC",
-    pub doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
-    pub department: String, // "DEP": "LTN"
-    pub jurisdiction: Store, //"JURISCODE": "LTN",
-    pub invoice_amnt: String,
-
-    pub customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",
-    pub customer_phone_1: String,
-    pub customer_phone_2: String,
-    pub customer_email: String,
-    pub last_invoice_number: String, // "LI_DOC": "53745333",
-    pub last_invoice_amount: String,  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
-    //last_tuneup_date: String, // <-- HERE
-    //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
-    pub total_invoice_count: String,
-
-    pub checkin_notes: String,
-    pub item_codes: String,
-}
 
 
-#[derive(Serialize, Deserialize)]
-pub struct PulledKeys{
-    pub webroot_key: String,
-    pub superanti_key: String,
-}
+
+
 
 impl ScaffoldRequestBuilder {
     pub fn build_scaffold_call(&mut self) -> Value {
