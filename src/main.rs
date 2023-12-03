@@ -4,10 +4,11 @@ mod ticket_request;
 mod context;
 pub mod github;
 mod minidump;
+mod data;
 
 use std::fs::File;
 use github::self_updater;
-use crate::ticket_request::{scaffold, request};
+use crate::ticket_request::scaffold;
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
@@ -15,7 +16,8 @@ use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel,
 use egui_dock::{DockArea, Style};
 use catppuccin_egui::MOCHA;
 use self_update::cargo_crate_version;
-use filesystem::system_info::{RetrieveSystemInfo, SystemInformation};
+use data::SystemInformation;
+use filesystem::system_info::RetrieveSystemInfo;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -136,7 +138,7 @@ impl eframe::App for MasterTechApp {
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            if let Ok(info) = serde_json::from_str::<scaffold::TicketInformation>(&message) {
+            if let Ok(info) = serde_json::from_str::<data::TicketInformation>(&message) {
                 
                 self.context.output_text.clear();
 
@@ -158,7 +160,7 @@ impl eframe::App for MasterTechApp {
                 self.context.spinner = false;
     
             }             
-            else if let Ok(info) = serde_json::from_str::<scaffold::PulledKeys>(&message) {
+            else if let Ok(info) = serde_json::from_str::<data::PulledKeys>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
                     self.context.keys.webroot_key = info.webroot_key;
                     self.context.keys.superanti_key = info.superanti_key;

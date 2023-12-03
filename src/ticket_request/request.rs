@@ -9,7 +9,7 @@ use tokio::io::AsyncWriteExt;
 use std::{error::Error, path::PathBuf};
 use log::*;
 use simplelog::*; //::{error, debug, info};
-use crate::scaffold::*;
+use crate::{scaffold::*, data::{TicketInformation, PulledKeys}};
 use std::result::Result;
 use asana::{
     apis::{

@@ -4,19 +4,19 @@ use serde_json::Value;
 use eframe::egui;
 use egui::*;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use scaffold::PulledKeys;
+use crate::data::{PulledKeys, TicketInformation};
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
-use scaffold::TicketInformation;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use crate::{
+    data::SystemInformation,
     filesystem::{
         file_browser::FileBrowser,
-        system_info::{RetrieveSystemInfo, SystemInformation}
+        system_info::RetrieveSystemInfo
     }, 
     ticket_request::{
         request::SendRequest,

@@ -7,19 +7,13 @@ use tokio::{io::{self, ErrorKind}, runtime::Handle};
 use crossbeam::channel;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
+use crate::data::SystemInformation;
 
 pub struct RetrieveSystemInfo {
     pub tx: std::sync::mpsc::Sender<String>,
 }
 
-#[derive(Serialize, Deserialize, Default)]
-pub struct SystemInformation{
-    pub cpu_name: String,
-    pub total_ram: String,
-    pub system_name: String,
-    pub disks: DiskData, //Option<String>
-    pub gpu: Option<String>,
-}
+
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct DiskData {
