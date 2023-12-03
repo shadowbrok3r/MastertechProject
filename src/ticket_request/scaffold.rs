@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::*;
 use dotenv::var;
 
+use super::Store;
+
 #[derive(Debug, PartialEq)]
 pub enum Salesman {
     Jake,
@@ -211,7 +213,7 @@ pub struct TicketInformation{
     pub terms: String, // "TERMS": "CC",
     pub doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
     pub department: String, // "DEP": "LTN"
-    pub jurisdiction: String, //"JURISCODE": "LTN",
+    pub jurisdiction: Store, //"JURISCODE": "LTN",
     pub invoice_amnt: String,
 
     pub customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",

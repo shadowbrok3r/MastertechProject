@@ -12,7 +12,7 @@ pub struct RetrieveSystemInfo {
     pub tx: std::sync::mpsc::Sender<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct SystemInformation{
     pub cpu_name: String,
     pub total_ram: String,
@@ -21,7 +21,7 @@ pub struct SystemInformation{
     pub gpu: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct DiskData {
     pub disks: Vec<Value>,
 }
