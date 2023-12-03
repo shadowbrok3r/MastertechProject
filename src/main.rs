@@ -166,11 +166,9 @@ impl eframe::App for MasterTechApp {
                 self.context.spinner = false;
             }
             else if let Ok(info) = serde_json::from_str::<SystemInformation>(&message) {
-                self.context.system_name = info.system_name;
-                self.context.cpu_name = info.cpu_name;
-                self.context.total_ram = info.total_ram;
-                self.context.gpu = info.gpu;
-                for disk in info.disks.disks{
+                self.context.system_info = info;
+
+                for disk in &self.context.system_info.disks.disks{
                     
                     self.context.disk_num += 1;
     
@@ -212,11 +210,11 @@ impl eframe::App for MasterTechApp {
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
                     for tab in &[
-                        &self.context.tur_sheet_tab, 
-                        &self.context.scripts_tab, 
-                        &self.context.output_console_tab, 
-                        &self.context.system_info_tab, 
-                        &self.context.file_browser_tab,
+                        &"TUR Sheet".to_string(),
+                        &"Scripts".to_string(),
+                        &"Console".to_string(),
+                        &"System Information".to_string(),
+                        &"File Browser 📂".to_string(),
                         &"Minidump Analysis".to_string(),
                         &"Profiler".to_string(),
                     ] {

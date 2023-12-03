@@ -10,6 +10,7 @@ use std::{error::Error, path::PathBuf};
 use log::*;
 use simplelog::*; //::{error, debug, info};
 use crate::scaffold::*;
+use std::result::Result;
 use asana::{
     apis::{
         configuration::Configuration, 
@@ -24,7 +25,7 @@ use asana::{
     }
 };
 
-use super::{GetTicketResponse, GetKeysResponse, AsanaResponse};
+use super::{GetTicketResponse, GetKeysResponse, AsanaResponse, Store};
 // use log::{error, info, trace};
 
 
@@ -35,19 +36,19 @@ pub struct SendRequest {
 
 #[async_trait]
 pub trait SendReq<T>{
-    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> core::result::Result<T, Box<dyn Error>>;
+    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
 }
 
 #[async_trait]
 impl SendReq<GetTicketResponse> for SendRequest{
-    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
+    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
         todo!()
     }
 }
 
 #[async_trait]
 impl SendReq<GetKeysResponse> for SendRequest{
-    async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
+    async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
         todo!()
     }
 }
@@ -56,7 +57,11 @@ impl SendReq<GetKeysResponse> for SendRequest{
 
 
 impl SendRequest{
-    pub fn get_ticket(so_number: String, tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
+    pub fn get_ticket(
+        so_number: String, 
+        tx: std::sync::mpsc::Sender<String>, 
+        client: reqwest::Client)
+    {
         
         tokio::spawn(async move{
             let args = vec![
@@ -79,27 +84,23 @@ impl SendRequest{
             // Handle the response
             match response { // Successfully received GetTicketResponse
                 Ok(get_ticket_response) => {
-                    
-                    // You can now use fields of get_ticket_response
                     let header = get_ticket_response.header;
                     let customer = get_ticket_response.customer;
                     let addresses = get_ticket_response.addresses.address_object;
                     let items_objects = get_ticket_response.items;
                     //let transactions = &get_ticket_response.transactions;
 
-                    let mut checkin_note = "".to_string();
-                    let mut itemcodes = "".to_string();
+                    let mut checkin_note = String::new();
+                    let mut itemcodes = String::new();
 
-                    // DW_UPDATE_DATE is the exact time that the line item (AKA 'items') was added.
                     // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
-                    
                     for object in items_objects{
                         let x = object.clone();
                         // If i want to....
                         // "COST": "7.100000", this is our cost
                         // ITEM_PR_FEX is what we charge the customer, although AMOUNT is the same value
                         x
-                        .unwrap_or("".into())
+                        .unwrap_or("empty".into())
                         .get("NOTE")
                         .and_then(|v| v.as_str())
                         .map(|note| {
@@ -114,35 +115,40 @@ impl SendRequest{
                         
 
                         object
-                        .unwrap_or("".into())
-                        .get("ITEM_CODE")
-                        .and_then(|v| v.as_str())
-                        .map(|item_code| {
-                            itemcodes += &format!("{item_code}\n").to_string();
-                        });
+                            .unwrap_or("".into())
+                            .get("ITEM_CODE")
+                            .and_then(|v| v.as_str())
+                            .map(|item_code| {
+                                itemcodes += &format!("{item_code}\n").to_string();
+                            });
                     }
 
+                    let mut originating_store: Store = Store::None;
+                    if let Some(store) = header.JURISCODE{
+                        originating_store = store;
+                    }
 
                     let ticket_information = TicketInformation{
                         cust_code: header.CUST_CODE.unwrap_or("empty".to_string()),
                         user_id: header.USER_ID.unwrap_or("empty".to_string()),
-                        customer_phone_1: addresses.TEL1.clone(),
-                        customer_phone_2: addresses.TEL2.clone(),
-                        customer_email: addresses.EMAIL.clone(),
+                        customer_phone_1: addresses.TEL1.unwrap_or("empty".to_string()),
+                        customer_phone_2: addresses.TEL2.unwrap_or("empty".to_string()),
+                        customer_email: addresses.EMAIL.unwrap_or("empty".to_string()),
                         last_invoice_amount: customer.LI_AMT.unwrap_or("empty".to_string()),
                         terms: header.TERMS.unwrap_or("empty".to_string()),
                         doc_alias: header.DOC_ALIAS.unwrap_or("empty".to_string()),
                         department: header.DEP.unwrap_or("empty".to_string()),
-                        jurisdiction: header.JURISCODE.unwrap_or("empty".to_string()),
+                        jurisdiction: originating_store,
                         invoice_amnt: header.INV_AMOUNT.unwrap_or("empty".to_string()),
-                        customer_name: customer.NAME.clone(),
-                        checkin_notes: checkin_note.clone(),
+                        customer_name: customer.NAME.unwrap_or("empty".to_string()),
+                        checkin_notes: checkin_note,
                         last_invoice_number: customer.LI_DOC.unwrap_or("empty".to_string()),
                         item_codes: itemcodes.clone(),
                         total_invoice_count: customer.NUM_INV.unwrap_or("empty".to_string()),
                     };
                     
-                    let ticket_info_json = serde_json::to_string(&ticket_information).unwrap();
+                    let ticket_info_json = serde_json::to_string(&ticket_information).unwrap_or("No Ticket Information".to_string());
+
                     match tx.send(ticket_info_json) {
                         Ok(_) => drop(tx),
                         Err(e) => {
@@ -250,6 +256,7 @@ impl SendRequest{
         if assignees.1 == "Logan" { assigned_tech = "1199992640930465".to_string(); }
         else if assignees.1 == "Bread" { assigned_tech = "1202792432421640".to_string(); }
         else if assignees.1 == "Taco" { assigned_tech = "1202792432551073".to_string(); }
+
 
         let asana_response = AsanaResponse{
             gid: Some("".to_string()),

@@ -10,14 +10,17 @@ use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
 use scaffold::TicketInformation;
+use lettre::message::header::ContentType;
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::{Message, SmtpTransport, Transport};
 use crate::{
     filesystem::{
         file_browser::FileBrowser,
-        system_info::RetrieveSystemInfo
+        system_info::{RetrieveSystemInfo, SystemInformation}
     }, 
     ticket_request::{
         request::SendRequest,
-        scaffold
+        scaffold, Store
     },
     self_updater::run,
     // minidump::minidump_main::MiniDumpApp,
@@ -49,18 +52,9 @@ pub struct MastertechContext {
 
     pub output_text: String,
     
-    pub cpu_name: String,
-    pub total_ram: String,
-    pub system_name: String,
-    pub gpu: Option<String>,
+    pub system_info: SystemInformation,
     pub disks: Value,
     pub disk_num: usize,
-
-    pub tur_sheet_tab: String,
-    pub output_console_tab: String,
-    pub system_info_tab: String,
-    pub file_browser_tab: String,
-    pub scripts_tab: String,
 
     pub rx: Option<std::sync::mpsc::Receiver<String>>,
     pub ctx: egui::Context,
@@ -103,7 +97,7 @@ impl TabViewer for MastertechContext {
             "Minidump Analysis" => self.mini_dump(ui),
             "Profiler" => self.puffin_profiler(ui),
             _ => {
-                let sysinfo_tab = &self.system_info_tab.to_string();
+                let sysinfo_tab = &"System Information".to_string();
                 if ui.label(tab.as_str()).clicked(){
                     if tab.as_str() == sysinfo_tab{
                         self.specs_first_run = true;
@@ -209,11 +203,8 @@ impl Default for MasterTechApp {
             output_text: "".to_string(),
 
             
-            cpu_name: "".to_string(),
-            total_ram: "".to_string(),
-            system_name: "".to_string(),
+            system_info: SystemInformation { ..Default::default() },
             disks: Value::Array(vec![]),
-            gpu: Some("".to_string()),
             disk_num: 0,
 
 
@@ -229,11 +220,11 @@ impl Default for MasterTechApp {
             show_add_buttons: true,
             draggable_tabs: true,
             show_tab_name_on_hover: false,
-            tur_sheet_tab: "TUR Sheet".to_string(),
-            output_console_tab: "Console".to_string(),
-            system_info_tab: "System Information".to_string(),
-            scripts_tab: "Scripts".to_string(),
-            file_browser_tab: "File Browser 📂".to_string(),
+    
+    
+    
+    
+    
             date: None,
             animate_progress_bar: false,
             reader_bytes: 0,
@@ -723,10 +714,10 @@ impl MastertechContext {
                                             if self.send_specs == true{
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
-                                                let system_name = &self.system_name;
-                                                let cpu_name = &self.cpu_name;
-                                                let total_ram = &self.total_ram;
-                                                let gpu = &self.gpu.clone().unwrap_or("no gpu detected".to_string());
+                                                let system_name = &self.system_info.system_name;
+                                                let cpu_name = &self.system_info.cpu_name;
+                                                let total_ram = &self.system_info.total_ram;
+                                                let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
 
                                                 for index in 0..self.disk_num
                                                 {
@@ -846,19 +837,56 @@ impl MastertechContext {
                                                 <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
                                                 <li><strong>Technician:</strong>            {technician}</li></ul>
                                                 */
-                
-                                            SendRequest::send_ticket_request(
-                                                self.scaffold_request.tx.clone(), 
-                                                self.client.clone(), 
-                                                task_name,
-                                                html_notes,
-                                                assignees,
-                                                date,
-                                                attached_file
-                                            );
+
+                                            let store = &self.ticket_info.jurisdiction;
+                                            if store.as_str() != "RIV"{
+                                                SendRequest::send_ticket_request(
+                                                    self.scaffold_request.tx.clone(), 
+                                                    self.client.clone(), 
+                                                    task_name,
+                                                    html_notes,
+                                                    assignees,
+                                                    date,
+                                                    attached_file
+                                                );
+                                            }else{
+                                                let mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
+                                                let mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
+                                                let store_email = store.store_email();
+
+                                                let email = Message::builder()
+                                                    .from("TUR SHEET <pcl.mastertech@gmail.com>".parse().unwrap())
+                                                    .to("logan.lees@pclaptops.com".parse().unwrap())
+                                                    .subject(format!("{cust} - {so_num}"))
+                                                    .header(ContentType::TEXT_HTML)
+                                                    .body(html_notes)
+                                                    .unwrap();
+
+                                                let creds = Credentials::new(mtech_username.to_owned(), mtech_password.to_owned());
+
+                                                // Open a remote connection to gmail
+                                                let mailer = SmtpTransport::relay("smtp.gmail.com")
+                                                    .unwrap()
+                                                    .credentials(creds)
+                                                    .build();
+
+                                                self.output_text += "\n {store_email} {email}";
+                                                // Send the email
+                                                match mailer.send(&email) {
+                                                    Ok(_) => println!("Email sent successfully!"),
+                                                    Err(e) => {
+                                                        self.output_text += "\n{e:?}";
+                                                        println!("Could not send email: {e:?}")
+                                                    },
+                                                }
+                                            }
+
+
+
+
                                             self.spinner = false;
                                             
-                                            self.output_text += "\nSent Ticket";
+                                            // self.output_text += "\nSent Ticket";
                                         }
                                         else{
                                             self.output_text.clear();
@@ -943,7 +971,7 @@ impl MastertechContext {
             }); 
         }
 
-        let gpu = &self.gpu.clone().unwrap_or("no GPU found".to_string());
+        let gpu = &self.system_info.gpu.clone().unwrap_or("no GPU found".to_string());
 
         //let disks = self.disks.disks.clone();
         ui.indent("indented_sysinfo_table", |ui|{
@@ -970,7 +998,7 @@ impl MastertechContext {
                         ui.label("System Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.system_name);
+                        ui.label(&self.system_info.system_name);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -978,7 +1006,7 @@ impl MastertechContext {
                         ui.label("CPU Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.cpu_name);
+                        ui.label(&self.system_info.cpu_name);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -986,7 +1014,7 @@ impl MastertechContext {
                         ui.label("Total RAM");
                     });
                     row.col(|ui|{
-                        ui.label(format!("{} Gb", &self.total_ram));
+                        ui.label(format!("{} Gb", &self.system_info.total_ram));
                     });
                 });
                 body.row(20.0, |mut row| {

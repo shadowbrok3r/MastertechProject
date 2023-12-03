@@ -33,14 +33,14 @@ pub struct Header {
     pub TERMS: Option<String>, // "TERMS": "CC",
     pub DOC_ALIAS: Option<String>, // "DOC_ALIAS": "SERVICE ORDER",
     pub DEP: Option<String>, // "DEP": "LTN"
-    pub JURISCODE: Option<String>, //"JURISCODE": "LTN",
+    pub JURISCODE: Option<Store>, //"JURISCODE": "LTN",
     pub COG: Option<String>, // "COG": "7.1000", //Cost of goods?
     pub INV_AMOUNT: Option<String>, // "INV_AMOUNT": "53.6100",
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Customer {
-    pub NAME: String, 
+    pub NAME: Option<String>, 
     //pub CUSTOMER_ADDRESS: String,
     //"LI_DOC": "53745333",
     pub LI_DOC: Option<String>, 
@@ -90,7 +90,48 @@ pub struct Addresses {
 #[derive(Deserialize, Debug)]
 pub struct AddressObject{
     // Phone Number 1 & 2
-    pub TEL1: String, 
-    pub TEL2: String, 
-    pub EMAIL: String,
+    pub TEL1: Option<String>, 
+    pub TEL2: Option<String>,
+    pub EMAIL: Option<String>
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub enum Store{
+    None,
+    #[default]
+    RIV,
+    MUR,
+    WJ,
+    LTN,
+    AF,
+    SAN,
+    ORE,
+}
+
+impl Store {
+    pub fn store_email(&self) -> &'static str {
+        match *self {
+            Store::None => "",
+            Store::RIV => "RIV",
+            Store::MUR => "pclmur@pclaptops.com",
+            Store::WJ => "pclwj@pclaptops.com",
+            Store::LTN => "pclltn@pclaptops.com",
+            Store::AF => "pclaf@pclaptops.com",
+            Store::SAN => "pclsan@pclaptops.com",
+            Store::ORE => "pclore@pclaptops.com",
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match *self {
+            Store::None => "",
+            Store::RIV => "RIV",
+            Store::MUR => "MUR",
+            Store::WJ => "WJ",
+            Store::LTN => "LTN",
+            Store::AF => "AF",
+            Store::SAN => "SAN",
+            Store::ORE => "ORE",
+        }  
+    }
+
 }
