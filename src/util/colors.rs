@@ -210,34 +210,34 @@ pub const MACCHIATO: Theme = Theme {
     crust: Color32::from_rgb(24, 25, 38),
 };
 
-pub const MOCHA: Theme = Theme {
-    text: Color32::from_rgb(29, 187, 176), // override_text_color
-    rosewater: Color32::from_rgb(97, 131, 187), // hyperlink_color
-    surface0: Color32::from_rgb(26, 27, 38), // faint_bg_color
-    crust: Color32::from_rgb(81, 86, 112), // extreme_bg_color
-    mantle: Color32::from_rgb(26, 27, 38), // code_bg_color
-    peach: Color32::from_rgb(187, 164, 97), // warn_fg_color
-    maroon: Color32::from_rgb(187, 97, 107), // error_fg_color
-    base: Color32::from_rgb(26, 27, 38), // panel_fill: RGB(22, 22, 30), // window_fill
-    flamingo: Color32::from_rgb(242, 205, 205), // panel_fill
-    pink: Color32::from_rgb(245, 194, 231),
-    mauve: Color32::from_rgb(203, 166, 247),
-    red: Color32::from_rgb(243, 139, 168),
-    yellow: Color32::from_rgb(249, 226, 175),
-    green: Color32::from_rgb(166, 227, 161),
-    teal: Color32::from_rgb(148, 226, 213),
-    sky: Color32::from_rgb(137, 220, 235),
-    sapphire: Color32::from_rgb(116, 199, 236),
-    blue: Color32::from_rgb(137, 180, 250),
-    lavender: Color32::from_rgb(180, 190, 254),
-    subtext1: Color32::from_rgb(186, 194, 222),
-    subtext0: Color32::from_rgb(166, 173, 200),
-    overlay2: Color32::from_rgb(147, 153, 178),
-    overlay1: Color32::from_rgb(13, 15, 23),
-    overlay0: Color32::from_rgb(108, 112, 134),
-    surface2: Color32::from_rgb(88, 91, 112),
-    surface1: Color32::from_rgb(69, 71, 90),
-};
+// pub const MOCHA: Theme = Theme {
+//     text: Color32::from_rgb(29, 187, 176), // override_text_color
+//     rosewater: Color32::from_rgb(97, 131, 187), // hyperlink_color
+//     surface0: Color32::from_rgb(26, 27, 38), // faint_bg_color
+//     crust: Color32::from_rgb(81, 86, 112), // extreme_bg_color
+//     mantle: Color32::from_rgb(26, 27, 38), // code_bg_color
+//     peach: Color32::from_rgb(187, 164, 97), // warn_fg_color
+//     maroon: Color32::from_rgb(187, 97, 107), // error_fg_color
+//     base: Color32::from_rgb(26, 27, 38), // panel_fill: RGB(22, 22, 30), // window_fill
+//     flamingo: Color32::from_rgb(242, 205, 205), // panel_fill
+//     pink: Color32::from_rgb(245, 194, 231),
+//     mauve: Color32::from_rgb(203, 166, 247),
+//     red: Color32::from_rgb(243, 139, 168),
+//     yellow: Color32::from_rgb(249, 226, 175),
+//     green: Color32::from_rgb(166, 227, 161),
+//     teal: Color32::from_rgb(148, 226, 213),
+//     sky: Color32::from_rgb(137, 220, 235),
+//     sapphire: Color32::from_rgb(116, 199, 236),
+//     blue: Color32::from_rgb(137, 180, 250),
+//     lavender: Color32::from_rgb(180, 190, 254),
+//     subtext1: Color32::from_rgb(186, 194, 222),
+//     subtext0: Color32::from_rgb(166, 173, 200),
+//     overlay2: Color32::from_rgb(147, 153, 178),
+//     overlay1: Color32::from_rgb(13, 15, 23),
+//     overlay0: Color32::from_rgb(108, 112, 134),
+//     surface2: Color32::from_rgb(88, 91, 112),
+//     surface1: Color32::from_rgb(69, 71, 90),
+// };
 /*
 override_text_color: RGB(120, 124, 153)
 hyperlink_color: RGB(97, 131, 187)
@@ -261,34 +261,34 @@ popup_shadow: RGB(13, 15, 23)
 dark_mode: True
 */
 
-// pub const MOCHA: Theme = Theme {
-//     rosewater: Color32::from_rgb(245, 224, 220),
-//     flamingo: Color32::from_rgb(242, 205, 205),
-//     pink: Color32::from_rgb(245, 194, 231),
-//     mauve: Color32::from_rgb(203, 166, 247),
-//     red: Color32::from_rgb(243, 139, 168),
-//     maroon: Color32::from_rgb(235, 160, 172),
-//     peach: Color32::from_rgb(250, 179, 135),
-//     yellow: Color32::from_rgb(249, 226, 175),
-//     green: Color32::from_rgb(166, 227, 161),
-//     teal: Color32::from_rgb(148, 226, 213),
-//     sky: Color32::from_rgb(137, 220, 235),
-//     sapphire: Color32::from_rgb(116, 199, 236),
-//     blue: Color32::from_rgb(137, 180, 250),
-//     lavender: Color32::from_rgb(180, 190, 254),
-//     text: Color32::from_rgb(205, 214, 244),
-//     subtext1: Color32::from_rgb(186, 194, 222),
-//     subtext0: Color32::from_rgb(166, 173, 200),
-//     overlay2: Color32::from_rgb(147, 153, 178),
-//     overlay1: Color32::from_rgb(127, 132, 156),
-//     overlay0: Color32::from_rgb(108, 112, 134),
-//     surface2: Color32::from_rgb(88, 91, 112),
-//     surface1: Color32::from_rgb(69, 71, 90),
-//     surface0: Color32::from_rgb(49, 50, 68),
-//     base: Color32::from_rgb(30, 30, 46),
-//     mantle: Color32::from_rgb(24, 24, 37),
-//     crust: Color32::from_rgb(17, 17, 27),
-// };
+pub const MOCHA: Theme = Theme {
+    rosewater: Color32::from_rgb(245, 224, 220),
+    flamingo: Color32::from_rgb(242, 205, 205),
+    pink: Color32::from_rgb(245, 194, 231),
+    mauve: Color32::from_rgb(203, 166, 247),
+    red: Color32::from_rgb(243, 139, 168),
+    maroon: Color32::from_rgb(235, 160, 172),
+    peach: Color32::from_rgb(250, 179, 135),
+    yellow: Color32::from_rgb(249, 226, 175),
+    green: Color32::from_rgb(166, 227, 161),
+    teal: Color32::from_rgb(148, 226, 213),
+    sky: Color32::from_rgb(137, 220, 235),
+    sapphire: Color32::from_rgb(116, 199, 236),
+    blue: Color32::from_rgb(137, 180, 250),
+    lavender: Color32::from_rgb(180, 190, 254),
+    text: Color32::from_rgb(205, 214, 244),
+    subtext1: Color32::from_rgb(186, 194, 222),
+    subtext0: Color32::from_rgb(166, 173, 200),
+    overlay2: Color32::from_rgb(147, 153, 178),
+    overlay1: Color32::from_rgb(127, 132, 156),
+    overlay0: Color32::from_rgb(108, 112, 134),
+    surface2: Color32::from_rgb(88, 91, 112),
+    surface1: Color32::from_rgb(69, 71, 90),
+    surface0: Color32::from_rgb(49, 50, 68),
+    base: Color32::from_rgb(30, 30, 46),
+    mantle: Color32::from_rgb(24, 24, 37),
+    crust: Color32::from_rgb(17, 17, 27),
+};
 
 pub fn style() -> Style {
     Style {
