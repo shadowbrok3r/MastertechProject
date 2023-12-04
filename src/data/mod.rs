@@ -97,7 +97,45 @@ pub struct DriveData{
 
 impl TicketResponse{
     pub fn serialize_payload(&mut self) -> Self{
-        todo!()
-        // let x = self.ticket_data.
+        self.ticket_data = TicketData{
+            service_number: todo!(),
+            checkin_rep: todo!(),
+            checkin_notes: todo!(),
+            recommendations: todo!(),
+            tech: todo!(),
+            salesman: todo!(),
+            dep: todo!(),
+            terms: todo!(),
+            ticket_total: todo!(),
+            doc_alias: todo!(),
+        };
+
+        self.computer_data = ComputerData{
+            hostname: todo!(),
+            operating_system: todo!(),
+            cpu: todo!(),
+            gpu: todo!(),
+            ram: todo!(),
+            drives: todo!(),
+        };
+
+        self.customer_data = CustomerData{
+            cust_code: todo!(),
+            name: todo!(),
+            phone_number: todo!(),
+            phone_number_2: todo!(),
+            email: todo!(),
+            address: todo!(),
+            li_doc: todo!(),
+            li_amnt: todo!(),
+            num_inv: todo!(),
+        };
+
+        TicketResponse { 
+            ticket_data: self.ticket_data, 
+            customer_data: self.customer_data, 
+            computer_data: self.computer_data 
+        }
+
     }
 }

@@ -1,8 +1,9 @@
 use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
+use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, };
 use serde_json::Value;
 use eframe::egui;
-use egui::*;
+// use egui::*;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use crate::data::{PulledKeys, TicketInformation};
 use tokio::sync::mpsc::unbounded_channel;
@@ -34,6 +35,7 @@ pub struct MastertechContext {
 
     pub ticket_info: TicketInformation,
     pub keys: PulledKeys,
+
     pub file_browser: Arc<Mutex<FileBrowser>>,
     pub client: reqwest::Client,
     scaffold_request: SendRequest,
@@ -79,7 +81,7 @@ pub struct MastertechContext {
     pub style: Option<egui_dock::Style>,
     pub text_color: Color32,
     pub border_stroke_color: Stroke,
-    pub bg_color: Color32,
+    // pub bg_color: Color32,
     pub frame_counter: u64,
 }
 
@@ -107,7 +109,7 @@ impl TabViewer for MastertechContext {
         }
     }
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, surface_index: SurfaceIndex, node_index: NodeIndex) {
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
             _ => {
@@ -120,10 +122,12 @@ impl TabViewer for MastertechContext {
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
         tab.as_str().into()
     }
+    
     fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
         self.open_tabs.remove(tab);
         true
     }
+    
     fn on_add(&mut self, surface_index: SurfaceIndex, _node_index: NodeIndex) {
         //self.open_tabs.add(tab)
     }
@@ -135,15 +139,30 @@ pub struct MasterTechApp {
 
 impl Default for MasterTechApp {
     fn default() -> Self {
-        let mut tree = DockState::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
+        let mut tree = DockState::new(
+            vec!["TUR Sheet".to_owned(), 
+            "System Information".to_owned()
+        ]);
+
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
-        let [a, _] = tree.main_surface_mut().split_left(NodeIndex::root(), 0.3, vec!["File Browser 📂".to_owned(), "Scripts".to_owned()]);
-        let [_, _] = tree.main_surface_mut().split_below(
+        let [a, _] = tree
+            .main_surface_mut()
+            .split_left(
+                NodeIndex::root(),
+                0.3, 
+                vec![
+                    "File Browser 📂".to_owned(), 
+                    "Scripts".to_owned()
+        ]);
+
+        let [_, _] = tree
+            .main_surface_mut()
+            .split_below(
             a,
             0.72,
             vec!["Console".to_owned()],
-        );//let [_, _] = tree.split_below(b, 0.5, vec!["Scripts".to_owned()]);
+        );
 
         let mut open_tabs = HashSet::new();
 
@@ -172,19 +191,24 @@ impl Default for MasterTechApp {
 
         // let minidump_app = MiniDumpApp::default();
 
-        let ticket_information = TicketInformation {..Default::default()};
-        
-        //let system_information = SystemInformation {};
+        let ticket_information = TicketInformation::default();
+
 
         let context = MastertechContext {
             so_number: "".to_string(),
             recommendations: "".to_string(),
 
             ticket_info: ticket_information,
+
             keys: PulledKeys { 
                 webroot_key: "Webroot Key".to_string(), 
                 superanti_key: "SuperAnti Key".to_string() 
             },
+
+            system_info: SystemInformation::default(),
+            disks: Value::Array(vec![]),
+            disk_num: 0,
+
             scaffold_request,
             sysinfo_request,
             client,
@@ -202,12 +226,6 @@ impl Default for MasterTechApp {
             // minidump_app,
             output_text: "".to_string(),
 
-            
-            system_info: SystemInformation { ..Default::default() },
-            disks: Value::Array(vec![]),
-            disk_num: 0,
-
-
             rx: Some(rx),
 
             //////////////////////////////////////////
@@ -221,10 +239,6 @@ impl Default for MasterTechApp {
             draggable_tabs: true,
             show_tab_name_on_hover: false,
     
-    
-    
-    
-    
             date: None,
             animate_progress_bar: false,
             reader_bytes: 0,
@@ -236,14 +250,12 @@ impl Default for MasterTechApp {
             get_specs: false,
             spinner: false,
 
-            
-
             //////////////////////////////////////////
             /*          UI Colors                   */
             //////////////////////////////////////////
             style: None,
             text_color: Color32::from_rgb(255, 204, 230),//(200,200,200),
-            bg_color: Color32::from_rgb(28,30,36),
+            // bg_color: Color32::from_rgb(28,30,36),
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
 
             frame_counter: 0,
@@ -282,12 +294,12 @@ impl MastertechContext {
     }
 
     fn tur_sheet(&mut self, ui: &mut Ui) {
-        ui.visuals_mut().override_text_color = Some(self.text_color);
+        // ui.visuals_mut().override_text_color = Some(self.text_color);
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
-        ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
-        ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
+        // ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
+        // ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui|{ui.add_space(8.0);});
         
 
@@ -599,11 +611,11 @@ impl MastertechContext {
                                         Button::new
                                         (
                                             RichText::new("Submit TUR Sheet")
-                                                .color(Color32::from_rgb(255, 204, 255))
+                                                // .color(Color32::from_rgb(255, 204, 255))
                                                 .strong()
                                                 .italics()
                                         )
-                                            .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+                                            // .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
                                     )
                                     .clicked()
                                     {
@@ -954,8 +966,8 @@ impl MastertechContext {
         }
     
     fn system_information(&mut self, ui: &mut Ui){
-        ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
-        ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
+        // ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
+        // ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
 
         if self.specs_first_run{

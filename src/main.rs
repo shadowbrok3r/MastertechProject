@@ -5,19 +5,20 @@ mod context;
 pub mod github;
 mod minidump;
 mod data;
+mod util;
 
-use std::fs::File;
+use std::{fs::File, rc::Rc, sync::Arc};
 use github::self_updater;
+// use util::colors::style;
 use crate::ticket_request::scaffold;
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
-// use egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
-use egui_dock::{DockArea, Style};
-use catppuccin_egui::MOCHA;
+use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder, style::Style};
+use egui_dock::DockArea;
 use self_update::cargo_crate_version;
 use data::SystemInformation;
 use filesystem::system_info::RetrieveSystemInfo;
+use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -71,7 +72,12 @@ pub(crate) fn load_icon() -> egui::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        //catppuccin_egui::set_theme(ctx, MOCHA);
+        let theme = CarlDark;
+
+        let style: Style = theme.custom_style();
+
+        ctx.set_style(Arc::new(style));
+        // util::colors::set_theme(ctx, util::colors::MOCHA);
 
         if self.context.spinner == true{
             egui::Window::new("Spinner Window")
