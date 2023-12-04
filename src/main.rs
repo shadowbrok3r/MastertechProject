@@ -13,8 +13,8 @@ use github::self_updater;
 use crate::ticket_request::scaffold;
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder, style::Style};
-use egui_dock::DockArea;
+use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
+use egui_dock::{DockArea, Style};
 use self_update::cargo_crate_version;
 use data::SystemInformation;
 use filesystem::system_info::RetrieveSystemInfo;
@@ -74,10 +74,10 @@ impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let theme = CarlDark;
 
-        let style: Style = theme.custom_style();
+        // let style: Style = theme.custom_style();
 
-        ctx.set_style(Arc::new(style));
-        // util::colors::set_theme(ctx, util::colors::MOCHA);
+        // ctx.set_style(Arc::new(style));
+        util::colors::set_theme(ctx, util::colors::MOCHA);
 
         if self.context.spinner == true{
             egui::Window::new("Spinner Window")

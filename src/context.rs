@@ -851,7 +851,7 @@ impl MastertechContext {
                                                 */
 
                                             let store = &self.ticket_info.jurisdiction;
-                                            if store.as_str() != "RIV"{
+                                            if store.as_str() == "RIV"{
                                                 SendRequest::send_ticket_request(
                                                     self.scaffold_request.tx.clone(), 
                                                     self.client.clone(), 
@@ -883,6 +883,7 @@ impl MastertechContext {
                                                     .build();
 
                                                 self.output_text += "\n {store_email} {email}";
+
                                                 // Send the email
                                                 match mailer.send(&email) {
                                                     Ok(_) => println!("Email sent successfully!"),
@@ -892,9 +893,6 @@ impl MastertechContext {
                                                     },
                                                 }
                                             }
-
-
-
 
                                             self.spinner = false;
                                             
