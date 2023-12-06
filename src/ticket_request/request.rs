@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::*;
 use tokio::io::AsyncWriteExt;
 use std::{error::Error, path::PathBuf};
-use log::*;
+use log::{info, debug, trace, error};
 use simplelog::*; //::{error, debug, info};
 use crate::{scaffold::*, data::{TicketInformation, PulledKeys}};
 use std::result::Result;
@@ -26,32 +26,29 @@ use asana::{
 };
 
 use super::{GetTicketResponse, GetKeysResponse, AsanaResponse, Store};
-// use log::{error, info, trace};
-
-
 
 pub struct SendRequest {
     pub tx: std::sync::mpsc::Sender<String>,
 }
 
-#[async_trait]
-pub trait SendReq<T>{
-    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
-}
+// #[async_trait]
+// pub trait SendReq<T>{
+//     async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
+// }
 
-#[async_trait]
-impl SendReq<GetTicketResponse> for SendRequest{
-    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
-        todo!()
-    }
-}
+// #[async_trait]
+// impl SendReq<GetTicketResponse> for SendRequest{
+//     async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
+//         todo!()
+//     }
+// }
 
-#[async_trait]
-impl SendReq<GetKeysResponse> for SendRequest{
-    async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
-        todo!()
-    }
-}
+// #[async_trait]
+// impl SendReq<GetKeysResponse> for SendRequest{
+//     async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
+//         todo!()
+//     }
+// }
 
 
 
@@ -152,7 +149,7 @@ impl SendRequest{
                     match tx.send(ticket_info_json) {
                         Ok(_) => drop(tx),
                         Err(e) => {
-                            eprintln!("Error while sending ticket information: {}", e.to_string());
+                            debug!("Error while sending ticket information: {}", e.to_string());
                             drop(tx)
                         }
                     }
@@ -164,7 +161,7 @@ impl SendRequest{
                             drop(tx)
                         },
                         Err(e) => {
-                            eprintln!("Error while sending error message: {}", e);
+                            debug!("Error while sending error message: {}", e);
                             drop(tx)
                         }
                     }
@@ -173,8 +170,7 @@ impl SendRequest{
         });
         
     }
-    
-    
+       
     pub fn get_cps(so_number: String, tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
         
         tokio::spawn(async move{
@@ -189,7 +185,8 @@ impl SendRequest{
                 arguments: Some(args.clone())
             };
             
-            let response = request_keys(scaffold_builder, client).await;
+            let response = request_keys(scaffold_builder, client)
+                .await;
 
             match response { // Successfully received GetTicketResponse
                 Ok(get_keys_response) => {
@@ -211,7 +208,7 @@ impl SendRequest{
                             drop(tx)
                         },
                         Err(e) => {
-                            eprintln!("Error while sending ticket information: {}", e.to_string());
+                            debug!("Error while sending ticket information: {}", e.to_string());
                             drop(tx)
                         }
                     }
@@ -223,7 +220,7 @@ impl SendRequest{
                             drop(tx)
                         },
                         Err(e) => {
-                            eprintln!("Error while sending error message: {}", e);
+                            debug!("Error while sending error message: {}", e);
                             drop(tx)
                         }
                     }
@@ -419,10 +416,10 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
             if cfg!(debug_assertions){
                 
                 let raw_response: GetTicketResponse = res.json().await?;
-                println!("raw resp: {raw_response:?}");
+                info!("raw resp: {raw_response:?}");
 
                 for y in &raw_response.items{
-                    println!("{y:?}");
+                    info!("{y:?}");
                 }
 
                 // let json_response: GetTicketResponse = serde_json::from_str(&raw_response)
@@ -443,7 +440,7 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
             }
         },
         Err(e) => {
-            println!("Boxed error: {e:?}");
+            info!("Boxed error: {e:?}");
             Err(Box::new(e))
         },
     }
@@ -464,7 +461,7 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
             match response {
                 Ok(res) => {
                     let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
-                    //println!("response: {:?}", response_text);
+                    debug!("response: {:?}", response_text);
         
                     let mut webroot_key = "";
                     let mut superanti_key = "";
@@ -520,7 +517,7 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
                             if total > 0 {
                                 let progress = (downloaded as f64 / total as f64 * 100.0) as u32;
                                 progress_bytes = progress;
-                                println!("progress: {:?}", progress_bytes);
+                                info!("progress: {:?}", progress_bytes);
                             }
                         },
                         None => break, // The stream has ended

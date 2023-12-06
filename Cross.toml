@@ -1,8 +1,8 @@
 #[target.x86_64-unknown-linux-gnu]
 #image = "linux-x64"
 
-#[target.x86_64-pc-windows-gnu]
-#image = "windows11-x64"
+[target.x86_64-pc-windows-gnu]
+image = "windows11-x64"
 
 # Get-Content Dockerfile | docker build -
 
