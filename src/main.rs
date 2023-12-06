@@ -18,7 +18,7 @@ use egui_dock::{DockArea, Style};
 use self_update::cargo_crate_version;
 use data::SystemInformation;
 use filesystem::system_info::RetrieveSystemInfo;
-use egui_aesthetix::{themes::CarlDark, Aesthetix};
+// use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -37,7 +37,7 @@ async fn main() -> eframe::Result<()> {
     );
 
     // Configure log level and log file
-    let log_level = LevelFilter::Error; 
+    let log_level = LevelFilter::Debug; 
     let log_file = File::create("output.log").unwrap();
 
     // Init the logger
@@ -72,7 +72,7 @@ pub(crate) fn load_icon() -> egui::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        let theme = CarlDark;
+        // let theme = CarlDark;
 
         // let style: Style = theme.custom_style();
 
@@ -168,8 +168,7 @@ impl eframe::App for MasterTechApp {
             }             
             else if let Ok(info) = serde_json::from_str::<data::PulledKeys>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
-                    self.context.keys.webroot_key = info.webroot_key;
-                    self.context.keys.superanti_key = info.superanti_key;
+                    self.context.keys = info;
                 }
                 self.context.spinner = false;
             }
