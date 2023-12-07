@@ -17,7 +17,7 @@ pub struct GetTicketResponse {
     pub header: Header,
     pub customer: Customer,
     //pub transactions: Transactions,
-    pub addresses: Addresses,
+    pub addresses: Vec<Option<AddressObject>>,
     pub items: Vec<Option<Value>>,
 }
 
@@ -74,18 +74,18 @@ pub struct TransacObjectOne{
  */
 }
 
-#[derive(Deserialize, Debug)]
-pub struct Addresses {
-    pub address_object: AddressObject,
-/*
-    "ACCT_NAME": "Timber Ridge Fireplace LLC",
-    "NAME": "Timber Ridge Fireplace LLC",
-    "LAST_NAME": "Hale",
-    "FIRST_NAME": "Lisa",
-    "MOBILE_PHONE": "8013501447",
-    "ADDRESS_LINE1": "3080 N Fairfield Rd Suite #1",
- */
-}
+// #[derive(Deserialize, Debug)]
+// pub struct Addresses {
+//     pub address_object: AddressObject,
+// /*
+//     "ACCT_NAME": "Timber Ridge Fireplace LLC",
+//     "NAME": "Timber Ridge Fireplace LLC",
+//     "LAST_NAME": "Hale",
+//     "FIRST_NAME": "Lisa",
+//     "MOBILE_PHONE": "8013501447",
+//     "ADDRESS_LINE1": "3080 N Fairfield Rd Suite #1",
+//  */
+// }
 
 #[derive(Deserialize, Debug)]
 pub struct AddressObject{

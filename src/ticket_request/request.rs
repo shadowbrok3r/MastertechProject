@@ -8,7 +8,7 @@ use serde_json::*;
 use tokio::io::AsyncWriteExt;
 use std::{error::Error, path::PathBuf};
 use log::{info, debug, trace, error};
-use crate::{scaffold::*, data::{TicketInformation, PulledKeys}};
+use crate::{scaffold::*, data::{TicketInformation, PulledKeys}, ticket_request::AddressObject};
 use std::result::Result;
 use asana::{
     apis::{
@@ -83,13 +83,23 @@ impl SendRequest{
                     debug!("get_ticket_response -> {get_ticket_response:?}");
                     let header = get_ticket_response.header;
                     let customer = get_ticket_response.customer;
-                    let addresses = get_ticket_response.addresses.address_object;
+                    let addresses = get_ticket_response.addresses;
                     let items_objects = get_ticket_response.items;
                     //let transactions = &get_ticket_response.transactions;
 
                     let mut checkin_note = String::new();
                     let mut itemcodes = String::new();
 
+                    // Additional variables to store extra values
+                    let mut extra_tel1: Vec<String> = Vec::new();
+                    let mut extra_tel2: Vec<String> = Vec::new();
+                    let mut extra_email: Vec<String> = Vec::new();
+                    // Initialize your AddressObject with None values
+                    let mut address_object = AddressObject {
+                        TEL1: None,
+                        TEL2: None,
+                        EMAIL: None,
+                    };
                     // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
                     for object in items_objects{
                         let x = object.clone();
@@ -119,7 +129,35 @@ impl SendRequest{
                                 itemcodes += &format!("{item_code}\n").to_string();
                             });
                     }
+                    fn assign_or_collect(field: &mut Option<String>, extra: &mut Vec<String>, value: Option<String>) {
+                        match (&field, value) {
+                            (None, Some(v)) => *field = Some(v),
+                            (Some(_), Some(v)) => extra.push(v),
+                            _ => (),
+                        }
+                    }
+                    for address in addresses.into_iter().flatten() {
+                        assign_or_collect(&mut address_object.TEL1, &mut extra_tel1, address.TEL1);
+                        assign_or_collect(&mut address_object.TEL2, &mut extra_tel2, address.TEL2);
+                        assign_or_collect(&mut address_object.EMAIL, &mut extra_email, address.EMAIL);
+                    }
 
+                    // for object in addresses {
+                    //     if let Some(address) = object {
+                    //         println!("Address obj: {address:?}");
+                    //         // Assign the first non-None value or store additional values
+                    //         address_object.TEL1.get_or_insert_with(|| address.TEL1.unwrap_or_default())
+                    //                            .then(|| extra_tel1.push(address.TEL1.unwrap_or_default()));
+                    //         address_object.TEL2.get_or_insert_with(|| address.TEL2.unwrap_or_default())
+                    //                            .then(|| extra_tel2.push(address.TEL2.unwrap_or_default()));
+                    //         address_object.EMAIL.get_or_insert_with(|| address.EMAIL.unwrap_or_default())
+                    //                             .then(|| extra_email.push(address.EMAIL.unwrap_or_default()));
+                    //     }
+                    // }
+                    println!("first_tel1: {extra_tel1:?}");
+                    println!("first_tel2: {extra_tel2:?}");
+                    println!("first_email: {extra_email:?}");
+                    
                     let mut originating_store: Store = Store::None;
                     if let Some(store) = header.JURISCODE{
                         originating_store = store;
@@ -128,9 +166,9 @@ impl SendRequest{
                     let ticket_information = TicketInformation{
                         cust_code: header.CUST_CODE.unwrap_or("empty".to_string()),
                         user_id: header.USER_ID.unwrap_or("empty".to_string()),
-                        customer_phone_1: addresses.TEL1.unwrap_or("empty".to_string()),
-                        customer_phone_2: addresses.TEL2.unwrap_or("empty".to_string()),
-                        customer_email: addresses.EMAIL.unwrap_or("empty".to_string()),
+                        customer_phone_1: address_object.TEL1.unwrap(),
+                        customer_phone_2: extra_tel1.first().unwrap().to_string(),
+                        customer_email: address_object.EMAIL.unwrap(),
                         last_invoice_amount: customer.LI_AMT.unwrap_or("empty".to_string()),
                         terms: header.TERMS.unwrap_or("empty".to_string()),
                         doc_alias: header.DOC_ALIAS.unwrap_or("empty".to_string()),
@@ -400,7 +438,7 @@ impl SendRequest{
 
 async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, client: reqwest::Client)  
 -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
-
+    
     // Now you can use the method on the instance of ScaffoldRequestBuilder
     let params: Value = scaffold_builder.build_scaffold_call();
 
@@ -414,21 +452,7 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
 
     match response {
         Ok(res) => {
-            let x: Value = serde_json::from_value(res.json::<Value>().await?.clone()).or_else(|e|{
-                debug!("ERROR -> {e:?}");
-                Err(e)
-            }).unwrap();
-            debug!("x -> {x:?}");
-
-            let y = x.to_string();
-
-            debug!("y -> {y:?}");
-
-            // let json_response: GetTicketResponse  = res.json().await?.;
-            let json_response: GetTicketResponse = serde_json::from_str(y.as_str().trim()).unwrap();
-
-            debug!("json_response -> {json_response:?}");
-
+            let json_response: GetTicketResponse  = res.json().await?;
             Ok(json_response)
         },
         Err(e) => {
