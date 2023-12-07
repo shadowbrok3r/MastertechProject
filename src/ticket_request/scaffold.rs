@@ -207,10 +207,6 @@ impl ScaffoldCalls {
 }
 
 
-
-
-
-
 impl ScaffoldRequestBuilder {
     pub fn build_scaffold_call(&mut self) -> Value {
 
