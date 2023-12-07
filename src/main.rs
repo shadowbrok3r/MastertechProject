@@ -9,6 +9,7 @@ mod util;
 
 use std::{fs::File, rc::Rc, sync::Arc};
 use github::self_updater;
+use log::debug;
 // use util::colors::style;
 use crate::ticket_request::scaffold;
 use context::MasterTechApp;
@@ -23,18 +24,6 @@ use filesystem::system_info::RetrieveSystemInfo;
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     puffin::set_scopes_on(true);
-    let app = eframe::run_native(
-        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
-        eframe::NativeOptions {
-            viewport: ViewportBuilder::default()
-                .with_inner_size([925.0, 740.0])
-                .with_drag_and_drop(true)
-                .with_icon(load_icon())
-                .with_always_on_top(),
-            ..Default::default()
-        },
-        Box::new(|_cc| Box::<MasterTechApp>::default()),
-    );
 
     // Configure log level and log file
     let log_level = LevelFilter::Debug; 
@@ -47,7 +36,18 @@ async fn main() -> eframe::Result<()> {
         log_file
     ).unwrap();
 
-    app
+    eframe::run_native(
+        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
+        eframe::NativeOptions {
+            viewport: ViewportBuilder::default()
+                .with_inner_size([925.0, 740.0])
+                .with_drag_and_drop(true)
+                .with_icon(load_icon())
+                .with_always_on_top(),
+            ..Default::default()
+        },
+        Box::new(|_cc| Box::<MasterTechApp>::default()),
+    )
 }
 
 
@@ -149,11 +149,11 @@ impl eframe::App for MasterTechApp {
                 self.context.output_text.clear();
 
 
-                println!("ticket information: {:#?}", info);
+                debug!("ticket information: {:#?}", info);
     
                 // Handle TicketInformation
                 self.context.ticket_info = info;
-                println!("ticket information: {:#?}", self.context.ticket_info);
+                debug!("ticket information: {:#?}", self.context.ticket_info);
 
                 if self.context.ticket_info.user_id  == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
                 else if self.context.ticket_info.user_id  == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}

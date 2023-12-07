@@ -8,7 +8,6 @@ use serde_json::*;
 use tokio::io::AsyncWriteExt;
 use std::{error::Error, path::PathBuf};
 use log::{info, debug, trace, error};
-use simplelog::*; //::{error, debug, info};
 use crate::{scaffold::*, data::{TicketInformation, PulledKeys}};
 use std::result::Result;
 use asana::{
@@ -81,6 +80,7 @@ impl SendRequest{
             // Handle the response
             match response { // Successfully received GetTicketResponse
                 Ok(get_ticket_response) => {
+                    debug!("get_ticket_response -> {get_ticket_response:?}");
                     let header = get_ticket_response.header;
                     let customer = get_ticket_response.customer;
                     let addresses = get_ticket_response.addresses.address_object;
@@ -156,6 +156,7 @@ impl SendRequest{
                     
                 },
                 Err(e) => { 
+                    debug!("response error -> {e:?}");
                     match tx.send(e.to_string()) {
                         Ok(_) => {
                             drop(tx)
@@ -413,34 +414,25 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
 
     match response {
         Ok(res) => {
-            if cfg!(debug_assertions){
-                
-                let raw_response: GetTicketResponse = res.json().await?;
-                info!("raw resp: {raw_response:?}");
+            let x: Value = serde_json::from_value(res.json::<Value>().await?.clone()).or_else(|e|{
+                debug!("ERROR -> {e:?}");
+                Err(e)
+            }).unwrap();
+            debug!("x -> {x:?}");
 
-                for y in &raw_response.items{
-                    info!("{y:?}");
-                }
+            let y = x.to_string();
 
-                // let json_response: GetTicketResponse = serde_json::from_str(&raw_response)
-                // .map_err(|err| {
-                //     let error_position = err.column();
-                //     let start = error_position.saturating_sub(10);
-                //     let end = (error_position + 10).min(raw_response.len());
-                //     format!(
-                //         "Context: {:#?}                           JSON parse error: {:#?}",
-                //         &raw_response[start..end], err
-                //     )
-                // }).unwrap();
+            debug!("y -> {y:?}");
 
-                Ok(raw_response)
-            }else{
-                let json_response: GetTicketResponse = res.json().await?;
-                Ok(json_response)
-            }
+            // let json_response: GetTicketResponse  = res.json().await?.;
+            let json_response: GetTicketResponse = serde_json::from_str(y.as_str().trim()).unwrap();
+
+            debug!("json_response -> {json_response:?}");
+
+            Ok(json_response)
         },
         Err(e) => {
-            info!("Boxed error: {e:?}");
+            debug!("Boxed error: {e:?}");
             Err(Box::new(e))
         },
     }
