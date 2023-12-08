@@ -26,6 +26,7 @@ pub struct TaskAssignee{
     pub tech: Techs
 }
 
+/*
 pub fn html_builder(
     ticket_info: TicketInformation, 
     system_info: SystemInformation,
@@ -298,4 +299,6 @@ pub fn asana_html_builder(
 
 }
 
+
+*/
 // pub fn email_builder() -> String {  }
