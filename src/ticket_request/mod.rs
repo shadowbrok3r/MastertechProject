@@ -3,6 +3,7 @@ use serde_json::Value;
 
 pub mod request;
 pub mod scaffold;
+pub mod request_builder;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AsanaResponse{

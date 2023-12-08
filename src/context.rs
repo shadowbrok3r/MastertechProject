@@ -5,14 +5,12 @@ use serde_json::Value;
 use eframe::egui;
 // use egui::*;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use crate::data::{PulledKeys, TicketInformation};
+use crate::{data::{PulledKeys, TicketInformation}, ticket_request::request_builder::asana_html_builder};
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
-use lettre::message::header::ContentType;
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::{Message, SmtpTransport, Transport};
+
 use crate::{
     data::SystemInformation,
     filesystem::{
@@ -141,27 +139,27 @@ impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = DockState::new(
             vec!["TUR Sheet".to_owned(), 
-            "System Information".to_owned()
+            "File Browser 📂".to_owned(),
+            "Scripts".to_owned()
         ]);
 
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
-        let [a, _] = tree
+        let [a, b] = tree
             .main_surface_mut()
             .split_left(
                 NodeIndex::root(),
-                0.3, 
+                0.32, 
                 vec![
-                    "File Browser 📂".to_owned(), 
-                    "Scripts".to_owned()
+                    "Console".to_owned(),
         ]);
 
         let [_, _] = tree
             .main_surface_mut()
             .split_below(
-            a,
-            0.72,
-            vec!["Console".to_owned()],
+            b,
+            0.4,
+            vec!["System Information".to_owned()],
         );
 
         let mut open_tabs = HashSet::new();
@@ -618,287 +616,46 @@ impl MastertechContext {
                                             // .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
                                     )
                                     .clicked()
-                                    {
-                                        let cust = &self.ticket_info.customer_name;
-                                        let so_num = &self.so_number;
-                
-                                        if !cust.is_empty() && !so_num.is_empty()
+                                    {  
+                                        if !&self.ticket_info.customer_name.is_empty() || !&self.so_number.is_empty()
                                         {
                                             self.spinner = true;
-
-                                            if self.spinner == true{
+                                            if self.spinner{
                                                 ui.add(
                                                     Spinner::new()
                                                     .color(Color32::LIGHT_RED)
                                                     .size(20.0)
                                                 );
                                             }
-                                            let mut salesman_map = HashMap::new();
-                                            let mut tech_map = HashMap::new();
-
-                                            let salesman = &format!("{:?}", &self.salesman_cbox);
-                                            let checkin_rep = &self.ticket_info.user_id;
-                                            let technician = &format!("{:?}", &self.techs_cbox);
-
-                                            salesman_map.insert("Jake", "1202792432658520");
-                                            salesman_map.insert("Danny", "1202791016369879");
-                                            tech_map.insert("Logan", "1199992640930465");
-                                            tech_map.insert("Bread", "1202792432421640");
-                                            tech_map.insert("Taco", "1202792432551073");
-
-                                            //let assigned_salesman = salesman_map.get(salesman.as_str()).unwrap_or(&"1202792432658520").to_string();
-                                            //let assigned_tech = tech_map.get(technician.as_str()).unwrap_or(&"1199992640930465").to_string();
-
-                                            let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
-                                            let ram_test = &format!("{:?}", &self.ram_test_cbox);
-                                            let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
-                                            let checkin_notes = &self.ticket_info.checkin_notes;
-                                            let recommendations = &self.recommendations;   
-                                            let task_name = (cust, so_num);
-                                            let assignees = (salesman, technician);
-                                            let date = format!("{}", self.date.unwrap());
-                                            let mut attached_file: Option<PathBuf> = None;
-                                            if let Some(file) = &self.opened_file{
-                                                attached_file = Some(file.to_path_buf());
-                                            }
-
-                                            let mut specs = String::new();
-                                            let cps = self.antivirus_installed.clone();
-                                            let mut final_disk = String::new();
-                                            let mut each_disk = String::new();
-                                                                                    
-                                            let cust_code = &self.ticket_info.cust_code;
-                                            let doc_alias = &self.ticket_info.doc_alias;
-                                            //let department = &self.ticket_info.department;
-                                            //let juris = &self.ticket_info.jurisdiction;
-                                            let inv_amt = &self.ticket_info.invoice_amnt;
-                                            let cust_email = &self.ticket_info.customer_email;
-                                            let last_inv_num = &self.ticket_info.last_invoice_number;
-                                            let last_inv_amt = &self.ticket_info.last_invoice_amount;
-                                            let total_inv_num = &self.ticket_info.total_invoice_count;
-                                            let phone1 = &self.ticket_info.customer_phone_1;
-                                            let phone2 = &self.ticket_info.customer_phone_2;
-                                            let mut phone_2 = String::new();
-                                            if !phone2.is_empty(){
-                                                phone_2 = format!("<tr>
-                                                <td style=\"padding:1px 1px\">Phone #2</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{phone2}</td>
-                                                </tr>");
-                                            }
-                                            /*      
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Depart/Juris</td>
-                                                <td style=\"padding:1px 1px\">{department}/{juris}</td>
-                                            </tr>
-                                            */
-                                            let extra_customer_info = format!
-                                            ("
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Customer Code</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{cust_code}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Phone #</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\"><strong>{phone1}</strong></td>
-                                            </tr>
-                                            {phone_2}
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Customer Email</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{cust_email}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Current Total</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">${inv_amt}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Last SI#</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{last_inv_num}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Last Invoice Total</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{last_inv_amt}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\"># of SI's</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{total_inv_num}</td>
-                                            </tr>
-                                            ");
-                                            if self.send_specs == true{
-                                                self.output_text.clear();
-                                                self.output_text += "pulling system information. Please wait a moment..\n";
-                                                let system_name = &self.system_info.system_name;
-                                                let cpu_name = &self.system_info.cpu_name;
-                                                let total_ram = &self.system_info.total_ram;
-                                                let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
-
-                                                for index in 0..self.disk_num
-                                                {
-                                                    if let Some(disk) = self.disks.get(index)
-                                                    {
-                                                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
-                                                        let disk_available = format!
-                                                        (
-                                                            "{} Gb", disk.get("available space").and_then(Value::as_str).unwrap_or("")
-                                                        );
-                                                        let disk_total = format!
-                                                        (
-                                                            "{} Gb", disk.get("total space").and_then(Value::as_str).unwrap_or("")
-                                                        );
-
-                                                        each_disk += &format!("
-                                                        <tr>
-                                                        <td style=\"padding:1px 1px\">        {disk_letter}</td>
-                                                        <td style=\"padding:1px 1px\">        {disk_available}</td>
-                                                        <td style=\"padding:1px 1px\">        {disk_total}</td>
-                                                        </tr>
-                                                        ");
-
-                                                        final_disk = format!
-                                                            ("
-                                                            <tr>
-                                                                <td style=\"padding:1px 4px\">Letter</td>
-                                                                <td style=\"padding:1px 4px\">Avail Space</td>
-                                                                <td style=\"padding:1px 4px\">Total Space</td>
-                                                            </tr>
-                                                            {each_disk}
-                                                        ");
-
-                                                    }
-                                                }
-
-                                                specs = format!("
-                                                <table>
-                                                    <tr>
-                                                        <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,200,200\" width=\"450\"
-                                                        >              <code>       Computer Info        </code></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>OS</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{system_name}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>CPU</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{cpu_name}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>RAM</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{total_ram} Gb</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>GPU</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{gpu}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>Antivirus</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{cps}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>SEB</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\"></td>
-                                                    </tr>
-                                                    <tr>
-                                                    <td colspan=
-                                                    \"3\" data-cell-widths=\"100,200,200\" width=\"400\" style=\"text-align:center;\"
-                                                    >                <code>        HDD/SSD info        </code></td>
-                                                    </tr>
-                                                    {final_disk}
-                                                    </table>
-                                                ").trim().to_string();
-                                            }else{
-                                                specs = "Computer information was not sent with ticket".to_string();
-                                            }
-                                            
-                                            let html_notes = format!(
-                                                "<body>
-                                                    <table>
-                                                        <tr>
-                                                            <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,130,130\" width=\"390\"
-                                                            >                <code>        {doc_alias} Info        </code>
-                                                            </td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style=\"padding:1px 1px\">Salesman</td>
-                                                            <td style=\"padding:1px 1px\">Checkin Rep</td>
-                                                            <td style=\"padding:1px 1px\">Technician</td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style=\"padding:1px 4px\">     {salesman}</td>
-                                                            <td style=\"padding:1px 4px\">     {checkin_rep}</td>
-                                                            <td style=\"padding:1px 4px\">     {technician}</td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,130,130\" width=\"390\"
-                                                            >                <code>           Customer           </code>
-                                                            </td>
-                                                        </tr>
-                                                        {extra_customer_info}
-                                                    </table>
-                                                    {specs}
-                                                    <ul>
-                                                        <li><strong>SSD test:</strong>     {ssd_test}</li>
-                                                        <li><strong>HDD test:</strong>     {hdd_test}</li>
-                                                        <li><strong>RAM test:</strong>     {ram_test}</li>
-                                                    </ul>
-                                                    <h2><strong><code>           Notes           </code></strong></h2>
-                                                    <ul><li><strong>        Checkin Notes:      </strong>     \n{checkin_notes}</li>
-                                                        <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",
-                                            );
-                                                /*
-                                                <ul>
-                                                <li><strong>Salesman:</strong>              {salesman}</li>
-                                                <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
-                                                <li><strong>Technician:</strong>            {technician}</li></ul>
-                                                */
-
                                             let store = &self.ticket_info.jurisdiction;
+
                                             if store.as_str() == "RIV"{
+                                                let sm = self.salesman_cbox;
+                                                let tests = self.hdd_test_cbox;
+                                                
+                                                let asana_task = asana_html_builder(
+                                                    self.ticket_info,
+                                                    self.system_info,
+                                                    self.send_specs,
+                                                    self.client,
+                                                    self.scaffold_request.tx
+                                                );
+
                                                 SendRequest::send_ticket_request(
                                                     self.scaffold_request.tx.clone(), 
                                                     self.client.clone(), 
-                                                    task_name,
-                                                    html_notes,
-                                                    assignees,
-                                                    date,
-                                                    attached_file
+                                                    asana_task,
+                                                    self.date.unwrap().to_string(),
                                                 );
-                                            }else{
-                                                let mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
-                                                let mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
-                                                let store_email = store.store_email();
+                                            }
+                                            else{
 
-                                                let email = Message::builder()
-                                                    .from("TUR SHEET <pcl.mastertech@gmail.com>".parse().unwrap())
-                                                    .to("logan.lees@pclaptops.com".parse().unwrap())
-                                                    .subject(format!("{cust} - {so_num}"))
-                                                    .header(ContentType::TEXT_HTML)
-                                                    .body(html_notes)
-                                                    .unwrap();
-
-                                                let creds = Credentials::new(mtech_username.to_owned(), mtech_password.to_owned());
-
-                                                // Open a remote connection to gmail
-                                                let mailer = SmtpTransport::relay("smtp.gmail.com")
-                                                    .unwrap()
-                                                    .credentials(creds)
-                                                    .build();
-
-                                                self.output_text += "\n {store_email} {email}";
-
-                                                // Send the email
-                                                match mailer.send(&email) {
-                                                    Ok(_) => println!("Email sent successfully!"),
-                                                    Err(e) => {
-                                                        self.output_text += "\n{e:?}";
-                                                        println!("Could not send email: {e:?}")
-                                                    },
-                                                }
                                             }
 
                                             self.spinner = false;
-                                            
-                                            // self.output_text += "\nSent Ticket";
                                         }
-                                        else{
+                                        else
+                                        {
                                             self.output_text.clear();
                                             self.output_text = "You need to enter a customer name or Service number".to_string();
                                         }
@@ -984,7 +741,7 @@ impl MastertechContext {
         let gpu = &self.system_info.gpu.clone().unwrap_or("no GPU found".to_string());
 
         //let disks = self.disks.disks.clone();
-        ui.indent("indented_sysinfo_table", |ui|{
+        ui.push_id("table 1",|ui|{
             let table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
@@ -1040,13 +797,13 @@ impl MastertechContext {
 
         });
         ui.vertical(|ui|{ui.add_space(20.0)});
-        ui.indent("indented_disks",|ui|{
+        ui.push_id("table 2",|ui|{
             let disks_table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(Column::exact(15.0))
-                .column(Column::exact(150.0))
+                .column(Column::exact(42.0))
                 .columns(Column::remainder(), 2);
             
             disks_table
@@ -1056,7 +813,7 @@ impl MastertechContext {
                     ui.label("#");
                 });
                 header.col(|ui|{
-                    ui.label("Drive Letter");
+                    ui.label("Letter");
                 });
                 // header.col(|ui|{
                 //     ui.label("Space Used");

@@ -40,7 +40,7 @@ async fn main() -> eframe::Result<()> {
         format!("Mastertech-{}",cargo_crate_version!()).as_str(),
         eframe::NativeOptions {
             viewport: ViewportBuilder::default()
-                .with_inner_size([925.0, 740.0])
+                .with_inner_size([945.0, 560.0])
                 .with_drag_and_drop(true)
                 .with_icon(load_icon())
                 .with_always_on_top(),
@@ -145,11 +145,8 @@ impl eframe::App for MasterTechApp {
         
         while let Ok(message) = receiver.try_recv() {
             if let Ok(info) = serde_json::from_str::<data::TicketInformation>(&message) {
-                
+    
                 self.context.output_text.clear();
-
-
-                debug!("ticket information: {:#?}", info);
     
                 // Handle TicketInformation
                 self.context.ticket_info = info;
@@ -161,8 +158,9 @@ impl eframe::App for MasterTechApp {
                 let code = &self.context.ticket_info.cust_code;
                 let email = &self.context.ticket_info.customer_email;
                 let codes = &self.context.ticket_info.item_codes;
-    
-                self.context.output_text += &format!("Customer Code: {code}\nCustomer Email: {email}\n\nItem on order:\n{codes}");
+                let store = &self.context.ticket_info.jurisdiction;
+
+                self.context.output_text += &format!("Store: {store:?}\n\nCustomer Code: {code}\nCustomer Email: {email}\n\nItem on order:\n{codes}");
                 self.context.spinner = false;
     
             }             
