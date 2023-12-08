@@ -4,13 +4,13 @@ use dotenv::var;
 
 use super::Store;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Salesman {
     Jake,
     Danny
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Techs{
     Logan,
     Bread,
