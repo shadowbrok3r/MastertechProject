@@ -24,7 +24,7 @@ use asana::{
     }
 };
 
-use super::{GetTicketResponse, GetKeysResponse, AsanaResponse, Store};
+use super::{GetTicketResponse, GetKeysResponse, AsanaResponse, Store, request_builder::{AsanaTask, TaskAssignee}};
 
 pub struct SendRequest {
     pub tx: std::sync::mpsc::Sender<String>,
@@ -90,16 +90,6 @@ impl SendRequest{
                     let mut checkin_note = String::new();
                     let mut itemcodes = String::new();
 
-                    // Additional variables to store extra values
-                    let mut extra_tel1: Vec<String> = Vec::new();
-                    let mut extra_tel2: Vec<String> = Vec::new();
-                    let mut extra_email: Vec<String> = Vec::new();
-                    // Initialize your AddressObject with None values
-                    let mut address_object = AddressObject {
-                        TEL1: None,
-                        TEL2: None,
-                        EMAIL: None,
-                    };
                     // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
                     for object in items_objects{
                         let x = object.clone();
@@ -129,18 +119,51 @@ impl SendRequest{
                                 itemcodes += &format!("{item_code}\n").to_string();
                             });
                     }
-                    fn assign_or_collect(field: &mut Option<String>, extra: &mut Vec<String>, value: Option<String>) {
-                        match (&field, value) {
-                            (None, Some(v)) => *field = Some(v),
-                            (Some(_), Some(v)) => extra.push(v),
-                            _ => (),
+
+                    /// Collects non-None values into a vector.
+                    /// 
+                    /// # Arguments
+                    /// * `values` - A mutable reference to a vector of strings where the values will be collected.
+                    /// * `value` - An Option<String> that may contain a value to be collected.
+                    fn collect_values(values: &mut Vec<String>, value: Option<String>) {
+                        // Check if the value is Some and, if so, push it into the provided vector.
+                        // The `if let` syntax is a concise way to handle `Option` types that are `Some`.
+                        if let Some(v) = value {
+                            values.push(v);
                         }
                     }
+
+
+                    // Temporary vectors to collect all non-None values for each field.
+                    let mut temp_tel1 = Vec::new();
+                    let mut temp_tel2 = Vec::new();
+                    let mut temp_email = Vec::new();
+
+                    // Iterate through the addresses and collect all non-None values.
                     for address in addresses.into_iter().flatten() {
-                        assign_or_collect(&mut address_object.TEL1, &mut extra_tel1, address.TEL1);
-                        assign_or_collect(&mut address_object.TEL2, &mut extra_tel2, address.TEL2);
-                        assign_or_collect(&mut address_object.EMAIL, &mut extra_email, address.EMAIL);
+                        // Collect non-None TEL1 values.
+                        collect_values(&mut temp_tel1, address.TEL1);
+                        // Collect non-None TEL2 values.
+                        collect_values(&mut temp_tel2, address.TEL2);
+                        // Collect non-None EMAIL values.
+                        collect_values(&mut temp_email, address.EMAIL);
                     }
+
+                    // Initialize address_object with the last value from each collection,
+                    // which is assumed to be the most recent or relevant.
+                    let address_object = AddressObject {
+                        TEL1: temp_tel1.pop(), // Get and remove the last TEL1 value, if any.
+                        TEL2: temp_tel2.pop(), // Get and remove the last TEL2 value, if any.
+                        EMAIL: temp_email.pop(), // Get and remove the last EMAIL value, if any.
+                    };
+
+                    // The remaining values in the temporary vectors are assigned to the extra vectors.
+                    // These are the primary phone numbers and emails, excluding the most recent ones assigned to address_object.
+                    let extra_tel1 = temp_tel1;
+                    let extra_tel2 = temp_tel2;
+                    let extra_email = temp_email;
+
+
 
                     // for object in addresses {
                     //     if let Some(address) = object {
@@ -154,21 +177,26 @@ impl SendRequest{
                     //                             .then(|| extra_email.push(address.EMAIL.unwrap_or_default()));
                     //     }
                     // }
-                    println!("first_tel1: {extra_tel1:?}");
-                    println!("first_tel2: {extra_tel2:?}");
-                    println!("first_email: {extra_email:?}");
                     
+                    println!("extra_tel1: {extra_tel1:?}");
+                    println!("extra_tel2: {extra_tel2:?}");
+                    println!("extra_email: {extra_email:?}");
+                    println!("address_object TEL1: {:?}", address_object.TEL1);
+                    println!("address_object TEL2: {:?}", address_object.TEL2);
+                    println!("address_object EMAIL: {:?}", address_object.EMAIL);
+                    // update the originating store sending the ticket
                     let mut originating_store: Store = Store::None;
                     if let Some(store) = header.JURISCODE{
                         originating_store = store;
                     }
 
+                    // 
                     let ticket_information = TicketInformation{
                         cust_code: header.CUST_CODE.unwrap_or("empty".to_string()),
                         user_id: header.USER_ID.unwrap_or("empty".to_string()),
-                        customer_phone_1: address_object.TEL1.unwrap(),
-                        customer_phone_2: extra_tel1.first().unwrap().to_string(),
-                        customer_email: address_object.EMAIL.unwrap(),
+                        customer_phone_1: address_object.TEL1.unwrap_or("empty".to_string()),
+                        customer_phone_2: address_object.TEL2.unwrap_or("empty".to_string()),
+                        customer_email: address_object.EMAIL.unwrap_or("empty".to_string()),
                         last_invoice_amount: customer.LI_AMT.unwrap_or("empty".to_string()),
                         terms: header.TERMS.unwrap_or("empty".to_string()),
                         doc_alias: header.DOC_ALIAS.unwrap_or("empty".to_string()),
@@ -271,28 +299,26 @@ impl SendRequest{
     pub fn send_ticket_request(
         tx: std::sync::mpsc::Sender<String>, 
         client: reqwest::Client, 
-        task_name: (&String, &String),
-        html_notes: String,
-        assignees: (&String, &String),
+        asana_task: AsanaTask,
         due_date: String,
-        file_attachment: Option<PathBuf>
     ) 
     {
         let (sender, receiver) = channel::bounded::<String>(5);
         let send = tx.clone();
-        let cust = task_name.0.clone();
-        let so_num = task_name.1.clone();
 
         let mut assigned_salesman = "1202792432658520".to_string(); // Jake
         let mut assigned_tech = "1199992640930465".to_string(); // Logan
 
-        if assignees.0 == "Jake"{ assigned_salesman = "1202792432658520".to_string(); }
-        else if assignees.0 == "Danny"{ assigned_salesman = "1202791016369879".to_string() }
+        match asana_task.assignee.salesman{
+            Salesman::Jake => {assigned_salesman = "1202792432658520".to_string()},
+            Salesman::Danny => {assigned_salesman = "1202791016369879".to_string()},
+        };
 
-        if assignees.1 == "Logan" { assigned_tech = "1199992640930465".to_string(); }
-        else if assignees.1 == "Bread" { assigned_tech = "1202792432421640".to_string(); }
-        else if assignees.1 == "Taco" { assigned_tech = "1202792432551073".to_string(); }
-
+         match asana_task.assignee.tech{
+            Techs::Logan => { assigned_tech = "1199992640930465".to_string()},
+            Techs::Bread => { assigned_tech = "1202792432551073".to_string()},
+            Techs::Taco => { assigned_tech = "1202792432421640".to_string()},
+        };
 
         let asana_response = AsanaResponse{
             gid: Some("".to_string()),
@@ -315,7 +341,7 @@ impl SendRequest{
             asana_config.bearer_access_token = Some("1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2".to_string());
             asana_config.user_agent = None;
             
-            task.name = Some(format!("{cust} - {so_num}"));
+            task.name = Some(asana_task.task_name);// Some(format!("{cust} - {so_num}"));
             
             task.workspace = Some("13314583095021".to_string());
             if !cfg!(debug_assertions){
@@ -326,20 +352,20 @@ impl SendRequest{
             }
             
             task.followers = Some(vec![assigned_salesman, assigned_tech]); // Logan: 1199992640930465
-            task.html_notes = Some(html_notes);
+            task.html_notes = Some(asana_task.html_notes);
             task.due_on = Some(due_date);
             //task.resource_subtype = Some("".to_string());
             //task.dependencies = Some("".to_string());
 
-            let asana_task = 
+            let new_task = 
             InlineObject35{ data: Some(Box::new(task)) };
 
             // Serialize the html_notes to a JSON string and calculate its length
-            let html_notes_json = serde_json::to_string(&asana_task).unwrap();
+            let html_notes_json = serde_json::to_string(&new_task).unwrap();
             let content_length = html_notes_json.len();
             
             match create_task(&asana_config, 
-                asana_task, 
+                new_task, 
                 Some(true), //only set to true if debugging
                 None
                 ).await
@@ -350,7 +376,7 @@ impl SendRequest{
                     {
                         Some(data) =>
                         {
-                            let file = file_attachment.clone();
+                            let file = asana_task.file_attachment.clone();
 
                             if let Some(file) = file
                             {
@@ -364,7 +390,7 @@ impl SendRequest{
                                         .and_then(|name| name.to_str())
                                         .unwrap_or("no file name");
                                         
-                                        let file_attachment = file_attachment.clone();
+                                        let file_attachment = asana_task.file_attachment.clone();
                                         let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
                                         
                                         let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
