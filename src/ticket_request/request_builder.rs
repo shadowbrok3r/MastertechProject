@@ -301,7 +301,13 @@ pub fn asana_html_builder(
 
 
 */
- pub fn email_builder<T >() -> String {
+ pub fn email_builder<T: Serialize>(info: T) -> String {
+
+
+     let y = X{
+         y: "".to_string(),
+         z: "".to_string()
+     };
 
      let html_string = format!("
  <!doctype html>
