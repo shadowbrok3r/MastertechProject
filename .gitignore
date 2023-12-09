@@ -8,3 +8,4 @@ output.log
 .idea/vcs.xml
 .idea/inspectionProfiles/Project_Default.xml
 .env
+.idea/codeStyles/codeStyleConfig.xml

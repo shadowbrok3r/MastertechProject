@@ -13,6 +13,7 @@ use puffin_egui;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
+use serde::Serialize;
 
 use crate::{
     data::SystemInformation,
@@ -28,6 +29,7 @@ use crate::{
     // minidump::minidump_main::MiniDumpApp,
     // puffin_profiler::start_puffin_server,
 };
+use crate::ticket_request::request_builder::email_builder;
 
 
 pub struct MastertechContext { 
@@ -847,6 +849,7 @@ impl MastertechContext {
                                             );
 
                                             let store = &self.ticket_info.jurisdiction;
+
                                             if store.as_str() == "RIV"{
                                                 let sm = self.salesman_cbox;
                                                 let tech = self.techs_cbox;
@@ -874,6 +877,69 @@ impl MastertechContext {
                                                 let mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
                                                 let store_email = store.store_email();
 
+                                                #[derive(Serialize)]
+                                                struct Info{
+                                                    hdd_test: String,
+                                                    ram_test: String,
+                                                    ssd_test: String,
+                                                    checkin_notes: String,
+                                                    recommendations: String,
+                                                    specs: String,
+                                                    cps: String,
+                                                    cust_code: String,
+                                                    doc_alias: String,
+                                                    inv_amt: String,
+                                                    cust_email: String,
+                                                    last_inv_num: String,
+                                                    last_inv_amt: String,
+                                                    total_inv_num: String,
+                                                    phone1: String,
+                                                    phone2: String,
+                                                    disk_letter: String,
+                                                    disk_available: String,
+                                                    disk_total: String,
+                                                    system_name: String,
+                                                    cpu_name: String,
+                                                    total_ram: String,
+                                                    gpu: String,
+                                                    salesman: String,
+                                                    checkin_rep: String,
+                                                    technician: String,
+                                                    extra_customer_info: String,
+                                                }
+
+                                                let info = Info{
+                                                    hdd_test,
+                                                    ram_test,
+                                                    ssd_test,
+                                                    checkin_notes,
+                                                    recommendations,
+                                                    specs,
+                                                    cps,
+                                                    cust_code,
+                                                    doc_alias,
+                                                    inv_amt,
+                                                    cust_email,
+                                                    last_inv_num,
+                                                    last_inv_amt,
+                                                    total_inv_num,
+                                                    phone1,
+                                                    phone2,
+                                                    disk_letter,
+                                                    disk_available,
+                                                    disk_total,
+                                                    system_name,
+                                                    cpu_name,
+                                                    total_ram,
+                                                    gpu,
+                                                    salesman,
+                                                    checkin_rep,
+                                                    technician,
+                                                    extra_customer_info,
+                                                };
+
+                                                let html = email_builder(info);
+                                                
                                                 let email = Message::builder()
                                                     .from("TUR SHEET <pcl.mastertech@gmail.com>".parse().unwrap())
                                                     .to("logan.lees@pclaptops.com".parse().unwrap())
