@@ -634,6 +634,7 @@ impl MastertechContext {
                                                     .size(20.0)
                                                 );
                                             }
+
                                             let mut salesman_map = HashMap::new();
                                             let mut tech_map = HashMap::new();
 
@@ -647,8 +648,8 @@ impl MastertechContext {
                                             tech_map.insert("Bread", "1202792432421640");
                                             tech_map.insert("Taco", "1202792432551073");
 
-                                            //let assigned_salesman = salesman_map.get(salesman.as_str()).unwrap_or(&"1202792432658520").to_string();
-                                            //let assigned_tech = tech_map.get(technician.as_str()).unwrap_or(&"1199992640930465").to_string();
+                                            // let assigned_salesman = salesman_map.get(salesman.as_str()).unwrap_or(&"1202792432658520").to_string();
+                                            // let assigned_tech = tech_map.get(technician.as_str()).unwrap_or(&"1199992640930465").to_string();
 
                                             let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
                                             let ram_test = &format!("{:?}", &self.ram_test_cbox);
@@ -852,10 +853,10 @@ impl MastertechContext {
 
                                                 let task = AsanaTask { 
                                                     task_name: format!("{cust} - {so_num}"), 
-                                                    html_notes: html_notes, 
+                                                    html_notes,
                                                     assignee: TaskAssignee { 
                                                         salesman: sm, 
-                                                        tech: tech 
+                                                        tech
                                                     }, 
                                                     file_attachment: self.opened_file.clone() 
                                                 };
@@ -895,8 +896,8 @@ impl MastertechContext {
                                                 match mailer.send(&email) {
                                                     Ok(_) => println!("Email sent successfully!"),
                                                     Err(e) => {
-                                                        self.output_text += "\n{e:?}";
-                                                        println!("Could not send email: {e:?}")
+                                                        self.output_text += format!("\n{e:?}").as_str();
+                                                        //println!("Could not send email: {e:?}")
                                                     },
                                                 }
                                             }
