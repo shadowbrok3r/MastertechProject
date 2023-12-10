@@ -7,10 +7,39 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use reqwest::Client;
 use serde::Serialize;
+use serde_json::Value;
 use crate::data::{TicketInformation, SystemInformation};
 
 use super::scaffold::{Salesman, Techs};
 
+#[derive(Serialize)]
+pub struct Info{
+  pub customer_name: String, 
+  pub so_num: String, 
+  pub hdd_test: String,
+  pub ram_test: String,
+  pub ssd_test: String,
+  pub checkin_notes: String,
+  pub recommendations: String,
+  pub specs: String,
+  pub cps: String,
+  pub cust_code: String,
+  pub doc_alias: String,
+  pub inv_amt: String,
+  pub cust_email: String,
+  pub last_inv_num: String,
+  pub last_inv_amt: String,
+  pub total_inv_num: String,
+  pub phone1: String,
+  pub phone2: String,
+
+  pub final_disk: String,
+
+  pub salesman: String,
+  pub checkin_rep: String,
+  pub technician: String,
+  pub extra_customer_info: String,
+}
 
 // #[derive(Serialize)]
 pub struct AsanaTask{
@@ -301,557 +330,273 @@ pub fn asana_html_builder(
 
 
 */
- pub fn email_builder<T: Serialize>(info: T) -> String {
+ pub fn email_builder(info: Info) -> String {
+
+  let customer_name = info.customer_name;
+  let so_num = info.so_num;
+  let hdd_test = info.hdd_test;
+  let ram_test = info.ram_test;
+  let ssd_test = info.ssd_test;
+  let checkin_notes = info.checkin_notes;
+  let recommendations = info.recommendations;
+  let specs = info.specs;
+  let cps = info.cps;
+  let cust_code = info.cust_code;
+  let doc_alias = info.doc_alias;
+  let inv_amt = info.inv_amt;
+  let cust_email = info.cust_email;
+  let last_inv_num = info.last_inv_num;
+  let last_inv_amt = info.last_inv_amt;
+  let total_inv_num = info.total_inv_num;
+  let phone1 = info.phone1;
+  let phone2 = info.phone2;
+  let final_disk = info.final_disk;
+  let salesman = info.salesman;
+  let checkin_rep = info.checkin_rep;
+  let technician = info.technician;
+  let extra_customer_info = info.extra_customer_info;
 
 
-     let y = X{
-         y: "".to_string(),
-         z: "".to_string()
-     };
+  let html_string = format!("
+  <!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">
+  <html dir=\"ltr\" xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" lang=\"en\">
+   <head>
+    <meta charset=\"UTF-8\">
+    <meta content=\"width=device-width, initial-scale=1\" name=\"viewport\">
+    <meta name=\"x-apple-disable-message-reformatting\">
+    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\">
+    <meta content=\"telephone=no\" name=\"format-detection\">
+    <title>Mtech template</title>
+    <link href=\"https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap\" rel=\"stylesheet\">
+    <link href=\"https://fonts.googleapis.com/css?family=Open+Sans:400,400i,700,700i\" rel=\"stylesheet\">
+    <style type=\"text/css\">
+  #outlook a {{
+    
+  }}
+  .es-button {{
+    mso-style-priority:100!important;
+    text-decoration:none!important;
+  }}
+  a[x-apple-data-detectors] {{
+    color:inherit!important;
+    text-decoration:none!important;
+    font-size:inherit!important;
+    font-family:inherit!important;
+    font-weight:inherit!important;
+    line-height:inherit!important;
+  }}
+  .es-desk-hidden {{
+    display:none;
+    float:left;
+    overflow:hidden;
+    width:0;
+    max-height:0;
+    line-height:0;
+    mso-hide:all;
+  }}
+  @media only screen and (max-width:600px) {{p, ul li, ol li {{ margin-bottom:11px!important }} .es-header-body p, .es-header-body ul li, .es-header-body ol li {{ margin-bottom:9px!important }} .es-footer-body p, .es-footer-body ul li, .es-footer-body ol li {{ margin-bottom:8px!important }} .es-infoblock p, .es-infoblock ul li, .es-infoblock ol li {{ margin-bottom:8px!important }} p, ul li, ol li, a {{ line-height:120%!important }} h1, h2, h3, h1 a, h2 a, h3 a {{ line-height:100%!important }} h1 {{ font-size:30px!important; text-align:center; margin-bottom:15px }} h2 {{ font-size:24px!important; text-align:center; margin-bottom:12px }} h3 {{ font-size:20px!important; text-align:center; margin-bottom:10px }} .es-header-body h1 a, .es-content-body h1 a, .es-footer-body h1 a {{ font-size:30px!important; text-align:center }} .es-header-body h2 a, .es-content-body h2 a, .es-footer-body h2 a {{ font-size:24px!important; text-align:center }} .es-header-body h3 a, .es-content-body h3 a, .es-footer-body h3 a {{ font-size:20px!important; text-align:center }} .es-menu td a {{ font-size:12px!important }} .es-header-body p, .es-header-body ul li, .es-header-body ol li, .es-header-body a {{ font-size:14px!important }} .es-content-body p, .es-content-body ul li, .es-content-body ol li, .es-content-body a {{ font-size:14px!important }} .es-footer-body p, .es-footer-body ul li, .es-footer-body ol li, .es-footer-body a {{ font-size:12px!important }} .es-infoblock p, .es-infoblock ul li, .es-infoblock ol li, .es-infoblock a {{ font-size:12px!important }} *[class=\"gmail-fix\"] {{ display:none!important }} .es-m-txt-c, .es-m-txt-c h1, .es-m-txt-c h2, .es-m-txt-c h3 {{ text-align:center!important }} .es-m-txt-r, .es-m-txt-r h1, .es-m-txt-r h2, .es-m-txt-r h3 {{ text-align:right!important }} .es-m-txt-l, .es-m-txt-l h1, .es-m-txt-l h2, .es-m-txt-l h3 {{ text-align:left!important }} .es-m-txt-r img, .es-m-txt-c img, .es-m-txt-l img {{ display:inline!important }} .es-button-border {{ display:inline-block!important }} a.es-button, button.es-button {{ font-size:18px!important; display:inline-block!important }} .es-adaptive table, .es-left, .es-right {{ width:100%!important }} .es-content table, .es-header table, .es-footer table, .es-content, .es-footer, .es-header {{ width:100%!important; max-width:600px!important }} .es-adapt-td {{ display:block!important; width:100%!important }} .adapt-img {{ width:100%!important; height:auto!important }} .es-m-p0 {{ padding:0!important }} .es-m-p0r {{ padding-right:0!important }} .es-m-p0l {{ padding-left:0!important }} .es-m-p0t {{ padding-top:0!important }} .es-m-p0b {{ padding-bottom:0!important }} .es-m-p20b {{ padding-bottom:20px!important }} .es-mobile-hidden, .es-hidden {{ display:none!important }} tr.es-desk-hidden, td.es-desk-hidden, table.es-desk-hidden {{ width:auto!important; overflow:visible!important; float:none!important; max-height:inherit!important; line-height:inherit!important }} tr.es-desk-hidden {{ display:table-row!important }} table.es-desk-hidden {{ display:table!important }} td.es-desk-menu-hidden {{ display:table-cell!important }} .es-menu td {{ width:1%!important }} table.es-table-not-adapt, .esd-block-html table {{ width:auto!important }} table.es-social {{ display:inline-block!important }} table.es-social td {{ display:inline-block!important }} .es-desk-hidden {{ display:table-row!important; width:auto!important; overflow:visible!important; max-height:inherit!important }} .es-m-p5 {{ padding:5px!important }} .es-m-p5t {{ padding-top:5px!important }} .es-m-p5b {{ padding-bottom:5px!important }} .es-m-p5r {{ padding-right:5px!important }} .es-m-p5l {{ padding-left:5px!important }} .es-m-p10 {{ padding:10px!important }} .es-m-p10t {{ padding-top:10px!important }} .es-m-p10b {{ padding-bottom:10px!important }} .es-m-p10r {{ padding-right:10px!important }} .es-m-p10l {{ padding-left:10px!important }} .es-m-p15 {{ padding:15px!important }} .es-m-p15t {{ padding-top:15px!important }} .es-m-p15b {{ padding-bottom:15px!important }} .es-m-p15r {{ padding-right:15px!important }} .es-m-p15l {{ padding-left:15px!important }} .es-m-p20 {{ padding:20px!important }} .es-m-p20t {{ padding-top:20px!important }} .es-m-p20r {{ padding-right:20px!important }} .es-m-p20l {{ padding-left:20px!important }} .es-m-p25 {{ padding:25px!important }} .es-m-p25t {{ padding-top:25px!important }} .es-m-p25b {{ padding-bottom:25px!important }} .es-m-p25r {{ padding-right:25px!important }} .es-m-p25l {{ padding-left:25px!important }} .es-m-p30 {{ padding:30px!important }} .es-m-p30t {{ padding-top:30px!important }} .es-m-p30b {{ padding-bottom:30px!important }} .es-m-p30r {{ padding-right:30px!important }} .es-m-p30l {{ padding-left:30px!important }} .es-m-p35 {{ padding:35px!important }} .es-m-p35t {{ padding-top:35px!important }} .es-m-p35b {{ padding-bottom:35px!important }} .es-m-p35r {{ padding-right:35px!important }} .es-m-p35l {{ padding-left:35px!important }} .es-m-p40 {{ padding:40px!important }} .es-m-p40t {{ padding-top:40px!important }} .es-m-p40b {{ padding-bottom:40px!important }} .es-m-p40r {{ padding-right:40px!important }} .es-m-p40l {{ padding-left:40px!important }} }}
+  @media screen and (max-width:384px) {{.mail-message-content {{ width:414px!important }} }}
+  </style>
+   </head>
+   <body style=\"width:100%;font-family:'open sans', 'helvetica neue', helvetica, arial, sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;Margin:0\">
+    <div dir=\"ltr\" class=\"es-wrapper-color\" lang=\"en\" style=\"background-color:#131313\">
+     <table class=\"es-wrapper\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%;height:100%;background-repeat:repeat;background-position:center top;background-color:#131313\">
+       <tr>
+        <td valign=\"top\" style=\"Margin:0\">
+         <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-header\" align=\"center\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;table-layout:fixed !important;width:100%;background-color:transparent;background-repeat:repeat;background-position:center top\">
+           <tr>
+            <td align=\"center\" style=\"Margin:0\">
+             <table bgcolor=\"#ffffff\" class=\"es-header-body\" align=\"center\" cellpadding=\"0\" cellspacing=\"0\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;background-color:transparent;width:700px\">
+               <tr>
+                <td align=\"left\" style=\"padding:20px;Margin:0\">
+                 <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                   <tr>
+                    <td class=\"es-m-p0r\" valign=\"top\" align=\"center\" style=\"width:660px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                       <tr>
+                        <td align=\"center\" class=\"es-m-txt-c\" style=\"font-size:0px\"><a target=\"_blank\" href=\"https://viewstripo.email\" style=\"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:underline;color:#FFFFFF;font-size:12px\"><img src=\"https://ecwnuzs.stripocdn.email/content/guids/89070ba8-83e1-4d67-b646-4663532227d2/images/masterlogov2_1.png\" alt=\"Logo\" style=\"display:block;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic\" title=\"Logo\" height=\"70\"></a></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                 </table></td>
+               </tr>
+             </table></td>
+           </tr>
+         </table>
+         <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-content\" align=\"center\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;table-layout:fixed !important;width:100%\">
+           <tr>
+            <td align=\"center\" style=\"Margin:0\">
+             <table bgcolor=\"#ffffff\" class=\"es-content-body\" align=\"center\" cellpadding=\"0\" cellspacing=\"0\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;background-color:#FFFFFF;border-radius:50px 50px 0 0;width:700px\">
+               <tr>
+                <td align=\"left\" style=\"Margin:0\">
+                 <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                   <tr>
+                    <td align=\"center\" valign=\"top\" style=\"width:700px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:separate;border-spacing:0px;border-radius:4px\">
+                       <tr>
+                        <td align=\"center\" class=\"es-m-p20r es-m-p20l\" style=\"padding-top:5px\"><h2 style=\"line-height:48px;mso-line-height-rule:exactly;font-family:'trebuchet ms', 'lucida grande', 'lucida sans unicode', 'lucida sans', tahoma, sans-serif;font-size:24px;font-style:normal;font-weight:bold;color:#000000;margin-bottom:12px\"><b>{customer_name} - {so_num}</b></h2></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                 </table></td>
+               </tr>
+               <tr>
+                <td align=\"left\" bgcolor=\"#22272f\" style=\"padding-left:20px;padding-right:20px;padding-top:40px;background-color:#22272f\">
+                 <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-left\" align=\"left\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:left\">
+                   <tr>
+                    <td class=\"es-m-p20b\" align=\"left\" style=\"width:315px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                       <tr>
+                        <td align=\"center\" style=\"Margin:0\"><h2 style=\"line-height:24px;mso-line-height-rule:exactly;font-family:'times new roman', times, baskerville, georgia, serif;font-size:24px;font-style:normal;font-weight:bold;color:#fcfdfd;margin-bottom:12px;text-align:center\"><strong>Customer Info</strong></h2>
+                         <table border=\"2\" align=\"center\" cellspacing=\"2\" cellpadding=\"2\" class=\"es-table\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%\">
+                           <tr>
+                            <td style=\"color:#ffffff\"><strong>Phone #</strong></td>
+                            <td style=\"text-align:center;color:#ffffff\">{phone1}</td>
+                           </tr>
+                           <tr>
+                            <td style=\"color:#ffffff\"><strong>Phone # 2</strong></td>
+                            <td style=\"text-align:center;color:#ffffff\">{phone2}</td>
+                           </tr>
+                           <tr>
+                            <td style=\"color:#ffffff\"><strong>Email</strong></td>
+                            <td style=\"color:#ffffff;text-align:center\">{cust_email}</td>
+                           </tr>
+                           <tr>
+                            <td style=\"color:#ffffff\"><strong>Ticket Total</strong></td>
+                            <td style=\" text-align:center\">${inv_amt}</td>
+                           </tr>
+                           <tr>
+                            <td style=\"color:#ffffff\"><strong>Last SI #</strong></td>
+                            <td style=\" text-align:center\">{last_inv_num}</td>
+                           </tr>
+                           <tr>
+                            <td style=\"color:#ffffff\"><strong>Last SI $</strong></td>
+                            <td style=\" text-align:center\">${last_inv_amt}</td>
+                           </tr>
+                         </table></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                 </table>
+                 <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-right\" align=\"right\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:right\">
+                   <tr>
+                    <td align=\"left\" style=\"width:315px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                       <tr>
+                        <td align=\"left\" style=\"Margin:0\"><h2 style=\"line-height:24px;mso-line-height-rule:exactly;font-family:'times new roman', times, baskerville, georgia, serif;font-size:24px;font-style:normal;font-weight:bold;color:#ffffff;margin-bottom:12px;text-align:center\"><strong>Hardware Info</strong></h2>
+                         <table border=\"2\" align=\"center\" cellspacing=\"2\" cellpadding=\"2\" class=\"es-table\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%\">
+                          {specs}
+                         </table><p style=\"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:'open sans', 'helvetica neue', helvetica, arial, sans-serif;line-height:22px;margin-bottom:11px;color:#081D36;font-size:18px\"><br></p></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                   <tr>
+                    <td align=\"left\" style=\"width:315px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                       <tr>
+                        <td align=\"left\" style=\"Margin:0\"><h3 style=\"line-height:20px;mso-line-height-rule:exactly;font-family:'times new roman', times, baskerville, georgia, serif;font-size:20px;font-style:normal;font-weight:bold;color:#ffffff;margin-bottom:10px;text-align:center\"><strong>Drives</strong></h3>
+                         <table border=\"2\" align=\"center\" cellspacing=\"2\" cellpadding=\"2\" class=\"es-table\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;width:100%\">
+                            {final_disk}
+                         </table><p style=\"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:'open sans', 'helvetica neue', helvetica, arial, sans-serif;line-height:22px;margin-bottom:11px;color:#081D36;font-size:18px\"><br></p></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                 </table></td>
+               </tr>
+             </table></td>
+           </tr>
+         </table>
+         <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-content\" align=\"center\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;table-layout:fixed !important;width:100%\">
+           <tr>
+            <td align=\"center\" style=\"Margin:0\">
+             <table bgcolor=\"#ffffff\" class=\"es-content-body\" align=\"center\" cellpadding=\"0\" cellspacing=\"0\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;background-color:#FFFFFF;width:700px\">
+               <tr>
+                <td align=\"left\" bgcolor=\"#2d3644\" style=\"background-color:#2d3644\">
+                 <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                   <tr>
+                    <td align=\"left\" style=\"width:700px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                       <tr>
+                        <td align=\"center\" style=\"padding:10px;font-size:0\">
+                         <table border=\"0\" width=\"100%\" height=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                           <tr>
+                            <td style=\"border-bottom:1px solid #11feda;background:unset;height:1px;width:100%;margin:0px\"></td>
+                           </tr>
+                         </table></td>
+                       </tr>
+                       <tr>
+                        <td align=\"center\" style=\"Margin:0\"><h2 style=\"line-height:36px;mso-line-height-rule:exactly;font-family:'trebuchet ms', 'lucida grande', 'lucida sans unicode', 'lucida sans', tahoma, sans-serif;font-size:24px;font-style:normal;font-weight:bold;color:#ffffff;margin-bottom:12px\">Service Notes</h2></td>
+                       </tr>
+                       <tr>
+                        <td align=\"center\" style=\"padding:10px;font-size:0\">
+                         <table border=\"0\" width=\"100%\" height=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                           <tr>
+                            <td style=\"border-bottom:1px solid #11feda;background:unset;height:1px;width:100%;margin:0px\"></td>
+                           </tr>
+                         </table></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                 </table></td>
+               </tr>
+               <tr>
+                <td align=\"left\" bgcolor=\"#22272f\" style=\"padding-left:20px;padding-right:20px;padding-bottom:25px;padding-top:40px;background-color:#22272f\">
+                 <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-left\" align=\"left\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:left\">
+                   <tr>
+                    <td class=\"es-m-p20b\" align=\"left\" style=\"width:320px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                       <tr>
+                        <td align=\"center\" style=\"Margin:0\"><h2 style=\"line-height:36px;mso-line-height-rule:exactly;font-family:'trebuchet ms', 'lucida grande', 'lucida sans unicode', 'lucida sans', tahoma, sans-serif;font-size:24px;font-style:normal;font-weight:bold;color:#ffffff;margin-bottom:12px\">Checkin Notes</h2></td>
+                       </tr>
+                       <tr>
+                        <td align=\"center\" style=\"Margin:0\"><p style=\"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:'open sans', 'helvetica neue', helvetica, arial, sans-serif;line-height:27px;margin-bottom:11px;color:#ffffff;font-size:18px\">{checkin_notes}</p></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                 </table><!--[if mso]></td><td style=\"width:20px\"></td><td style=\"width:319px\" valign=\"top\"><![endif]-->
+                 <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-right\" align=\"right\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;float:right\">
+                   <tr>
+                    <td align=\"left\" style=\"width:319px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                       <tr>
+                        <td align=\"center\" style=\"Margin:0\"><h2 style=\"line-height:36px;mso-line-height-rule:exactly;font-family:'trebuchet ms', 'lucida grande', 'lucida sans unicode', 'lucida sans', tahoma, sans-serif;font-size:24px;font-style:normal;font-weight:bold;color:#ffffff;margin-bottom:12px\">Recommendations</h2></td>
+                       </tr>
+                       <tr>
+                        <td align=\"center\" style=\"Margin:0\"><p style=\"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:'open sans', 'helvetica neue', helvetica, arial, sans-serif;line-height:27px;margin-bottom:11px;color:#ffffff;font-size:18px\">{checkin_notes}</p></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                 </table></td>
+               </tr>
+             </table></td>
+           </tr>
+         </table>
+         <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-footer\" align=\"center\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;table-layout:fixed !important;width:100%;background-color:transparent;background-repeat:repeat;background-position:center top\">
+           <tr>
+            <td align=\"center\" style=\"Margin:0\">
+             <table bgcolor=\"#ffffff\" class=\"es-footer-body\" align=\"center\" cellpadding=\"0\" cellspacing=\"0\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px;background-color:#FFFFFF;border-radius:0 0 50px 50px;width:700px\">
+               <tr>
+                <td align=\"left\" style=\"padding:5px;Margin:0\">
+                 <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                   <tr>
+                    <td align=\"center\" valign=\"top\" style=\"width:690px\">
+                     <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;border-spacing:0px\">
+                       <tr>
+                        <td align=\"center\" class=\"made_with\" style=\"font-size:0px\"><a target=\"_blank\" href=\"https://viewstripo.email/?utm_source=templates&utm_medium=email&utm_campaign=gadget_11&utm_content=santa_claus_brought_gifts\" style=\"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;text-decoration:underline;color:#081D36;font-size:14px\"><img src=\"https://ecwnuzs.stripocdn.email/content/guids/89070ba8-83e1-4d67-b646-4663532227d2/images/pcllogo.png\" alt width=\"60\" style=\"display:block;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic\"></a></td>
+                       </tr>
+                     </table></td>
+                   </tr>
+                 </table></td>
+               </tr>
+             </table></td>
+           </tr>
+         </table></td>
+       </tr>
+     </table>
+    </div>
+   </body>
+  </html>
+  ").to_string();
 
-     let html_string = format!("
- <!doctype html>
-<html ⚡4email data-css-strict>
- <head><meta charset=\"utf-8\"><style amp4email-boilerplate>body{{visibility:hidden}}</style><script async src=\"https://cdn.ampproject.org/v0.js\"></script>
-  
-  <style amp-custom>
-.es-desk-hidden {{
-	display:none;
-	float:left;
-	overflow:hidden;
-	width:0;
-	max-height:0;
-	line-height:0;
-}}
-body {{
-	width:100%;
-	font-family:\"open sans\", \"helvetica neue\", helvetica, arial, sans-serif;
-}}
-table {{
-	border-collapse:collapse;
-	border-spacing:0px;
-}}
-table td, body, .es-wrapper {{
-	padding:0;
-	Margin:0;
-}}
-.es-content, .es-header, .es-footer {{
-	table-layout:fixed;
-	width:100%;
-}}
-p, hr {{
-	Margin:0;
-}}
-h1, h2, h3, h4, h5 {{
-	Margin:0;
-	line-height:100%;
-	font-family:\"trebuchet ms\", \"lucida grande\", \"lucida sans unicode\", \"lucida sans\", tahoma, sans-serif;
-}}
-.es-left {{
-	float:left;
-}}
-.es-right {{
-	float:right;
-}}
-.es-p5 {{
-	padding:5px;
-}}
-.es-p5t {{
-	padding-top:5px;
-}}
-.es-p5b {{
-	padding-bottom:5px;
-}}
-.es-p5l {{
-	padding-left:5px;
-}}
-.es-p5r {{
-	padding-right:5px;
-}}
-.es-p10 {{
-	padding:10px;
-}}
-.es-p10t {{
-	padding-top:10px;
-}}
-.es-p10b {{
-	padding-bottom:10px;
-}}
-.es-p10l {{
-	padding-left:10px;
-}}
-.es-p10r {{
-	padding-right:10px;
-}}
-.es-p15 {{
-	padding:15px;
-}}
-.es-p15t {{
-	padding-top:15px;
-}}
-.es-p15b {{
-	padding-bottom:15px;
-}}
-.es-p15l {{
-	padding-left:15px;
-}}
-.es-p15r {{
-	padding-right:15px;
-}}
-.es-p20 {{
-	padding:20px;
-}}
-.es-p20t {{
-	padding-top:20px;
-}}
-.es-p20b {{
-	padding-bottom:20px;
-}}
-.es-p20l {{
-	padding-left:20px;
-}}
-.es-p20r {{
-	padding-right:20px;
-}}
-.es-p25 {{
-	padding:25px;
-}}
-.es-p25t {{
-	padding-top:25px;
-}}
-.es-p25b {{
-	padding-bottom:25px;
-}}
-.es-p25l {{
-	padding-left:25px;
-}}
-.es-p25r {{
-	padding-right:25px;
-}}
-.es-p30 {{
-	padding:30px;
-}}
-.es-p30t {{
-	padding-top:30px;
-}}
-.es-p30b {{
-	padding-bottom:30px;
-}}
-.es-p30l {{
-	padding-left:30px;
-}}
-.es-p30r {{
-	padding-right:30px;
-}}
-.es-p35 {{
-	padding:35px;
-}}
-.es-p35t {{
-	padding-top:35px;
-}}
-.es-p35b {{
-	padding-bottom:35px;
-}}
-.es-p35l {{
-	padding-left:35px;
-}}
-.es-p35r {{
-	padding-right:35px;
-}}
-.es-p40 {{
-	padding:40px;
-}}
-.es-p40t {{
-	padding-top:40px;
-}}
-.es-p40b {{
-	padding-bottom:40px;
-}}
-.es-p40l {{
-	padding-left:40px;
-}}
-.es-p40r {{
-	padding-right:40px;
-}}
-.es-menu td {{
-	border:0;
-}}
-s {{
-	text-decoration:line-through;
-}}
-p, ul li, ol li {{
-	font-family:\"open sans\", \"helvetica neue\", helvetica, arial, sans-serif;
-	line-height:120%;
-	margin-bottom:11px;
-}}
-ul li, ol li {{
-	margin-left:0;
-}}
-a {{
-	text-decoration:underline;
-}}
-.es-menu td a {{
-	text-decoration:none;
-	display:block;
-	font-family:\"open sans\", \"helvetica neue\", helvetica, arial, sans-serif;
-}}
-.es-wrapper {{
-	width:100%;
-	height:100%;
-}}
-.es-wrapper-color, .es-wrapper {{
-	background-color:#131313;
-}}
-.es-header {{
-	background-color:transparent;
-}}
-.es-header-body {{
-	background-color:transparent;
-}}
-.es-header-body p, .es-header-body ul li, .es-header-body ol li {{
-	color:#FFFFFF;
-	font-size:12px;
-	margin-bottom:8px;
-}}
-.es-header-body a {{
-	color:#FFFFFF;
-	font-size:12px;
-}}
-.es-content-body {{
-	background-color:#FFFFFF;
-}}
-.es-content-body p, .es-content-body ul li, .es-content-body ol li {{
-	color:#081D36;
-	font-size:18px;
-	margin-bottom:11px;
-}}
-.es-content-body a {{
-	color:#081D36;
-	font-size:18px;
-}}
-.es-footer {{
-	background-color:transparent;
-}}
-.es-footer-body {{
-	background-color:#FFFFFF;
-}}
-.es-footer-body p, .es-footer-body ul li, .es-footer-body ol li {{
-	color:#081D36;
-	font-size:14px;
-	margin-bottom:9px;
-}}
-.es-footer-body a {{
-	color:#081D36;
-	font-size:14px;
-}}
-.es-infoblock, .es-infoblock p, .es-infoblock ul li, .es-infoblock ol li {{
-	line-height:120%;
-	font-size:12px;
-	color:#CCCCCC;
-	margin-bottom:8px;
-}}
-.es-infoblock a {{
-	font-size:12px;
-	color:#CCCCCC;
-}}
-h1 {{
-	font-size:40px;
-	font-style:normal;
-	font-weight:bold;
-	color:#081D36;
-	margin-bottom:20px;
-}}
-h2 {{
-	font-size:24px;
-	font-style:normal;
-	font-weight:bold;
-	color:#081D36;
-	margin-bottom:12px;
-}}
-h3 {{
-	font-size:20px;
-	font-style:normal;
-	font-weight:bold;
-	color:#081D36;
-	margin-bottom:10px;
-}}
-.es-header-body h1 a, .es-content-body h1 a, .es-footer-body h1 a {{
-	font-size:40px;
-}}
-.es-header-body h2 a, .es-content-body h2 a, .es-footer-body h2 a {{
-	font-size:24px;
-}}
-.es-header-body h3 a, .es-content-body h3 a, .es-footer-body h3 a {{
-	font-size:20px;
-}}
-a.es-button, button.es-button {{
-	padding:10px 30px 10px 30px;
-	display:inline-block;
-	background:#B2222D;
-	border-radius:0px;
-	font-size:18px;
-	font-family:arial, \"helvetica neue\", helvetica, sans-serif;
-	font-weight:normal;
-	font-style:normal;
-	line-height:120%;
-	color:#FFFFFF;
-	text-decoration:none;
-	width:auto;
-	text-align:center;
-}}
-.es-button-border {{
-	border-style:solid solid solid solid;
-	border-color:#2CB543 #2CB543 #2CB543 #2CB543;
-	background:#B2222D;
-	border-width:0px 0px 0px 0px;
-	display:inline-block;
-	border-radius:0px;
-	width:auto;
-}}
-.es-menu amp-img, .es-button amp-img {{
-	vertical-align:middle;
-}}
-@media only screen and (max-width:600px) {{p, ul li, ol li, a {{ line-height:120% }} h1, h2, h3, h1 a, h2 a, h3 a {{ line-height:100% }} h1 {{ font-size:30px; text-align:center; margin-bottom:15px }} h2 {{ font-size:24px; text-align:center; margin-bottom:12px }} h3 {{ font-size:20px; text-align:center; margin-bottom:10px }} .es-header-body h1 a, .es-content-body h1 a, .es-footer-body h1 a {{ font-size:30px; text-align:center }} .es-header-body h2 a, .es-content-body h2 a, .es-footer-body h2 a {{ font-size:24px; text-align:center }} .es-header-body h3 a, .es-content-body h3 a, .es-footer-body h3 a {{ font-size:20px; text-align:center }} .es-menu td a {{ font-size:12px }} .es-header-body p, .es-header-body ul li, .es-header-body ol li, .es-header-body a {{ font-size:14px }} .es-content-body p, .es-content-body ul li, .es-content-body ol li, .es-content-body a {{ font-size:14px }} .es-footer-body p, .es-footer-body ul li, .es-footer-body ol li, .es-footer-body a {{ font-size:12px }} .es-infoblock p, .es-infoblock ul li, .es-infoblock ol li, .es-infoblock a {{ font-size:12px }} *[class=\"gmail-fix\"] {{ display:none }} .es-m-txt-c, .es-m-txt-c h1, .es-m-txt-c h2, .es-m-txt-c h3 {{ text-align:center }} .es-m-txt-r, .es-m-txt-r h1, .es-m-txt-r h2, .es-m-txt-r h3 {{ text-align:right }} .es-m-txt-l, .es-m-txt-l h1, .es-m-txt-l h2, .es-m-txt-l h3 {{ text-align:left }} .es-m-txt-r amp-img {{ float:right }} .es-m-txt-c amp-img {{ margin:0 auto }} .es-m-txt-l amp-img {{ float:left }} .es-button-border {{ display:inline-block }} a.es-button, button.es-button {{ font-size:18px; display:inline-block }} .es-adaptive table, .es-left, .es-right {{ width:100% }} .es-content table, .es-header table, .es-footer table, .es-content, .es-footer, .es-header {{ width:100%; max-width:600px }} .es-adapt-td {{ display:block; width:100% }} .adapt-img {{ width:100%; height:auto }} td.es-m-p0 {{ padding:0 }} td.es-m-p0r {{ padding-right:0 }} td.es-m-p0l {{ padding-left:0 }} td.es-m-p0t {{ padding-top:0 }} td.es-m-p0b {{ padding-bottom:0 }} td.es-m-p20b {{ padding-bottom:20px }} .es-mobile-hidden, .es-hidden {{ display:none }} tr.es-desk-hidden, td.es-desk-hidden, table.es-desk-hidden {{ width:auto; overflow:visible; float:none; max-height:inherit; line-height:inherit }} tr.es-desk-hidden {{ display:table-row }} table.es-desk-hidden {{ display:table }} td.es-desk-menu-hidden {{ display:table-cell }} .es-menu td {{ width:1% }} table.es-table-not-adapt, .esd-block-html table {{ width:auto }} table.es-social {{ display:inline-block }} table.es-social td {{ display:inline-block }} .es-desk-hidden {{ display:table-row; width:auto; overflow:visible; max-height:inherit }} td.es-m-p5 {{ padding:5px }} td.es-m-p5t {{ padding-top:5px }} td.es-m-p5b {{ padding-bottom:5px }} td.es-m-p5r {{ padding-right:5px }} td.es-m-p5l {{ padding-left:5px }} td.es-m-p10 {{ padding:10px }} td.es-m-p10t {{ padding-top:10px }} td.es-m-p10b {{ padding-bottom:10px }} td.es-m-p10r {{ padding-right:10px }} td.es-m-p10l {{ padding-left:10px }} td.es-m-p15 {{ padding:15px }} td.es-m-p15t {{ padding-top:15px }} td.es-m-p15b {{ padding-bottom:15px }} td.es-m-p15r {{ padding-right:15px }} td.es-m-p15l {{ padding-left:15px }} td.es-m-p20 {{ padding:20px }} td.es-m-p20t {{ padding-top:20px }} td.es-m-p20r {{ padding-right:20px }} td.es-m-p20l {{ padding-left:20px }} td.es-m-p25 {{ padding:25px }} td.es-m-p25t {{ padding-top:25px }} td.es-m-p25b {{ padding-bottom:25px }} td.es-m-p25r {{ padding-right:25px }} td.es-m-p25l {{ padding-left:25px }} td.es-m-p30 {{ padding:30px }} td.es-m-p30t {{ padding-top:30px }} td.es-m-p30b {{ padding-bottom:30px }} td.es-m-p30r {{ padding-right:30px }} td.es-m-p30l {{ padding-left:30px }} td.es-m-p35 {{ padding:35px }} td.es-m-p35t {{ padding-top:35px }} td.es-m-p35b {{ padding-bottom:35px }} td.es-m-p35r {{ padding-right:35px }} td.es-m-p35l {{ padding-left:35px }} td.es-m-p40 {{ padding:40px }} td.es-m-p40t {{ padding-top:40px }} td.es-m-p40b {{ padding-bottom:40px }} td.es-m-p40r {{ padding-right:40px }} td.es-m-p40l {{ padding-left:40px }} p, ul li, ol li {{ margin-bottom:11px }} .es-header-body p, .es-header-body ul li, .es-header-body ol li {{ margin-bottom:9px }} .es-footer-body p, .es-footer-body ul li, .es-footer-body ol li {{ margin-bottom:8px }} .es-infoblock p, .es-infoblock ul li, .es-infoblock ol li {{ margin-bottom:8px }} }}
-</style>
- </head>
- <body>
-  <div dir=\"ltr\" class=\"es-wrapper-color\" lang=\"en\">
-   <!--[if gte mso 9]>
-			<v:background xmlns:v=\"urn:schemas-microsoft-com:vml\" fill=\"t\">
-				<v:fill type=\"tile\" color=\"#131313\" origin=\"0.5, 0\" position=\"0.5, 0\"></v:fill>
-			</v:background>
-		<![endif]-->
-   <table class=\"es-wrapper\" style=\"background-position: center top\">
-     <tr>
-      <td valign=\"top\">
-       <table class=\"es-header\" align=\"center\">
-         <tr>
-          <td align=\"center\">
-           <table bgcolor=\"#ffffff\" class=\"es-header-body\" align=\"center\" cellpadding=\"0\" cellspacing=\"0\" width=\"700\">
-             <tr>
-              <td class=\"es-p20\" align=\"left\">
-               <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                 <tr>
-                  <td width=\"660\" class=\"es-m-p0r\" valign=\"top\" align=\"center\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                     <tr>
-                      <td align=\"center\" class=\"es-m-txt-c\" style=\"font-size: 0px\"><a target=\"_blank\" href=\"https://viewstripo.email\"><amp-img src=\"https://ecwnuzs.stripocdn.email/content/guids/89070ba8-83e1-4d67-b646-4663532227d2/images/masterlogov2_1.png\" alt=\"Logo\" style=\"display: block\" title=\"Logo\" height=\"70\" width=\"70\"></amp-img></a></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-               </table></td>
-             </tr>
-           </table></td>
-         </tr>
-       </table>
-       <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-content\" align=\"center\">
-         <tr>
-          <td align=\"center\">
-           <table bgcolor=\"#ffffff\" class=\"es-content-body\" align=\"center\" cellpadding=\"0\" cellspacing=\"0\" width=\"700\" style=\"border-radius: 50px 50px 0 0\">
-             <tr>
-              <td align=\"left\">
-               <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                 <tr>
-                  <td width=\"700\" align=\"center\" valign=\"top\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\" style=\"border-radius: 4px;border-collapse: separate\">
-                     <tr>
-                      <td align=\"center\" class=\"es-p5t es-m-p20r es-m-p20l\"><h2 style=\"color: #000000;line-height: 200%\"><b>CUST_NAME - SO_NUMBER</b></h2></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-               </table></td>
-             </tr>
-             <tr>
-              <td class=\"es-p40t es-p20r es-p20l\" align=\"left\" bgcolor=\"#22272f\" style=\"background-color: #22272f\">
-               <!--[if mso]><table width=\"660\" cellpadding=\"0\" cellspacing=\"0\"><tr><td width=\"315\" valign=\"top\"><![endif]-->
-               <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-left\" align=\"left\">
-                 <tr>
-                  <td width=\"315\" class=\"es-m-p20b\" align=\"left\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                     <tr>
-                      <td align=\"center\"><h2 style=\"text-align: center;color: #fcfdfd;font-family: &quot;times new roman&quot;, times, baskerville, georgia, serif\"><strong>Customer Info</strong></h2>
-                       <table border=\"2\" align=\"center\" cellspacing=\"2\" cellpadding=\"2\" class=\"es-table\" style=\"width: 100%\">
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>Phone #</strong></td>
-                          <td style=\"text-align: center;color: #ffffff\">phone_number_1</td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>Phone # 2</strong></td>
-                          <td style=\"text-align: center;color: #ffffff\">phone_number_2</td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>Email</strong></td>
-                          <td style=\"color: #ffffff;text-align: center\">your_email@google.com</td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>Ticket Total</strong></td>
-                          <td><p style=\"color: #fcfdfd\"><br></p></td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>Last SI #</strong></td>
-                          <td><p style=\"color: #fcfdfd\"><br></p></td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>Last SI $</strong></td>
-                          <td><p style=\"color: #fcfdfd\"><br></p></td>
-                         </tr>
-                       </table><p style=\"color: #fcfdfd\"><br></p></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-               </table> 
-               <!--[if mso]></td><td width=\"30\"></td><td width=\"315\" valign=\"top\"><![endif]-->
-               <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-right\" align=\"right\">
-                 <tr>
-                  <td width=\"315\" align=\"left\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                     <tr>
-                      <td align=\"left\"><h2 style=\"text-align: center;color: #ffffff;font-family: 'times new roman', times, baskerville, georgia, serif\"><strong>Hardware Info</strong></h2>
-                       <table border=\"2\" align=\"center\" cellspacing=\"2\" cellpadding=\"2\" class=\"es-table\" style=\"width: 100%\">
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>CPU</strong></td>
-                          <td style=\"text-align: center;color: #ffffff\">Ryzen 9 5950X</td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>GPU</strong></td>
-                          <td style=\"text-align: center;color: #ffffff\">RTX 3090</td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><strong>RAM</strong></td>
-                          <td style=\"text-align: center;color: #ffffff\">32 Gb</td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><b>OS</b></td>
-                          <td><p style=\"text-align: center;color: #ffffff\">Windows 11</p></td>
-                         </tr>
-                       </table><p><br></p></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-                 <tr>
-                  <td width=\"315\" align=\"left\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                     <tr>
-                      <td align=\"left\"><h3 style=\"text-align: center;color: #ffffff;font-family: 'times new roman', times, baskerville, georgia, serif\"><strong>Drives</strong></h3>
-                       <table border=\"2\" align=\"center\" cellspacing=\"2\" cellpadding=\"2\" class=\"es-table\" style=\"width: 100%\">
-                         <tr>
-                          <td style=\"color: #ffffff\">C:\</td>
-                          <td style=\"text-align: center;color: #ffffff\">325 / 1024 Gb</td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><br></td>
-                          <td style=\"text-align: center;color: #ffffff\"><br></td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><br></td>
-                          <td style=\"text-align: center;color: #ffffff\"><br></td>
-                         </tr>
-                         <tr>
-                          <td style=\"color: #ffffff\"><br></td>
-                          <td><p style=\"text-align: center;color: #ffffff\"><br></p></td>
-                         </tr>
-                       </table><p><br></p></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-               </table> 
-               <!--[if mso]></td></tr></table><![endif]--></td>
-             </tr>
-           </table></td>
-         </tr>
-       </table>
-       <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-content\" align=\"center\">
-         <tr>
-          <td align=\"center\">
-           <table bgcolor=\"#ffffff\" class=\"es-content-body\" align=\"center\" cellpadding=\"0\" cellspacing=\"0\" width=\"700\">
-             <tr>
-              <td align=\"left\" bgcolor=\"#2d3644\" style=\"background-color: #2d3644\">
-               <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                 <tr>
-                  <td width=\"700\" align=\"left\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                     <tr>
-                      <td align=\"center\" class=\"es-p10\" style=\"font-size:0\">
-                       <table border=\"0\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">
-                         <tr>
-                          <td style=\"border-bottom: 1px solid #11feda;background: unset;height: 1px;width: 100%;margin: 0px\"></td>
-                         </tr>
-                       </table></td>
-                     </tr>
-                     <tr>
-                      <td align=\"center\"><h2 style=\"color: #ffffff;line-height: 150%\">Service Notes</h2></td>
-                     </tr>
-                     <tr>
-                      <td align=\"center\" class=\"es-p10\" style=\"font-size:0\">
-                       <table border=\"0\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">
-                         <tr>
-                          <td style=\"border-bottom: 1px solid #11feda;background: unset;height: 1px;width: 100%;margin: 0px\"></td>
-                         </tr>
-                       </table></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-               </table></td>
-             </tr>
-             <tr>
-              <td class=\"es-p40t es-p25b es-p20r es-p20l\" align=\"left\" bgcolor=\"#22272f\" style=\"background-color: #22272f\">
-               <!--[if mso]><table width=\"660\" cellpadding=\"0\" cellspacing=\"0\"><tr><td width=\"320\" valign=\"top\"><![endif]-->
-               <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-left\" align=\"left\">
-                 <tr>
-                  <td width=\"320\" class=\"es-m-p20b\" align=\"left\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                     <tr>
-                      <td align=\"center\"><h2 style=\"color: #ffffff;line-height: 150%\">Checkin Notes</h2></td>
-                     </tr>
-                     <tr>
-                      <td align=\"center\"><p style=\"color: #ffffff;line-height: 150%\">These are the checkin notes</p></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-               </table> 
-               <!--[if mso]></td><td width=\"20\"></td><td width=\"319\" valign=\"top\"><![endif]-->
-               <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-right\" align=\"right\">
-                 <tr>
-                  <td width=\"319\" align=\"left\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                     <tr>
-                      <td align=\"center\"><h2 style=\"color: #ffffff;line-height: 150%\">Recommendations</h2></td>
-                     </tr>
-                     <tr>
-                      <td align=\"center\"><p style=\"color: #ffffff;line-height: 150%\">These are the recommendations</p></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-               </table> 
-               <!--[if mso]></td></tr></table><![endif]--></td>
-             </tr>
-           </table></td>
-         </tr>
-       </table>
-       <table cellpadding=\"0\" cellspacing=\"0\" class=\"es-footer\" align=\"center\">
-         <tr>
-          <td align=\"center\">
-           <table bgcolor=\"#ffffff\" class=\"es-footer-body\" align=\"center\" cellpadding=\"0\" cellspacing=\"0\" width=\"700\" style=\"border-radius: 0 0 50px 50px\">
-             <tr>
-              <td class=\"es-p5\" align=\"left\">
-               <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                 <tr>
-                  <td width=\"690\" align=\"center\" valign=\"top\">
-                   <table cellpadding=\"0\" cellspacing=\"0\" width=\"100%\">
-                     <tr>
-                      <td align=\"center\" class=\"made_with\" style=\"font-size: 0px\"><a target=\"_blank\" href=\"https://viewstripo.email/?utm_source=templates&utm_medium=email&utm_campaign=gadget_11&utm_content=santa_claus_brought_gifts\"><amp-img src=\"https://ecwnuzs.stripocdn.email/content/guids/89070ba8-83e1-4d67-b646-4663532227d2/images/pcllogo.png\" alt width=\"60\" style=\"display: block\" height=\"60\"></amp-img></a></td>
-                     </tr>
-                   </table></td>
-                 </tr>
-               </table></td>
-             </tr>
-           </table></td>
-         </tr>
-       </table></td>
-     </tr>
-   </table>
-  </div>
- </body>
-</html>");
-     html_string
- }
+  html_string
+}

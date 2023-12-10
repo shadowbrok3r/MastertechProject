@@ -5,7 +5,7 @@ use serde_json::Value;
 use eframe::egui;
 // use egui::*;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use crate::{data::{PulledKeys, TicketInformation}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask}, scaffold::{Salesman, Techs}}};
+use crate::{data::{PulledKeys, TicketInformation}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs}}};
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -877,64 +877,106 @@ impl MastertechContext {
                                                 let mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
                                                 let store_email = store.store_email();
 
-                                                #[derive(Serialize)]
-                                                struct Info{
-                                                    hdd_test: String,
-                                                    ram_test: String,
-                                                    ssd_test: String,
-                                                    checkin_notes: String,
-                                                    recommendations: String,
-                                                    specs: String,
-                                                    cps: String,
-                                                    cust_code: String,
-                                                    doc_alias: String,
-                                                    inv_amt: String,
-                                                    cust_email: String,
-                                                    last_inv_num: String,
-                                                    last_inv_amt: String,
-                                                    total_inv_num: String,
-                                                    phone1: String,
-                                                    phone2: String,
-                                                    disk_letter: String,
-                                                    disk_available: String,
-                                                    disk_total: String,
-                                                    system_name: String,
-                                                    cpu_name: String,
-                                                    total_ram: String,
-                                                    gpu: String,
-                                                    salesman: String,
-                                                    checkin_rep: String,
-                                                    technician: String,
-                                                    extra_customer_info: String,
+                                                let system_name = &self.system_info.system_name;
+                                                let cpu_name = &self.system_info.cpu_name;
+                                                let total_ram = &self.system_info.total_ram;
+                                                let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
+                                                let mut final_disk = String::new();
+                                                
+                                                for index in 0..self.disk_num
+                                                {
+                                                    if let Some(disk) = self.disks.get(index)
+                                                    {
+                                                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
+                                                        let disk_available = format!
+                                                        (
+                                                            "{} Gb", disk.get("available space").and_then(Value::as_str).unwrap_or("")
+                                                        );
+                                                        let disk_total = format!
+                                                        (
+                                                            "{} Gb", disk.get("total space").and_then(Value::as_str).unwrap_or("")
+                                                        );
+
+                                                        each_disk += &format!("
+
+                                                        <tr>
+                                                        <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_letter}</td>
+                                                       </tr>
+                                                       <tr>
+                                                        <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_available}</td>
+                                                       </tr>
+                                                       <tr>
+                                                        <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_total}</td>
+                                                       </tr>
+                                                        ");
+
+                                                        final_disk = format!
+                                                            ("
+                                                            <tr>
+                                                                <td style=\"padding:1px 4px; text-align: center; \">Letter</td>
+                                                                <td style=\"padding:1px 4px; text-align: center; \">Avail Space</td>
+                                                                <td style=\"padding:1px 4px; text-align: center; \">Total Space</td>
+                                                            </tr>
+                                                            {each_disk}
+                                                        ");
+
+                                                    }
                                                 }
 
+                                                specs = format!("
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><strong>CPU</strong></td>
+                                                    <td style=\"text-align: center; color: #ffffff;\">{cpu_name}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><strong>GPU</strong></td>
+                                                    <td style=\"text-align: center; color: #ffffff;\">{gpu}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><strong>RAM</strong></td>
+                                                    <td style=\"text-align: center; color: #ffffff;\">{total_ram} Gb</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><b>System Name</b></td>
+                                                    <td>
+                                                        <p style=\"text-align: center; color: #ffffff;\">{system_name}</p>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><b>CPS</b></td>
+                                                    <td>
+                                                        <p style=\"text-align: center; color: #ffffff;\">{cps}</p>
+                                                    </td>
+                                                </tr>
+                                                ");
+
+
+
                                                 let info = Info{
-                                                    hdd_test,
-                                                    ram_test,
-                                                    ssd_test,
-                                                    checkin_notes,
-                                                    recommendations,
+                                                    customer_name: cust.to_string(),
+                                                    so_num: so_num.to_string(),
+                                                    hdd_test: hdd_test.to_string(),
+                                                    ram_test: ram_test.to_string(),
+                                                    ssd_test: ssd_test.to_string(),
+                                                    checkin_notes: checkin_notes.to_string(),
+                                                    recommendations: recommendations.to_string(),
                                                     specs,
                                                     cps,
-                                                    cust_code,
-                                                    doc_alias,
-                                                    inv_amt,
-                                                    cust_email,
-                                                    last_inv_num,
-                                                    last_inv_amt,
-                                                    total_inv_num,
-                                                    phone1,
-                                                    phone2,
-                                                    disk_letter,
-                                                    disk_available,
-                                                    disk_total,
-                                                    system_name,
-                                                    cpu_name,
-                                                    total_ram,
-                                                    gpu,
-                                                    salesman,
-                                                    checkin_rep,
-                                                    technician,
+                                                    cust_code: cust_code.to_string(),
+                                                    doc_alias: doc_alias.to_string(),
+                                                    inv_amt: inv_amt.to_string(),
+                                                    cust_email: cust_email.to_string(),
+                                                    last_inv_num: last_inv_num.to_string(),
+                                                    last_inv_amt: last_inv_amt.to_string(),
+                                                    total_inv_num: total_inv_num.to_string(),
+                                                    phone1: phone1.to_string(),
+                                                    phone2: phone2.to_string(),
+
+                                                    final_disk,
+
+                                                    salesman: salesman.to_string(),
+                                                    checkin_rep: checkin_rep.to_string(),
+                                                    technician: technician.to_string(),
                                                     extra_customer_info,
                                                 };
 
@@ -945,7 +987,7 @@ impl MastertechContext {
                                                     .to("logan.lees@pclaptops.com".parse().unwrap())
                                                     .subject(format!("{cust} - {so_num}"))
                                                     .header(ContentType::TEXT_HTML)
-                                                    .body(html_notes)
+                                                    .body(html)
                                                     .unwrap();
 
                                                 let creds = Credentials::new(mtech_username.to_owned(), mtech_password.to_owned());
@@ -956,7 +998,7 @@ impl MastertechContext {
                                                     .credentials(creds)
                                                     .build();
 
-                                                self.output_text += "\n {store_email} {email}";
+                                                self.output_text += format!("\n {store_email} {cust_email}").as_str();
 
                                                 // Send the email
                                                 match mailer.send(&email) {
