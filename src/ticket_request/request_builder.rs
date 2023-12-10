@@ -562,7 +562,7 @@ pub fn asana_html_builder(
                         <td align=\"center\" style=\"Margin:0\"><h2 style=\"line-height:36px;mso-line-height-rule:exactly;font-family:'trebuchet ms', 'lucida grande', 'lucida sans unicode', 'lucida sans', tahoma, sans-serif;font-size:24px;font-style:normal;font-weight:bold;color:#ffffff;margin-bottom:12px\">Recommendations</h2></td>
                        </tr>
                        <tr>
-                        <td align=\"center\" style=\"Margin:0\"><p style=\"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:'open sans', 'helvetica neue', helvetica, arial, sans-serif;line-height:27px;margin-bottom:11px;color:#ffffff;font-size:18px\">{checkin_notes}</p></td>
+                        <td align=\"center\" style=\"Margin:0\"><p style=\"-webkit-text-size-adjust:none;-ms-text-size-adjust:none;mso-line-height-rule:exactly;font-family:'open sans', 'helvetica neue', helvetica, arial, sans-serif;line-height:27px;margin-bottom:11px;color:#ffffff;font-size:18px\">{recommendations}</p></td>
                        </tr>
                      </table></td>
                    </tr>

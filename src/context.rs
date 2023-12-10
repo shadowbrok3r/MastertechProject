@@ -1,6 +1,6 @@
 use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
-use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, };
+use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
 use serde_json::Value;
 use eframe::egui;
 // use egui::*;
@@ -622,20 +622,22 @@ impl MastertechContext {
                                     )
                                     .clicked()
                                     {  
+                                        self.spinner = true;
+
+                                        if self.spinner{
+                                            ui.add(
+                                                Spinner::new()
+                                                .color(Color32::LIGHT_RED)
+                                                .size(20.0)
+                                                //.paint_at(ui, Rect { min: egui::Pos2 { x: (), y: () }, max: () })
+                                            );
+                                        }
+
                                         let cust = &self.ticket_info.customer_name;
                                         let so_num = &self.so_number;
                 
                                         if !cust.is_empty() && !so_num.is_empty()
                                         {
-                                            self.spinner = true;
-
-                                            if self.spinner == true{
-                                                ui.add(
-                                                    Spinner::new()
-                                                    .color(Color32::LIGHT_RED)
-                                                    .size(20.0)
-                                                );
-                                            }
 
                                             let mut salesman_map = HashMap::new();
                                             let mut tech_map = HashMap::new();
@@ -882,7 +884,8 @@ impl MastertechContext {
                                                 let total_ram = &self.system_info.total_ram;
                                                 let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
                                                 let mut final_disk = String::new();
-                                                
+                                                let mut each_disk = String::new();
+
                                                 for index in 0..self.disk_num
                                                 {
                                                     if let Some(disk) = self.disks.get(index)
@@ -898,16 +901,11 @@ impl MastertechContext {
                                                         );
 
                                                         each_disk += &format!("
-
                                                         <tr>
-                                                        <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_letter}</td>
-                                                       </tr>
-                                                       <tr>
-                                                        <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_available}</td>
-                                                       </tr>
-                                                       <tr>
-                                                        <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_total}</td>
-                                                       </tr>
+                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_letter}</td>
+                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_available}</td>
+                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_total}</td>
+                                                        </tr>
                                                         ");
 
                                                         final_disk = format!
@@ -984,13 +982,13 @@ impl MastertechContext {
                                                 
                                                 let email = Message::builder()
                                                     .from("TUR SHEET <pcl.mastertech@gmail.com>".parse().unwrap())
-                                                    .to("logan.lees@pclaptops.com".parse().unwrap())
+                                                    .to(store_email.parse().unwrap())
                                                     .subject(format!("{cust} - {so_num}"))
                                                     .header(ContentType::TEXT_HTML)
                                                     .body(html)
                                                     .unwrap();
 
-                                                let creds = Credentials::new(mtech_username.to_owned(), mtech_password.to_owned());
+                                                let creds = Credentials::new("pcl.mastertech@gmail.com".to_owned(), "pgumcgekyrcqadah".to_owned());
 
                                                 // Open a remote connection to gmail
                                                 let mailer = SmtpTransport::relay("smtp.gmail.com")
@@ -1053,7 +1051,7 @@ impl MastertechContext {
 
                                         //     }
 
-                                        //     self.spinner = false;
+                                        self.spinner = false;
                                         // }
                                         // else
                                         // {
@@ -1133,11 +1131,11 @@ impl MastertechContext {
         }
         self.specs_first_run = false;
         
-        if self.spinner{
-            ui.vertical_centered(|ui|{
-                ui.add(Spinner::new());
-            }); 
-        }
+        // if self.spinner{
+        //     ui.vertical_centered(|ui|{
+        //         ui.add(Spinner::new());
+        //     }); 
+        // }
 
         let gpu = &self.system_info.gpu.clone().unwrap_or("no GPU found".to_string());
 

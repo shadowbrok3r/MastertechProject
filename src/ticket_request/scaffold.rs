@@ -1,3 +1,4 @@
+use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use dotenv::var;
@@ -209,12 +210,13 @@ impl ScaffoldCalls {
 
 impl ScaffoldRequestBuilder {
     pub fn build_scaffold_call(&mut self) -> Value {
-
+        debug!("build_scaffold_call");
         let company = "pcl".to_string();
-        
+        // dotenv::var("SCAFFOLD_USER").unwrap()
+
         let mut scaffold_call = serde_json::json!({
-            "user_email": dotenv::var("SCAFFOLD_USER").unwrap(), 
-            "user_password": dotenv::var("SCAFFOLD_PASS").unwrap(),
+            "user_email": "logan.lees@pclaptops.com", 
+            "user_password": "Poolparty1",
             "action": self.action.as_str().to_string(),
             //"call": self.call.as_str().to_string(), 
             "application": self.app.as_str().to_string(), 
