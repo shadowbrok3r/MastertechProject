@@ -30,24 +30,24 @@ pub struct SendRequest {
     pub tx: std::sync::mpsc::Sender<String>,
 }
 
-// #[async_trait]
-// pub trait SendReq<T>{
-//     async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
-// }
+#[async_trait]
+pub trait SendReq<T>{
+    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
+}
 
-// #[async_trait]
-// impl SendReq<GetTicketResponse> for SendRequest{
-//     async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
-//         todo!()
-//     }
-// }
+#[async_trait]
+impl SendReq<GetTicketResponse> for SendRequest{
+    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
+        todo!()
+    }
+}
 
-// #[async_trait]
-// impl SendReq<GetKeysResponse> for SendRequest{
-//     async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
-//         todo!()
-//     }
-// }
+#[async_trait]
+impl SendReq<GetKeysResponse> for SendRequest{
+    async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
+        todo!()
+    }
+}
 
 
 
@@ -58,7 +58,7 @@ impl SendRequest{
         tx: std::sync::mpsc::Sender<String>, 
         client: reqwest::Client)
     {
-        
+        debug!("Getting Ticket");
         tokio::spawn(async move{
             let args = vec![
                 serde_json::json!(so_number),
@@ -162,35 +162,12 @@ impl SendRequest{
                     let extra_tel1 = temp_tel1;
                     let extra_tel2 = temp_tel2;
                     let extra_email = temp_email;
-
-
-
-                    // for object in addresses {
-                    //     if let Some(address) = object {
-                    //         println!("Address obj: {address:?}");
-                    //         // Assign the first non-None value or store additional values
-                    //         address_object.TEL1.get_or_insert_with(|| address.TEL1.unwrap_or_default())
-                    //                            .then(|| extra_tel1.push(address.TEL1.unwrap_or_default()));
-                    //         address_object.TEL2.get_or_insert_with(|| address.TEL2.unwrap_or_default())
-                    //                            .then(|| extra_tel2.push(address.TEL2.unwrap_or_default()));
-                    //         address_object.EMAIL.get_or_insert_with(|| address.EMAIL.unwrap_or_default())
-                    //                             .then(|| extra_email.push(address.EMAIL.unwrap_or_default()));
-                    //     }
-                    // }
                     
-                    println!("extra_tel1: {extra_tel1:?}");
-                    println!("extra_tel2: {extra_tel2:?}");
-                    println!("extra_email: {extra_email:?}");
-                    println!("address_object TEL1: {:?}", address_object.TEL1);
-                    println!("address_object TEL2: {:?}", address_object.TEL2);
-                    println!("address_object EMAIL: {:?}", address_object.EMAIL);
-                    // update the originating store sending the ticket
                     let mut originating_store: Store = Store::None;
                     if let Some(store) = header.JURISCODE{
                         originating_store = store;
                     }
 
-                    // 
                     let ticket_information = TicketInformation{
                         cust_code: header.CUST_CODE.unwrap_or("empty".to_string()),
                         user_id: header.USER_ID.unwrap_or("empty".to_string()),
@@ -464,7 +441,7 @@ impl SendRequest{
 
 async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, client: reqwest::Client)  
 -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
-    
+    debug!("request_ticket_info");
     // Now you can use the method on the instance of ScaffoldRequestBuilder
     let params: Value = scaffold_builder.build_scaffold_call();
 

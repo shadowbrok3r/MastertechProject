@@ -42,8 +42,7 @@ async fn main() -> eframe::Result<()> {
             viewport: ViewportBuilder::default()
                 .with_inner_size([945.0, 560.0])
                 .with_drag_and_drop(true)
-                .with_icon(load_icon())
-                .with_always_on_top(),
+                .with_icon(load_icon()),
             ..Default::default()
         },
         Box::new(|_cc| Box::<MasterTechApp>::default()),
@@ -83,6 +82,8 @@ impl eframe::App for MasterTechApp {
             egui::Window::new("Spinner Window")
             .title_bar(false)
             .fixed_size(vec2(10.0,10.0))
+            .constrain_to(ctx.available_rect())
+            
             .anchor(Align2::RIGHT_TOP, [2.0, 2.0])
             .show(&ctx, |ui|{
                 ui.add(
@@ -91,7 +92,6 @@ impl eframe::App for MasterTechApp {
                     .size(20.0)
                 );
             });
-            
         }
     
         if self.context.specs_first_run == true{
