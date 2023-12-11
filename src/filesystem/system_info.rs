@@ -7,7 +7,7 @@ use tokio::{io::{self, ErrorKind}, runtime::Handle};
 use crossbeam::channel;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
-use crate::data::SystemInformation;
+use crate::data::ComputerData;
 
 pub struct RetrieveSystemInfo {
     pub tx: std::sync::mpsc::Sender<String>,
@@ -15,7 +15,7 @@ pub struct RetrieveSystemInfo {
 
 
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 pub struct DiskData {
     pub disks: Vec<Value>,
 }
@@ -144,7 +144,7 @@ impl RetrieveSystemInfo{
                     new_gpu_name = parse_gpu_name.clone()[1].trim();
                 }
 
-                let system_info = SystemInformation{
+                let system_info = ComputerData{
                     cpu_name: cpu_brand,
                     total_ram: ram,
                     system_name: system,
@@ -184,11 +184,11 @@ impl RetrieveSystemInfo{
                     gpu_name = full_gpu_name.split_whitespace().take(3).collect::<Vec<&str>>().join(" ");
                 }
     
-                let system_info = SystemInformation{
-                    cpu_name: cpu_brand,
-                    total_ram: ram,
-                    system_name: system,
-                    disks: data,
+                let system_info = ComputerData{
+                    cpu: cpu_brand,
+                    ram: ram,
+                    hostname: system,
+                    drives: data,
                     gpu: Some(gpu_name)
                 };
                 let system_info_json = serde_json::to_string(&system_info).unwrap();

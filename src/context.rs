@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
 use serde_json::Value;
 use eframe::egui;
-// use egui::*;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use crate::{data::{PulledKeys, TicketInformation}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs}}};
+use crate::{data::{PulledKeys, TicketData}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs}}};
 use tokio::sync::mpsc::unbounded_channel;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -14,9 +13,8 @@ use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use serde::Serialize;
-
 use crate::{
-    data::SystemInformation,
+    data::ComputerData,
     filesystem::{
         file_browser::FileBrowser,
         system_info::RetrieveSystemInfo
@@ -36,28 +34,30 @@ pub struct MastertechContext {
     pub so_number: String,
     pub recommendations: String,
 
-    pub ticket_info: TicketInformation,
+    pub ticket_info: TicketData,
     pub keys: PulledKeys,
 
     pub file_browser: Arc<Mutex<FileBrowser>>,
     pub client: reqwest::Client,
+
+    /// Sends requests and retrieves data from scaffold
     scaffold_request: SendRequest,
+    /// This is just a channel sender struct to send sys data to main loop
     pub sysinfo_request: RetrieveSystemInfo,
     pub antivirus_installed: String,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
     // pub minidump_app: MiniDumpApp,
-    
-    //pub system_information: SystemInformation,
+
     pub salesman_cbox: scaffold::Salesman,
     pub techs_cbox: scaffold::Techs,
-    pub ram_test_cbox: scaffold::HardwareTest,
+    pub ram_test_cbox: scaffold::HardwareTest, // We just need one of these...
     pub hdd_test_cbox: scaffold::HardwareTest,
     pub ssd_test_cbox: scaffold::HardwareTest,
 
     pub output_text: String,
     
-    pub system_info: SystemInformation,
+    pub system_info: ComputerData,
     pub disks: Value,
     pub disk_num: usize,
 
@@ -84,57 +84,9 @@ pub struct MastertechContext {
     pub style: Option<egui_dock::Style>,
     pub text_color: Color32,
     pub border_stroke_color: Stroke,
-    // pub bg_color: Color32,
     pub frame_counter: u64,
 }
 
-impl TabViewer for MastertechContext {
-    type Tab = String;
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-
-        match tab.as_str() {
-            "TUR Sheet" => self.tur_sheet(ui),
-            "Console" => self.output_console(ui),
-            "Scripts" => self.scripts(ui),
-            "File Browser 📂" => self.file_browse(ui),
-            "System Information" => self.system_information(ui),
-            "Minidump Analysis" => self.mini_dump(ui),
-            "Profiler" => self.puffin_profiler(ui),
-            _ => {
-                let sysinfo_tab = &"System Information".to_string();
-                if ui.label(tab.as_str()).clicked(){
-                    if tab.as_str() == sysinfo_tab{
-                        self.specs_first_run = true;
-                    }
-                };
-            }
-        }
-    }
-
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        match tab.as_str() {
-            "TUR Sheet" => self.simple_demo_menu(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
-    }
-    
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-    
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
-    }
-    
-    fn on_add(&mut self, surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        //self.open_tabs.add(tab)
-    }
-}
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: DockState<String>,
@@ -194,7 +146,7 @@ impl Default for MasterTechApp {
 
         // let minidump_app = MiniDumpApp::default();
 
-        let ticket_information = TicketInformation::default();
+        let ticket_information = TicketData::default();
 
 
         let context = MastertechContext {
@@ -208,7 +160,7 @@ impl Default for MasterTechApp {
                 superanti_key: "SuperAnti Key".to_string() 
             },
 
-            system_info: SystemInformation::default(),
+            system_info: ComputerData::default(),
             disks: Value::Array(vec![]),
             disk_num: 0,
 
@@ -265,6 +217,54 @@ impl Default for MasterTechApp {
         };
 
         Self { context, tree }
+    }
+}
+
+impl TabViewer for MastertechContext {
+    type Tab = String;
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+
+        match tab.as_str() {
+            "TUR Sheet" => self.tur_sheet(ui),
+            "Console" => self.output_console(ui),
+            "Scripts" => self.scripts(ui),
+            "File Browser 📂" => self.file_browse(ui),
+            "System Information" => self.system_information(ui),
+            "Minidump Analysis" => self.mini_dump(ui),
+            "Profiler" => self.puffin_profiler(ui),
+            _ => {
+                let sysinfo_tab = &"System Information".to_string();
+                if ui.label(tab.as_str()).clicked(){
+                    if tab.as_str() == sysinfo_tab{
+                        self.specs_first_run = true;
+                    }
+                };
+            }
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        match tab.as_str() {
+            "TUR Sheet" => self.simple_demo_menu(ui),
+            _ => {
+                ui.label(tab.to_string());
+                ui.label("This is a context menu");
+            }
+        }
+    }
+    
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.as_str().into()
+    }
+    
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        self.open_tabs.remove(tab);
+        true
+    }
+    
+    fn on_add(&mut self, surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        //self.open_tabs.add(tab)
     }
 }
 
@@ -732,9 +732,9 @@ impl MastertechContext {
                                             if self.send_specs == true{
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
-                                                let system_name = &self.system_info.system_name;
-                                                let cpu_name = &self.system_info.cpu_name;
-                                                let total_ram = &self.system_info.total_ram;
+                                                let system_name = &self.system_info.hostname;
+                                                let cpu_name = &self.system_info.cpu;
+                                                let total_ram = &self.system_info.ram;
                                                 let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
 
                                                 for index in 0..self.disk_num
@@ -879,9 +879,9 @@ impl MastertechContext {
                                                 let mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
                                                 let store_email = store.store_email();
 
-                                                let system_name = &self.system_info.system_name;
-                                                let cpu_name = &self.system_info.cpu_name;
-                                                let total_ram = &self.system_info.total_ram;
+                                                let system_name = &self.system_info.hostname;
+                                                let cpu_name = &self.system_info.cpu;
+                                                let total_ram = &self.system_info.ram;
                                                 let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
                                                 let mut final_disk = String::new();
                                                 let mut each_disk = String::new();
@@ -1139,7 +1139,7 @@ impl MastertechContext {
 
         let gpu = &self.system_info.gpu.clone().unwrap_or("no GPU found".to_string());
 
-        //let disks = self.disks.disks.clone();
+        //let disks = self.drives.drives.clone();
         ui.push_id("table 1",|ui|{
             let table = TableBuilder::new(ui)
                 .striped(true)
@@ -1164,7 +1164,7 @@ impl MastertechContext {
                         ui.label("System Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.system_info.system_name);
+                        ui.label(&self.system_info.hostname);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -1172,7 +1172,7 @@ impl MastertechContext {
                         ui.label("CPU Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.system_info.cpu_name);
+                        ui.label(&self.system_info.cpu);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -1180,7 +1180,7 @@ impl MastertechContext {
                         ui.label("Total RAM");
                     });
                     row.col(|ui|{
-                        ui.label(format!("{} Gb", &self.system_info.total_ram));
+                        ui.label(format!("{} Gb", &self.system_info.ram));
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -1229,7 +1229,10 @@ impl MastertechContext {
                 |disk_index, mut row| 
                 {                                                           // this is stupid..
                     if let Some(disk) = self.disks.get(disk_index){
-                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
+                        let disk_letter = format!("{}", disk
+                            .get("letter")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""));
 
                         //let disk_smart = SmartDisk::new(Path::new(disk.get("letter").unwrap()));
 

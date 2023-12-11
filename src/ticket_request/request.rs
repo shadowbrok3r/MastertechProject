@@ -8,7 +8,7 @@ use serde_json::*;
 use tokio::io::AsyncWriteExt;
 use std::{error::Error, path::PathBuf};
 use log::{info, debug, trace, error};
-use crate::{scaffold::*, data::{TicketInformation, PulledKeys}, ticket_request::AddressObject};
+use crate::{scaffold::*, data::{TicketData, PulledKeys}, ticket_request::AddressObject};
 use std::result::Result;
 use asana::{
     apis::{
@@ -168,7 +168,7 @@ impl SendRequest{
                         originating_store = store;
                     }
 
-                    let ticket_information = TicketInformation{
+                    let ticket_information = TicketData{
                         cust_code: header.CUST_CODE.unwrap_or("empty".to_string()),
                         user_id: header.USER_ID.unwrap_or("empty".to_string()),
                         customer_phone_1: address_object.TEL1.unwrap_or("empty".to_string()),

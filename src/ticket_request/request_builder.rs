@@ -8,7 +8,7 @@ use lettre::{Message, SmtpTransport, Transport};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
-use crate::data::{TicketInformation, SystemInformation};
+use crate::data::{TicketData, ComputerData};
 
 use super::scaffold::{Salesman, Techs};
 
@@ -57,8 +57,8 @@ pub struct TaskAssignee{
 
 /*
 pub fn html_builder(
-    ticket_info: TicketInformation, 
-    system_info: SystemInformation,
+    ticket_info: TicketData, 
+    system_info: ComputerData,
     client: Client,
     scaffold_request: Sender<String>
 ){
@@ -106,8 +106,8 @@ pub fn html_builder(
 }
 
 pub fn asana_html_builder(
-    ticket_info: TicketInformation, 
-    system_info: SystemInformation,
+    ticket_info: TicketData, 
+    system_info: ComputerData,
     send_specs: bool,
     client: Client,
     scaffold_request: Sender<String>
@@ -200,9 +200,9 @@ pub fn asana_html_builder(
         </tr>
     ");
     if send_specs == true{
-        let system_name = &system_info.system_name;
-        let cpu_name = &system_info.cpu_name;
-        let total_ram = &system_info.total_ram;
+        let system_name = &system_info.hostname;
+        let cpu_name = &system_info.cpu;
+        let total_ram = &system_info.ram;
         let gpu = &system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
 
         for index in 0..disk_num
