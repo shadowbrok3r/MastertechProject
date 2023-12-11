@@ -17,7 +17,7 @@ use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
 use egui_dock::{DockArea, Style};
 use self_update::cargo_crate_version;
-use data::SystemInformation;
+use data::ComputerData;
 use filesystem::system_info::RetrieveSystemInfo;
 // use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
@@ -144,11 +144,11 @@ impl eframe::App for MasterTechApp {
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            if let Ok(info) = serde_json::from_str::<data::TicketInformation>(&message) {
+            if let Ok(info) = serde_json::from_str::<data::TicketData>(&message) {
     
                 self.context.output_text.clear();
     
-                // Handle TicketInformation
+                // Handle TicketData
                 self.context.ticket_info = info;
                 debug!("ticket information: {:#?}", self.context.ticket_info);
 
@@ -170,10 +170,10 @@ impl eframe::App for MasterTechApp {
                 }
                 self.context.spinner = false;
             }
-            else if let Ok(info) = serde_json::from_str::<SystemInformation>(&message) {
+            else if let Ok(info) = serde_json::from_str::<ComputerData>(&message) {
                 self.context.system_info = info;
 
-                for disk in &self.context.system_info.disks.disks{
+                for disk in &self.context.system_info.drives.disks{
                     
                     self.context.disk_num += 1;
     
@@ -183,7 +183,7 @@ impl eframe::App for MasterTechApp {
                 
                         disks_arr.push(disk_json);
                     } else {
-                        eprintln!("Expected self.context.disks to be an Array");
+                        eprintln!("Expected self.context.drives to be an Array");
                     }
                     
                 }
@@ -356,7 +356,7 @@ impl MasterTechApp{
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            if let Ok(info) = serde_json::from_str::<scaffold::TicketInformation>(&message) {
+            if let Ok(info) = serde_json::from_str::<scaffold::TicketData>(&message) {
                 println!("ticket information: {info:#?}");
                 self.context.output_text.clear();
                 let checkin_rep = info.user_id;
@@ -364,7 +364,7 @@ impl MasterTechApp{
                 if checkin_rep == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
                 else if checkin_rep == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
     
-                // Handle TicketInformation
+                // Handle TicketData
                 self.context.ticket_info.customer_name = info.customer_name;
                 self.context.ticket_info.customer_phone_1 = info.customer_phone_1;
                 self.context.ticket_info.customer_phone_2 = info.customer_phone_2;
@@ -396,22 +396,22 @@ impl MasterTechApp{
                 }
                 self.context.spinner = false;
             }
-            else if let Ok(info) = serde_json::from_str::<system_info::SystemInformation>(&message) {
-                self.context.system_name = info.system_name;
-                self.context.cpu_name = info.cpu_name;
-                self.context.total_ram = info.total_ram;
+            else if let Ok(info) = serde_json::from_str::<system_info::ComputerData>(&message) {
+                self.context.hostname = info.hostname;
+                self.context.cpu = info.cpu;
+                self.context.ram = info.ram;
                 self.context.gpu = info.gpu;
-                for disk in info.disks.disks{
+                for disk in info.drives.drives{
                     
                     self.context.disk_num += 1;
     
-                    if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                    if let Some(disks_arr) = self.context.drives.as_array_mut() {
                         // Convert `disk` to a serde_json::Value
                         let disk_json = serde_json::to_value(&disk).unwrap();
                 
                         disks_arr.push(disk_json);
                     } else {
-                        eprintln!("Expected self.context.disks to be an Array");
+                        eprintln!("Expected self.context.drives to be an Array");
                     }
                     
                 }

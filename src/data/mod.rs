@@ -1,18 +1,8 @@
 use serde::{Serialize, Deserialize};
 use crate::{filesystem::system_info::DiskData, ticket_request::Store};
 
-
-#[derive(Serialize, Deserialize, Default)]
-pub struct SystemInformation{
-    pub cpu_name: String,
-    pub total_ram: String,
-    pub system_name: String,
-    pub disks: DiskData, //Option<String>
-    pub gpu: Option<String>,
-}
-
 #[derive(Serialize, Deserialize, Debug, Default)]
-pub struct TicketInformation{
+pub struct TicketData{
     pub cust_code: String,
     pub user_id: String, // "USER_ID": "BP3", //checkin rep
     pub terms: String, // "TERMS": "CC",
@@ -33,6 +23,18 @@ pub struct TicketInformation{
 
     pub checkin_notes: String,
     pub item_codes: String,
+
+    // pub ssd_test_cbox: scaffold::HardwareTest,
+    // pub antivirus_installed: String,
+    // pub service_number: i32,
+    // pub checkin_rep: String,
+    // pub recommendations: String,
+    // pub tech: String,
+    // pub salesman: String,
+    // pub dep: String, // Store
+    // pub terms: String,
+    // pub ticket_total: String,
+    // pub doc_alias: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -40,6 +42,17 @@ pub struct PulledKeys{
     pub webroot_key: String,
     pub superanti_key: String,
 }
+
+#[derive(Serialize, Deserialize, Default, Debug)]
+pub struct ComputerData{
+    pub hostname: String,
+    // pub operating_system: String,
+    pub cpu: String,
+    pub gpu: Option<String>,
+    pub ram: String,
+    pub drives: DiskData,
+}
+
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TicketResponse{
@@ -49,19 +62,19 @@ pub struct TicketResponse{
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TicketData{
-    pub service_number: i32,
-    pub checkin_rep: String,
-    pub checkin_notes: String,
-    pub recommendations: String,
-    pub tech: String,
-    pub salesman: String,
-    pub dep: String, // Store
-    pub terms: String,
-    pub ticket_total: String,
-    pub doc_alias: String,
-}
+// #[derive(Serialize, Deserialize, Debug)]
+// pub struct TicketData{
+//     pub service_number: i32,
+//     pub checkin_rep: String,
+//     pub checkin_notes: String,
+//     pub recommendations: String,
+//     pub tech: String,
+//     pub salesman: String,
+//     pub dep: String, // Store
+//     pub terms: String,
+//     pub ticket_total: String,
+//     pub doc_alias: String,
+// }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CustomerData{
@@ -76,15 +89,6 @@ pub struct CustomerData{
     pub num_inv: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ComputerData{
-    pub hostname: String,
-    pub operating_system: String,
-    pub cpu: String,
-    pub gpu: String,
-    pub ram: String,
-    pub drives: Vec<DriveData>
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DriveData{
@@ -98,21 +102,27 @@ pub struct DriveData{
 impl TicketResponse{
     pub fn serialize_payload(&mut self) -> Self{
         self.ticket_data = TicketData{
-            service_number: todo!(),
-            checkin_rep: todo!(),
+            cust_code: todo!(),
+            user_id: todo!(), // "USER_ID": "BP3", //checkin rep
+            terms: todo!(), // "TERMS": "CC",
+            doc_alias: todo!(), // "DOC_ALIAS": "SERVICE ORDER",
+            department: todo!(), // "DEP": "LTN"
+            jurisdiction: todo!(), //"JURISCODE": "LTN",
+            invoice_amnt: todo!(),
+            customer_name: todo!(), // "NAME": "Timber Ridge Fireplace LLC",
+            customer_phone_1: todo!(),
+            customer_phone_2: todo!(),
+            customer_email: todo!(),
+            last_invoice_number: todo!(), // "LI_DOC": "53745333",
+            last_invoice_amount: todo!(),  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
+            total_invoice_count: todo!(),
             checkin_notes: todo!(),
-            recommendations: todo!(),
-            tech: todo!(),
-            salesman: todo!(),
-            dep: todo!(),
-            terms: todo!(),
-            ticket_total: todo!(),
-            doc_alias: todo!(),
+            item_codes: todo!(),
         };
 
         self.computer_data = ComputerData{
             hostname: todo!(),
-            operating_system: todo!(),
+            // operating_system: todo!(),
             cpu: todo!(),
             gpu: todo!(),
             ram: todo!(),
