@@ -61,21 +61,6 @@ pub struct TicketResponse{
     pub computer_data: ComputerData
 }
 
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct TicketData{
-//     pub service_number: i32,
-//     pub checkin_rep: String,
-//     pub checkin_notes: String,
-//     pub recommendations: String,
-//     pub tech: String,
-//     pub salesman: String,
-//     pub dep: String, // Store
-//     pub terms: String,
-//     pub ticket_total: String,
-//     pub doc_alias: String,
-// }
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CustomerData{
     pub cust_code: i32,
