@@ -8,7 +8,7 @@ use serde_json::*;
 use tokio::io::AsyncWriteExt;
 use std::{error::Error, path::PathBuf};
 use log::{info, debug, trace, error};
-use crate::{scaffold::*, data::{TicketData, PulledKeys}, ticket_request::AddressObject};
+use crate::{scaffold::*, data::{PulledKeys, PreTicketData}, ticket_request::AddressObject};
 use std::result::Result;
 use asana::{
     apis::{
@@ -168,18 +168,18 @@ impl SendRequest{
                         originating_store = store;
                     }
 
-                    let ticket_information = TicketData{
+                    let ticket_information = PreTicketData{
                         cust_code: header.CUST_CODE.unwrap_or("empty".to_string()),
-                        user_id: header.USER_ID.unwrap_or("empty".to_string()),
+                        checkin_rep: header.USER_ID.unwrap_or("empty".to_string()),
                         customer_phone_1: address_object.TEL1.unwrap_or("empty".to_string()),
                         customer_phone_2: address_object.TEL2.unwrap_or("empty".to_string()),
                         customer_email: address_object.EMAIL.unwrap_or("empty".to_string()),
                         last_invoice_amount: customer.LI_AMT.unwrap_or("empty".to_string()),
                         terms: header.TERMS.unwrap_or("empty".to_string()),
                         doc_alias: header.DOC_ALIAS.unwrap_or("empty".to_string()),
-                        department: header.DEP.unwrap_or("empty".to_string()),
+                        dep: header.DEP.unwrap_or("empty".to_string()),
                         jurisdiction: originating_store,
-                        invoice_amnt: header.INV_AMOUNT.unwrap_or("empty".to_string()),
+                        ticket_total: header.INV_AMOUNT.unwrap_or("empty".to_string()),
                         customer_name: customer.NAME.unwrap_or("empty".to_string()),
                         checkin_notes: checkin_note,
                         last_invoice_number: customer.LI_DOC.unwrap_or("empty".to_string()),

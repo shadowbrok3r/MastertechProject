@@ -7,7 +7,7 @@ mod minidump;
 mod data;
 mod util;
 
-use std::{fs::File, rc::Rc, sync::Arc};
+use std::fs::File;
 use github::self_updater;
 use log::debug;
 // use util::colors::style;
@@ -18,7 +18,6 @@ use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel,
 use egui_dock::{DockArea, Style};
 use self_update::cargo_crate_version;
 use data::ComputerData;
-use filesystem::system_info::RetrieveSystemInfo;
 // use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 #[tokio::main]
@@ -48,8 +47,6 @@ async fn main() -> eframe::Result<()> {
         Box::new(|_cc| Box::<MasterTechApp>::default()),
     )
 }
-
-
 
 pub(crate) fn load_icon() -> egui::IconData {
 	let (icon_rgba, icon_width, icon_height) = {
@@ -95,6 +92,7 @@ impl eframe::App for MasterTechApp {
         }
     
         if self.context.specs_first_run == true{
+            self.context.spinner = true;
             /*             
             let (tx, rx) = crossbeam::channel::bounded(1);
             tokio::task::spawn_blocking(move || {
@@ -113,15 +111,40 @@ impl eframe::App for MasterTechApp {
             } 
             */
     
-            let specs_sender = self.context.sysinfo_request.tx.clone();
-            RetrieveSystemInfo::get_system_specs(specs_sender);
-            
+            let specs = ComputerData::get_computer_data();
+
+            match specs{
+                Ok(computer_data) => {
+                    self.context.system_info = computer_data;
+
+                    for disk in &self.context.system_info.drives.disks{
+                        
+                        self.context.disk_num += 1;
+        
+                        if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                            // Convert `disk` to a serde_json::Value
+                            let disk_json = serde_json::to_value(&disk).unwrap();
+                    
+                            disks_arr.push(disk_json);
+                        } else {
+                            eprintln!("Expected self.context.drives to be an Array");
+                        }
+                        
+                    }
+                    self.context.spinner = false;
+                },
+                Err(e) => {
+                    self.context.output_text = format!("{}", e.to_string());
+                    self.context.spinner = false;
+                }
+            }
+
             #[cfg(target_os="windows")]
             {
                 let mut cps = self.context.antivirus_installed.clone();
                 let mut new_out_text = String::new();
     
-                let installed_antivirus = RetrieveSystemInfo::get_antivirus()
+                let installed_antivirus = ComputerData::get_antivirus()
                 .map_err(|e| 
                     new_out_text = format!("Error checking antivirus: {e}\n")
                 ).unwrap();
@@ -144,16 +167,16 @@ impl eframe::App for MasterTechApp {
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            if let Ok(info) = serde_json::from_str::<data::TicketData>(&message) {
+            if let Ok(info) = serde_json::from_str::<data::PreTicketData>(&message) {
     
                 self.context.output_text.clear();
     
-                // Handle TicketData
+                // Handle PreTicketData
                 self.context.ticket_info = info;
                 debug!("ticket information: {:#?}", self.context.ticket_info);
 
-                if self.context.ticket_info.user_id  == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
-                else if self.context.ticket_info.user_id  == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
+                if self.context.ticket_info.checkin_rep  == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
+                else if self.context.ticket_info.checkin_rep  == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
     
                 let code = &self.context.ticket_info.cust_code;
                 let email = &self.context.ticket_info.customer_email;
@@ -169,25 +192,6 @@ impl eframe::App for MasterTechApp {
                     self.context.keys = info;
                 }
                 self.context.spinner = false;
-            }
-            else if let Ok(info) = serde_json::from_str::<ComputerData>(&message) {
-                self.context.system_info = info;
-
-                for disk in &self.context.system_info.drives.disks{
-                    
-                    self.context.disk_num += 1;
-    
-                    if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                        // Convert `disk` to a serde_json::Value
-                        let disk_json = serde_json::to_value(&disk).unwrap();
-                
-                        disks_arr.push(disk_json);
-                    } else {
-                        eprintln!("Expected self.context.drives to be an Array");
-                    }
-                    
-                }
-                
             }
             else if let Ok(info) = serde_json::from_str::<crate::ticket_request::AsanaResponse>(&message) { 
                 if let Some(e) = info.status{
@@ -356,15 +360,15 @@ impl MasterTechApp{
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            if let Ok(info) = serde_json::from_str::<scaffold::TicketData>(&message) {
+            if let Ok(info) = serde_json::from_str::<scaffold::PreTicketData>(&message) {
                 println!("ticket information: {info:#?}");
                 self.context.output_text.clear();
-                let checkin_rep = info.user_id;
-                self.context.ticket_info.user_id = checkin_rep.clone();
+                let checkin_rep = info.checkin_rep;
+                self.context.ticket_info.checkin_rep = checkin_rep.clone();
                 if checkin_rep == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
                 else if checkin_rep == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
     
-                // Handle TicketData
+                // Handle PreTicketData
                 self.context.ticket_info.customer_name = info.customer_name;
                 self.context.ticket_info.customer_phone_1 = info.customer_phone_1;
                 self.context.ticket_info.customer_phone_2 = info.customer_phone_2;
