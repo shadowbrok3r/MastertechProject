@@ -1,15 +1,20 @@
-use serde::{Serialize, Deserialize};
-use crate::{filesystem::system_info::DiskData, ticket_request::Store};
+use std::error::Error;
 
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct TicketData{
+use log::debug;
+use reqwest::header::{CONTENT_TYPE, ACCEPT};
+use serde::{Serialize, Deserialize};
+use serde_json::Value;
+use crate::ticket_request::{Store, scaffold::HardwareTest};
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct PreTicketData{
     pub cust_code: String,
-    pub user_id: String, // "USER_ID": "BP3", //checkin rep
+    pub checkin_rep: String, // "USER_ID": "BP3", //checkin rep
     pub terms: String, // "TERMS": "CC",
     pub doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
-    pub department: String, // "DEP": "LTN"
+    pub dep: String, // "DEP": "LTN"
     pub jurisdiction: Store, //"JURISCODE": "LTN",
-    pub invoice_amnt: String,
+    pub ticket_total: String,
 
     pub customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",
     pub customer_phone_1: String,
@@ -17,24 +22,24 @@ pub struct TicketData{
     pub customer_email: String,
     pub last_invoice_number: String, // "LI_DOC": "53745333",
     pub last_invoice_amount: String,  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
-    //last_tuneup_date: String, // <-- HERE
-    //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
     pub total_invoice_count: String,
-
     pub checkin_notes: String,
     pub item_codes: String,
+    //last_tuneup_date: String, // <-- HERE
+    //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
+}
 
-    // pub ssd_test_cbox: scaffold::HardwareTest,
-    // pub antivirus_installed: String,
-    // pub service_number: i32,
-    // pub checkin_rep: String,
-    // pub recommendations: String,
-    // pub tech: String,
-    // pub salesman: String,
-    // pub dep: String, // Store
-    // pub terms: String,
-    // pub ticket_total: String,
-    // pub doc_alias: String,
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct TicketData{
+    #[serde(flatten)]
+    pub pre_ticket_data: PreTicketData,
+
+    pub antivirus_installed: String,
+    pub service_number: i32,
+    pub recommendations: String,
+    pub tech: String,
+    pub salesman: String,
+    pub hardware_test_results: HardwareTest
 }
 
 #[derive(Serialize, Deserialize)]
@@ -43,10 +48,10 @@ pub struct PulledKeys{
     pub superanti_key: String,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct ComputerData{
     pub hostname: String,
-    // pub operating_system: String,
+    pub operating_system: String,
     pub cpu: String,
     pub gpu: Option<String>,
     pub ram: String,
@@ -68,7 +73,6 @@ pub struct CustomerData{
     pub phone_number: String,
     pub phone_number_2: String,
     pub email: String, 
-    pub address: String,
     pub li_doc: i32,
     pub li_amnt: String,
     pub num_inv: i32,
@@ -83,54 +87,92 @@ pub struct DriveData{
 
 }
 
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+pub struct DiskData {
+    pub disks: Vec<Value>,
+}
+
+impl DiskData {
+    pub fn new() -> Self {
+        DiskData {
+            disks: Vec::new(),
+        }
+    }
+
+    pub fn add_disk(&mut self, disk: Value){
+        self.disks.push(disk);
+    }
+}
 
 impl TicketResponse{
-    pub fn serialize_payload(&mut self) -> Self{
-        self.ticket_data = TicketData{
-            cust_code: todo!(),
-            user_id: todo!(), // "USER_ID": "BP3", //checkin rep
-            terms: todo!(), // "TERMS": "CC",
-            doc_alias: todo!(), // "DOC_ALIAS": "SERVICE ORDER",
-            department: todo!(), // "DEP": "LTN"
-            jurisdiction: todo!(), //"JURISCODE": "LTN",
-            invoice_amnt: todo!(),
-            customer_name: todo!(), // "NAME": "Timber Ridge Fireplace LLC",
-            customer_phone_1: todo!(),
-            customer_phone_2: todo!(),
-            customer_email: todo!(),
-            last_invoice_number: todo!(), // "LI_DOC": "53745333",
-            last_invoice_amount: todo!(),  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
-            total_invoice_count: todo!(),
-            checkin_notes: todo!(),
-            item_codes: todo!(),
+    pub fn serialize_payload(
+        pre_ticket: &PreTicketData, 
+        computer_data: &ComputerData,
+        service_number: &String,
+        antivirus_installed: &String,
+        recommendations: &String,
+        tech: String,
+        salesman: String, 
+        hardware_results: HardwareTest
+    ) -> Self{
+        let pre_ticket_clone = pre_ticket.clone();
+
+        let customer_data = CustomerData{
+            cust_code: pre_ticket_clone.cust_code.parse::<i32>().unwrap_or(0),
+            name: pre_ticket_clone.customer_name,
+            phone_number: pre_ticket_clone.customer_phone_1,
+            phone_number_2: pre_ticket_clone.customer_phone_2,
+            email: pre_ticket_clone.customer_email,
+            li_doc: pre_ticket_clone.last_invoice_number.parse::<i32>().unwrap_or(0),
+            li_amnt: pre_ticket_clone.last_invoice_amount,
+            num_inv: pre_ticket_clone.total_invoice_count.parse::<i32>().unwrap_or(0),
         };
 
-        self.computer_data = ComputerData{
-            hostname: todo!(),
-            // operating_system: todo!(),
-            cpu: todo!(),
-            gpu: todo!(),
-            ram: todo!(),
-            drives: todo!(),
+        
+        let ticket_data = TicketData{
+            pre_ticket_data: pre_ticket.clone(),
+            antivirus_installed: antivirus_installed.clone(),
+            service_number: service_number.parse::<i32>().unwrap_or(0),
+            recommendations: recommendations.clone(),
+            tech,
+            salesman,
+            hardware_test_results: hardware_results,
         };
 
-        self.customer_data = CustomerData{
-            cust_code: todo!(),
-            name: todo!(),
-            phone_number: todo!(),
-            phone_number_2: todo!(),
-            email: todo!(),
-            address: todo!(),
-            li_doc: todo!(),
-            li_amnt: todo!(),
-            num_inv: todo!(),
+        let ticket_reponse = TicketResponse { 
+            ticket_data, 
+            customer_data, 
+            computer_data: computer_data.clone() 
         };
 
-        TicketResponse { 
-            ticket_data: self.ticket_data, 
-            customer_data: self.customer_data, 
-            computer_data: self.computer_data 
-        }
+        debug!("Ticket Response: {ticket_reponse:?}");
+        
+        ticket_reponse
+    }
 
+ }
+
+pub async fn send_payload(payload: TicketResponse, client: reqwest::Client)  
+-> core::result::Result<String, Box<dyn Error>> {
+    debug!("sending payload");
+
+    
+    let response = client
+        .post("http://localhost:8080/api/submitTicket") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json")
+        .json(&payload)
+        .send()
+        .await;
+
+    match response {
+        Ok(res) => {
+            let text_response = res.text().await?;
+            Ok(text_response)
+        },
+        Err(e) => {
+            debug!("Boxed error: {e:?}");
+            Err(Box::new(e))
+        },
     }
 }

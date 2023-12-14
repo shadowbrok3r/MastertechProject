@@ -8,7 +8,7 @@ use lettre::{Message, SmtpTransport, Transport};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
-use crate::data::{TicketData, ComputerData};
+use crate::data::{PreTicketData, ComputerData};
 
 use super::scaffold::{Salesman, Techs};
 
@@ -57,7 +57,7 @@ pub struct TaskAssignee{
 
 /*
 pub fn html_builder(
-    ticket_info: TicketData, 
+    ticket_info: PreTicketData, 
     system_info: ComputerData,
     client: Client,
     scaffold_request: Sender<String>
@@ -106,7 +106,7 @@ pub fn html_builder(
 }
 
 pub fn asana_html_builder(
-    ticket_info: TicketData, 
+    ticket_info: PreTicketData, 
     system_info: ComputerData,
     send_specs: bool,
     client: Client,
@@ -116,7 +116,7 @@ pub fn asana_html_builder(
     let mut tech_map = HashMap::new();
 
     let salesman = &format!("{}", &salesman_cbox);
-    let checkin_rep = &ticket_info.user_id;
+    let checkin_rep = &ticket_info.checkin_rep;
     let technician = &format!("{}", &techs_cbox);
 
     salesman_map.insert("Jake", "1202792432658520");
@@ -149,7 +149,7 @@ pub fn asana_html_builder(
     let doc_alias = &ticket_info.doc_alias;
     //let department = &ticket_info.department;
     //let juris = &ticket_info.jurisdiction;
-    let inv_amt = &ticket_info.invoice_amnt;
+    let inv_amt = &ticket_info.ticket_total;
     let cust_email = &ticket_info.customer_email;
     let last_inv_num = &ticket_info.last_invoice_number;
     let last_inv_amt = &ticket_info.last_invoice_amount;

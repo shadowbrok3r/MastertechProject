@@ -17,7 +17,7 @@ pub struct AsanaResponse{
 pub struct GetTicketResponse {
     pub header: Header,
     pub customer: Customer,
-    //pub transactions: Transactions,
+    //pub transactions: Vec<Transactions>,
     pub addresses: Vec<Option<AddressObject>>,
     pub items: Vec<Option<Value>>,
 }
@@ -60,12 +60,15 @@ pub struct Customer {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Transactions{
-    pub TRANSAC_OBJ_ONE: TransacObjectOne,
+pub struct AddressObject{
+    // Phone Number 1 & 2
+    pub TEL1: Option<String>, 
+    pub TEL2: Option<String>,
+    pub EMAIL: Option<String>
 }
 
 #[derive(Deserialize, Debug)]
-pub struct TransacObjectOne{
+pub struct Transactions{
 /*
     "TRANHIST_DATE": "2023-05-04 14:25:36.000",
     "USER_ID": "KMJ",
@@ -75,28 +78,7 @@ pub struct TransacObjectOne{
  */
 }
 
-// #[derive(Deserialize, Debug)]
-// pub struct Addresses {
-//     pub address_object: AddressObject,
-// /*
-//     "ACCT_NAME": "Timber Ridge Fireplace LLC",
-//     "NAME": "Timber Ridge Fireplace LLC",
-//     "LAST_NAME": "Hale",
-//     "FIRST_NAME": "Lisa",
-//     "MOBILE_PHONE": "8013501447",
-//     "ADDRESS_LINE1": "3080 N Fairfield Rd Suite #1",
-//  */
-// }
-
-#[derive(Deserialize, Debug)]
-pub struct AddressObject{
-    // Phone Number 1 & 2
-    pub TEL1: Option<String>, 
-    pub TEL2: Option<String>,
-    pub EMAIL: Option<String>
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub enum Store{
     None,
     #[default]

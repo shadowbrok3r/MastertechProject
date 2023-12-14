@@ -18,10 +18,11 @@ pub enum Techs{
     Taco
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub enum HardwareTest{
     RamPass,
     RamFail,
+    #[default] 
     RamNotTested,
     HddPass,
     HddFail,
