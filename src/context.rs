@@ -1064,7 +1064,6 @@ impl MastertechContext {
                                     )
                                     .clicked()
                                     {  
-                                        let ticket = &self.ticket_info;
                                         let tech = match self.techs_cbox{
                                             Techs::Logan => "Logan".to_string(),
                                             Techs::Bread => "Brett".to_string(),
@@ -1240,7 +1239,8 @@ impl MastertechContext {
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(Column::exact(15.0))
                 .column(Column::exact(42.0))
-                .columns(Column::remainder(), 2);
+                .column(Column::exact(50.0))
+                .column(Column::remainder());
             
             disks_table
                 .header(20.0, |mut header|
@@ -1250,6 +1250,9 @@ impl MastertechContext {
                 });
                 header.col(|ui|{
                     ui.label("Letter");
+                });
+                header.col(|ui|{
+                    ui.label("Type");
                 });
                 header.col(|ui|{
                     ui.label("Avail / Total Space");
@@ -1264,9 +1267,14 @@ impl MastertechContext {
                 {                                                           // this is stupid..
                     if let Some(disk) = self.disks.get(disk_index){
                         let disk_letter = format!("{}", disk
-                            .get("letter")
+                            .get("drive_letter")
                             .and_then(Value::as_str)
                             .unwrap_or(""));
+
+                        let drive_type = disk
+                            .get("drive_type")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
 
                         row.col(|ui| {
                             ui.label(disk_index.to_string());  // Show disk index
@@ -1275,10 +1283,17 @@ impl MastertechContext {
                             ui.label(disk_letter);  // Show disk letter
                         });
                         row.col(|ui| {
+                            if !drive_type.starts_with("Unknown"){
+                                ui.label(drive_type);  // Show disk type
+                            }else{
+                                ui.label("Network Drive?");
+                            }
+                        });
+                        row.col(|ui| {
                             let disk_space = format!(
                                 "{} Gb / {} Gb",
-                                disk.get("available space").and_then(Value::as_str).unwrap_or(""),
-                                disk.get("total space").and_then(Value::as_str).unwrap_or("")
+                                disk.get("space_left").and_then(Value::as_str).unwrap_or(""),
+                                disk.get("total_size").and_then(Value::as_str).unwrap_or("")
                             );
                             ui.label(disk_space);  // Show disk space
                         });

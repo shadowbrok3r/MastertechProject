@@ -85,17 +85,34 @@ pub struct HardwareTests{
     pub ram_test: String
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DriveData{
+    pub drive_letter: String,
     pub drive_type: String,
     pub total_size: String,
     pub space_left: String,
-
 }
+
+// #[derive(Serialize, Deserialize, Default, Debug, Clone)]
+// pub struct DriveData {
+//     pub disks: Vec<Value>,
+// }
+
+// impl DriveData {
+//     pub fn new() -> Self {
+//         DriveData {
+//             disks: Vec::new(),
+//         }
+//     }
+
+//     pub fn add_disk(&mut self, disk: Value){
+//         self.disks.push(disk);
+//     }
+// }
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct DiskData {
-    pub disks: Vec<Value>,
+    pub disks: Vec<DriveData>,
 }
 
 impl DiskData {
@@ -105,7 +122,7 @@ impl DiskData {
         }
     }
 
-    pub fn add_disk(&mut self, disk: Value){
+    pub fn add_disk(&mut self, disk: DriveData){
         self.disks.push(disk);
     }
 }
@@ -134,6 +151,7 @@ impl TicketResponse{
             num_inv: pre_ticket_clone.total_invoice_count.parse::<i32>().unwrap_or(0),
         };
 
+        // let disks = computer_data.drives.disks.
         
         let ticket_data = TicketData{
             pre_ticket_data: pre_ticket.clone(),

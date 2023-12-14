@@ -8,7 +8,7 @@ use tokio::{io::{self, ErrorKind}, runtime::Handle};
 use crossbeam::channel;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
-use crate::data::{ComputerData, DiskData};
+use crate::data::{ComputerData, DiskData, DriveData};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -92,19 +92,21 @@ impl ComputerData{
             let ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_formatted_string(&Locale::en);
             let operating_system = sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
             let disks = sys.disks();
-            let disks_clone = disks.clone();
             let hostname = sys.host_name();
 
             let mut data = DiskData::new();
-            
-            for disk in disks_clone{
+
+            for disk in disks{
                 if !disk.is_removable(){
-                    data.add_disk(serde_json::json!({
-                        "name": disk.name(),
-                        "letter": disk.mount_point().to_str(),
-                        "total space": (disk.total_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
-                        "available space": (disk.available_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
-                    }));
+                    data.add_disk(
+                        DriveData{
+                            drive_type: format!("{:?}", disk.kind()),
+                            total_size: (disk.total_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
+                            space_left: (disk.available_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
+                            drive_letter: disk.mount_point().to_str().unwrap_or("").to_string()
+                        }
+                    );
+                    println!("DriveData: {:?}", disk.name());
                 }   
             }
             
