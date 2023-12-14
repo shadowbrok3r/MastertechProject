@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use log::debug;
-use reqwest::header::{CONTENT_TYPE, ACCEPT};
+use reqwest::header::{COOKIE, CONTENT_TYPE, ACCEPT, HeaderValue};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use crate::ticket_request::{Store, scaffold::HardwareTest};
@@ -39,7 +39,7 @@ pub struct TicketData{
     pub recommendations: String,
     pub tech: String,
     pub salesman: String,
-    pub hardware_test_results: HardwareTest
+    pub hardware_test_results: HardwareTests
 }
 
 #[derive(Serialize, Deserialize)]
@@ -78,6 +78,12 @@ pub struct CustomerData{
     pub num_inv: i32,
 }
 
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct HardwareTests{
+    pub hdd_test: String,
+    pub ssd_test: String,
+    pub ram_test: String
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DriveData{
@@ -113,7 +119,7 @@ impl TicketResponse{
         recommendations: &String,
         tech: String,
         salesman: String, 
-        hardware_results: HardwareTest
+        hardware_results: HardwareTests
     ) -> Self{
         let pre_ticket_clone = pre_ticket.clone();
 
@@ -139,15 +145,15 @@ impl TicketResponse{
             hardware_test_results: hardware_results,
         };
 
-        let ticket_reponse = TicketResponse { 
+        let ticket_response = TicketResponse { 
             ticket_data, 
             customer_data, 
             computer_data: computer_data.clone() 
         };
 
-        debug!("Ticket Response: {ticket_reponse:?}");
+        debug!("Ticket Response: {ticket_response:#?}");
         
-        ticket_reponse
+        ticket_response
     }
 
  }
@@ -161,6 +167,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client)
         .post("http://localhost:8080/api/submitTicket") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
+        .header(COOKIE, HeaderValue::from_static("jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE3MDE5NjY0NjYsIm5iZiI6MTcwMTk2NjQ2NiwiZXhwIjoxNzAyMDUyODY2LCJpc3MiOiJTdXJyZWFsREIiLCJOUyI6Ik1hc3RlcnRlY2giLCJEQiI6Ik1hc3RlcnRlY2hEQiIsIlNDIjoidXNlciIsIklEIjoidXNlcjpkcDZpMnFldHJ2enYzdWY2Z3ZvdSJ9.vUoMmULjUZ7yTejrqAyYyP8Hl3jXqPmChQYCB228daC3DImwOid8MSa0uOI0_y-AwWv1m1X-6h87DGouNGXFpg"))
         .json(&payload)
         .send()
         .await;
