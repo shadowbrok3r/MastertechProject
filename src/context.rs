@@ -5,7 +5,7 @@ use log::{debug, info};
 use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest}}};
+use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest}}};
 use tokio::{sync::mpsc::unbounded_channel, spawn};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -1076,7 +1076,9 @@ impl MastertechContext {
                                             Salesman::Danny => "Danny".to_string(),
                                         };
                                         
-
+                                        let hdd_test = format!("{:?}", &self.hdd_test_cbox);
+                                        let ram_test = format!("{:?}", &self.ram_test_cbox);
+                                        let ssd_test = format!("{:?}", &self.ssd_test_cbox);
 
                                         let pre_ticket = &self.ticket_info;
                                         let payload = TicketResponse::serialize_payload(
@@ -1087,7 +1089,11 @@ impl MastertechContext {
                                             &self.recommendations,
                                             tech,
                                             salesman, 
-                                            HardwareTest::HddFail // example
+                                            HardwareTests{
+                                                hdd_test,
+                                                ssd_test,
+                                                ram_test,
+                                            } // example
                                         );
                                         let client = self.client.clone();
                                         spawn(async move{
