@@ -117,7 +117,7 @@ impl eframe::App for MasterTechApp {
                 Ok(computer_data) => {
                     self.context.system_info = computer_data;
 
-                    for disk in &self.context.system_info.drives.disks{
+                    for disk in &self.context.system_info.drives{
                         
                         self.context.disk_num += 1;
         
@@ -141,7 +141,7 @@ impl eframe::App for MasterTechApp {
 
             #[cfg(target_os="windows")]
             {
-                let mut cps = self.context.antivirus_installed.clone();
+                let mut cps = self.context.current_antivirus.clone();
                 let mut new_out_text = String::new();
     
                 let installed_antivirus = ComputerData::get_antivirus()
