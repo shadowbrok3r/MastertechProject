@@ -228,6 +228,7 @@ impl TabViewer for MastertechContext {
             "System Information" => self.system_information(ui),
             "Minidump Analysis" => self.mini_dump(ui),
             "Profiler" => self.puffin_profiler(ui),
+            "QC ☑️" => self.quality_check(ui),
             _ => {
                 let sysinfo_tab = &"System Information".to_string();
                 if ui.label(tab.as_str()).clicked(){
@@ -1328,4 +1329,6 @@ impl MastertechContext {
         // self.minidump_app.update_ui(&self.ctx, ui);
         // self.minidump_app.last_status = self.minidump_app.cur_status;
     }
+
+    fn quality_check(&mut self, ui: &mut Ui){ }
 }
