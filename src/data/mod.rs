@@ -34,7 +34,7 @@ pub struct TicketData{
     #[serde(flatten)]
     pub pre_ticket_data: PreTicketData,
 
-    pub antivirus_installed: String,
+    pub current_antivirus: Vec<String>,
     pub service_number: i32,
     pub recommendations: String,
     pub tech: String,
@@ -55,9 +55,8 @@ pub struct ComputerData{
     pub cpu: String,
     pub gpu: Option<String>,
     pub ram: String,
-    pub drives: DiskData,
+    pub drives: Vec<DriveData>,
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TicketResponse{
@@ -85,46 +84,25 @@ pub struct HardwareTests{
     pub ram_test: String
 }
 
+impl ComputerData{
+    pub fn new() -> Self{
+        ComputerData{
+            drives: Vec::new(),
+            ..Default::default()
+        }
+    }
+
+    pub fn add_disk(&mut self, disk: DriveData){
+        self.drives.push(disk);
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DriveData{
     pub drive_letter: String,
     pub drive_type: String,
     pub total_size: String,
     pub space_left: String,
-}
-
-// #[derive(Serialize, Deserialize, Default, Debug, Clone)]
-// pub struct DriveData {
-//     pub disks: Vec<Value>,
-// }
-
-// impl DriveData {
-//     pub fn new() -> Self {
-//         DriveData {
-//             disks: Vec::new(),
-//         }
-//     }
-
-//     pub fn add_disk(&mut self, disk: Value){
-//         self.disks.push(disk);
-//     }
-// }
-
-#[derive(Serialize, Deserialize, Default, Debug, Clone)]
-pub struct DiskData {
-    pub disks: Vec<DriveData>,
-}
-
-impl DiskData {
-    pub fn new() -> Self {
-        DiskData {
-            disks: Vec::new(),
-        }
-    }
-
-    pub fn add_disk(&mut self, disk: DriveData){
-        self.disks.push(disk);
-    }
 }
 
 impl TicketResponse{
@@ -151,11 +129,13 @@ impl TicketResponse{
             num_inv: pre_ticket_clone.total_invoice_count.parse::<i32>().unwrap_or(0),
         };
 
-        // let disks = computer_data.drives.disks.
-        
+        let mut current_antivirus: Vec<String> = Vec::new();
+        current_antivirus.push("webroot".to_string());
+        current_antivirus.push("superantiSpyware".to_string());
+
         let ticket_data = TicketData{
             pre_ticket_data: pre_ticket.clone(),
-            antivirus_installed: antivirus_installed.clone(),
+            current_antivirus, //.clone(),
             service_number: service_number.parse::<i32>().unwrap_or(0),
             recommendations: recommendations.clone(),
             tech,

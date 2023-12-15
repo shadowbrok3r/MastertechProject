@@ -8,7 +8,7 @@ use tokio::{io::{self, ErrorKind}, runtime::Handle};
 use crossbeam::channel;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
-use crate::data::{ComputerData, DiskData, DriveData};
+use crate::data::{ComputerData, DriveData};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -94,7 +94,8 @@ impl ComputerData{
             let disks = sys.disks();
             let hostname = sys.host_name();
 
-            let mut data = DiskData::new();
+            // let mut data = DiskData::new();
+            let mut data = ComputerData::new();
 
             for disk in disks{
                 if !disk.is_removable(){
@@ -171,7 +172,7 @@ impl ComputerData{
                     cpu,
                     ram,
                     hostname: hostname.unwrap_or("empty".to_string()),
-                    drives: data,
+                    drives: data.drives,
                     gpu: Some(gpu_name),
                     operating_system,
                 };
