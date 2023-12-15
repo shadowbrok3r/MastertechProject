@@ -137,7 +137,7 @@ impl ComputerData{
                     cpu,
                     ram,
                     operating_system,
-                    drives: data,
+                    drives: data.drives,
                     gpu: Some(new_gpu_name.to_string()),
                     hostname: hostname.unwrap_or("empty".to_string()),
                 };

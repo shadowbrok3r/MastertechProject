@@ -43,7 +43,7 @@ pub struct MastertechContext {
     /// Sends requests and retrieves data from scaffold
     scaffold_request: SendRequest,
 
-    pub antivirus_installed: String,
+    pub current_antivirus: String,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
     // pub minidump_app: MiniDumpApp,
@@ -163,7 +163,7 @@ impl Default for MasterTechApp {
             scaffold_request,
             client,
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
-            antivirus_installed: "".to_string(),
+            current_antivirus: "".to_string(),
             opened_file: None,
             open_file_dialog: None,
             // I should just make this section take
@@ -661,7 +661,7 @@ impl MastertechContext {
                                             }
 
                                             let mut specs = String::new();
-                                            let cps = self.antivirus_installed.clone();
+                                            let cps = self.current_antivirus.clone();
                                             let mut final_disk = String::new();
                                             let mut each_disk = String::new();
                                                                                     
@@ -1084,7 +1084,7 @@ impl MastertechContext {
                                             pre_ticket,
                                             &self.system_info,
                                             &self.so_number,
-                                            &self.antivirus_installed,
+                                            &self.current_antivirus,
                                             &self.recommendations,
                                             tech,
                                             salesman, 
