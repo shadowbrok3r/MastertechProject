@@ -68,29 +68,29 @@ pub(crate) fn load_icon() -> egui::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // let theme = CarlDark;
-
-        // let style: Style = theme.custom_style();
-
-        // ctx.set_style(Arc::new(style));
         util::colors::set_theme(ctx, util::colors::MOCHA);
+        // let theme = CarlDark;
+        // let style: Style = theme.custom_style();
+        // ctx.set_style(Arc::new(style));
+        // if self.context.spinner{
 
-        if self.context.spinner == true{
-            egui::Window::new("Spinner Window")
-            .title_bar(false)
-            .fixed_size(vec2(10.0,10.0))
-            .constrain_to(ctx.available_rect())
-            
-            .anchor(Align2::RIGHT_TOP, [2.0, 2.0])
-            .show(&ctx, |ui|{
-                ui.add(
-                    Spinner::new()
-                    .color(Color32::LIGHT_RED)
-                    .size(20.0)
-                );
-            });
-        }
-    
+        // }
+        // egui::Window::new("Spinner Window")
+        //     .enabled(self.spinner)
+        //     .open(&mut self.spinner)
+        //     .title_bar(false)
+        //     .fixed_size(vec2(10.0,10.0))
+        //     // .constrain_to(ctx.available_rect())
+        //     .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+        //     .show(&self.ctx, |ui|{
+        //         ui.add(
+        //             Spinner::new()
+        //             .color(Color32::LIGHT_RED)
+        //             .size(20.0)
+        //         );
+        // });
+        
+                
         if self.context.specs_first_run == true{
             self.context.spinner = true;
             /*             

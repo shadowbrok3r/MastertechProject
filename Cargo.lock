@@ -674,9 +674,9 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.68.1"
+version = "0.69.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "726e4313eb6ec35d2730258ad4e15b547ee75d6afaa1361a922e78e59b7d8078"
+checksum = "9ffcebc3849946a7170a05992aac39da343a90676ab392c51a4280981d6379c2"
 dependencies = [
  "bitflags 2.4.1",
  "cexpr",
@@ -1730,9 +1730,9 @@ dependencies = [
 
 [[package]]
 name = "egui_dock"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cabf77568b8da81f419596357583fbc14fd761c72c3433856d30c7669e5b5679"
+checksum = "246a6cbf38560cdcf75f955b1f2f39be6339a3f2958d06997ce70b7b4aa3f57d"
 dependencies = [
  "duplicate",
  "egui 0.24.1",
@@ -4966,9 +4966,9 @@ checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
 
 [[package]]
 name = "skia-bindings"
-version = "0.68.0"
+version = "0.69.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0af1b86d01552a56d70b515e2bc1af9123acffcc679a7410010e2648f59fbec3"
+checksum = "8b4b5af96ee7d895763fa606f4531fddfb11de034217edd0c7beb9ea181efe5b"
 dependencies = [
  "bindgen",
  "cc",
@@ -4984,9 +4984,9 @@ dependencies = [
 
 [[package]]
 name = "skia-safe"
-version = "0.68.0"
+version = "0.69.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed678303df69daf5b666faf477800ff7fcb7b67316b10a94c31d748d42dd5a83"
+checksum = "4a3d25acaedea0a8ed1dac52f383fc90276f5679a68e3f84c5fb7f7bde8934ff"
 dependencies = [
  "bitflags 2.4.1",
  "lazy_static",
