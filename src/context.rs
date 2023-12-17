@@ -349,6 +349,7 @@ impl MastertechContext {
                                             if !service_num.is_empty(){
                                                 self.output_text = "Its Everest, this may take a 'moment'".to_string();
                                                 self.spinner = true;
+ 
                                                 SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
                                             }else{
                                                 self.output_text = "You need to enter an SO number before submitting TUR sheet".to_string();
@@ -618,13 +619,21 @@ impl MastertechContext {
                                     {  
                                         self.spinner = true;
 
-                                        if self.spinner{
+                                        egui::Window::new("Spinner Window")
+                                        .enabled(self.spinner)
+                                        .open(&mut self.spinner)
+                                        .title_bar(false)
+                                        .fixed_size(vec2(10.0,10.0))
+                                        // .constrain_to(ctx.available_rect())
+                                        .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+                                        .show(&self.ctx, |ui|{
                                             ui.add(
                                                 Spinner::new()
                                                 .color(Color32::LIGHT_RED)
                                                 .size(20.0)
                                             );
-                                        }
+                                    });
+                                        
 
                                         let cust = &self.ticket_info.customer_name;
                                         let so_num = &self.so_number;
@@ -1165,6 +1174,24 @@ impl MastertechContext {
     }
 
     fn output_console(&mut self, ui: &mut Ui) { 
+        let input = egui::RawInput::default();
+
+        let _ = self.ctx.run(input, |ctx|{
+            egui::Window::new("Spinner Window")
+            .enabled(self.spinner)
+            .open(&mut self.spinner)
+            .title_bar(false)
+            .fixed_size(vec2(20.0,20.0))
+            .anchor(Align2::CENTER_TOP, [0.0, 0.0])
+            .show(&ctx, |ui|{
+                ui.add(
+                    Spinner::new()
+                    .color(Color32::LIGHT_RED)
+                    .size(20.0)
+                );
+            });
+        });
+       
         ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text.to_string()).hint_text("Output"));
     }
     
