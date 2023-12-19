@@ -164,7 +164,7 @@ impl SendRequest{
                     let extra_email = temp_email;
                     
                     let mut originating_store: Store = Store::None;
-                    if let Some(store) = header.JURISCODE{
+                    if let Some(store) = header.DEP{
                         originating_store = store;
                     }
 
@@ -177,8 +177,8 @@ impl SendRequest{
                         last_invoice_amount: customer.LI_AMT.unwrap_or("empty".to_string()),
                         terms: header.TERMS.unwrap_or("empty".to_string()),
                         doc_alias: header.DOC_ALIAS.unwrap_or("empty".to_string()),
-                        dep: header.DEP.unwrap_or("empty".to_string()),
-                        jurisdiction: originating_store,
+                        dep: originating_store ,
+                        jurisdiction: header.JURISCODE.unwrap_or("empty".to_string()),
                         ticket_total: header.INV_AMOUNT.unwrap_or("empty".to_string()),
                         customer_name: customer.NAME.unwrap_or("empty".to_string()),
                         checkin_notes: checkin_note,
