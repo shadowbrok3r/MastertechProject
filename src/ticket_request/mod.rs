@@ -33,8 +33,8 @@ pub struct Header {
     pub USER_ID: Option<String>, // "USER_ID": "BP3", //checkin rep
     pub TERMS: Option<String>, // "TERMS": "CC",
     pub DOC_ALIAS: Option<String>, // "DOC_ALIAS": "SERVICE ORDER",
-    pub DEP: Option<String>, // "DEP": "LTN"
-    pub JURISCODE: Option<Store>, //"JURISCODE": "LTN",
+    pub DEP: Option<Store>, // "DEP": "LTN"
+    pub JURISCODE: Option<String>, //"JURISCODE": "LTN",
     pub COG: Option<String>, // "COG": "7.1000", //Cost of goods?
     pub INV_AMOUNT: Option<String>, // "INV_AMOUNT": "53.6100",
 }
@@ -89,6 +89,8 @@ pub enum Store{
     AF,
     SAN,
     ORE,
+    SLC,
+    SLC1
 }
 
 impl Store {
@@ -102,6 +104,8 @@ impl Store {
             Store::AF => "pclaf@pclaptops.com",
             Store::SAN => "pclsan@pclaptops.com",
             Store::ORE => "pclore@pclaptops.com",
+            Store::SLC => "pclmur@pclaptops.com",
+            Store::SLC1 => "pclmur@pclaptops.com",
         }
     }
     pub fn as_str(&self) -> &'static str {
@@ -114,6 +118,8 @@ impl Store {
             Store::AF => "AF",
             Store::SAN => "SAN",
             Store::ORE => "ORE",
+            Store::SLC => "SLC",
+            Store::SLC1 => "SLC1"
         }  
     }
 

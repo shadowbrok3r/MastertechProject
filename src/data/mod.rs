@@ -12,8 +12,8 @@ pub struct PreTicketData{
     pub checkin_rep: String, // "USER_ID": "BP3", //checkin rep
     pub terms: String, // "TERMS": "CC",
     pub doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
-    pub dep: String, // "DEP": "LTN"
-    pub jurisdiction: Store, //"JURISCODE": "LTN",
+    pub dep: Store, // "DEP": "LTN"
+    pub jurisdiction: String, //"JURISCODE": "LTN",
     pub ticket_total: String,
 
     pub customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",

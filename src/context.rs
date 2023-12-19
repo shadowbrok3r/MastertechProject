@@ -677,8 +677,8 @@ impl MastertechContext {
                                                                                     
                                             let cust_code = &self.ticket_info.cust_code;
                                             let doc_alias = &self.ticket_info.doc_alias;
-                                            //let department = &self.ticket_info.department;
-                                            //let juris = &self.ticket_info.jurisdiction;
+                                            let department = &self.ticket_info.dep;
+                                            //let juris = &self.ticket_info.juris;
                                             let ticket_total = &self.ticket_info.ticket_total;
                                             let cust_email = &self.ticket_info.customer_email;
                                             let last_inv_num = &self.ticket_info.last_invoice_number;
@@ -852,7 +852,7 @@ impl MastertechContext {
                                                         <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",
                                             );
 
-                                            let store = &self.ticket_info.jurisdiction;
+                                            let store = &self.ticket_info.dep;
 
                                             if store.as_str() == "RIV"{
                                                 let sm = self.salesman_cbox;
@@ -1018,49 +1018,10 @@ impl MastertechContext {
                                             self.output_text.clear();
                                             self.output_text = "You need to enter a customer name or Service number".to_string();
                                         }
-                                        // if !&self.ticket_info.customer_name.is_empty() || !&self.so_number.is_empty()
-                                        // {
-                                        //     self.spinner = true;
-                                        //     if self.spinner{
-                                        //         ui.add(
-                                        //             Spinner::new()
-                                        //             .color(Color32::LIGHT_RED)
-                                        //             .size(20.0)
-                                        //         );
-                                        //     }
-                                        //     let store = &self.ticket_info.jurisdiction;
-
-                                        //     if store.as_str() == "RIV"{
-                                        //         let sm = self.salesman_cbox;
-                                        //         let tests = self.hdd_test_cbox;
-                                                
-                                        //         let asana_task = asana_html_builder(
-                                        //             self.ticket_info,
-                                        //             self.system_info,
-                                        //             self.send_specs,
-                                        //             self.client,
-                                        //             self.scaffold_request.tx
-                                        //         );
-
-                                        //         SendRequest::send_ticket_request(
-                                        //             self.scaffold_request.tx.clone(), 
-                                        //             self.client.clone(), 
-                                        //             asana_task,
-                                        //             self.date.unwrap().to_string(),
-                                        //         );
-                                        //     }
-                                        //     else{
-
-                                        //     }
+                                    
 
                                         self.spinner = false;
                                         self.ctx.request_repaint();
-                                        // }
-                                        // else
-                                        // {
-                                        //     self.output_text.clear();
-                                        //     self.output_text = "You need to enter a customer name or Service number".to_string();
-                                        // }
                                     }
                                 
                                     if ui
