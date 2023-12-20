@@ -511,7 +511,9 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
             }
 }
 
-//pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
+//pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
+    // supereasybackup.com/downloads/SuperEasyBackup.exe
+// }
 
 //pub async fn get_computer_purchases(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
 
