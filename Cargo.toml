@@ -80,6 +80,7 @@ dotenv = "0.15.0"
 lettre = "0.11.2"
 async-trait = "0.1.74"
 egui-aesthetix = { version = "0.2.0", features = [ "carl" ] }
+xml = "0.8.10"
 
 
 [target.'cfg(target_os = "linux")'.dependencies]
