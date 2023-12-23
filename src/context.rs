@@ -5,7 +5,7 @@ use log::{debug, info};
 use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest}}};
+use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest}, request::request_seb_info}};
 use tokio::{sync::mpsc::unbounded_channel, spawn};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -447,7 +447,7 @@ impl MastertechContext {
                                                     if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
                                                         
-                                                        //check_seb_info
+                                                        request_seb_info();
                                                     }
                         
                                                     ui.end_row();

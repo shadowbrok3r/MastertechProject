@@ -6,7 +6,8 @@ use reqwest::{header::{CONTENT_TYPE, ACCEPT}, multipart::{Form, Part}};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use tokio::io::AsyncWriteExt;
-use std::{error::Error, path::PathBuf};
+use xml::{EventReader, reader::XmlEvent};
+use std::{error::Error, path::PathBuf, fs::File, io::BufReader};
 use log::{info, debug, trace, error};
 use crate::{scaffold::*, data::{PulledKeys, PreTicketData}, ticket_request::AddressObject};
 use std::result::Result;
@@ -511,9 +512,48 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
             }
 }
 
-//pub async fn request_seb_info(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
+pub fn request_seb_info(){ // cust_id: String -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
     // supereasybackup.com/downloads/SuperEasyBackup.exe
-// }
+    let file = File::open("D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log").unwrap();
+    let file = BufReader::new(file);
+
+    let parser = EventReader::new(file);
+    let mut depth = 0;
+    for e in parser {
+        match e {
+            Ok(XmlEvent::StartElement { name, .. }) => {
+                // XmlEvent::ProcessingInstruction { name, data: () }
+                /*
+                    <InstalledDeviceId>8a8e1c4f-83ff-47cf-96fb-94b31695f68a</InstalledDeviceId>
+                    <UtcClientTime>2023-12-21 23:22:00</UtcClientTime>
+                    <LocalClientTime>2023-12-21 15:22:00</LocalClientTime>
+                    <InstallInstanceId>1fc3b934-21ea-42a9-893a-4be7c335fcb9</InstallInstanceId>
+                    <HasIssues>false</HasIssues>
+                    <InstallationStage>Activated</InstallationStage>
+                    <ReasonCode>0</ReasonCode>
+                    <ActivationCode>6894-1dbe-ad8f-e320-d94d</ActivationCode>
+                    <ProcessUsername>NT AUTHORITY\SYSTEM</ProcessUsername>
+                    <ProcessUserIsMemberOfAdministratorsGroups>true</ProcessUserIsMemberOfAdministratorsGroups>
+                    <InstallVersion>10.6.2.296</InstallVersion>
+                    <MachineName>OWNERPC</MachineName>
+                */
+                println!("{:spaces$}+{name}", "", spaces = depth * 2);
+                depth += 1;
+            }
+            Ok(XmlEvent::EndElement { name }) => {
+                depth -= 1;
+                println!("{:spaces$}-{name}", "", spaces = depth * 2);
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                break;
+            }
+            // There's more: https://docs.rs/xml-rs/latest/xml/reader/enum.XmlEvent.html
+            _ => {}
+        }
+    }
+
+}
 
 //pub async fn get_computer_purchases(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
 

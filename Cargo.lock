@@ -59,6 +59,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "walkdir",
+ "xml",
 ]
 
 [[package]]
@@ -6729,6 +6730,15 @@ checksum = "2769203cd13a0c6015d515be729c526d041e9cf2c0cc478d57faee85f40c6dcd"
 dependencies = [
  "nix 0.26.4",
  "winapi",
+]
+
+[[package]]
+name = "xml"
+version = "0.8.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cb5b0add8d5aaa69357818de5f3b60104a62ef345dca81d0947e2148347a7f7"
+dependencies = [
+ "xml-rs",
 ]
 
 [[package]]
