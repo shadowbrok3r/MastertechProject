@@ -449,7 +449,7 @@ impl MastertechContext {
                                                         
                                                         let _ = request_seb_info().or_else(|err|{
                                                             debug!("Error: {:?}", err.to_string());
-                                                            self.output_text += "Couldnt pull SEB info: \n {err:?}";
+                                                            self.output_text += format!("Couldnt pull SEB info: \n {err:?}").as_str();
                                                             Err(err)
                                                         }).and_then(|data|{
                                                             self.output_text += format!("{data:#?}").as_str();

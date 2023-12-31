@@ -90,26 +90,26 @@ impl ComputerData{
 
             let cpu = sys.cpus()[0].brand().to_string();
             let ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_formatted_string(&Locale::en);
-            // let operating_system = sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
-            // let disks = sys.disks();
-            // let hostname = sys.host_name();
+            let operating_system = System::long_os_version().unwrap_or_default(); //sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
+            let mut disks = Disks::new_with_refreshed_list();
+            let hostname = System::host_name().unwrap_or_default();
 
             // let mut data = DiskData::new();
             let mut data = ComputerData::new();
 
-            // for disk in disks{
-            //     if !disk.is_removable(){
-            //         data.add_disk(
-            //             DriveData{
-            //                 drive_type: format!("{:?}", disk.kind()),
-            //                 total_size: (disk.total_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
-            //                 space_left: (disk.available_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
-            //                 drive_letter: disk.mount_point().to_str().unwrap_or("").to_string()
-            //             }
-            //         );
-            //         println!("DriveData: {:?}", disk.name());
-            //     }   
-            // }
+            for disk in &mut disks{
+                if !disk.is_removable(){
+                    data.add_disk(
+                        DriveData{
+                            drive_type: format!("{:?}", disk.kind()),
+                            total_size: (disk.total_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
+                            space_left: (disk.available_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
+                            drive_letter: disk.mount_point().to_str().unwrap_or("").to_string()
+                        }
+                    );
+                    println!("DriveData: {:?}", disk.name());
+                }   
+            }
             
             #[cfg(target_os = "windows")]
             {
@@ -133,15 +133,14 @@ impl ComputerData{
                     new_gpu_name = parse_gpu_name.clone()[1].trim();
                 }
 
-                let system_info = todo!();
-                // ComputerData{
-                //     cpu,
-                //     ram,
-                //     // operating_system,
-                //     // drives: data.drives,
-                //     gpu: Some(new_gpu_name.to_string()),
-                //     // hostname: hostname.unwrap_or("empty".to_string()),
-                // };
+                let system_info = ComputerData{
+                    cpu,
+                    ram,
+                    operating_system,
+                    drives: data.drives,
+                    gpu: Some(new_gpu_name.to_string()),
+                    hostname,
+                };
 
                 match tx.send(system_info){
                     Ok(_) => info!("sent computer data"),
