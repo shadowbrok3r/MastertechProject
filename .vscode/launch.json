@@ -4,6 +4,18 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        // {
+        //     "type": "lldb",
+        //     "request": "custom",
+        //     "name": "Custom launch",
+        //     "targetCreateCommands": [
+        //         "target create ${workspaceFolder}/target/debug/MasterTech.exe"
+        //     ],
+        //     "processCreateCommands": [
+        //         "settings set target.run-args",
+        //         "process launch"
+        //     ]
+        // },
         {
             "type": "lldb",
             "request": "launch",

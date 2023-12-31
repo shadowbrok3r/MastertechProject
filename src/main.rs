@@ -111,56 +111,56 @@ impl eframe::App for MasterTechApp {
             } 
             */
     
-            let specs = ComputerData::get_computer_data();
+            // let specs = ComputerData::get_computer_data();
 
-            match specs{
-                Ok(computer_data) => {
-                    self.context.system_info = computer_data;
+            // match specs{
+            //     Ok(computer_data) => {
+            //         self.context.system_info = computer_data;
 
-                    for disk in &self.context.system_info.drives{
+            //         for disk in &self.context.system_info.drives{
                         
-                        self.context.disk_num += 1;
+            //             self.context.disk_num += 1;
         
-                        if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                            // Convert `disk` to a serde_json::Value
-                            let disk_json = serde_json::to_value(&disk).unwrap();
+            //             if let Some(disks_arr) = self.context.disks.as_array_mut() {
+            //                 // Convert `disk` to a serde_json::Value
+            //                 let disk_json = serde_json::to_value(&disk).unwrap();
                     
-                            disks_arr.push(disk_json);
-                        } else {
-                            eprintln!("Expected self.context.drives to be an Array");
-                        }
+            //                 disks_arr.push(disk_json);
+            //             } else {
+            //                 eprintln!("Expected self.context.drives to be an Array");
+            //             }
                         
-                    }
-                    self.context.spinner = false;
-                },
-                Err(e) => {
-                    self.context.output_text = format!("{}", e.to_string());
-                    self.context.spinner = false;
-                }
-            }
+            //         }
+            //         self.context.spinner = false;
+            //     },
+            //     Err(e) => {
+            //         self.context.output_text = format!("{}", e.to_string());
+            //         self.context.spinner = false;
+            //     }
+            // }
 
-            #[cfg(target_os="windows")]
-            {
-                let mut cps = self.context.current_antivirus.clone();
-                let mut new_out_text = String::new();
+            // #[cfg(target_os="windows")]
+            // {
+            //     let mut cps = self.context.current_antivirus.clone();
+            //     let mut new_out_text = String::new();
     
-                let installed_antivirus = ComputerData::get_antivirus()
-                .map_err(|e| 
-                    new_out_text = format!("Error checking antivirus: {e}\n")
-                ).unwrap();
+            //     let installed_antivirus = ComputerData::get_antivirus()
+            //     .map_err(|e| 
+            //         new_out_text = format!("Error checking antivirus: {e}\n")
+            //     ).unwrap();
     
     
-                for (name, is_installed) in installed_antivirus {
-                    match is_installed {
-                        Some(true) => {
-                            new_out_text += &format!("{name} detected");
-                            cps += "\n";
-                            cps += &format!("{name}");
-                        },
-                        _ => {},
-                    }
-                }
-            }
+            //     for (name, is_installed) in installed_antivirus {
+            //         match is_installed {
+            //             Some(true) => {
+            //                 new_out_text += &format!("{name} detected");
+            //                 cps += "\n";
+            //                 cps += &format!("{name}");
+            //             },
+            //             _ => {},
+            //         }
+            //     }
+            // }
         }
     
         self.context.specs_first_run = false;
