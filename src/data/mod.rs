@@ -48,6 +48,21 @@ pub struct PulledKeys{
     pub superanti_key: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+#[serde(rename = "xml")]
+pub struct LocalSebData {
+    pub InstalledDeviceId: String,
+    pub InstallInstanceId: String,
+    pub HasIssues: String,
+    pub InstallationStage: String,
+    pub ReasonCode: String,
+    pub ActivationCode: String,
+    pub InstallVersion: String,
+    pub MachineName: String,
+}
+
+
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct ComputerData{
     pub hostname: String,

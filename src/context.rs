@@ -447,7 +447,14 @@ impl MastertechContext {
                                                     if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
                                                         
-                                                        request_seb_info();
+                                                        let _ = request_seb_info().or_else(|err|{
+                                                            debug!("Error: {:?}", err.to_string());
+                                                            self.output_text += "Couldnt pull SEB info: \n {err:?}";
+                                                            Err(err)
+                                                        }).and_then(|data|{
+                                                            self.output_text += format!("{data:#?}").as_str();
+                                                            Ok(data)
+                                                        }); 
                                                     }
                         
                                                     ui.end_row();
