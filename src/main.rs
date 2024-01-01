@@ -131,6 +131,7 @@ impl eframe::App for MasterTechApp {
                         }
                         
                     }
+                    self.context.output_text += format!("{:#?}", self.context.system_info.clone().seb_info.unwrap_or_default()).as_str();
                     self.context.spinner = false;
                 },
                 Err(e) => {
