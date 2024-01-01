@@ -10,7 +10,7 @@ use quick_xml::{Reader, events::Event, name::QName};
 use quick_xml::de::from_str;
 use std::{error::Error, path::PathBuf, fs::{File, self}, io::BufReader};
 use log::{info, debug, trace, error};
-use crate::{scaffold::*, data::{PulledKeys, PreTicketData, LocalSebData}, ticket_request::AddressObject};
+use crate::{scaffold::*, data::{PulledKeys, PreTicketData, LocalSebData, ExtendedSeb}, ticket_request::AddressObject};
 use std::result::Result;
 use asana::{
     apis::{
@@ -513,54 +513,41 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
             }
 }
 
-pub fn request_seb_info() -> Result<LocalSebData,Box<dyn Error>>{
+pub async fn request_seb_info(client: reqwest::Client) -> Result<LocalSebData, Box<dyn Error>>{
     // supereasybackup.com/downloads/SuperEasyBackup.exe
-    let file_path = "C:\\DCProtect\\Shared\\Logs\\InstallationTracking.log";
+    let file_path = "C:\\DCProtect\\Shared\\Logs\\InstallationTracking.log"; // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log"; 
 
     // Read the file content
     let file_content = fs::read_to_string(file_path)?;
 
     // Deserialize the XML content
-    let result: LocalSebData = from_str(&file_content)?;
+    let mut result: LocalSebData = from_str(&file_content)?;
 
+    let params = serde_json::json!({
+        "user_email": "logan.lees@pclaptops.com",
+        "user_password": "Poolparty1",
+        "action": "search",
+        "application": "carbonite",
+        "search": result.InstalledDeviceId.as_str()
+    });
+
+    let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json")
+        .json(&params)
+        .send()
+        .await?;
+
+        let respone_json: Vec<ExtendedSeb> = response.json().await?;
+        
+        let actual_response = respone_json.get(0);
+
+        if let Some(extended_seb) = actual_response{
+            println!("Carbonite response: {extended_seb:#?}");
+
+            result.ExtendedSeb = Some(extended_seb.clone());
+        }
+        
     Ok(result)
 }
 
-//pub async fn get_computer_purchases(cust_id: String)  -> core::result::Result<GetTicketResponse, Box<dyn Error>> {}
-
-/*
-        match response {
-            Ok(mut res) => {
-                let total: u64 = res.headers()
-                    .get(CONTENT_LENGTH)
-                    .and_then(|len| len.to_str().ok())
-                    .and_then(|number| number.parse().ok())
-                    .unwrap_or(0);
-        
-                let mut downloaded: u64 = 0;
-                let mut data = bytes::BytesMut::new();
-        
-                while let Ok(chunk_result) = res.chunk().await {
-                    match chunk_result {
-                        Some(chunk) => {
-                            downloaded += chunk.len() as u64; // Here we update our downloaded count with the size of the chunk
-                            data.extend_from_slice(&chunk);
-                
-                            if total > 0 {
-                                let progress = (downloaded as f64 / total as f64 * 100.0) as u32;
-                                progress_bytes = progress;
-                                info!("progress: {:?}", progress_bytes);
-                            }
-                        },
-                        None => break, // The stream has ended
-                    }
-                }
-                
-        
-                let json_response: GetTicketResponse = serde_json::from_slice(&data)?; // Parse the buffered data
-        
-                Ok(json_response)
-            },
-            Err(e) => Err(Box::new(e)),
-        }
- */

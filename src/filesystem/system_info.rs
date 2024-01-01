@@ -1,6 +1,7 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 use std::{collections::HashMap, sync::{Arc, mpsc::Sender}, path::Path, error::Error};
 use log::{debug, info};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
@@ -8,7 +9,7 @@ use tokio::{io::{self, ErrorKind}, runtime::Handle};
 use crossbeam::channel;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
-use crate::data::{ComputerData, DriveData};
+use crate::{data::{ComputerData, DriveData}, ticket_request::request::request_seb_info};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -132,6 +133,23 @@ impl ComputerData{
                 if parse_gpu_name[0].is_empty(){
                     new_gpu_name = parse_gpu_name.clone()[1].trim();
                 }
+                let client = Client::new();
+                let seb_data = request_seb_info(client)
+                    .await
+                    .or_else(|err|{
+                        debug!("Error: {:?}", err.to_string());
+                        Err(err)
+                    }).and_then(|data|{
+                        info!("Pulled SEB Data successfully: {data:#?}");
+                        Ok(data)
+                }); 
+
+                let seb_info: Option<crate::data::LocalSebData>;
+                if let Ok(seb) = seb_data{
+                    seb_info = Some(seb);
+                }else {
+                    seb_info = None;
+                }
 
                 let system_info = ComputerData{
                     cpu,
@@ -140,6 +158,7 @@ impl ComputerData{
                     drives: data.drives,
                     gpu: Some(new_gpu_name.to_string()),
                     hostname,
+                    seb_info,
                 };
 
                 match tx.send(system_info){

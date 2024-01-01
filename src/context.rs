@@ -1,11 +1,11 @@
-use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf, fs}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
 use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
 use log::{debug, info};
 use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest}, request::request_seb_info}};
+use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests, LocalSebData}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest}, request::request_seb_info}};
 use tokio::{sync::mpsc::unbounded_channel, spawn};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -44,6 +44,7 @@ pub struct MastertechContext {
     scaffold_request: SendRequest,
 
     pub current_antivirus: String,
+    pub seb_info: Option<LocalSebData>,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
     // pub minidump_app: MiniDumpApp,
@@ -155,7 +156,7 @@ impl Default for MasterTechApp {
                 webroot_key: "Webroot Key".to_string(), 
                 superanti_key: "SuperAnti Key".to_string() 
             },
-
+            seb_info: None,
             system_info: ComputerData::default(),
             disks: Value::Array(vec![]),
             disk_num: 0,
@@ -446,15 +447,22 @@ impl MastertechContext {
                                                     
                                                     if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
-                                                        
-                                                        let _ = request_seb_info().or_else(|err|{
-                                                            debug!("Error: {:?}", err.to_string());
-                                                            self.output_text += format!("Couldnt pull SEB info: \n {err:?}").as_str();
-                                                            Err(err)
-                                                        }).and_then(|data|{
-                                                            self.output_text += format!("{data:#?}").as_str();
-                                                            Ok(data)
-                                                        }); 
+                                                        // if fs::read_dir("").is_ok() && self.seb_info.is_none(){
+                                                        //     let seb_data = request_seb_info(self.client).or_else(|err|{
+                                                        //         debug!("Error: {:?}", err.to_string());
+                                                        //         self.output_text += format!("Couldnt pull SEB info: \n {err:?}").as_str();
+                                                        //         Err(err)
+                                                        //     }).and_then(|data|{
+                                                        //         self.output_text += format!("{data:#?}").as_str();
+                                                        //         Ok(data)
+                                                        //     }); 
+    
+                                                        //     if let Ok(seb_info) = seb_data{
+                                                        //         self.seb_info = Some(seb_info);
+                                                        //     }
+                                                        // }else{
+                                                        //     self.output_text += "Already pulled SEB data";
+                                                        // }
                                                     }
                         
                                                     ui.end_row();
@@ -679,6 +687,7 @@ impl MastertechContext {
 
                                             let mut specs = String::new();
                                             let cps = self.current_antivirus.clone();
+                                            let seb_info = self.seb_info.clone().unwrap_or_default();
                                             let mut final_disk = String::new();
                                             let mut each_disk = String::new();
                                                                                     
@@ -700,12 +709,7 @@ impl MastertechContext {
                                                 <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{phone2}</td>
                                                 </tr>");
                                             }
-                                            /*      
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Depart/Juris</td>
-                                                <td style=\"padding:1px 1px\">{department}/{juris}</td>
-                                            </tr>
-                                            */
+
                                             let extra_customer_info = format!
                                             ("
                                             <tr>
@@ -809,7 +813,7 @@ impl MastertechContext {
                                                     </tr>
                                                     <tr>
                                                         <td>SEB</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\"></td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{seb_info:#?}</td>
                                                     </tr>
                                                     <tr>
                                                     <td colspan=
@@ -1030,61 +1034,6 @@ impl MastertechContext {
                                         self.spinner = false;
                                         self.ctx.request_repaint();
                                     }
-                                
-                                    if ui
-                                    .add(
-                                        Button::new
-                                        (
-                                            RichText::new("Test Server")
-                                                .strong()
-                                                .italics()
-                                        )
-                                    )
-                                    .clicked()
-                                    {  
-                                        let tech = match self.techs_cbox{
-                                            Techs::Logan => "Logan".to_string(),
-                                            Techs::Bread => "Brett".to_string(),
-                                            Techs::Taco => "Taco".to_string(),
-                                        };
-
-                                        let salesman = match self.salesman_cbox{
-                                            Salesman::Jake => "Jake".to_string(),
-                                            Salesman::Danny => "Danny".to_string(),
-                                        };
-                                        
-                                        let hdd_test = format!("{:?}", &self.hdd_test_cbox);
-                                        let ram_test = format!("{:?}", &self.ram_test_cbox);
-                                        let ssd_test = format!("{:?}", &self.ssd_test_cbox);
-
-                                        let pre_ticket = &self.ticket_info;
-                                        let payload = TicketResponse::serialize_payload(
-                                            pre_ticket,
-                                            &self.system_info,
-                                            &self.so_number,
-                                            &self.current_antivirus,
-                                            &self.recommendations,
-                                            tech,
-                                            salesman, 
-                                            HardwareTests{
-                                                hdd_test,
-                                                ssd_test,
-                                                ram_test,
-                                            } // example
-                                        );
-                                        let client = self.client.clone();
-                                        spawn(async move{
-                                            let mut output = String::new();
-                                            let x = send_payload(payload, client).await;
-                                            match x{
-                                                Ok(o) => {
-                                                    output = o;
-                                                },
-                                                Err(e) => debug!("Error {e:?}"),
-                                            }
-                                            info!("output: {output}");
-                                        });
-                                    }
                                 }); // vertical center justified
                             }); // vertical center
                         }); // cell
@@ -1165,7 +1114,60 @@ impl MastertechContext {
     
     fn system_information(&mut self, ui: &mut Ui){
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
+        if ui
+        .add(
+            Button::new
+            (
+                RichText::new("Test Server")
+                    .strong()
+                    .italics()
+            )
+        )
+        .clicked()
+        {  
+            let tech = match self.techs_cbox{
+                Techs::Logan => "Logan".to_string(),
+                Techs::Bread => "Brett".to_string(),
+                Techs::Taco => "Taco".to_string(),
+            };
 
+            let salesman = match self.salesman_cbox{
+                Salesman::Jake => "Jake".to_string(),
+                Salesman::Danny => "Danny".to_string(),
+            };
+            
+            let hdd_test = format!("{:?}", &self.hdd_test_cbox);
+            let ram_test = format!("{:?}", &self.ram_test_cbox);
+            let ssd_test = format!("{:?}", &self.ssd_test_cbox);
+
+            let pre_ticket = &self.ticket_info;
+            let payload = TicketResponse::serialize_payload(
+                pre_ticket,
+                &self.system_info,
+                &self.so_number,
+                &self.current_antivirus,
+                &self.recommendations,
+                tech,
+                salesman, 
+                HardwareTests{
+                    hdd_test,
+                    ssd_test,
+                    ram_test,
+                } // example
+            );
+            let client = self.client.clone();
+            spawn(async move{
+                let mut output = String::new();
+                let x = send_payload(payload, client).await;
+                match x{
+                    Ok(o) => {
+                        output = o;
+                    },
+                    Err(e) => debug!("Error {e:?}"),
+                }
+                info!("output: {output}");
+            });
+        }
         self.specs_first_run = false;
 
         let computer_data = &self.system_info;
