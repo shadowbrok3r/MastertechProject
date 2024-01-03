@@ -29,8 +29,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
     //         "wrsa", // WEBROOT
     //         "egui", // ESET
     //         "superantispyware" // SUPERANTI
-    //         ];
-            
+    //         ];          
     //         let antivirus_mapping = Arc::new([
     //             ("mbam", "Malwarebytes"),
     //             ("aswtoolssvc", "Avast"),
@@ -41,16 +40,11 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
     //             ("egui", "ESET"),
     //             ("superantispyware", "SuperAntiSpyware"),
     //         ].iter().cloned().collect::<HashMap<&str, &str>>());
-
     //     for antivirus in av_to_search.clone().into_iter() {
-
     //         let sender = sender.clone();
     //         let antivirus_mapping = Arc::clone(&antivirus_mapping);
-
     //         tokio::spawn(async move {
-
     //             let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
-
     //             let output = tokio::process::Command::new("cmd")
     //                 .args(&["/C"])
     //                 .args(where_cmd)
@@ -58,28 +52,22 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
     //                 .output()
     //                 .await
     //                 .map_err(|e| io::Error::new(ErrorKind::Other, format!("Failed to execute command: {}", e)))?;
-
     //                 let exists = if output.stdout.is_empty() {
     //                     None
     //                 } else {
     //                     Some(true)
     //                 };
-
     //                 let name = antivirus_mapping.get(antivirus).unwrap_or(&antivirus);
-
     //                 sender.send((name.to_string(), exists)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
     //         });
     //     }
-    
     //     let mut antivirus_exists = Vec::new();
     //     for _ in 0..av_to_search.len() {
     //         let exists = receiver.recv().map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to receive data from channel"))?;
     //         antivirus_exists.push(exists);
     //     }
-    
     //     Ok(antivirus_exists)
     // }
-
 // }
 
 impl ComputerData{
@@ -111,7 +99,24 @@ impl ComputerData{
                     println!("DriveData: {:?}", disk.name());
                 }   
             }
-            
+            let client = Client::new();
+            let seb_data = request_seb_info(client)
+                .await
+                .or_else(|err|{
+                    debug!("Error: {:?}", err.to_string());
+                    Err(err)
+                }).and_then(|data|{
+                    info!("Pulled SEB Data successfully: {data:#?}");
+                    Ok(data)
+            }); 
+
+            let seb_info: Option<crate::data::LocalSebData>;
+            if let Ok(seb) = seb_data{
+                seb_info = Some(seb);
+            }else {
+                seb_info = None;
+            }
+
             #[cfg(target_os = "windows")]
             {
                 let gpu = 
@@ -133,23 +138,7 @@ impl ComputerData{
                 if parse_gpu_name[0].is_empty(){
                     new_gpu_name = parse_gpu_name.clone()[1].trim();
                 }
-                let client = Client::new();
-                let seb_data = request_seb_info(client)
-                    .await
-                    .or_else(|err|{
-                        debug!("Error: {:?}", err.to_string());
-                        Err(err)
-                    }).and_then(|data|{
-                        info!("Pulled SEB Data successfully: {data:#?}");
-                        Ok(data)
-                }); 
 
-                let seb_info: Option<crate::data::LocalSebData>;
-                if let Ok(seb) = seb_data{
-                    seb_info = Some(seb);
-                }else {
-                    seb_info = None;
-                }
 
                 let system_info = ComputerData{
                     cpu,
@@ -170,30 +159,31 @@ impl ComputerData{
 
             #[cfg(target_os = "linux")]
             {
-                let re = Regex::new(r"\[(.*)\]").unwrap();
-                let mut gpu_name = String::new();
-                let gpu = 
-                String::from_utf8(
-                    tokio::process::Command::new("sh")
-                        .arg("-c")
-                        .arg("lspci | grep VGA")
-                        .output()
-                        .await
-                        .unwrap()
-                        .stdout
-                );
-                if let Some(captures) = re.captures(gpu.clone().unwrap_or("empty".to_string()).as_str()){
-                    let full_gpu_name = &captures[1];
-                    gpu_name = full_gpu_name.split_whitespace().take(3).collect::<Vec<&str>>().join(" ");
-                }
+                // let re = Regex::new(r"\[(.*)\]").unwrap();
+                // let mut gpu_name = String::new();
+                // let gpu = 
+                // String::from_utf8(
+                //     tokio::process::Command::new("sh")
+                //         .arg("-c")
+                //         .arg("lspci | grep VGA")
+                //         .output()
+                //         .await
+                //         .unwrap()
+                //         .stdout
+                // );
+                // if let Some(captures) = re.captures(gpu.clone().unwrap_or("empty".to_string()).as_str()){
+                //     let full_gpu_name = &captures[1];
+                //     gpu_name = full_gpu_name.split_whitespace().take(3).collect::<Vec<&str>>().join(" ");
+                // }
     
                 let system_info = ComputerData{
                     cpu,
                     ram,
-                    hostname: hostname.unwrap_or("empty".to_string()),
+                    hostname,
                     drives: data.drives,
-                    gpu: Some(gpu_name),
+                    gpu: Some( "Todo".to_string() ),// gpu_name),
                     operating_system,
+                    seb_info,
                 };
 
                 match tx.send(system_info){
