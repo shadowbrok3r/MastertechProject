@@ -553,7 +553,8 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
                     let mut webroot_key = "";
                     let mut superanti_key = "";
 
-                    let lines: Vec<&str> = response_text.split("\n").collect();
+                    let lines: Vec<&str> = response_text.split("\nSAS: ").collect();
+                    let x = response_text.matches(pat)
                     for line in lines {
                         let parts: Vec<&str> = line.split(": ").collect();
                         if parts.len() >= 2 {
