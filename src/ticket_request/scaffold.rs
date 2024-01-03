@@ -79,7 +79,7 @@ pub enum ScaffoldApps{
 
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
-#[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
+#[serde(rename_all="snake_case")]
 pub enum ScaffoldActions {
     Create,
     Read,

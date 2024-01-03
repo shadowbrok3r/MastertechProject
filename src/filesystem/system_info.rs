@@ -73,6 +73,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 impl ComputerData{
     pub fn get_computer_data() -> Result<ComputerData, Box<dyn Error>>{
         let (tx, rx) = std::sync::mpsc::channel();
+        
         tokio::spawn(async move {
 
             let sys = System::new_all(); // Create `System` struct.
@@ -119,25 +120,24 @@ impl ComputerData{
 
             #[cfg(target_os = "windows")]
             {
-                let gpu = 
-                String::from_utf8(
-                    tokio::process::Command::new("cmd")
-                    .args(["/C", "wmic path win32_VideoController get name"])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    // "-Command {", 
-                    //"(win32_videocontroller | select-object -property Name | ft -autosize -hidetableheaders | out-string).trim()}"
-                    .output()
-                    .await
-                    .unwrap()
-                    .stdout
-                );
+                // let gpu =  String::from_utf8(
+                //     tokio::process::Command::new("cmd")
+                //     .args(["/C", "wmic path win32_VideoController get name"])
+                //     .creation_flags(CREATE_NO_WINDOW)
+                //     // "-Command {", 
+                //     //"(win32_videocontroller | select-object -property Name | ft -autosize -hidetableheaders | out-string).trim()}"
+                //     .output()
+                //     .await
+                //     .expect("msg")
+                //     .stdout
+                // );
 
                 let mut new_gpu_name = "";
-                let clone_gpu_name = gpu.clone().unwrap_or("no gpu detected".to_string());
-                let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
-                if parse_gpu_name[0].is_empty(){
-                    new_gpu_name = parse_gpu_name.clone()[1].trim();
-                }
+                // let clone_gpu_name = gpu.clone().unwrap_or("no gpu detected".to_string());
+                // let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
+                // if parse_gpu_name[0].is_empty(){
+                //     new_gpu_name = parse_gpu_name.clone()[1].trim();
+                // }
 
 
                 let system_info = ComputerData{
