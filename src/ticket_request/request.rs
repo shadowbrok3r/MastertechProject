@@ -41,8 +41,10 @@ pub trait SendReq<T>{
 impl SendReq<GetTicketResponse> for SendRequest{
     async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
         debug!("request_ticket_info");
-        // Now you can use the method on the instance of ScaffoldRequestBuilder
-        let params: Value = scaffold_builder.build_scaffold_call();
+        
+        let params: Value = serde_json::json!({
+            "":""
+        }); // scaffold_builder.build_scaffold_call();
     
         let response = client
             .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
@@ -69,7 +71,9 @@ impl SendReq<GetTicketResponse> for SendRequest{
 impl SendReq<GetKeysResponse> for SendRequest{
     async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
 
-        let params: Value = scaffold_builder.build_scaffold_call();
+        let params: Value = serde_json::json!({
+            "":""
+        }); // scaffold_builder.build_scaffold_call();
 
         let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
             .header(CONTENT_TYPE, "application/json")

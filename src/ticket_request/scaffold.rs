@@ -217,7 +217,6 @@ pub enum ScaffoldCalls{
 //     }
 // }
 
-
 impl ScaffoldRequestBuilder {
     pub fn build_scaffold_call(&mut self) -> Value {
         debug!("build_scaffold_call");
@@ -242,8 +241,8 @@ impl ScaffoldRequestBuilder {
                 },
                 (Some(arg1), Some(arg2), None) => {
                     if let Some(call) = &self.call{
-                        let call_value = Value::String(call);
-                        scaffold_call.as_object_mut().unwrap().insert("call".to_string(), call_value);
+                        let call_value = serde_json::to_string(call).unwrap();
+                        scaffold_call.as_object_mut().unwrap().insert("call".to_string(), Value::String(call_value));
                         scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
                         scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
                     }
@@ -251,16 +250,14 @@ impl ScaffoldRequestBuilder {
                     scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
                 },
                 (Some(arg1), None, None) => {
-                    if let Some(call) = &self.call{
-                        match call.is_empty() {
-                            true => {
-                                scaffold_call.as_object_mut().unwrap().insert("id_order".to_string(), arg1.clone());
-                            }
-                            false => {
-                                let call_value = Value::String(call);
-                                scaffold_call.as_object_mut().unwrap().insert("call".to_string(), call_value);
-                                scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
-                            }
+                    match &self.call{
+                        Some(_) => {
+                            scaffold_call.as_object_mut().unwrap().insert("id_order".to_string(), arg1.clone());
+                        }
+                        None => {
+                            let call_value = serde_json::to_string(&self.call).unwrap();
+                            scaffold_call.as_object_mut().unwrap().insert("call".to_string(), serde_json::Value::String(call_value));
+                            scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
                         }
                     }
                 },
