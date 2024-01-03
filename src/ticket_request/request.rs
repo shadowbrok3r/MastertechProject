@@ -40,14 +40,76 @@ pub trait SendReq<T>{
 #[async_trait]
 impl SendReq<GetTicketResponse> for SendRequest{
     async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
-        todo!()
+        debug!("request_ticket_info");
+        // Now you can use the method on the instance of ScaffoldRequestBuilder
+        let params: Value = scaffold_builder.build_scaffold_call();
+    
+        let response = client
+            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .json(&params)
+            .send()
+            .await;
+    
+        match response {
+            Ok(res) => {
+                let json_response: GetTicketResponse  = res.json().await?;
+                Ok(json_response)
+            },
+            Err(e) => {
+                debug!("Boxed error: {e:?}");
+                Err(Box::new(e))
+            },
+        }
     }
 }
 
 #[async_trait]
 impl SendReq<GetKeysResponse> for SendRequest{
     async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
-        todo!()
+
+        let params: Value = scaffold_builder.build_scaffold_call();
+
+        let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .json(&params)
+            .send()
+            .await;
+    
+            match response {
+                Ok(res) => {
+                    let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
+                    debug!("response: {:?}", response_text);
+        
+                    let mut webroot_key = "";
+                    let mut superanti_key = "";
+
+                    let lines: Vec<&str> = response_text.split("\n").collect();
+                    for line in lines {
+                        let parts: Vec<&str> = line.split(": ").collect();
+                        if parts.len() >= 2 {
+                            let prefix = parts[0].trim();
+                            let key = parts[1].trim();
+                            match prefix {
+                                "WRAV" => webroot_key = key,
+                                "SAS" => superanti_key = key,
+                                _ => (),
+                            }
+                        }
+                    }
+                    
+
+                    let response_keys = GetKeysResponse {
+                        webroot_key: webroot_key.to_string(),
+                        superanti_key: superanti_key.to_string(),
+                    };
+                    
+                    Ok(response_keys)
+                },
+                Err(e) => Err(Box::new(e)),
+            }
     }
 }
 
