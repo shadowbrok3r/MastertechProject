@@ -1,6 +1,6 @@
 use log::debug;
 use serde::{Deserialize, Serialize};
-use serde_json::*;
+use serde_json::Value;
 use dotenv::var;
 
 use super::Store;
@@ -58,22 +58,28 @@ pub struct ScaffoldRequestBuilder{
     pub arguments: Option<Vec<Value>>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[allow(non_snake_case)]
+#[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 pub enum ScaffoldApps{
     Everest,
     SoftwareLicenseFetch,
     CustomerRequestOrder,
 }
 
-impl ScaffoldApps{
-    fn as_str(&self) -> &'static str {
-        match *self {
-            ScaffoldApps::Everest => "everest",
-            ScaffoldApps::SoftwareLicenseFetch => "software_license_fetch",
-            ScaffoldApps::CustomerRequestOrder => "customer_request_order",
-        }
-    }
-}
+// impl ScaffoldApps{
+//     fn as_str(&self) -> &'static str {
+//         match *self {
+//             ScaffoldApps::Everest => "everest",
+//             ScaffoldApps::SoftwareLicenseFetch => "software_license_fetch",
+//             ScaffoldApps::CustomerRequestOrder => "customer_request_order",
+//         }
+//     }
+// }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[allow(non_snake_case)]
+#[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 pub enum ScaffoldActions {
     Create,
     Read,
@@ -86,22 +92,25 @@ pub enum ScaffoldActions {
     FetchKeys
 }
 
-impl ScaffoldActions {
-    fn as_str(&self) -> &'static str {
-        match *self {
-            ScaffoldActions::Create => "create",
-            ScaffoldActions::Read => "read",
-            ScaffoldActions::Update => "update",
-            ScaffoldActions::Delete => "delete",
-            ScaffoldActions::Search => "search",
-            ScaffoldActions::GetList => "get_list",
-            ScaffoldActions::GetStatus => "get_status",
-            ScaffoldActions::EverestCall => "everest_call",
-            ScaffoldActions::FetchKeys => "fetch_keys",
-        }
-    }
-}
+// impl ScaffoldActions {
+//     fn as_str(&self) -> &'static str {
+//         match *self {
+//             ScaffoldActions::Create => "create",
+//             ScaffoldActions::Read => "read",
+//             ScaffoldActions::Update => "update",
+//             ScaffoldActions::Delete => "delete",
+//             ScaffoldActions::Search => "search",
+//             ScaffoldActions::GetList => "get_list",
+//             ScaffoldActions::GetStatus => "get_status",
+//             ScaffoldActions::EverestCall => "everest_call",
+//             ScaffoldActions::FetchKeys => "fetch_keys",
+//         }
+//     }
+// }
 
+#[derive(Serialize, Deserialize, Debug)]
+#[allow(non_snake_case)]
+#[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 pub enum ScaffoldCalls{
     None,
     CheckStock,
@@ -153,60 +162,60 @@ pub enum ScaffoldCalls{
     ListFunctions,
 }
 
-impl ScaffoldCalls {
-    fn as_str(&self) -> &'static str {
-        match *self {
-            ScaffoldCalls::None => "",
-            ScaffoldCalls::CheckStock => "check_stock",
-            ScaffoldCalls::GetOrderDetailSerials => "get_order_detail_serials",
-            ScaffoldCalls::GetOrderDetails => "get_order_details",
-            ScaffoldCalls::GetOrderList => "get_order_list",
-            ScaffoldCalls::GetOpenSerialsByPaging => "get_open_serials_by_paging",
-            ScaffoldCalls::GetActiveItems => "get_active_items",
-            ScaffoldCalls::ItemCodeSearch => "item_code_search",
-            ScaffoldCalls::DisplayStock => "display_stock",
-            ScaffoldCalls::DisplayAutocomplete => "display_autocomplete",
-            ScaffoldCalls::GetCog => "get_cog",
-            ScaffoldCalls::GetItemCategory => "get_item_category",
-            ScaffoldCalls::GetDocAlias => "get_doc_alias",
-            ScaffoldCalls::GetCogMovementByDate => "get_cog_movement_by_date",
-            ScaffoldCalls::GetItemSellThroughByRepByDateRange => "get_item_sell_through_by_rep_by_date_range",
-            ScaffoldCalls::GetItemSellThroughByMonth => "get_item_sell_through_by_month",
-            ScaffoldCalls::GetItemSellThroughByDateRange => "get_item_sell_through_by_date_range",
-            ScaffoldCalls::GetComputerServicesByDateRange => "get_computer_services_by_date_range",
-            ScaffoldCalls::GetOpenServiceOrders => "get_open_service_orders",
-            ScaffoldCalls::GetOpenServiceOrdersWithCallNotes => "get_open_service_orders_with_call_notes",
-            ScaffoldCalls::CountInvoicePaymentMethodsByDateRange => "count_invoice_payment_methods_by_date_range",
-            ScaffoldCalls::GetAllServiceOrdersWithCallNotesByDateRange => "get_all_service_orders_with_call_notes_by_date_range",
-            ScaffoldCalls::GetOpenComputerServiceOrdersWithCallNotes => "get_open_computer_service_orders_with_call_notes",
-            ScaffoldCalls::GetInvoicedComputerServiceOrdersWithCallNotesByDateRange => "get_invoiced_computer_service_orders_with_call_notes_by_date_range",
-            ScaffoldCalls::GetInvoicedOrdersWithCallNotesByDateRange => "get_invoiced_orders_with_call_notes_by_date_range",
-            ScaffoldCalls::GetItemDetailBySerial => "get_item_detail_by_serial",
-            ScaffoldCalls::GetItemDetailBySerialString => "get_item_detail_by_serial_string",
-            ScaffoldCalls::GetEmployeeDetailsByName => "get_employee_details_by_name",
-            ScaffoldCalls::GetSalesInvoicesForLocationByDateRange => "get_sales_invoices_for_location_by_date_range",
-            ScaffoldCalls::GetSalesOrdersWithSebAhsForLocationsByDateRange => "get_sales_orders_with_seb_ahs_for_locations_by_date_range",
-            ScaffoldCalls::GetCustomerNameByIdOrder => "get_customer_name_by_id_order",
-            ScaffoldCalls::GetSerialNumbersByDocnum => "get_serial_numbers_by_docnum",
-            ScaffoldCalls::GetDocnumBySerialNumber => "get_docnum_by_serial_number",
-            ScaffoldCalls::GetSerialNumbersByReference => "get_serial_numbers_by_reference",
-            ScaffoldCalls::GetSerialNumbersByOrderID => "get_serial_numbers_by_order_id",
-            ScaffoldCalls::IsOrderValid => "is_order_valid",
-            ScaffoldCalls::GetNameByOrderId => "get_name_by_order_id",
-            ScaffoldCalls::CompareOrderCustomer => "compare_order_customer",
-            ScaffoldCalls::GetMonthlySales => "get_monthly_sales",
-            ScaffoldCalls::GetCustomers => "get_customers",
-            ScaffoldCalls::GetCustomer => "get_customer",
-            ScaffoldCalls::GetAddressByOrderId => "get_address_by_order_id",
-            ScaffoldCalls::GetTransactionHistory => "get_transaction_history",
-            ScaffoldCalls::GetAddressesByCustomerCode => "get_addresses_by_customer_code",
-            ScaffoldCalls::GetCustomerByPhone => "get_customer_by_phone",
-            ScaffoldCalls::GetOrdersByCustomerId => "get_orders_by_customer_id",
-            ScaffoldCalls::GetOrder => "getOrder",
-            ScaffoldCalls::ListFunctions => "list_functions",
-        }
-    }
-}
+// impl ScaffoldCalls {
+//     fn as_str(&self) -> &'static str {
+//         match *self {
+//             ScaffoldCalls::None => "",
+//             ScaffoldCalls::CheckStock => "check_stock",
+//             ScaffoldCalls::GetOrderDetailSerials => "get_order_detail_serials",
+//             ScaffoldCalls::GetOrderDetails => "get_order_details",
+//             ScaffoldCalls::GetOrderList => "get_order_list",
+//             ScaffoldCalls::GetOpenSerialsByPaging => "get_open_serials_by_paging",
+//             ScaffoldCalls::GetActiveItems => "get_active_items",
+//             ScaffoldCalls::ItemCodeSearch => "item_code_search",
+//             ScaffoldCalls::DisplayStock => "display_stock",
+//             ScaffoldCalls::DisplayAutocomplete => "display_autocomplete",
+//             ScaffoldCalls::GetCog => "get_cog",
+//             ScaffoldCalls::GetItemCategory => "get_item_category",
+//             ScaffoldCalls::GetDocAlias => "get_doc_alias",
+//             ScaffoldCalls::GetCogMovementByDate => "get_cog_movement_by_date",
+//             ScaffoldCalls::GetItemSellThroughByRepByDateRange => "get_item_sell_through_by_rep_by_date_range",
+//             ScaffoldCalls::GetItemSellThroughByMonth => "get_item_sell_through_by_month",
+//             ScaffoldCalls::GetItemSellThroughByDateRange => "get_item_sell_through_by_date_range",
+//             ScaffoldCalls::GetComputerServicesByDateRange => "get_computer_services_by_date_range",
+//             ScaffoldCalls::GetOpenServiceOrders => "get_open_service_orders",
+//             ScaffoldCalls::GetOpenServiceOrdersWithCallNotes => "get_open_service_orders_with_call_notes",
+//             ScaffoldCalls::CountInvoicePaymentMethodsByDateRange => "count_invoice_payment_methods_by_date_range",
+//             ScaffoldCalls::GetAllServiceOrdersWithCallNotesByDateRange => "get_all_service_orders_with_call_notes_by_date_range",
+//             ScaffoldCalls::GetOpenComputerServiceOrdersWithCallNotes => "get_open_computer_service_orders_with_call_notes",
+//             ScaffoldCalls::GetInvoicedComputerServiceOrdersWithCallNotesByDateRange => "get_invoiced_computer_service_orders_with_call_notes_by_date_range",
+//             ScaffoldCalls::GetInvoicedOrdersWithCallNotesByDateRange => "get_invoiced_orders_with_call_notes_by_date_range",
+//             ScaffoldCalls::GetItemDetailBySerial => "get_item_detail_by_serial",
+//             ScaffoldCalls::GetItemDetailBySerialString => "get_item_detail_by_serial_string",
+//             ScaffoldCalls::GetEmployeeDetailsByName => "get_employee_details_by_name",
+//             ScaffoldCalls::GetSalesInvoicesForLocationByDateRange => "get_sales_invoices_for_location_by_date_range",
+//             ScaffoldCalls::GetSalesOrdersWithSebAhsForLocationsByDateRange => "get_sales_orders_with_seb_ahs_for_locations_by_date_range",
+//             ScaffoldCalls::GetCustomerNameByIdOrder => "get_customer_name_by_id_order",
+//             ScaffoldCalls::GetSerialNumbersByDocnum => "get_serial_numbers_by_docnum",
+//             ScaffoldCalls::GetDocnumBySerialNumber => "get_docnum_by_serial_number",
+//             ScaffoldCalls::GetSerialNumbersByReference => "get_serial_numbers_by_reference",
+//             ScaffoldCalls::GetSerialNumbersByOrderID => "get_serial_numbers_by_order_id",
+//             ScaffoldCalls::IsOrderValid => "is_order_valid",
+//             ScaffoldCalls::GetNameByOrderId => "get_name_by_order_id",
+//             ScaffoldCalls::CompareOrderCustomer => "compare_order_customer",
+//             ScaffoldCalls::GetMonthlySales => "get_monthly_sales",
+//             ScaffoldCalls::GetCustomers => "get_customers",
+//             ScaffoldCalls::GetCustomer => "get_customer",
+//             ScaffoldCalls::GetAddressByOrderId => "get_address_by_order_id",
+//             ScaffoldCalls::GetTransactionHistory => "get_transaction_history",
+//             ScaffoldCalls::GetAddressesByCustomerCode => "get_addresses_by_customer_code",
+//             ScaffoldCalls::GetCustomerByPhone => "get_customer_by_phone",
+//             ScaffoldCalls::GetOrdersByCustomerId => "get_orders_by_customer_id",
+//             ScaffoldCalls::GetOrder => "getOrder",
+//             ScaffoldCalls::ListFunctions => "list_functions",
+//         }
+//     }
+// }
 
 
 impl ScaffoldRequestBuilder {
@@ -218,9 +227,9 @@ impl ScaffoldRequestBuilder {
         let mut scaffold_call = serde_json::json!({
             "user_email": "logan.lees@pclaptops.com", 
             "user_password": "Poolparty1",
-            "action": self.action.as_str().to_string(),
-            //"call": self.call.as_str().to_string(), 
-            "application": self.app.as_str().to_string(), 
+            "action": self.action,
+            //"call": self.call.to_string(), 
+            "application": self.app, 
             "company": company.to_string()
         });
 
@@ -233,7 +242,7 @@ impl ScaffoldRequestBuilder {
                 },
                 (Some(arg1), Some(arg2), None) => {
                     if let Some(call) = &self.call{
-                        let call_value = Value::String(call.as_str().to_string());
+                        let call_value = Value::String(call);
                         scaffold_call.as_object_mut().unwrap().insert("call".to_string(), call_value);
                         scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
                         scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
@@ -243,12 +252,12 @@ impl ScaffoldRequestBuilder {
                 },
                 (Some(arg1), None, None) => {
                     if let Some(call) = &self.call{
-                        match call.as_str().is_empty() {
+                        match call.is_empty() {
                             true => {
                                 scaffold_call.as_object_mut().unwrap().insert("id_order".to_string(), arg1.clone());
                             }
                             false => {
-                                let call_value = Value::String(call.as_str().to_string());
+                                let call_value = Value::String(call);
                                 scaffold_call.as_object_mut().unwrap().insert("call".to_string(), call_value);
                                 scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
                             }

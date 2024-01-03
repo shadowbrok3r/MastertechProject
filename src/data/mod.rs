@@ -4,7 +4,7 @@ use log::debug;
 use reqwest::header::{COOKIE, CONTENT_TYPE, ACCEPT, HeaderValue};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
-use crate::ticket_request::{Store, scaffold::HardwareTest};
+use crate::ticket_request::Store;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PreTicketData{
