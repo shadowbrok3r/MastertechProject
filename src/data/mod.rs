@@ -42,8 +42,8 @@ pub struct TicketData{
     pub hardware_test_results: HardwareTests
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct PulledKeys{
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+pub struct GetKeysResponse{
     pub webroot_key: String,
     pub superanti_key: String,
 }
