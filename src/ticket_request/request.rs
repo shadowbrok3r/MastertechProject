@@ -306,6 +306,9 @@ impl SendRequest{
                     let webroot_key = &get_keys_response.webroot_key;
                     let superanti_key = &get_keys_response.superanti_key;
 
+                    if webroot_key == "error"{
+                        
+                    }
             
 
                     let cps_keys = PulledKeys{
@@ -313,7 +316,7 @@ impl SendRequest{
                         superanti_key: superanti_key.to_string()
                     };
 
-                    let cps_keys_json = serde_json::to_string(&cps_keys).unwrap();
+                    let cps_keys_json = serde_json::to_string(&cps_keys).unwrap_or("error".to_string());
                     
                     match tx.send(cps_keys_json) {
                         Ok(_) => {
@@ -547,26 +550,43 @@ async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqw
     
             match response {
                 Ok(res) => {
-                    let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
+                    let mut response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
                     debug!("response: {:?}", response_text);
         
                     let mut webroot_key = "";
                     let mut superanti_key = "";
 
-                    let lines: Vec<&str> = response_text.split("\nSAS: ").collect();
-                    let x = response_text.matches(pat)
-                    for line in lines {
-                        let parts: Vec<&str> = line.split(": ").collect();
-                        if parts.len() >= 2 {
-                            let prefix = parts[0].trim();
-                            let key = parts[1].trim();
-                            match prefix {
-                                "WRAV" => webroot_key = key,
-                                "SAS" => superanti_key = key,
-                                _ => (),
-                            }
-                        }
+                    if !response_text.contains("hasError"){
+                        let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
+
+                        let _: String = response_text.drain(..wrav_offset).collect(); 
+    
+                        let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
+    
+                        let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
+
+                        webroot_key = split_wrav[1].trim();
+                        superanti_key = split_lines[1].trim();
                     }
+                    else{
+                        println!("SW\\/PCLCPS\\/O not on ticket");
+                        webroot_key = "Error";
+                        superanti_key = "Check console";
+                    }
+                   
+
+                    // for line in lines {
+                    //     let parts: Vec<&str> = line.split(": ").collect();
+                    //     if parts.len() >= 2 {
+                    //         let prefix = parts[0].trim();
+                    //         let key = parts[1].trim();
+                    //         match prefix {
+                    //             "WRAV" => webroot_key = key,
+                    //             "SAS" => superanti_key = key,
+                    //             _ => (),
+                    //         }
+                    //     }
+                    // }
                     
 
                     let response_keys = GetKeysResponse {
