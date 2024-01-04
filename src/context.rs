@@ -5,7 +5,7 @@ use log::{debug, info};
 use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests, LocalSebData}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest}, request::request_seb_info}};
+use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests, LocalSebData}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest, SendReq}, request::request_seb_info, GetKeysResponse}};
 use tokio::{sync::mpsc::unbounded_channel, spawn};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -442,7 +442,11 @@ impl MastertechContext {
                                                     .clicked(){ 
                                                         let service_num = self.so_number.clone();
                                                         self.spinner = true;
-                                                        SendRequest::get_cps(service_num, self.scaffold_request.tx.clone(), self.client.clone());
+                                                        let keys = SendRequest::get_cps(service_num.as_str(), self.client.clone());
+
+                                                        tokio::spawn(async move{
+                                                            let x = keys.await.unwrap_or(GetKeysResponse::default());
+                                                        });
                                                     }
                                                     
                                                     if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))

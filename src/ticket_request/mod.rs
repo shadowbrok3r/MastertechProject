@@ -22,6 +22,7 @@ pub struct GetTicketResponse {
     pub items: Vec<Option<Value>>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct GetKeysResponse{
     pub webroot_key: String,
     pub superanti_key: String,

@@ -32,117 +32,6 @@ pub struct SendRequest {
     pub tx: std::sync::mpsc::Sender<String>,
 }
 
-#[async_trait]
-pub trait SendReq<T>{
-    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
-}
-
-#[async_trait]
-impl SendReq<GetTicketResponse> for SendRequest{
-    async fn retrieve_data(so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
-        debug!("request_ticket_info");
-        
-        let params: Value = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com", 
-            "user_password": "Poolparty1",
-            "action": ScaffoldActions::EverestCall,
-            "call": ScaffoldCalls::GetOrder,
-            "application": ScaffoldApps::Everest, 
-            "company": "pcl",
-            "arg1": so_number,
-            "arg2": "false"
-        }); // scaffold_builder.build_scaffold_call();
-    
-        let response = client
-            .post("https://scaffold.pclaptops.com/api/index")
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json")
-            .json(&params)
-            .send()
-            .await;
-    
-        match response {
-            Ok(res) => {
-                let json_response: GetTicketResponse  = res.json().await?;
-                Ok(json_response)
-            },
-            Err(e) => {
-                debug!("Boxed error: {e:?}");
-                Err(Box::new(e))
-            },
-        }
-    }
-}
-
-#[async_trait]
-impl SendReq<GetKeysResponse> for SendRequest{
-    async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
-        let params: Value = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com", 
-            "user_password": "Poolparty1",
-            "action": ScaffoldActions::FetchKeys,
-            "application": ScaffoldApps::SoftwareLicenseFetch, 
-            "company": "pcl",
-            "id_order": so_number,
-        }); // scaffold_builder.build_scaffold_call();
-        
-
-
-
-        let join_handle = tokio::spawn(async move{
-            let response = client.post("https://scaffold.pclaptops.com/api/index") 
-                .header(CONTENT_TYPE, "application/json")
-                .header(ACCEPT, "application/json")
-                .json(&params)
-                .send()
-                .await;
-        
-            match response {
-                Ok(res) => {
-                    let mut response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
-                    debug!("response: {:?}", response_text);
-        
-                    let mut webroot_key: &str = "";
-                    let mut superanti_key: &str = "";
-
-                    if !response_text.contains("hasError"){
-                        let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
-
-                        let _: String = response_text.drain(..wrav_offset).collect(); 
-    
-                        let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
-    
-                        let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
-
-                        webroot_key = split_wrav[1].trim();
-                        superanti_key = split_lines[1].trim();
-                    }
-                    else{
-                        println!("SW\\/PCLCPS\\/O not on ticket");
-                        webroot_key = "Error";
-                        superanti_key = "Check console";
-                    }
-                    
-
-                    let response_keys = GetKeysResponse {
-                        webroot_key: webroot_key.to_string(),
-                        superanti_key: superanti_key.to_string(),
-                    };
-                    
-                    Ok(response_keys)
-                },
-                Err(e) => Err(Box::new(e)),
-            }
-        });
-
-        Ok(join_handle.await??)
-        
-    }
-}
-
-
-
-
 impl SendRequest{
     pub fn get_ticket(
         so_number: String, 
@@ -306,42 +195,64 @@ impl SendRequest{
         
     }
        
-    pub fn get_cps(so_number: String, tx: std::sync::mpsc::Sender<String>, client: reqwest::Client){
+    pub async fn get_cps(so_number: &str, client: reqwest::Client)
+    -> core::result::Result<GetKeysResponse, Box<dyn Error>>{
         
-        tokio::spawn(async move{
-            let args = vec![
-                serde_json::json!(so_number),
-            ];
-        
-            let scaffold_builder = ScaffoldRequestBuilder{
-                app: ScaffoldApps::SoftwareLicenseFetch,
-                action: ScaffoldActions::FetchKeys, 
-                call: Some(ScaffoldCalls::None),
-                arguments: Some(args.clone())
-            };
-            
-            let response = request_keys(scaffold_builder, client)
+        let (tx, rx) = std::sync::mpsc::channel::<&str>();
+
+        let join_handle = tokio::spawn(async move{
+
+            let params: Value = serde_json::json!({
+                "user_email": "logan.lees@pclaptops.com", 
+                "user_password": "Poolparty1",
+                "action": ScaffoldActions::FetchKeys,
+                "application": ScaffoldApps::SoftwareLicenseFetch, 
+                "company": "pcl",
+                "id_order": so_number,
+            }); // scaffold_builder.build_scaffold_call();
+
+            let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+                .header(CONTENT_TYPE, "application/json")
+                .header(ACCEPT, "application/json")
+                .json(&params)
+                .send()
                 .await;
-
-            match response { // Successfully received GetTicketResponse
-                Ok(get_keys_response) => {
-
-                    let webroot_key = &get_keys_response.webroot_key;
-                    let superanti_key = &get_keys_response.superanti_key;
-
-                    if webroot_key == "error"{
-
+        
+            match response {
+                Ok(res) => {
+                    let mut response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
+                    debug!("response: {:?}", response_text);
+        
+                    let mut webroot_key = "";
+                    let mut superanti_key = "";
+        
+                    if !response_text.contains("hasError"){
+                        let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
+        
+                        let _: String = response_text.drain(..wrav_offset).collect(); 
+        
+                        let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
+        
+                        let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
+        
+                        webroot_key = split_wrav[1].trim();
+                        superanti_key = split_lines[1].trim();
                     }
-            
-
-                    let cps_keys = PulledKeys{
+                    else{
+                        println!("SW\\/PCLCPS\\/O not on ticket");
+                        webroot_key = "Error";
+                        superanti_key = "Check console";
+                    }
+        
+                    let response_keys = GetKeysResponse {
                         webroot_key: webroot_key.to_string(),
-                        superanti_key: superanti_key.to_string()
+                        superanti_key: superanti_key.to_string(),
                     };
 
-                    let cps_keys_json = serde_json::to_string(&cps_keys).unwrap_or("error".to_string());
+                    let cps_keys_json = serde_json::to_string(&response_keys).unwrap_or("error".to_string());
                     
-                    match tx.send(cps_keys_json) {
+
+                    match tx.send(&cps_keys_json) {
                         Ok(_) => {
                             drop(tx)
                         },
@@ -350,21 +261,26 @@ impl SendRequest{
                             drop(tx)
                         }
                     }
-                    
-                },
-                Err(e) => { 
-                    match tx.send(e.to_string()) {
-                        Ok(_) => {
-                            drop(tx)
-                        },
-                        Err(e) => {
-                            debug!("Error while sending error message: {}", e);
-                            drop(tx)
+
+/*                     Err(e) => { 
+                        match tx.send(e.to_string()) {
+                            Ok(_) => {
+                                drop(tx)
+                            },
+                            Err(e) => {
+                                debug!("Error while sending error message: {}", e);
+                                drop(tx)
+                            }
                         }
-                    }
-                }                    
+                    }     */  
+
+                    Ok(response_keys)
+                },
+                Err(e) => Err(Box::new(e)),
             }
         });
+
+        Ok(join_handle.await?)
     }
 
     pub fn send_ticket_request(
@@ -559,68 +475,59 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
     }
 }
 
-async fn request_keys(mut scaffold_builder: ScaffoldRequestBuilder, client: reqwest::Client)  
+async fn request_keys(so_number: &str, client: reqwest::Client)  
 -> core::result::Result<GetKeysResponse, Box<dyn Error>> {
 
-        let params: Value = scaffold_builder.build_scaffold_call();
+    let params: Value = serde_json::json!({
+        "user_email": "logan.lees@pclaptops.com", 
+        "user_password": "Poolparty1",
+        "action": ScaffoldActions::FetchKeys,
+        "application": ScaffoldApps::SoftwareLicenseFetch, 
+        "company": "pcl",
+        "id_order": so_number,
+    }); // scaffold_builder.build_scaffold_call();
+    let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json")
+        .json(&params)
+        .send()
+        .await;
 
-        let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json")
-            .json(&params)
-            .send()
-            .await;
-    
-            match response {
-                Ok(res) => {
-                    let mut response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
-                    debug!("response: {:?}", response_text);
-        
-                    let mut webroot_key = "";
-                    let mut superanti_key = "";
+    match response {
+        Ok(res) => {
+            let mut response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
+            debug!("response: {:?}", response_text);
 
-                    if !response_text.contains("hasError"){
-                        let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
+            let mut webroot_key = "";
+            let mut superanti_key = "";
 
-                        let _: String = response_text.drain(..wrav_offset).collect(); 
-    
-                        let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
-    
-                        let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
+            if !response_text.contains("hasError"){
+                let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
 
-                        webroot_key = split_wrav[1].trim();
-                        superanti_key = split_lines[1].trim();
-                    }
-                    else{
-                        println!("SW\\/PCLCPS\\/O not on ticket");
-                        webroot_key = "Error";
-                        superanti_key = "Check console";
-                    }
-                   
+                let _: String = response_text.drain(..wrav_offset).collect(); 
 
-                    // for line in lines {
-                    //     let parts: Vec<&str> = line.split(": ").collect();
-                    //     if parts.len() >= 2 {
-                    //         let prefix = parts[0].trim();
-                    //         let key = parts[1].trim();
-                    //         match prefix {
-                    //             "WRAV" => webroot_key = key,
-                    //             "SAS" => superanti_key = key,
-                    //             _ => (),
-                    //         }
-                    //     }
-                    // }
-                    
+                let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
 
-                    let response_keys = GetKeysResponse {
-                        webroot_key: webroot_key.to_string(),
-                        superanti_key: superanti_key.to_string(),
-                    };
-                    
-                    Ok(response_keys)
-                },
-                Err(e) => Err(Box::new(e)),
+                let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
+
+                webroot_key = split_wrav[1].trim();
+                superanti_key = split_lines[1].trim();
             }
+            else{
+                println!("SW\\/PCLCPS\\/O not on ticket");
+                webroot_key = "Error";
+                superanti_key = "Check console";
+            }
+
+            let response_keys = GetKeysResponse {
+                webroot_key: webroot_key.to_string(),
+                superanti_key: superanti_key.to_string(),
+            };
+            
+            Ok(response_keys)
+        },
+        Err(e) => Err(Box::new(e)),
+    }
 }
 
 pub async fn request_seb_info(client: reqwest::Client) -> Result<LocalSebData, Box<dyn Error>>{
