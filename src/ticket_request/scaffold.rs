@@ -9,8 +9,6 @@ use dotenv::var;
 
 use crate::ticket_request::GetTicketResponse;
 
-use super::{GetKeysResponse, request::SendRequest};
-
 
 impl ScaffoldRequestBuilder {
     pub fn build_scaffold_call(&mut self) -> Value {

@@ -5,7 +5,7 @@ use log::{debug, info};
 use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
-use crate::{data::{PulledKeys, PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests, LocalSebData}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest, SendReq}, request::request_seb_info, GetKeysResponse}};
+use crate::{data::{PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests, LocalSebData, GetKeysResponse}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest, SendReq}, request::request_seb_info}};
 use tokio::{sync::mpsc::unbounded_channel, spawn};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -35,7 +35,7 @@ pub struct MastertechContext {
     pub recommendations: String,
 
     pub ticket_info: PreTicketData,
-    pub keys: PulledKeys,
+    pub keys: GetKeysResponse,
 
     pub file_browser: Arc<Mutex<FileBrowser>>,
     pub client: reqwest::Client,
@@ -152,7 +152,7 @@ impl Default for MasterTechApp {
 
             ticket_info: ticket_information,
 
-            keys: PulledKeys { 
+            keys: GetKeysResponse { 
                 webroot_key: "Webroot Key".to_string(), 
                 superanti_key: "SuperAnti Key".to_string() 
             },
@@ -442,11 +442,26 @@ impl MastertechContext {
                                                     .clicked(){ 
                                                         let service_num = self.so_number.clone();
                                                         self.spinner = true;
-                                                        let keys = SendRequest::get_cps(service_num.as_str(), self.client.clone());
-
+                                                        let cps_request = SendRequest::get_cps(service_num, self.client.clone());
+                                                        let mut keys = GetKeysResponse::default();
+                                                        let (tx, rx) = std::sync::mpsc::channel::<GetKeysResponse>();
                                                         tokio::spawn(async move{
-                                                            let x = keys.await.unwrap_or(GetKeysResponse::default());
+                                                            let sender = tx.clone();
+                                                            match sender.send(cps_request.await.unwrap_or(GetKeysResponse::default())){
+                                                                Ok(_) => info!("sent keys successfully"),
+                                                                Err(err) => debug!("GetKeysClick -> Sender Error: {err:?}")
+                                                            }
                                                         });
+                                                        match rx.try_recv(){
+                                                            Ok(keys) => {
+                                                                self.keys = keys;
+                                                            },
+                                                            Err(err) => {
+                                                                debug!("GetKeysClick Receive Error -> {err:?}");
+                                                                self.output_text = format!("GetKeysClick -> Error receiving keys -> {err:?}");
+                                                            }
+                                                        }
+                                                        
                                                     }
                                                     
                                                     if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))

@@ -188,7 +188,7 @@ impl eframe::App for MasterTechApp {
                 self.context.spinner = false;
     
             }             
-            else if let Ok(info) = serde_json::from_str::<data::PulledKeys>(&message) {
+            else if let Ok(info) = serde_json::from_str::<data::GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
                     self.context.keys = info;
                 }
