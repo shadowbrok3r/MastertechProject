@@ -43,11 +43,18 @@ impl SendReq<GetTicketResponse> for SendRequest{
         debug!("request_ticket_info");
         
         let params: Value = serde_json::json!({
-            "":""
+            "user_email": "logan.lees@pclaptops.com", 
+            "user_password": "Poolparty1",
+            "action": ScaffoldActions::EverestCall,
+            "call": ScaffoldCalls::GetOrder,
+            "application": ScaffoldApps::Everest, 
+            "company": "pcl",
+            "arg1": so_number,
+            "arg2": "false"
         }); // scaffold_builder.build_scaffold_call();
     
         let response = client
-            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .post("https://scaffold.pclaptops.com/api/index")
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .json(&params)
@@ -70,38 +77,50 @@ impl SendReq<GetTicketResponse> for SendRequest{
 #[async_trait]
 impl SendReq<GetKeysResponse> for SendRequest{
     async fn retrieve_data<'a>(so_number: &'a str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
-
         let params: Value = serde_json::json!({
-            "":""
+            "user_email": "logan.lees@pclaptops.com", 
+            "user_password": "Poolparty1",
+            "action": ScaffoldActions::FetchKeys,
+            "application": ScaffoldApps::SoftwareLicenseFetch, 
+            "company": "pcl",
+            "id_order": so_number,
         }); // scaffold_builder.build_scaffold_call();
+        
 
-        let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json")
-            .json(&params)
-            .send()
-            .await;
-    
+
+
+        let join_handle = tokio::spawn(async move{
+            let response = client.post("https://scaffold.pclaptops.com/api/index") 
+                .header(CONTENT_TYPE, "application/json")
+                .header(ACCEPT, "application/json")
+                .json(&params)
+                .send()
+                .await;
+        
             match response {
                 Ok(res) => {
-                    let response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
+                    let mut response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
                     debug!("response: {:?}", response_text);
         
-                    let mut webroot_key = "";
-                    let mut superanti_key = "";
+                    let mut webroot_key: &str = "";
+                    let mut superanti_key: &str = "";
 
-                    let lines: Vec<&str> = response_text.split("\n").collect();
-                    for line in lines {
-                        let parts: Vec<&str> = line.split(": ").collect();
-                        if parts.len() >= 2 {
-                            let prefix = parts[0].trim();
-                            let key = parts[1].trim();
-                            match prefix {
-                                "WRAV" => webroot_key = key,
-                                "SAS" => superanti_key = key,
-                                _ => (),
-                            }
-                        }
+                    if !response_text.contains("hasError"){
+                        let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
+
+                        let _: String = response_text.drain(..wrav_offset).collect(); 
+    
+                        let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
+    
+                        let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
+
+                        webroot_key = split_wrav[1].trim();
+                        superanti_key = split_lines[1].trim();
+                    }
+                    else{
+                        println!("SW\\/PCLCPS\\/O not on ticket");
+                        webroot_key = "Error";
+                        superanti_key = "Check console";
                     }
                     
 
@@ -114,6 +133,10 @@ impl SendReq<GetKeysResponse> for SendRequest{
                 },
                 Err(e) => Err(Box::new(e)),
             }
+        });
+
+        Ok(join_handle.await??)
+        
     }
 }
 
@@ -307,7 +330,7 @@ impl SendRequest{
                     let superanti_key = &get_keys_response.superanti_key;
 
                     if webroot_key == "error"{
-                        
+
                     }
             
 
