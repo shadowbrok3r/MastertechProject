@@ -1,9 +1,171 @@
+use std::error::Error;
+
+use async_trait::async_trait;
 use log::debug;
+use reqwest::header::{CONTENT_TYPE, ACCEPT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use dotenv::var;
 
-use super::Store;
+use crate::ticket_request::GetTicketResponse;
+
+use super::{GetKeysResponse, request::SendRequest};
+
+
+impl ScaffoldRequestBuilder {
+    pub fn build_scaffold_call(&mut self) -> Value {
+        debug!("build_scaffold_call");
+        let company = "pcl".to_string();
+        // dotenv::var("SCAFFOLD_USER").unwrap()
+
+        let mut scaffold_call = serde_json::json!({
+            "user_email": "logan.lees@pclaptops.com", 
+            "user_password": "Poolparty1",
+            "action": self.action,
+            //"call": self.call.to_string(), 
+            "application": self.app, 
+            "company": company.to_string()
+        });
+
+        if let Some(args_vec) = &self.arguments {
+            match (args_vec.get(0), args_vec.get(1), args_vec.get(2)) {
+                (Some(arg1), Some(arg2), Some(arg3)) => {
+                    scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
+                    scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
+                    scaffold_call.as_object_mut().unwrap().insert("arg3".to_string(), arg3.clone());
+                },
+                (Some(arg1), Some(arg2), None) => {
+                    if let Some(call) = &self.call{
+                        let call_value = serde_json::to_string(call).unwrap();
+                        scaffold_call.as_object_mut().unwrap().insert("call".to_string(), Value::String(call_value));
+                        scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
+                        scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
+                    }
+                    scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
+                    scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
+                },
+                (Some(arg1), None, None) => {
+                    match &self.call{
+                        Some(_) => {
+                            scaffold_call.as_object_mut().unwrap().insert("id_order".to_string(), arg1.clone());
+                        }
+                        None => {
+                            let call_value = serde_json::to_string(&self.call).unwrap();
+                            scaffold_call.as_object_mut().unwrap().insert("call".to_string(), serde_json::Value::String(call_value));
+                            scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
+                        }
+                    }
+                },
+                _ => {},
+            }
+                
+        }
+        scaffold_call
+    }
+       
+}
+
+#[async_trait]
+pub trait SendReq<T>{
+    async fn retrieve_data(&self, so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
+}
+
+/* #[async_trait]
+impl SendReq<GetTicketResponse> for SendRequest{
+    async fn retrieve_data(&self, so_number: &str, client: reqwest::Client) -> Result<GetTicketResponse, Box<dyn Error>> {
+        debug!("request_ticket_info");  
+        let params: Value = serde_json::json!({
+            "user_email": "logan.lees@pclaptops.com", 
+            "user_password": "Poolparty1",
+            "action": ScaffoldActions::EverestCall,
+            "call": ScaffoldCalls::GetOrder,
+            "application": ScaffoldApps::Everest, 
+            "company": "pcl",
+            "arg1": so_number,
+            "arg2": "false"
+        }); // scaffold_builder.build_scaffold_call();
+        let response = client
+            .post("https://scaffold.pclaptops.com/api/index")
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .json(&params)
+            .send()
+            .await;
+        match response {
+            Ok(res) => {
+                let json_response: GetTicketResponse  = res.json().await?;
+                Ok(json_response)
+            },
+            Err(e) => {
+                debug!("Boxed error: {e:?}");
+                Err(Box::new(e))
+            },
+        }
+    }
+} */
+
+/* #[async_trait]
+impl <GetKeysResponse>SendReq<GetKeysResponse> for SendRequest{
+    async fn retrieve_data(&self, so_number: &str, client: reqwest::Client) -> Result<GetKeysResponse, Box<dyn Error>> {
+        let params: Value = serde_json::json!({
+            "user_email": "logan.lees@pclaptops.com", 
+            "user_password": "Poolparty1",
+            "action": ScaffoldActions::FetchKeys,
+            "application": ScaffoldApps::SoftwareLicenseFetch, 
+            "company": "pcl",
+            "id_order": so_number,
+        }); // scaffold_builder.build_scaffold_call();
+        
+        let join_handle = tokio::spawn(async move{
+            let response = client.post("https://scaffold.pclaptops.com/api/index") 
+                .header(CONTENT_TYPE, "application/json")
+                .header(ACCEPT, "application/json")
+                .json(&params)
+                .send()
+                .await;
+        
+            match response {
+                Ok(res) => {
+                    let mut response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
+                    debug!("response: {:?}", response_text);
+        
+                    let mut webroot_key: &str = "";
+                    let mut superanti_key: &str = "";
+
+                    if !response_text.contains("hasError"){
+                        let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
+
+                        let _: String = response_text.drain(..wrav_offset).collect(); 
+    
+                        let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
+    
+                        let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
+
+                        webroot_key = split_wrav[1].trim();
+                        superanti_key = split_lines[1].trim();
+                    }
+                    else{
+                        println!("SW\\/PCLCPS\\/O not on ticket");
+                        webroot_key = "Error";
+                        superanti_key = "Check console";
+                    }
+                    
+
+                    let response_keys: GetKeysResponse = GetKeysResponse {
+                        webroot_key: webroot_key.to_string(),
+                        superanti_key: superanti_key.to_string(),
+                    };
+                    
+                    Ok(response_keys)
+                },
+                Err(e) => Err(Box::new(e)),
+            }
+        });
+
+        Ok(join_handle.await??)
+        
+    }
+} */
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Salesman {
@@ -32,7 +194,6 @@ pub enum HardwareTest{
     SsdNotTested,
 }
 
-
 impl HardwareTest{
     pub fn as_str(&self) -> &'static str {
         match *self {
@@ -48,8 +209,6 @@ impl HardwareTest{
         }
     }
 }
-
-
 
 pub struct ScaffoldRequestBuilder{
     pub call: Option<ScaffoldCalls>,
@@ -67,16 +226,6 @@ pub enum ScaffoldApps{
     CustomerRequestOrder,
 }
 
-// impl ScaffoldApps{
-//     fn as_str(&self) -> &'static str {
-//         match *self {
-//             ScaffoldApps::Everest => "everest",
-//             ScaffoldApps::SoftwareLicenseFetch => "software_license_fetch",
-//             ScaffoldApps::CustomerRequestOrder => "customer_request_order",
-//         }
-//     }
-// }
-
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
 #[serde(rename_all="snake_case")]
@@ -92,21 +241,6 @@ pub enum ScaffoldActions {
     FetchKeys
 }
 
-// impl ScaffoldActions {
-//     fn as_str(&self) -> &'static str {
-//         match *self {
-//             ScaffoldActions::Create => "create",
-//             ScaffoldActions::Read => "read",
-//             ScaffoldActions::Update => "update",
-//             ScaffoldActions::Delete => "delete",
-//             ScaffoldActions::Search => "search",
-//             ScaffoldActions::GetList => "get_list",
-//             ScaffoldActions::GetStatus => "get_status",
-//             ScaffoldActions::EverestCall => "everest_call",
-//             ScaffoldActions::FetchKeys => "fetch_keys",
-//         }
-//     }
-// }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
@@ -162,150 +296,3 @@ pub enum ScaffoldCalls{
     ListFunctions,
 }
 
-// impl ScaffoldCalls {
-//     fn as_str(&self) -> &'static str {
-//         match *self {
-//             ScaffoldCalls::None => "",
-//             ScaffoldCalls::CheckStock => "check_stock",
-//             ScaffoldCalls::GetOrderDetailSerials => "get_order_detail_serials",
-//             ScaffoldCalls::GetOrderDetails => "get_order_details",
-//             ScaffoldCalls::GetOrderList => "get_order_list",
-//             ScaffoldCalls::GetOpenSerialsByPaging => "get_open_serials_by_paging",
-//             ScaffoldCalls::GetActiveItems => "get_active_items",
-//             ScaffoldCalls::ItemCodeSearch => "item_code_search",
-//             ScaffoldCalls::DisplayStock => "display_stock",
-//             ScaffoldCalls::DisplayAutocomplete => "display_autocomplete",
-//             ScaffoldCalls::GetCog => "get_cog",
-//             ScaffoldCalls::GetItemCategory => "get_item_category",
-//             ScaffoldCalls::GetDocAlias => "get_doc_alias",
-//             ScaffoldCalls::GetCogMovementByDate => "get_cog_movement_by_date",
-//             ScaffoldCalls::GetItemSellThroughByRepByDateRange => "get_item_sell_through_by_rep_by_date_range",
-//             ScaffoldCalls::GetItemSellThroughByMonth => "get_item_sell_through_by_month",
-//             ScaffoldCalls::GetItemSellThroughByDateRange => "get_item_sell_through_by_date_range",
-//             ScaffoldCalls::GetComputerServicesByDateRange => "get_computer_services_by_date_range",
-//             ScaffoldCalls::GetOpenServiceOrders => "get_open_service_orders",
-//             ScaffoldCalls::GetOpenServiceOrdersWithCallNotes => "get_open_service_orders_with_call_notes",
-//             ScaffoldCalls::CountInvoicePaymentMethodsByDateRange => "count_invoice_payment_methods_by_date_range",
-//             ScaffoldCalls::GetAllServiceOrdersWithCallNotesByDateRange => "get_all_service_orders_with_call_notes_by_date_range",
-//             ScaffoldCalls::GetOpenComputerServiceOrdersWithCallNotes => "get_open_computer_service_orders_with_call_notes",
-//             ScaffoldCalls::GetInvoicedComputerServiceOrdersWithCallNotesByDateRange => "get_invoiced_computer_service_orders_with_call_notes_by_date_range",
-//             ScaffoldCalls::GetInvoicedOrdersWithCallNotesByDateRange => "get_invoiced_orders_with_call_notes_by_date_range",
-//             ScaffoldCalls::GetItemDetailBySerial => "get_item_detail_by_serial",
-//             ScaffoldCalls::GetItemDetailBySerialString => "get_item_detail_by_serial_string",
-//             ScaffoldCalls::GetEmployeeDetailsByName => "get_employee_details_by_name",
-//             ScaffoldCalls::GetSalesInvoicesForLocationByDateRange => "get_sales_invoices_for_location_by_date_range",
-//             ScaffoldCalls::GetSalesOrdersWithSebAhsForLocationsByDateRange => "get_sales_orders_with_seb_ahs_for_locations_by_date_range",
-//             ScaffoldCalls::GetCustomerNameByIdOrder => "get_customer_name_by_id_order",
-//             ScaffoldCalls::GetSerialNumbersByDocnum => "get_serial_numbers_by_docnum",
-//             ScaffoldCalls::GetDocnumBySerialNumber => "get_docnum_by_serial_number",
-//             ScaffoldCalls::GetSerialNumbersByReference => "get_serial_numbers_by_reference",
-//             ScaffoldCalls::GetSerialNumbersByOrderID => "get_serial_numbers_by_order_id",
-//             ScaffoldCalls::IsOrderValid => "is_order_valid",
-//             ScaffoldCalls::GetNameByOrderId => "get_name_by_order_id",
-//             ScaffoldCalls::CompareOrderCustomer => "compare_order_customer",
-//             ScaffoldCalls::GetMonthlySales => "get_monthly_sales",
-//             ScaffoldCalls::GetCustomers => "get_customers",
-//             ScaffoldCalls::GetCustomer => "get_customer",
-//             ScaffoldCalls::GetAddressByOrderId => "get_address_by_order_id",
-//             ScaffoldCalls::GetTransactionHistory => "get_transaction_history",
-//             ScaffoldCalls::GetAddressesByCustomerCode => "get_addresses_by_customer_code",
-//             ScaffoldCalls::GetCustomerByPhone => "get_customer_by_phone",
-//             ScaffoldCalls::GetOrdersByCustomerId => "get_orders_by_customer_id",
-//             ScaffoldCalls::GetOrder => "getOrder",
-//             ScaffoldCalls::ListFunctions => "list_functions",
-//         }
-//     }
-// }
-
-impl ScaffoldRequestBuilder {
-    pub fn build_scaffold_call(&mut self) -> Value {
-        debug!("build_scaffold_call");
-        let company = "pcl".to_string();
-        // dotenv::var("SCAFFOLD_USER").unwrap()
-
-        let mut scaffold_call = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com", 
-            "user_password": "Poolparty1",
-            "action": self.action,
-            //"call": self.call.to_string(), 
-            "application": self.app, 
-            "company": company.to_string()
-        });
-
-        if let Some(args_vec) = &self.arguments {
-            match (args_vec.get(0), args_vec.get(1), args_vec.get(2)) {
-                (Some(arg1), Some(arg2), Some(arg3)) => {
-                    scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
-                    scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
-                    scaffold_call.as_object_mut().unwrap().insert("arg3".to_string(), arg3.clone());
-                },
-                (Some(arg1), Some(arg2), None) => {
-                    if let Some(call) = &self.call{
-                        let call_value = serde_json::to_string(call).unwrap();
-                        scaffold_call.as_object_mut().unwrap().insert("call".to_string(), Value::String(call_value));
-                        scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
-                        scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
-                    }
-                    scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
-                    scaffold_call.as_object_mut().unwrap().insert("arg2".to_string(), arg2.clone());
-                },
-                (Some(arg1), None, None) => {
-                    match &self.call{
-                        Some(_) => {
-                            scaffold_call.as_object_mut().unwrap().insert("id_order".to_string(), arg1.clone());
-                        }
-                        None => {
-                            let call_value = serde_json::to_string(&self.call).unwrap();
-                            scaffold_call.as_object_mut().unwrap().insert("call".to_string(), serde_json::Value::String(call_value));
-                            scaffold_call.as_object_mut().unwrap().insert("arg1".to_string(), arg1.clone());
-                        }
-                    }
-                },
-                _ => {},
-            }
-                
-        }
-        scaffold_call
-    }
-       
-}
-
-
-
-/*
-Request Array(   <--  Use this method to search for a single key->term pair
-    'user_email' => 'user@domain.com',
-    'user_password' => 'S3cuRe!Pas5',
-    'action' => 'search',
-    'search' => 'HSL', // the term you want to search
-    'target' => 'initials', // the column you're searching against, if you leave this empty, they all get searched!
-    'application' => 'users', // the chosen application to search, this will grab the parent app. and search siblings as well,
-    'search_siblings' => true, // if you pass this variable AT ALL, it'll search the application's siblings as well. (ie. part requests, spo, etc. all at once!)
-    'field_only' => true, // Add this if you want your search to return ONLY the target field mentioned above (useful for translation of text to ID)
-    'start' => 0, // The starting position for the result set (used for pagination)
-    'limit' => 20 // the amount of records you'd like to return (max: 1000)
-);
-Request Array(   <--  Use this method to search for a multiple key->term pairs, as well as specifying search operators (one term can still be used this way)
-    'user_email' => 'user@domain.com',
-    'user_password' => 'S3cuRe!Pas5',
-    'action' => 'search',
-    'search' => json_encode(array(
-        0 => array(
-            'field' => 'item_sku',
-            'value' => 'GPU/RTX3080,
-            'operator' => ' = '
-        ),
-        1 => array(
-            'field' => 'item_quantity',
-            'value' => 1,
-            'operator' => ' > '
-        )
-	)),
-    'application' => 'users' // the chosen application to search, this will grab the parent app. and search siblings as well,
-    'search_siblings' => true, // if you pass this variable AT ALL, it'll search the application's siblings as well. (ie. part requests, spo, etc. all at once!)
-    'start' => 0, // The starting position for the result set (used for pagination)
-    'limit' => 20 // the amount of records you'd like to return (max: 1000)
-);
- */
-
- 
