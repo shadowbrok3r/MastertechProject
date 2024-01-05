@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use reqwest::{header::{CONTENT_TYPE, ACCEPT}, multipart::{Form, Part}};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, sync::mpsc::error::TryRecvError};
 use quick_xml::{Reader, events::Event, name::QName};
 use quick_xml::de::from_str;
 use std::{error::Error, path::PathBuf, fs::{File, self}, io::BufReader};
@@ -196,12 +196,9 @@ impl SendRequest{
     }
        
     pub async fn get_cps(so_number: String, client: reqwest::Client)
-    -> core::result::Result<GetKeysResponse, Box<dyn Error>>{
+    -> core::result::Result<GetKeysResponse, reqwest::Error>{
         
-        let (tx, rx) = std::sync::mpsc::channel::<GetKeysResponse>();
-        
-        tokio::spawn(async move{
-            let sender = tx.clone();
+        let join = tokio::spawn(async move{
 
             let params: Value = serde_json::json!({
                 "user_email": "logan.lees@pclaptops.com", 
@@ -219,53 +216,57 @@ impl SendRequest{
                 .send()
                 .await;
         
-            if let Ok(res) = response{
-                let mut response_text = res.text().await.unwrap_or("get_cps() -> Error unwrapping response".to_string());
-                debug!("response: {:?}", response_text);
-    
-                let mut webroot_key = "";
-                let mut superanti_key = "";
-    
-                if response_text.contains("WRAV"){
-                    let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
-    
-                    let _: String = response_text.drain(..wrav_offset).collect(); 
-    
-                    let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
-    
-                    let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
-    
-                    webroot_key = split_wrav[1].trim();
-                    superanti_key = split_lines[1].trim();
-                }
-                else{
-                    println!("Is SW\\/PCLCPS\\/O on ticket");
-                    webroot_key = "Error";
-                    superanti_key = "Check console";
-                }
-    
-                let response_keys = GetKeysResponse {
-                    webroot_key: webroot_key.to_string(),
-                    superanti_key: superanti_key.to_string(),
-                };
-
-                match tx.send(response_keys) {
-                    Ok(_) => {
-                        drop(tx)
-                    },
-                    Err(err) => {
-                        debug!("Error while sending ticket information: {}", err.to_string());
-                        drop(tx)
+            match response{
+                Ok(res) => {
+                    let mut response_text = res.text().await.unwrap_or("get_cps() -> Error unwrapping response".to_string());
+                    debug!("response: {:?}", response_text);
+        
+                    let mut webroot_key = "";
+                    let mut superanti_key = "";
+        
+                    if response_text.contains("WRAV: ") || response_text.contains("SAS: "){
+                        let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
+        
+                        let _: String = response_text.drain(..wrav_offset).collect(); 
+        
+                        let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
+        
+                        let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
+        
+                        webroot_key = split_wrav[1].trim();
+                        superanti_key = split_lines[1].trim();
                     }
-                }
-            }else{
-                debug!("get_cps() -> Error");
-            }
-        });
+                    else{
+                        webroot_key = "Error";
+                        superanti_key = "Check console";
+                    }
+        
+                    let response_keys = GetKeysResponse {
+                        webroot_key: webroot_key.to_string(),
+                        superanti_key: superanti_key.to_string(),
+                    };
+    
 
-        match rx.try_recv(){
-            Ok(keys) => Ok(keys),
-            Err(err) => Err(Box::new(err))
+                    Ok(response_keys)
+                },
+                Err(e) => {
+                    debug!("get_cps() -> Error: {e:?}");
+                    Err(e)
+                }
+            }
+        })
+        .await
+        .unwrap_or(Ok(GetKeysResponse::default()));
+
+
+        match join{
+            Ok(keys) => {
+                Ok(keys)
+            },
+            Err(e) => {
+                debug!("Error: {e:?}");
+                Err(e)
+            }
         }
     }
 
@@ -458,61 +459,6 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
             debug!("Boxed error: {e:?}");
             Err(Box::new(e))
         },
-    }
-}
-
-async fn request_keys(so_number: &str, client: reqwest::Client)  
--> core::result::Result<GetKeysResponse, Box<dyn Error>> {
-
-    let params: Value = serde_json::json!({
-        "user_email": "logan.lees@pclaptops.com", 
-        "user_password": "Poolparty1",
-        "action": ScaffoldActions::FetchKeys,
-        "application": ScaffoldApps::SoftwareLicenseFetch, 
-        "company": "pcl",
-        "id_order": so_number,
-    }); // scaffold_builder.build_scaffold_call();
-    let response = client.post("https://scaffold.pclaptops.com/api/index")
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(&params)
-        .send()
-        .await;
-
-    match response {
-        Ok(res) => {
-            let mut response_text = res.text().await?;// serde_json::from_str(&raw_response)?;
-            debug!("response: {:?}", response_text);
-
-            let mut webroot_key = "";
-            let mut superanti_key = "";
-
-            if !response_text.contains("hasError"){
-                let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
-
-                let _: String = response_text.drain(..wrav_offset).collect(); 
-
-                let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
-
-                let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
-
-                webroot_key = split_wrav[1].trim();
-                superanti_key = split_lines[1].trim();
-            }
-            else{
-                println!("SW\\/PCLCPS\\/O not on ticket");
-                webroot_key = "Error";
-                superanti_key = "Check console";
-            }
-
-            let response_keys = GetKeysResponse {
-                webroot_key: webroot_key.to_string(),
-                superanti_key: superanti_key.to_string(),
-            };
-            
-            Ok(response_keys)
-        },
-        Err(e) => Err(Box::new(e)),
     }
 }
 
