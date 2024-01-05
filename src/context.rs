@@ -442,18 +442,26 @@ impl MastertechContext {
                                                     .clicked(){ 
                                                         let service_num = self.so_number.clone();
                                                         self.spinner = true;
+
                                                         let cps_request = SendRequest::get_cps(service_num, self.client.clone());
-                                                        let mut keys = GetKeysResponse::default();
                                                         let (tx, rx) = std::sync::mpsc::channel::<GetKeysResponse>();
+
                                                         tokio::spawn(async move{
                                                             let sender = tx.clone();
-                                                            match sender.send(cps_request.await.unwrap_or(GetKeysResponse::default())){
-                                                                Ok(_) => info!("sent keys successfully"),
-                                                                Err(err) => debug!("GetKeysClick -> Sender Error: {err:?}")
+                                                            let unwrapped_request =  cps_request.await.unwrap_or(GetKeysResponse::default());
+
+                                                            match sender.send(unwrapped_request){
+                                                                Ok(_) => info!("GetKeysClick -> sent keys successfully"),
+                                                                Err(err) => debug!("GetKeysClick -> Error propogating GetKeysResponse to callee -> {err:?}")
                                                             }
                                                         });
+
+
                                                         match rx.try_recv(){
                                                             Ok(keys) => {
+                                                                if keys.webroot_key.contains("Error"){
+                                                                    self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
+                                                                }
                                                                 self.keys = keys;
                                                             },
                                                             Err(err) => {
