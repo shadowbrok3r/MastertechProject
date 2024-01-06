@@ -651,11 +651,11 @@ impl MastertechContext {
                                         Button::new
                                         (
                                             RichText::new("Submit TUR Sheet")
-                                                // .color(Color32::from_rgb(255, 204, 255))
+                                                .color(Color32::from_rgb(255, 204, 255))
                                                 .strong()
                                                 .italics()
                                         )
-                                            // .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+                                            .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
                                     )
                                     .clicked()
                                     {  
@@ -890,7 +890,7 @@ impl MastertechContext {
                                                         <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",
                                             );
 
-                                            let store = &self.ticket_info.dep;
+                                            let store: &Store = &self.ticket_info.dep;
 
                                             if store.as_str() == "RIV"{
                                                 let sm = self.salesman_cbox;
