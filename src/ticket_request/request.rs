@@ -2,7 +2,7 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports, unused_variables))]
 use crossbeam::channel;
 use async_trait::async_trait;
-use reqwest::{header::{CONTENT_TYPE, ACCEPT}, multipart::{Form, Part}};
+use reqwest::{header::{CONTENT_TYPE, ACCEPT, AUTHORIZATION}, multipart::{Form, Part}};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use tokio::{io::AsyncWriteExt, sync::mpsc::error::TryRecvError};
@@ -40,22 +40,8 @@ impl SendRequest{
     {
         debug!("Getting Ticket");
         tokio::spawn(async move{
-            let args = vec![
-                serde_json::json!(so_number),
-                serde_json::json!("false"),
-            ];
-        
-            // Construct the scaffold call
-            let scaffold_builder = ScaffoldRequestBuilder{
-                app: ScaffoldApps::Everest,
-                action: ScaffoldActions::EverestCall, 
-                call: Some(ScaffoldCalls::GetOrder), 
-                arguments: Some(args.clone())
-        
-            };
-
             // Await the response 
-            let response = request_ticket_info(scaffold_builder, client).await;
+            let response = request_ticket_info(so_number, client).await;
 
             // Handle the response
             match response { // Successfully received GetTicketResponse
@@ -207,7 +193,7 @@ impl SendRequest{
                 "application": ScaffoldApps::SoftwareLicenseFetch, 
                 "company": "pcl",
                 "id_order": so_number,
-            }); // scaffold_builder.build_scaffold_call();
+            });
 
             let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
                 .header(CONTENT_TYPE, "application/json")
@@ -290,8 +276,8 @@ impl SendRequest{
 
          match asana_task.assignee.tech{
             Techs::Logan => { assigned_tech = "1199992640930465".to_string()},
-            Techs::Bread => { assigned_tech = "1202792432551073".to_string()},
-            Techs::Taco => { assigned_tech = "1202792432421640".to_string()},
+            Techs::Bread => { assigned_tech = "1202792432421640".to_string()},
+            Techs::Taco => { assigned_tech = "1202792432551073".to_string()},
         };
 
         let asana_response = AsanaResponse{
@@ -311,116 +297,95 @@ impl SendRequest{
             let mut asana_config = Configuration::new();
             let mut task = task_request::TaskRequest::new();
 
-            asana_config.client = client.clone();
-            asana_config.bearer_access_token = Some("1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2".to_string());
-            asana_config.user_agent = None;
-            
-            task.name = Some(asana_task.task_name);// Some(format!("{cust} - {so_num}"));
-            
-            task.workspace = Some("13314583095021".to_string());
-            if !cfg!(debug_assertions){
-                task.projects = Some(vec!["1202792139600600".to_string()]);
-                task.assignee = Some(assigned_salesman.clone());
-            }else{
-                task.assignee = Some("1199992640930465".to_string());
-            }
-            
-            task.followers = Some(vec![assigned_salesman, assigned_tech]); // Logan: 1199992640930465
-            task.html_notes = Some(asana_task.html_notes);
-            task.due_on = Some(due_date);
-            //task.resource_subtype = Some("".to_string());
-            //task.dependencies = Some("".to_string());
+            let params = serde_json::json!({
+                "data": {
+                    "name": "test",
+                    "html_notes": asana_task.html_notes,
+                    "followers": [
+                        assigned_salesman,
+                        assigned_tech
+                    ],
+                    "due_at": due_date,
+                    "workspace": "13314583095021",
+                    "assignee": assigned_salesman
+                }
+            });
 
-            let new_task = 
-            InlineObject35{ data: Some(Box::new(task)) };
-
-            // Serialize the html_notes to a JSON string and calculate its length
-            let html_notes_json = serde_json::to_string(&new_task).unwrap();
-            let content_length = html_notes_json.len();
             
-            match create_task(&asana_config, 
-                new_task, 
-                Some(true), //only set to true if debugging
-                None
-                ).await
-            {
-                Ok(res) => 
-                {
-                    match res.data
+            let response = client
+                .post("https://app.asana.com/api/1.0/tasks") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+                .header(CONTENT_TYPE, "application/json")
+                .header(ACCEPT, "application/json")
+                .header(AUTHORIZATION, "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
+                .json(&params)
+                .send()
+                .await;
+            
+            match response{
+                Ok(res) => {
+                    let gid: Value = res.json().await.unwrap();
+                    /*
                     {
-                        Some(data) =>
-                        {
-                            let file = asana_task.file_attachment.clone();
-
-                            if let Some(file) = file
-                            {
-                                let attachment_client = client.clone();
-
-                                match data.gid
-                                {
-                                    Some(gid) => 
-                                    {
-                                        let file_name = file.file_name()
-                                        .and_then(|name| name.to_str())
-                                        .unwrap_or("no file name");
-                                        
-                                        let file_attachment = asana_task.file_attachment.clone();
-                                        let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
-                                        
-                                        let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
-                                        let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
-
-                                        let form = Form::new()
-                                        .part("file", part)
-                                        .text("parent", gid);
-
-                                        let response = attachment_client
-                                        .post("https://app.asana.com/api/1.0/attachments")
-                                        .header("Authorization", "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
-                                        .header(ACCEPT, "application/json")
-                                        .multipart(form)
-                                        .send()
-                                        .await;
-                
-                
-                                        match response
-                                        {
-                                            Ok(resp) => 
-                                            {
-                                                // error!("{resp:?}");
-                                                let asana_response: AsanaResponse = resp.json().await.unwrap(); 
-                                                // error!("{asana_response:?}");
-
-                                                match sender.send(serde_json::to_string(&asana_response).unwrap()){
-                                                    Ok(_) => drop(sender),
-                                                    Err(e) => error!("error sending message: {e}"),
-                                                }
-                                            },
-                                            Err(e) => error!("{e:?}") 
-                                        }
-                                    }, 
-                                    None => error!("no gid received")
-                                    
-                                }
-                            }
-
-                        }, None => error!("no data")
-                    }               
-                },
-                Err(e) => {
-                    match e{
-                        asana::apis::Error::Reqwest(e) => error!("reqwest error: {e}"),
-                        asana::apis::Error::Serde(e) => error!("Serde error: {e}"),
-                        asana::apis::Error::Io(e) => error!("IO error: {e}"),
-                        asana::apis::Error::ResponseError(e) => {
-                            let send_tx = tx.clone();
-                            match send_tx.send(e.content){
-                                Ok(_) => { info!("sent error successfully"); drop(send_tx); },
-                                Err(e) => error!("send error: {e}")
-                            };
+                        "data": {
+                            "gid": "1206291413938831",
                         }
                     }
-                }
+                    */
+                    println!("Asana response: {gid:?}");
+
+                    let file = asana_task.file_attachment.clone();
+
+                    if let Some(file) = file{
+                        let file_name = file.file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("no file name");
+                        
+                        let file_attachment = asana_task.file_attachment.clone();
+                        let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
+                        
+                        let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
+                        let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
+
+                        let form = Form::new()
+                            .part("file", part)
+                            .text("parent", ""); //gid
+
+                        let response = client
+                            .post("https://app.asana.com/api/1.0/attachments")
+                            .header("Authorization", "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
+                            .header(ACCEPT, "application/json")
+                            .multipart(form)
+                            .send()
+                            .await;
+
+                        match response
+                        {
+                            Ok(resp) => 
+                            {
+                                let asana_response: AsanaResponse = resp.json().await.unwrap(); 
+
+                                match sender.send(serde_json::to_string(&asana_response).unwrap()){
+                                    Ok(_) => drop(sender),
+                                    Err(e) => error!("error sending message: {e}"),
+                                }
+                            },
+                            Err(e) => {
+                                let send_tx = tx.clone();
+                                match send_tx.send(e.to_string()){
+                                    Ok(_) => { info!("sent error successfully"); drop(send_tx); },
+                                    Err(e) => error!("send error: {e}")
+                                };
+                                error!("{e:?}"); 
+                            }
+                        }
+                
+                    }
+                    
+                },
+                Err(err) => {
+                    debug!("send_ticket_request -> Asana request error: {err:?}");
+                    // Err(err)
+                },
             }
         });
 
@@ -436,12 +401,22 @@ impl SendRequest{
     }
 }
 
-async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, client: reqwest::Client)  
+async fn request_ticket_info(so_number: String, client: reqwest::Client)  
 -> core::result::Result<GetTicketResponse, Box<dyn Error>> {
-    debug!("request_ticket_info");
-    // Now you can use the method on the instance of ScaffoldRequestBuilder
-    let params: Value = scaffold_builder.build_scaffold_call();
+    info!("request_ticket_info");
 
+    let params: Value = serde_json::json!({
+        "user_email": "logan.lees@pclaptops.com", 
+        "user_password": "Poolparty1",
+        "action": "everest_call",
+        "application": "everest", 
+        "call": "getOrder",
+        "company": "pcl",
+        "arg1": so_number,
+    });
+
+    debug!("request_ticket_info -> params -> {params:?}");
+    
     let response = client
         .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
@@ -452,8 +427,10 @@ async fn request_ticket_info(mut scaffold_builder: ScaffoldRequestBuilder, clien
 
     match response {
         Ok(res) => {
-            let json_response: GetTicketResponse  = res.json().await?;
-            Ok(json_response)
+            let json_response: Value  = res.json().await.unwrap();
+            debug!("request_ticket_info -> Json_response -> {json_response:?}");
+
+            Ok(GetTicketResponse::default())
         },
         Err(e) => {
             debug!("Boxed error: {e:?}");

@@ -13,7 +13,7 @@ pub struct AsanaResponse{
     //pub raw_resp: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct GetTicketResponse {
     pub header: Header,
     pub customer: Customer,
@@ -24,7 +24,7 @@ pub struct GetTicketResponse {
 
 
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct Header {
     pub CUST_CODE: Option<String>,
     pub USER_ID: Option<String>, // "USER_ID": "BP3", //checkin rep
@@ -36,7 +36,7 @@ pub struct Header {
     pub INV_AMOUNT: Option<String>, // "INV_AMOUNT": "53.6100",
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct Customer {
     pub NAME: Option<String>, 
     //pub CUSTOMER_ADDRESS: String,
@@ -56,7 +56,7 @@ pub struct Customer {
 
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct AddressObject{
     // Phone Number 1 & 2
     pub TEL1: Option<String>, 
