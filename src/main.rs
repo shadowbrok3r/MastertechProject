@@ -92,27 +92,7 @@ impl eframe::App for MasterTechApp {
         
                 
         if self.context.specs_first_run == true{
-            self.context.spinner = true;
-            /*             
-            let (tx, rx) = crossbeam::channel::bounded(1);
-            tokio::task::spawn_blocking(move || {
-                match run(){
-                    Ok(response) => {
-                        match tx.send((response.0, response.1)){
-                            Ok(_) => drop(tx),
-                            Err(e) => println!("{e}"),
-                        }
-                    },
-                    Err(e) => println!("err: {e}"),
-                }
-            });
-            if let Ok(res) = rx.recv(){
-                self.context.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
-            } 
-            */
-    
             let specs = ComputerData::get_computer_data();
-
             match specs{
                 Ok(computer_data) => {
                     self.context.system_info = computer_data;
@@ -132,11 +112,9 @@ impl eframe::App for MasterTechApp {
                         
                     }
                     self.context.output_text += format!("{:#?}", self.context.system_info.clone().seb_info.unwrap_or_default()).as_str();
-                    self.context.spinner = false;
                 },
                 Err(e) => {
                     self.context.output_text = format!("{}", e.to_string());
-                    self.context.spinner = false;
                 }
             }
 

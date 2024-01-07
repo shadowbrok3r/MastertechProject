@@ -1,7 +1,5 @@
 /target
 /dist
-Cargo.lock
-output.log
 .idea/.gitignore
 .idea/Mastertech4.0.iml
 .idea/modules.xml
@@ -9,3 +7,5 @@ output.log
 .idea/inspectionProfiles/Project_Default.xml
 .env
 .idea/codeStyles/codeStyleConfig.xml
+Cargo.lock
+output.log

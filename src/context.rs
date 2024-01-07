@@ -785,20 +785,16 @@ impl MastertechContext {
                                                     if let Some(disk) = self.disks.get(index)
                                                     {
                                                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
-                                                        let disk_available = format!
-                                                        (
-                                                            "{} Gb", disk.get("available space").and_then(Value::as_str).unwrap_or("")
-                                                        );
-                                                        let disk_total = format!
-                                                        (
-                                                            "{} Gb", disk.get("total space").and_then(Value::as_str).unwrap_or("")
-                                                        );
+                                                        let drive_type = disk.get("drive_type").and_then(Value::as_str).unwrap_or("");
+                                                        let space_left = format!("{} Gb", disk.get("space_left").and_then(Value::as_str).unwrap_or(""));
+                                                        let total_size = format!("{} Gb", disk.get("total_size").and_then(Value::as_str).unwrap_or(""));
 
                                                         each_disk += &format!("
                                                         <tr>
                                                         <td style=\"padding:1px 1px\">        {disk_letter}</td>
-                                                        <td style=\"padding:1px 1px\">        {disk_available}</td>
-                                                        <td style=\"padding:1px 1px\">        {disk_total}</td>
+                                                        <td style=\"padding:1px 1px\">        {drive_type}</td>
+                                                        <td style=\"padding:1px 1px\">        {space_left}</td>
+                                                        <td style=\"padding:1px 1px\">        {total_size}</td>
                                                         </tr>
                                                         ");
 
@@ -806,6 +802,7 @@ impl MastertechContext {
                                                             ("
                                                             <tr>
                                                                 <td style=\"padding:1px 4px\">Letter</td>
+                                                                <td style=\"padding:1px 4px\">Drive Type</td>
                                                                 <td style=\"padding:1px 4px\">Avail Space</td>
                                                                 <td style=\"padding:1px 4px\">Total Space</td>
                                                             </tr>
@@ -938,18 +935,14 @@ impl MastertechContext {
                                                     if let Some(disk) = self.disks.get(index)
                                                     {
                                                         let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
-                                                        let disk_available = format!
-                                                        (
-                                                            "{} Gb", disk.get("available space").and_then(Value::as_str).unwrap_or("")
-                                                        );
-                                                        let disk_total = format!
-                                                        (
-                                                            "{} Gb", disk.get("total space").and_then(Value::as_str).unwrap_or("")
-                                                        );
+                                                        let drive_type = disk.get("drive_type").and_then(Value::as_str).unwrap_or("");
+                                                        let disk_available = format!("{} Gb", disk.get("space_left").and_then(Value::as_str).unwrap_or(""));
+                                                        let disk_total = format!("{} Gb", disk.get("total_size").and_then(Value::as_str).unwrap_or(""));
 
                                                         each_disk += &format!("
                                                         <tr>
                                                             <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_letter}</td>
+                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{drive_type}</td>
                                                             <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_available}</td>
                                                             <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_total}</td>
                                                         </tr>
@@ -959,6 +952,7 @@ impl MastertechContext {
                                                             ("
                                                             <tr>
                                                                 <td style=\"padding:1px 4px; text-align: center; \">Letter</td>
+                                                                <td style=\"padding:1px 4px; text-align: center; \">Type</td>
                                                                 <td style=\"padding:1px 4px; text-align: center; \">Avail Space</td>
                                                                 <td style=\"padding:1px 4px; text-align: center; \">Total Space</td>
                                                             </tr>
