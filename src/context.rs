@@ -1,5 +1,6 @@
 use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf, fs}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
+use chrono::{DateTime, Utc};
 use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
 use log::{debug, info};
 use serde_json::Value;
@@ -70,7 +71,7 @@ pub struct MastertechContext {
     pub draggable_tabs: bool,
     pub show_tab_name_on_hover: bool,
 
-    pub date: Option<chrono::NaiveDate>,
+    pub date: Option<DateTime<Utc>>,
     
     pub reader_bytes: u32,
 
@@ -457,7 +458,7 @@ impl MastertechContext {
                                                         });
 
 
-                                                        match rx.try_recv(){
+                                                        match rx.recv(){
                                                             Ok(keys) => {
                                                                 if keys.webroot_key.contains("Error"){
                                                                     self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
@@ -587,8 +588,9 @@ impl MastertechContext {
                                         .num_columns(2)
                                         .show(ui, |ui| {
                                             let date = self.date.get_or_insert_with(|| 
-                                                chrono::offset::Utc::now().date_naive());
-                                            ui.add(DatePickerButton::new(date));
+                                                chrono::offset::Utc::now());
+                                                // 
+                                            ui.add(DatePickerButton::new(&mut date.date_naive()));
 
                                             ui.checkbox(&mut self.send_specs, "Send System Info");
 
@@ -706,7 +708,7 @@ impl MastertechContext {
                                             let checkin_notes = &self.ticket_info.checkin_notes;
                                             let recommendations = &self.recommendations;   
 
-                                            let date = format!("{}", self.date.unwrap());
+                                            let date = self.date.unwrap_or(DateTime::default());
                                             let mut attached_file: Option<PathBuf> = None;
                                             if let Some(file) = &self.opened_file{
                                                 attached_file = Some(file.to_path_buf());
@@ -773,6 +775,7 @@ impl MastertechContext {
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
                                                 let system_name = &self.system_info.hostname;
+                                                let os = &self.system_info.operating_system;
                                                 let cpu_name = &self.system_info.cpu;
                                                 let total_ram = &self.system_info.ram;
                                                 let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
@@ -819,8 +822,12 @@ impl MastertechContext {
                                                         >              <code>       Computer Info        </code></td>
                                                     </tr>
                                                     <tr>
-                                                        <td>OS</td>
+                                                        <td>PC Name</td>
                                                         <td colspan=\"2\" data-cell-widths=\"150,150\">{system_name}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>OS</td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{os}</td>
                                                     </tr>
                                                     <tr>
                                                         <td>CPU</td>

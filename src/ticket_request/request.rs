@@ -1,31 +1,18 @@
 
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports, unused_variables))]
+use chrono::{DateTime, Utc, SecondsFormat};
 use crossbeam::channel;
 use async_trait::async_trait;
-use reqwest::{header::{CONTENT_TYPE, ACCEPT, AUTHORIZATION}, multipart::{Form, Part}};
+use reqwest::header::{CONTENT_TYPE, ACCEPT, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use tokio::{io::AsyncWriteExt, sync::mpsc::error::TryRecvError};
 use quick_xml::{Reader, events::Event, name::QName};
 use quick_xml::de::from_str;
-use std::{error::Error, path::PathBuf, fs::{File, self}, io::BufReader};
+use std::{error::Error, path::PathBuf, fs::{File, self}, io::BufReader, collections::HashMap};
 use log::{info, debug, trace, error};
 use crate::{scaffold::*, data::{PreTicketData, LocalSebData, ExtendedSeb, GetKeysResponse}, ticket_request::AddressObject};
 use std::result::Result;
-use asana::{
-    apis::{
-        configuration::Configuration, 
-        tasks_api::{
-            create_task,
-            delete_task,
-        }, attachments_api::create_attachment_for_task
-    }, 
-    models::{
-        task_request,
-        InlineObject35, TaskResponse
-    }
-};
-
 use super::{GetTicketResponse, AsanaResponse, Store, request_builder::{AsanaTask, TaskAssignee}};
 
 pub struct SendRequest {
@@ -41,7 +28,7 @@ impl SendRequest{
         debug!("Getting Ticket");
         tokio::spawn(async move{
             // Await the response 
-            let response = request_ticket_info(so_number, client).await;
+            let response: Result<GetTicketResponse, Box<dyn Error>> = request_ticket_info(so_number, client).await;
 
             // Handle the response
             match response { // Successfully received GetTicketResponse
@@ -260,7 +247,7 @@ impl SendRequest{
         tx: std::sync::mpsc::Sender<String>, 
         client: reqwest::Client, 
         asana_task: AsanaTask,
-        due_date: String,
+        due_date: DateTime<Utc>,
     ) 
     {
         let (sender, receiver) = channel::bounded::<String>(5);
@@ -293,21 +280,25 @@ impl SendRequest{
             // i should use create_attachment_for_task,
             //  dependencies: Option<Vec<AsanaResource>> 
             // to add spo as dependancy to task
-
-            let mut asana_config = Configuration::new();
-            let mut task = task_request::TaskRequest::new();
+            let mut projects: Vec<String> = Vec::new();
+            projects.push("1202792432421640".to_string());
 
             let params = serde_json::json!({
                 "data": {
-                    "name": "test",
+                    "name": asana_task.task_name,
                     "html_notes": asana_task.html_notes,
                     "followers": [
                         assigned_salesman,
                         assigned_tech
                     ],
-                    "due_at": due_date,
+                    "due_at": due_date.to_rfc3339_opts(SecondsFormat::Secs, true),
                     "workspace": "13314583095021",
-                    "assignee": assigned_salesman
+                    "assignee": assigned_salesman,
+                    "projects": {
+                        "gid": "1202792432421640"
+                    }
+                        
+                    
                 }
             });
 
@@ -343,18 +334,18 @@ impl SendRequest{
                         let file_attachment = asana_task.file_attachment.clone();
                         let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
                         
-                        let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
-                        let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
+                        // let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
+                        // let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
 
-                        let form = Form::new()
-                            .part("file", part)
-                            .text("parent", ""); //gid
+                        let mut form = HashMap::new();
+                        form.insert("file", "part"); //part
+                        form.insert("parent", "gid"); //text
 
                         let response = client
                             .post("https://app.asana.com/api/1.0/attachments")
                             .header("Authorization", "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
                             .header(ACCEPT, "application/json")
-                            .multipart(form)
+                            .form(&form)
                             .send()
                             .await;
 
@@ -406,17 +397,18 @@ async fn request_ticket_info(so_number: String, client: reqwest::Client)
     info!("request_ticket_info");
 
     let params: Value = serde_json::json!({
-        "user_email": "logan.lees@pclaptops.com", 
+        "user_email": "logan.lees@pclaptops.com",
         "user_password": "Poolparty1",
         "action": "everest_call",
-        "application": "everest", 
+        "application": "everest",
         "call": "getOrder",
         "company": "pcl",
-        "arg1": so_number,
+        "arg1": so_number.as_str(),
+        "arg2": "false"
     });
 
     debug!("request_ticket_info -> params -> {params:?}");
-    
+
     let response = client
         .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
@@ -427,10 +419,10 @@ async fn request_ticket_info(so_number: String, client: reqwest::Client)
 
     match response {
         Ok(res) => {
-            let json_response: Value  = res.json().await.unwrap();
+            let json_response: GetTicketResponse  = res.json().await?;
             debug!("request_ticket_info -> Json_response -> {json_response:?}");
 
-            Ok(GetTicketResponse::default())
+            Ok(json_response)
         },
         Err(e) => {
             debug!("Boxed error: {e:?}");
