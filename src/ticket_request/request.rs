@@ -57,7 +57,7 @@ impl SendRequest{
                             if note != "null" && !note.is_empty() {
                                 let parts: Vec<&str> = note.split("Symptoms (Details):").collect();
                                 if parts.len() > 1{
-                                    let note = &parts[1].to_string();
+                                    let note = &parts[1].trim().to_string();
                                     checkin_note = note.to_string();
                                 }
                             }
@@ -168,8 +168,8 @@ impl SendRequest{
         
     }
        
-    pub async fn get_cps(so_number: String, client: reqwest::Client)
-    -> core::result::Result<GetKeysResponse, reqwest::Error>{
+    pub async fn get_cps(so_number: String, client: reqwest::Client
+    ) -> core::result::Result<GetKeysResponse, reqwest::Error>{
         
         let join = tokio::spawn(async move{
 
@@ -248,7 +248,7 @@ impl SendRequest{
         client: reqwest::Client, 
         asana_task: AsanaTask,
         due_date: DateTime<Utc>,
-    ) 
+    ) //-> core::result::Result<String, reqwest::Error>
     {
         let (sender, receiver) = channel::bounded::<String>(5);
         let send = tx.clone();
@@ -267,21 +267,12 @@ impl SendRequest{
             Techs::Taco => { assigned_tech = "1202792432551073".to_string()},
         };
 
-        let asana_response = AsanaResponse{
-            gid: Some("".to_string()),
-            //created_at: Some("".to_string()),
-            status: Some(200),
-            //raw_resp: Some("".to_string())
-        };
-
         tokio::spawn(async move{
             // ideally, id like to also add the functionality to search for a task by the SO number
             // so we can update the ticket or delete it, or add an attachment
             // i should use create_attachment_for_task,
             //  dependencies: Option<Vec<AsanaResource>> 
             // to add spo as dependancy to task
-            let mut projects: Vec<String> = Vec::new();
-            projects.push("1202792432421640".to_string());
 
             let params = serde_json::json!({
                 "data": {
@@ -294,11 +285,7 @@ impl SendRequest{
                     "due_at": due_date.to_rfc3339_opts(SecondsFormat::Secs, true),
                     "workspace": "13314583095021",
                     "assignee": assigned_salesman,
-                    "projects": {
-                        "gid": "1202792432421640"
-                    }
-                        
-                    
+                    "projects": ["1202792139600600"]
                 }
             });
 
@@ -314,14 +301,9 @@ impl SendRequest{
             
             match response{
                 Ok(res) => {
-                    let gid: Value = res.json().await.unwrap();
-                    /*
-                    {
-                        "data": {
-                            "gid": "1206291413938831",
-                        }
-                    }
-                    */
+                    let res_body: Value = res.json().await.unwrap();
+                    let gid: Value = res_body.get("gid").unwrap_or(&Value::default()).clone();
+
                     println!("Asana response: {gid:?}");
 
                     let file = asana_task.file_attachment.clone();
@@ -347,35 +329,14 @@ impl SendRequest{
                             .header(ACCEPT, "application/json")
                             .form(&form)
                             .send()
-                            .await;
-
-                        match response
-                        {
-                            Ok(resp) => 
-                            {
-                                let asana_response: AsanaResponse = resp.json().await.unwrap(); 
-
-                                match sender.send(serde_json::to_string(&asana_response).unwrap()){
-                                    Ok(_) => drop(sender),
-                                    Err(e) => error!("error sending message: {e}"),
-                                }
-                            },
-                            Err(e) => {
-                                let send_tx = tx.clone();
-                                match send_tx.send(e.to_string()){
-                                    Ok(_) => { info!("sent error successfully"); drop(send_tx); },
-                                    Err(e) => error!("send error: {e}")
-                                };
-                                error!("{e:?}"); 
-                            }
-                        }
-                
+                            .await?;
                     }
                     
+                    Ok("Successfully retrieved response".to_string())
                 },
                 Err(err) => {
                     debug!("send_ticket_request -> Asana request error: {err:?}");
-                    // Err(err)
+                    Err(err)
                 },
             }
         });
