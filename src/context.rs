@@ -295,15 +295,11 @@ impl MastertechContext {
     }
 
     fn tur_sheet(&mut self, ui: &mut Ui) {
-        // ui.visuals_mut().override_text_color = Some(self.text_color);
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
-        // ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
-        // ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui|{ui.add_space(8.0);});
         
-
         ui.with_layout(
             Layout::left_to_right(Align::Center),|ui|
         {     
@@ -1340,7 +1336,54 @@ impl MastertechContext {
         // file_browser.show(ui, command_tx, command_rx);
     }
     
-    fn scripts(&mut self, _ui: &mut Ui){ }
+    fn scripts(&mut self, ui: &mut Ui){
+        ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
+        ui.vertical(|ui|{ui.add_space(8.0);});
+        ui.horizontal(|ui|{ui.add_space(8.0);});
+
+        let scripts = [
+            "Install Webroot",
+            "Install SAS",
+            "Check Driver Issues",
+            "Running Tasks",
+            "Test",
+            "Test",
+            "Test"
+        ];
+
+        // ui.with_layout(
+        //     Layout::left_to_right(Align::Center),|ui|
+        // {     
+            Grid::new("scripts")
+                .spacing(vec2(2.0, 10.0))
+                .min_col_width(self.widget_size)
+                .num_columns(3)
+                .striped(true)
+                .min_row_height(10.0)
+                .show(ui, |ui| {
+                    let mut counter = 0;  // Initialize a counter
+
+                    for script in scripts{
+                        let button = Button::new(RichText::new(script).color(Color32::from_rgb(255, 204, 255))
+                            .strong()).stroke(Stroke::new(1.2, Color32::from_rgb(191, 33, 101)));
+
+
+                        if ui.add(button).clicked(){
+                            println!("Button: {script}")
+                        }
+
+                        counter += 1;  // Increment the counter
+
+                        if counter % 4 == 0 {
+                            ui.end_row();  // End the row after every 2 buttons
+                        }
+                    }
+            }); // Grid   
+        // });
+
+     }
 
     fn puffin_profiler(&mut self, ui: &mut Ui){
         puffin::profile_function!();
