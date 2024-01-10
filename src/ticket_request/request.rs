@@ -302,9 +302,10 @@ impl SendRequest{
             match response{
                 Ok(res) => {
                     let res_body: Value = res.json().await.unwrap();
+                    println!("Asana Response Body: {res_body:?}");
                     let gid: Value = res_body.get("gid").unwrap_or(&Value::default()).clone();
 
-                    println!("Asana response: {gid:?}");
+                    println!("Asana Response: {gid:?}");
 
                     let file = asana_task.file_attachment.clone();
 
