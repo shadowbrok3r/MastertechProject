@@ -394,7 +394,7 @@ async fn request_ticket_info(so_number: String, client: reqwest::Client)
 
 pub async fn request_seb_info(client: reqwest::Client) -> Result<LocalSebData, Box<dyn Error>>{
     // supereasybackup.com/downloads/SuperEasyBackup.exe
-    let file_path = "/home/shadowbroker/Desktop/SEB/DCProtectData-Customer/Shared/Logs/InstallationTracking.log"; // "C:\\DCProtect\\Shared\\Logs\\InstallationTracking.log"; // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log"; 
+    let file_path = "C:\\DCProtectData\\Shared\\Logs\\InstallationTracking.log"; // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log"; 
 
     // Read the file content
     let file_content = fs::read_to_string(file_path)?;

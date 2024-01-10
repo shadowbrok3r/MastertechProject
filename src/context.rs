@@ -7,7 +7,7 @@ use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use crate::{data::{PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests, LocalSebData, GetKeysResponse}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest, SendReq}, request::request_seb_info}};
-use tokio::{sync::mpsc::unbounded_channel, spawn};
+use tokio::{sync::mpsc::unbounded_channel, spawn, task::spawn_blocking};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
@@ -344,13 +344,13 @@ impl MastertechContext {
                                         { 
                                             self.output_text.clear();
                                             let service_num = self.so_number.clone();
-                                            if !service_num.is_empty(){
+                                            if !service_num.is_empty() && service_num.len() == 8{
                                                 self.output_text = "Its Everest, this may take a 'moment'".to_string();
                                                 self.spinner = true;
  
                                                 SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
                                             }else{
-                                                self.output_text = "You need to enter an SO number before submitting TUR sheet".to_string();
+                                                self.output_text = "Didn't enter SO number or SO number < 8 digits".to_string();
                                             }
 
                                         } 
@@ -453,19 +453,21 @@ impl MastertechContext {
                                                             }
                                                         });
 
-
-                                                        match rx.recv(){
-                                                            Ok(keys) => {
-                                                                if keys.webroot_key.contains("Error"){
-                                                                    self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
+                                                        // spawn_blocking(||{
+                                                            match rx.recv(){
+                                                                Ok(keys) => {
+                                                                    if keys.webroot_key.contains("Error"){
+                                                                        self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
+                                                                    }
+                                                                    self.keys = keys;
+                                                                },
+                                                                Err(err) => {
+                                                                    debug!("GetKeysClick Receive Error -> {err:?}");
+                                                                    self.output_text = format!("GetKeysClick -> Error receiving keys -> {err:?}");
                                                                 }
-                                                                self.keys = keys;
-                                                            },
-                                                            Err(err) => {
-                                                                debug!("GetKeysClick Receive Error -> {err:?}");
-                                                                self.output_text = format!("GetKeysClick -> Error receiving keys -> {err:?}");
                                                             }
-                                                        }
+                                                        // });
+                                                        
                                                         
                                                     }
                                                     
@@ -713,6 +715,9 @@ impl MastertechContext {
                                             let mut specs = String::new();
                                             let cps = self.current_antivirus.clone();
                                             let seb_info = self.seb_info.clone().unwrap_or_default();
+
+                                            println!("SEB INFO: {seb_info:?}");
+
                                             let mut final_disk = String::new();
                                             let mut each_disk = String::new();
                                                                                     
@@ -780,14 +785,14 @@ impl MastertechContext {
                                                 {
                                                     if let Some(disk) = self.disks.get(index)
                                                     {
-                                                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
+                                                        let drive_letter = format!("{}", disk.get("drive_letter").and_then(Value::as_str).unwrap_or(""));
                                                         let drive_type = disk.get("drive_type").and_then(Value::as_str).unwrap_or("");
                                                         let space_left = format!("{} Gb", disk.get("space_left").and_then(Value::as_str).unwrap_or(""));
                                                         let total_size = format!("{} Gb", disk.get("total_size").and_then(Value::as_str).unwrap_or(""));
 
                                                         each_disk += &format!("
                                                         <tr>
-                                                        <td style=\"padding:1px 1px\">        {disk_letter}</td>
+                                                        <td style=\"padding:1px 1px\">        {drive_letter}</td>
                                                         <td style=\"padding:1px 1px\">        {drive_type}</td>
                                                         <td style=\"padding:1px 1px\">        {space_left}</td>
                                                         <td style=\"padding:1px 1px\">        {total_size}</td>
@@ -907,12 +912,12 @@ impl MastertechContext {
                                                 };
 
 
-                                                SendRequest::send_ticket_request(
-                                                    self.scaffold_request.tx.clone(), 
-                                                    self.client.clone(), 
-                                                    task,
-                                                    date,
-                                                );
+                                                // SendRequest::send_ticket_request(
+                                                //     self.scaffold_request.tx.clone(), 
+                                                //     self.client.clone(), 
+                                                //     task,
+                                                //     date,
+                                                // );
 
                                             }else{
                                                 let mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
