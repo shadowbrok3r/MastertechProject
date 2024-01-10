@@ -716,7 +716,7 @@ impl MastertechContext {
                                             let cps = self.current_antivirus.clone();
                                             let seb_info = self.seb_info.clone().unwrap_or_default();
 
-                                            println!("SEB INFO: {seb_info:?}");
+                                            
 
                                             let mut final_disk = String::new();
                                             let mut each_disk = String::new();
@@ -912,12 +912,12 @@ impl MastertechContext {
                                                 };
 
 
-                                                // SendRequest::send_ticket_request(
-                                                //     self.scaffold_request.tx.clone(), 
-                                                //     self.client.clone(), 
-                                                //     task,
-                                                //     date,
-                                                // );
+                                                SendRequest::send_ticket_request(
+                                                    self.scaffold_request.tx.clone(), 
+                                                    self.client.clone(), 
+                                                    task,
+                                                    date,
+                                                );
 
                                             }else{
                                                 let mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
