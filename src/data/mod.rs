@@ -9,6 +9,7 @@ use crate::ticket_request::Store;
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PreTicketData{
     pub cust_code: String,
+    pub due_date: Option<String>,
     pub checkin_rep: String, // "USER_ID": "BP3", //checkin rep
     pub terms: String, // "TERMS": "CC",
     pub doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
@@ -88,7 +89,6 @@ pub struct ExtendedSeb {
     pub date_created: String,
 }
 
-
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct ComputerData{
     pub hostname: String,
@@ -156,7 +156,7 @@ impl TicketResponse{
         recommendations: &String,
         tech: String,
         salesman: String, 
-        hardware_results: HardwareTests
+        hardware_results: HardwareTests,
     ) -> Self{
         let pre_ticket_clone = pre_ticket.clone();
 
