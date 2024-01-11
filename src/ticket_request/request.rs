@@ -138,6 +138,7 @@ impl SendRequest{
                         last_invoice_number: customer.LI_DOC.unwrap_or("empty".to_string()),
                         item_codes: itemcodes.clone(),
                         total_invoice_count: customer.NUM_INV.unwrap_or("empty".to_string()),
+                        due_date: None,
                     };
                     
                     let ticket_info_json = serde_json::to_string(&ticket_information).unwrap_or("No Ticket Information".to_string());

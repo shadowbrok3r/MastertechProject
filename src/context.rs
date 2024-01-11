@@ -1,6 +1,6 @@
 use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf, fs}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, SecondsFormat};
 use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
 use log::{debug, info};
 use serde_json::Value;
@@ -1169,9 +1169,19 @@ impl MastertechContext {
             let ram_test = format!("{:?}", &self.ram_test_cbox);
             let ssd_test = format!("{:?}", &self.ssd_test_cbox);
 
-            let pre_ticket = &self.ticket_info;
+            let mut pre_ticket = self.ticket_info.clone();
+
+            pre_ticket.due_date = Some(
+                self.date.unwrap_or(
+                    DateTime::default()
+                ).to_rfc3339_opts(
+                    SecondsFormat::Secs, 
+                    true
+                )
+            );
+            
             let payload = TicketResponse::serialize_payload(
-                pre_ticket,
+                &pre_ticket,
                 &self.system_info,
                 &self.so_number,
                 &self.current_antivirus,
