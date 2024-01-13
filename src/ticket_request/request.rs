@@ -139,6 +139,7 @@ impl SendRequest{
                         item_codes: itemcodes.clone(),
                         total_invoice_count: customer.NUM_INV.unwrap_or("empty".to_string()),
                         due_date: None,
+                        sales_rep: header.SALES_REP.unwrap_or("empty".to_string())
                     };
                     
                     let ticket_info_json = serde_json::to_string(&ticket_information).unwrap_or("No Ticket Information".to_string());

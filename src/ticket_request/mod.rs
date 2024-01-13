@@ -34,6 +34,7 @@ pub struct Header {
     pub JURISCODE: Option<String>, //"JURISCODE": "LTN",
     pub COG: Option<String>, // "COG": "7.1000", //Cost of goods?
     pub INV_AMOUNT: Option<String>, // "INV_AMOUNT": "53.6100",
+    pub SALES_REP: Option<String>
 }
 
 #[derive(Deserialize, Debug)]

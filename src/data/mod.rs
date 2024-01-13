@@ -3,12 +3,12 @@ use std::error::Error;
 use log::debug;
 use reqwest::header::{COOKIE, CONTENT_TYPE, ACCEPT, HeaderValue};
 use serde::{Serialize, Deserialize};
-use serde_json::Value;
 use crate::ticket_request::Store;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PreTicketData{
     pub cust_code: String,
+    pub sales_rep: String,
     pub due_date: Option<String>,
     pub checkin_rep: String, // "USER_ID": "BP3", //checkin rep
     pub terms: String, // "TERMS": "CC",
