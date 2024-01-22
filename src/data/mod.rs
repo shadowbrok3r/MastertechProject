@@ -207,7 +207,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client)
         .post("http://localhost:8080/api/submitTicket") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
-        .header(COOKIE, HeaderValue::from_static("jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE3MDE5NjY0NjYsIm5iZiI6MTcwMTk2NjQ2NiwiZXhwIjoxNzAyMDUyODY2LCJpc3MiOiJTdXJyZWFsREIiLCJOUyI6Ik1hc3RlcnRlY2giLCJEQiI6Ik1hc3RlcnRlY2hEQiIsIlNDIjoidXNlciIsIklEIjoidXNlcjpkcDZpMnFldHJ2enYzdWY2Z3ZvdSJ9.vUoMmULjUZ7yTejrqAyYyP8Hl3jXqPmChQYCB228daC3DImwOid8MSa0uOI0_y-AwWv1m1X-6h87DGouNGXFpg"))
+        .header(COOKIE, HeaderValue::from_static("jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE3MDU4OTA4MzAsIm5iZiI6MTcwNTg5MDgzMCwiZXhwIjoxNzA1OTc3MjMwLCJpc3MiOiJTdXJyZWFsREIiLCJOUyI6Ik1hc3RlcnRlY2giLCJEQiI6Ik1hc3RlcnRlY2hEQiIsIlNDIjoidXNlciIsIklEIjoidXNlcjpqbTlhN2wzdjMyZ3NpY2NyN3BndyJ9.YtTKxOAMfsR5sxFcNAxtrAx9VHL7kqR8tnmPQXnSm2nI_xEWVGPI8Cu5C12zHb4a9Xq5D7PkfY9suGrBirYeJg"))
         .json(&payload)
         .send()
         .await;
