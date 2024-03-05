@@ -1,5 +1,6 @@
-use std::error::Error;
+use std::{collections::HashMap, error::Error};
 
+use dotenv::dotenv;
 use log::debug;
 use reqwest::header::{COOKIE, CONTENT_TYPE, ACCEPT, HeaderValue};
 use serde::{Serialize, Deserialize};
@@ -147,6 +148,34 @@ pub struct DriveData{
     pub space_left: String,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SystemInformation {
+    /// Live CPU usage as a percentage
+    pub cpu_percentage: f32,
+    /// Live CPU clock speed
+    pub cpu_clock: u64,
+    /// Live system temps
+    pub component_temps: HashMap<String, f32>,
+    /// Live RAM usage in Mb
+    pub used_memory: u64,
+    /// Total RAM
+    pub total_memory: u64,
+    /// Disk usage
+    pub disks: String,
+    /// Name of machine
+    pub name: String,
+    /// Kernel version
+    pub kernel_version: String,
+    /// OS version
+    pub os_version: String,
+    /// Hostname based on DNS
+    pub hostname: String,
+    /// Number of Physical CPU's
+    pub number_of_cpus: String,
+
+    pub network_interfaces: HashMap<String, String>,
+}
+
 impl TicketResponse{
     pub fn serialize_payload(
         pre_ticket: &PreTicketData, 
@@ -202,9 +231,11 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client)
 -> core::result::Result<String, Box<dyn Error>> {
     debug!("sending payload");
 
-    
+    let api_url = dotenv::var("API_URL").unwrap();
+    let url = format!("{api_url}/api/submitTicket");
+
     let response = client
-        .post("http://localhost:8080/api/submitTicket") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        .post(url) //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .header(COOKIE, HeaderValue::from_static("jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE3MDU4OTA4MzAsIm5iZiI6MTcwNTg5MDgzMCwiZXhwIjoxNzA1OTc3MjMwLCJpc3MiOiJTdXJyZWFsREIiLCJOUyI6Ik1hc3RlcnRlY2giLCJEQiI6Ik1hc3RlcnRlY2hEQiIsIlNDIjoidXNlciIsIklEIjoidXNlcjpqbTlhN2wzdjMyZ3NpY2NyN3BndyJ9.YtTKxOAMfsR5sxFcNAxtrAx9VHL7kqR8tnmPQXnSm2nI_xEWVGPI8Cu5C12zHb4a9Xq5D7PkfY9suGrBirYeJg"))
