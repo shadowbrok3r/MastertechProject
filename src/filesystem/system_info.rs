@@ -6,7 +6,7 @@ use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
-use tokio::{io::{self, ErrorKind}, runtime::Handle};
+use tokio::{io::{self, ErrorKind}, runtime::Handle, spawn};
 use crossbeam::channel;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
@@ -23,7 +23,7 @@ use rust_socketio::{
 use crate::{data::{ComputerData, DriveData, SystemInformation}, ticket_request::request::request_seb_info};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const URL: &str = "https://axum.master-tech.app/ws";
+const URL: &str = "wss://axum.master-tech.app";
 const SIGNIN_URL: &str = "https://axum.master-tech.app/login";
 
 // pub struct RetrieveSystemInfo {
@@ -302,20 +302,16 @@ impl ComputerData{
         Ok(antivirus_exists)
     }
 
-    pub async fn get_sysinfo_for_ws() {
+    pub fn initiate_websocket(run_once: &mut bool) {
         debug!("Starting WS");
-        let params = json!({
-            "name": "",
-            "email": "logan@test.com",
-            "password": "Poolparty10!9",
-            "store": "",
-            "everest_initials": ""
-        });
+
 
         let cookies = CookieStore::default();
         let cookie_store = CookieStoreMutex::new(cookies);
         let cookie_store = Arc::new(cookie_store);
+
         debug!("Pre Reqwest");
+
         let client_build = Client::builder()
             .cookie_provider(std::sync::Arc::clone(&cookie_store))
             .build();
@@ -324,37 +320,61 @@ impl ComputerData{
         match client_build{
             Ok(client) => {
                 debug!("Sending reqwest");
-                let res = client.post("https://axum.master-tech.app/login") 
-                    .header(CONTENT_TYPE, "application/json")
-                    .header(ACCEPT, "application/json") // .header(COOKIE, HeaderValue::from_static("jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE3MDU4OTA4MzAsIm5iZiI6MTcwNTg5MDgzMCwiZXhwIjoxNzA1OTc3MjMwLCJpc3MiOiJTdXJyZWFsREIiLCJOUyI6Ik1hc3RlcnRlY2giLCJEQiI6Ik1hc3RlcnRlY2hEQiIsIlNDIjoidXNlciIsIklEIjoidXNlcjpqbTlhN2wzdjMyZ3NpY2NyN3BndyJ9.YtTKxOAMfsR5sxFcNAxtrAx9VHL7kqR8tnmPQXnSm2nI_xEWVGPI8Cu5C12zHb4a9Xq5D7PkfY9suGrBirYeJg"))
-                    .json(&params)
-                    .send()
-                    .await;
-    
-                debug!("Post Reqwest");
-        
-                match res{
-                    Ok(response) => {
-                        // let res: String = response.text().await.unwrap();
-                        debug!("Response => {response:?}");
-        
-                        let store = cookie_store.lock().unwrap();
-                        for c in store.iter_any() {
-                            debug!("COOKIES => {:?}\n", c);
-                        }
-        
-                    }Err(err) => debug!("error with mastertech.app req => {err:?}")
-                };
+                spawn(async move {
+                    Self::login(client, cookie_store).await;
+                });
             }, Err(err) => debug!("Error with client_build => {err:?}"),
-        }
+        };
+    }
+    
+    async fn login(client: Client, cookie_store: Arc<CookieStoreMutex>) {
+        let params = json!({
+            "name": "",
+            "email": "logan@test.com",
+            "password": "Poolparty10!9",
+            "store": "",
+            "everest_initials": ""
+        });
 
+        let res = client.post(SIGNIN_URL) 
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json") // .header(COOKIE, HeaderValue::from_static("jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE3MDU4OTA4MzAsIm5iZiI6MTcwNTg5MDgzMCwiZXhwIjoxNzA1OTc3MjMwLCJpc3MiOiJTdXJyZWFsREIiLCJOUyI6Ik1hc3RlcnRlY2giLCJEQiI6Ik1hc3RlcnRlY2hEQiIsIlNDIjoidXNlciIsIklEIjoidXNlcjpqbTlhN2wzdjMyZ3NpY2NyN3BndyJ9.YtTKxOAMfsR5sxFcNAxtrAx9VHL7kqR8tnmPQXnSm2nI_xEWVGPI8Cu5C12zHb4a9Xq5D7PkfY9suGrBirYeJg"))
+            .json(&params)
+            .send()
+            .await;
+
+        debug!("Post Reqwest");
+        let mut cookie: Option<&str> = None;
+        let mut cookie_string = String::new();
+
+        match res{
+            Ok(response) => {
+                // let res: String = response.text().await.unwrap();
+                debug!("Response => {response:?}");
+
+                let store = cookie_store.lock().unwrap();
+                let next_cookie = store.iter_any().next();
+                cookie_string = next_cookie.unwrap().to_string().clone();
+                let cookie_split: Vec<&str> = cookie_string.split("jwt=").collect();
+                let y = cookie_split.get(1).copied();
+                cookie = y;
+            }Err(err) => {
+                debug!("error with mastertech.app req => {err:?}");
+                cookie = None;
+            }
+        };
 
 
         let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::new()));
         let event_app: Arc<Mutex<WebSocket>> = app.clone();
-    
+
+        debug!("Using jwt? {:?}", cookie.clone());
+
         let socket = ClientBuilder::new(URL)
+        .transport_type(rust_socketio::TransportType::Websocket)
             .namespace("/ws")
+            // .opening_header("jwt", cookie.unwrap_or("Nil"))
+            
             .on("open", |_, client| async move{
                 client.emit("join", json!({"room": "RIV"})).await.unwrap();
             }.boxed())
@@ -434,7 +454,7 @@ impl ComputerData{
             "hostname": "shadowbrokerPC"
         }); 
         
-    
+        sleep(Duration::from_secs(2)).await;
         // Spawn a task or run a loop that listens for a shutdown signal
         // tokio::spawn(async move {
             loop{
@@ -444,7 +464,7 @@ impl ComputerData{
                     .await
                     .unwrap();
     
-                println!("in loop");
+                debug!("in loop");
     
                 if app.lock().await.finish {
                     break;
@@ -453,7 +473,6 @@ impl ComputerData{
         // });
         socket.disconnect().await.unwrap()
     }
-
     async fn get_sysinfo() -> SystemInformation {
         let mut sys = System::new_all();
         // First we update all information of our `System` struct.
