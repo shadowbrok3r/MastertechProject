@@ -33,7 +33,7 @@ eframe = { version="0.24.1", features=["persistence", "puffin", "wgpu"] } #
 egui = "0.24.1"
 egui_dock = "0.9.1"
 egui_extras = { version = "0.24.1", features = ["datepicker"]}
-reqwest = { version = "0.11.20", features = ["json", "stream", "blocking"] }
+reqwest = { version = "0.11.20", features = ["json", "stream", "blocking", "cookies"] }
 sysinfo = "0.30.3"
 tokio = { version = "1.32.0", features = ["full"] }
 serde = { version = "1.0.188", features = ["derive"] }
@@ -81,6 +81,9 @@ dotenv = "0.15.0"
 lettre = "0.11.2"
 async-trait = "0.1.74"
 egui-aesthetix = { version = "0.2.0", features = [ "carl" ] }
+shell-words = "1.1.0"
+rust_socketio = { version = "0.4.4", features = ["async"] }
+reqwest_cookie_store = "0.6.0"
 
 
 

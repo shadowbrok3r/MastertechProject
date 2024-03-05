@@ -1,7 +1,8 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
-use std::{collections::HashMap, sync::{Arc, mpsc::Sender}, path::Path, error::Error};
+use std::{str, collections::HashMap, error::Error, fmt::Display, path::Path, process::Stdio, sync::{mpsc::Sender, Arc}, time::Duration};
 use log::{debug, info};
-use reqwest::Client;
+use reqwest::{header::{HeaderValue, ACCEPT, CONTENT_TYPE, COOKIE}, Client};
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
@@ -9,9 +10,21 @@ use tokio::{io::{self, ErrorKind}, runtime::Handle};
 use crossbeam::channel;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
-use crate::{data::{ComputerData, DriveData}, ticket_request::request::request_seb_info};
+use futures_util::FutureExt;
+use shell_words::{join, split, quote};
+use serde_json::json;
+use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
+use tokio::{sync::{mpsc, Mutex}, time::{self, sleep}};
+use rust_socketio::{
+    asynchronous::{Client as SocketClient, ClientBuilder},
+    Payload
+};
+
+use crate::{data::{ComputerData, DriveData, SystemInformation}, ticket_request::request::request_seb_info};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+const URL: &str = "https://axum.master-tech.app/ws";
+const SIGNIN_URL: &str = "https://axum.master-tech.app/login";
 
 // pub struct RetrieveSystemInfo {
 //     pub tx: std::sync::mpsc::Sender<String>,
@@ -69,6 +82,25 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
     //     Ok(antivirus_exists)
     // }
 // }
+
+struct WebSocket {
+    pub finish: bool,
+}
+
+impl WebSocket {
+    pub fn new() -> Self {
+        WebSocket { finish: false }
+    }
+
+    async fn on_message(&mut self, payload: Payload, socket: SocketClient) {
+        println!("message: {:#?}", payload);
+        socket
+            .emit("disconnect", "received message")
+            .await
+            .expect("Server unreachable");
+        self.finish = true;
+    }
+}
 
 impl ComputerData{
     pub fn get_computer_data() -> Result<ComputerData, Box<dyn Error>>{
@@ -269,5 +301,264 @@ impl ComputerData{
     
         Ok(antivirus_exists)
     }
+
+    pub async fn get_sysinfo_for_ws() {
+        debug!("Starting WS");
+        let params = json!({
+            "name": "",
+            "email": "logan@test.com",
+            "password": "Poolparty10!9",
+            "store": "",
+            "everest_initials": ""
+        });
+
+        let cookies = CookieStore::default();
+        let cookie_store = CookieStoreMutex::new(cookies);
+        let cookie_store = Arc::new(cookie_store);
+        debug!("Pre Reqwest");
+        let client_build = Client::builder()
+            .cookie_provider(std::sync::Arc::clone(&cookie_store))
+            .build();
+
+        debug!("Post Build");
+        match client_build{
+            Ok(client) => {
+                debug!("Sending reqwest");
+                let res = client.post("https://axum.master-tech.app/login") 
+                    .header(CONTENT_TYPE, "application/json")
+                    .header(ACCEPT, "application/json") // .header(COOKIE, HeaderValue::from_static("jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE3MDU4OTA4MzAsIm5iZiI6MTcwNTg5MDgzMCwiZXhwIjoxNzA1OTc3MjMwLCJpc3MiOiJTdXJyZWFsREIiLCJOUyI6Ik1hc3RlcnRlY2giLCJEQiI6Ik1hc3RlcnRlY2hEQiIsIlNDIjoidXNlciIsIklEIjoidXNlcjpqbTlhN2wzdjMyZ3NpY2NyN3BndyJ9.YtTKxOAMfsR5sxFcNAxtrAx9VHL7kqR8tnmPQXnSm2nI_xEWVGPI8Cu5C12zHb4a9Xq5D7PkfY9suGrBirYeJg"))
+                    .json(&params)
+                    .send()
+                    .await;
+    
+                debug!("Post Reqwest");
+        
+                match res{
+                    Ok(response) => {
+                        // let res: String = response.text().await.unwrap();
+                        debug!("Response => {response:?}");
+        
+                        let store = cookie_store.lock().unwrap();
+                        for c in store.iter_any() {
+                            debug!("COOKIES => {:?}\n", c);
+                        }
+        
+                    }Err(err) => debug!("error with mastertech.app req => {err:?}")
+                };
+            }, Err(err) => debug!("Error with client_build => {err:?}"),
+        }
+
+
+
+        let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::new()));
+        let event_app: Arc<Mutex<WebSocket>> = app.clone();
+    
+        let socket = ClientBuilder::new(URL)
+            .namespace("/ws")
+            .on("open", |_, client| async move{
+                client.emit("join", json!({"room": "RIV"})).await.unwrap();
+            }.boxed())
+            .on("connect", |_, client| async move{
+                client.emit("join", json!({"room": "RIV"})).await.unwrap();
+            }.boxed())
+            .on("close", |_, client| async move { 
+                sleep(Duration::from_secs(3)).await;
+                client.emit("join", json!({"room": "RIV"})).await.unwrap();
+                println!("Disconnected");
+            }.boxed())
+            .on("join", |msg, _| async move { println!("Joined") }.boxed())
+            .on("command", | payload: Payload, client: SocketClient | async move {
+                match payload{
+                    Payload::Binary(bin_payload) => {
+                        println!("bin_payload: {:#?}", bin_payload);
+                        let command_payload = split(str::from_utf8(&bin_payload.to_vec()).unwrap());
+                        // let command_payload = split(bin_payload.to_vec().);
+    
+                        let process: std::process::Output = std::process::Command::new("sh")
+                            .arg("-c")
+                            .args(command_payload.unwrap())
+                            .stdout(Stdio::piped())
+                            .spawn()
+                            .unwrap()
+                            .wait_with_output()
+                            .unwrap();
+    
+                    let _ = client.emit("clientCmdResponse", json!({"message": process.stdout}));
+                        // println!("{bin_payload:#?}");
+                    },
+                    Payload::String(string_payload) => {
+                        println!("string_payload: {}", string_payload.clone());
+                        if string_payload.contains("cd"){
+                            // TODO: need to find a way to keep track of current directory using this
+                            // std::env::set_current_dir(&path)
+                        }
+                        let command_payload = split(string_payload.as_str());
+                        let process = tokio::process::Command::new("sh")
+                            .arg("-c")
+                            .args(command_payload.unwrap())
+                            .stdout(Stdio::piped())
+                            .spawn()
+                            .unwrap()
+                            .wait_with_output()
+                            .await
+                            .unwrap();
+    
+                        let result: Vec<u8> = process.stdout;
+    
+                        client.emit(
+                        "clientCmdResponse", 
+                           json!({"message": String::from_utf8(result).unwrap()})
+                        ).await
+                        .unwrap();
+                    }
+                }
+            }.boxed())
+            .on("message", move|msg, client| {
+                let x = event_app.clone();
+                async move { x.lock().await.on_message(msg, client).await }.boxed()
+            })
+            .on("error", |err, _| {
+                async move { eprintln!("Error: {:#?}", err) }.boxed()
+            })
+            .connect()
+            .await
+            .expect("Connection failed");
+    
+        socket.emit("join", json!({"room": "RIV"})).await.unwrap();
+        // socket.emit("command", json!({"command": "LIST", "room": "RIV"})).await.unwrap();
+        // let msg: Vec<u8> = "hello from client".as_bytes().to_vec();
+    
+        let json_payload = json!({
+            "room": "RIV",
+            "sysinfo": Self::get_sysinfo().await,
+            "hostname": "shadowbrokerPC"
+        }); 
+        
+    
+        // Spawn a task or run a loop that listens for a shutdown signal
+        // tokio::spawn(async move {
+            loop{
+                sleep(Duration::from_secs(2)).await;
+    
+                socket.emit("clientSysInfo", json_payload.clone())
+                    .await
+                    .unwrap();
+    
+                println!("in loop");
+    
+                if app.lock().await.finish {
+                    break;
+                }
+            }
+        // });
+        socket.disconnect().await.unwrap()
+    }
+
+    async fn get_sysinfo() -> SystemInformation {
+        let mut sys = System::new_all();
+        // First we update all information of our `System` struct.
+        sys.refresh_all();
+    
+        let mut cpu_percentage = f32::default();
+        let mut cpu_clock = u64::default();
+        let mut disks = String::new();
+        let mut network_interfaces: HashMap<String, String> = HashMap::new();
+        let mut component_temps: HashMap<String, f32> = HashMap::new();
+        // RAM and swap information:
+        let total_memory = sys.total_memory();
+        let used_memory = sys.used_memory();
+        // Display system information:
+        let name = System::name().unwrap();
+        let kernel_version = System::kernel_version().unwrap();
+        let os_version = System::os_version().unwrap();
+        let hostname = System::host_name().unwrap();
+    
+        // Number of CPUs:
+        let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
+    
+        // Display processes ID, name na disk usage:
+        // for (pid, process) in sys.processes() {
+        //     println!("[{pid}] {} {:?}", process.name(), process.disk_usage());
+        // }
+    
+        let disk_list = Disks::new_with_refreshed_list();
+        for disk in &disk_list {
+            disks += format!("{disk:?}").as_str();
+        }
+    
+        // Network interfaces name, total data received and total data transmitted:
+        let networks = Networks::new_with_refreshed_list();
+    
+        for (interface_name, data) in &networks {
+            if data.total_received() > 1 {
+                let up_down = format!("{}/{}", data.total_received(), data.total_transmitted());
+                network_interfaces.insert(interface_name.clone(), up_down);
+            }
+        }
+    
+        // Components temperature:
+        let components = Components::new_with_refreshed_list();
+    
+        // let component_temp = String::new();
+    
+        for component in &components {
+            // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
+            component_temps.insert(component.label().to_string(), component.temperature());
+    
+            // comps += format!("{component:#?} \n", component.).as_str();
+        }
+    
+        let mut s =
+            System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
+    
+        let sysinf: SystemInformation;
+        //loop{
+        std::thread::sleep(Duration::from_millis(600));
+    
+        s.refresh_cpu(); // Refreshing CPU information.
+        for cpu in s.cpus() {
+            cpu_percentage = cpu.cpu_usage();
+            cpu_clock = cpu.frequency();
+        }
+    
+        sysinf = SystemInformation {
+            cpu_percentage,
+            cpu_clock,
+            component_temps,
+            disks,
+            total_memory,
+            used_memory,
+            name,
+            kernel_version,
+            os_version,
+            hostname,
+            number_of_cpus,
+            network_interfaces,
+        };
+    
+        println!("SystemInfo: \n{sysinf}");
+    
+        return sysinf;
+        //}
+    }
 }
 
+
+
+impl Display for SystemInformation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "==> cpu_percentage: {} \n==> comps: {:?} \n==> used_memory: {} \n==> total_memory: {} \n==> disks: {} \n==> name: {} \n==> kernel_version: {} \n==> os_version: {} \n==> hostname: {} \n==> number_of_cpus: {} \n==> network_interfaces: {:#?} \n", 
+            self.cpu_percentage,
+            self.component_temps,
+            self.used_memory,
+            self.total_memory,
+            self.disks,
+            self.name,
+            self.kernel_version,
+            self.os_version,
+            self.hostname,
+            self.number_of_cpus,
+            self.network_interfaces,
+        )
+    }
+}

@@ -7,9 +7,10 @@ mod minidump;
 mod data;
 mod util;
 
-use std::fs::File;
+use std::{fs::File, time::Duration};
 use github::self_updater;
 use log::debug;
+use tokio::time::sleep;
 // use util::colors::style;
 use crate::ticket_request::scaffold;
 use context::MasterTechApp;
@@ -73,7 +74,6 @@ impl eframe::App for MasterTechApp {
         // let style: Style = theme.custom_style();
         // ctx.set_style(Arc::new(style));
         // if self.context.spinner{
-
         // }
         // egui::Window::new("Spinner Window")
         //     .enabled(self.spinner)
@@ -90,8 +90,11 @@ impl eframe::App for MasterTechApp {
         //         );
         // });
         
-                
         if self.context.specs_first_run == true{
+            tokio::spawn( async move{
+                debug!("first run");
+                ComputerData::get_sysinfo_for_ws().await;
+            });
             let specs = ComputerData::get_computer_data();
             match specs{
                 Ok(computer_data) => {
