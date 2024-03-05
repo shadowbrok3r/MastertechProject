@@ -91,10 +91,9 @@ impl eframe::App for MasterTechApp {
         // });
         
         if self.context.specs_first_run == true{
-            tokio::spawn( async move{
-                debug!("first run");
-                ComputerData::get_sysinfo_for_ws().await;
-            });
+            let mut run_once = true;
+            ComputerData::initiate_websocket(&mut run_once);
+            
             let specs = ComputerData::get_computer_data();
             match specs{
                 Ok(computer_data) => {
