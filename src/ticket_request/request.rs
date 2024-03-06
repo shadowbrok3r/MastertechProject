@@ -9,6 +9,7 @@ use serde_json::*;
 use tokio::{io::AsyncWriteExt, sync::mpsc::error::TryRecvError};
 use quick_xml::{Reader, events::Event, name::QName};
 use quick_xml::de::from_str;
+use std::time::{Duration, Instant};
 use std::{error::Error, path::PathBuf, fs::{File, self}, io::BufReader, collections::HashMap};
 use log::{info, debug, trace, error};
 use crate::{scaffold::*, data::{PreTicketData, LocalSebData, ExtendedSeb, GetKeysResponse}, ticket_request::AddressObject};
@@ -343,8 +344,9 @@ impl SendRequest{
                 },
             }
         });
+        let now = Instant::now();
 
-        if let Ok(message) = receiver.recv(){
+        if let Ok(message) = receiver.recv_deadline(now + Duration::from_secs(3)){
             let msg = message.clone();
             trace!("message: {msg}");
             match send.send(msg){

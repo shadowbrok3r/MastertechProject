@@ -303,78 +303,13 @@ impl ComputerData{
     }
 
     pub fn initiate_websocket(run_once: &mut bool) {
-        debug!("Starting WS");
-
-
-        let cookies = CookieStore::default();
-        let cookie_store = CookieStoreMutex::new(cookies);
-        let cookie_store = Arc::new(cookie_store);
-
-        debug!("Pre Reqwest");
-
-        let client_build = Client::builder()
-            .cookie_provider(std::sync::Arc::clone(&cookie_store))
-            .build();
-
-        debug!("Post Build");
-        match client_build{
-            Ok(client) => {
-                debug!("Sending reqwest");
-                spawn(async move {
-                    Self::login(client, cookie_store).await;
-                });
-            }, Err(err) => debug!("Error with client_build => {err:?}"),
-        };
-    }
-    
-    async fn login(client: Client, cookie_store: Arc<CookieStoreMutex>) {
-        let params = json!({
-            "name": "",
-            "email": "logan@test.com",
-            "password": "Poolparty10!9",
-            "store": "",
-            "everest_initials": ""
-        });
-
-        let res = client.post(SIGNIN_URL) 
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json") // .header(COOKIE, HeaderValue::from_static("jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE3MDU4OTA4MzAsIm5iZiI6MTcwNTg5MDgzMCwiZXhwIjoxNzA1OTc3MjMwLCJpc3MiOiJTdXJyZWFsREIiLCJOUyI6Ik1hc3RlcnRlY2giLCJEQiI6Ik1hc3RlcnRlY2hEQiIsIlNDIjoidXNlciIsIklEIjoidXNlcjpqbTlhN2wzdjMyZ3NpY2NyN3BndyJ9.YtTKxOAMfsR5sxFcNAxtrAx9VHL7kqR8tnmPQXnSm2nI_xEWVGPI8Cu5C12zHb4a9Xq5D7PkfY9suGrBirYeJg"))
-            .json(&params)
-            .send()
-            .await;
-
-        debug!("Post Reqwest");
-        let mut cookie: Option<&str> = None;
-        let mut cookie_string = String::new();
-
-        match res{
-            Ok(response) => {
-                // let res: String = response.text().await.unwrap();
-                debug!("Response => {response:?}");
-
-                let store = cookie_store.lock().unwrap();
-                let next_cookie = store.iter_any().next();
-                cookie_string = next_cookie.unwrap().to_string().clone();
-                let cookie_split: Vec<&str> = cookie_string.split("jwt=").collect();
-                let y = cookie_split.get(1).copied();
-                cookie = y;
-            }Err(err) => {
-                debug!("error with mastertech.app req => {err:?}");
-                cookie = None;
-            }
-        };
-
-
         let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::new()));
         let event_app: Arc<Mutex<WebSocket>> = app.clone();
 
-        debug!("Using jwt? {:?}", cookie.clone());
-
-        let socket = ClientBuilder::new(URL)
-        .transport_type(rust_socketio::TransportType::Websocket)
-            .namespace("/ws")
-            // .opening_header("jwt", cookie.unwrap_or("Nil"))
-            
+        tokio::spawn(async move{
+            let socket = ClientBuilder::new(URL)
+            .transport_type(rust_socketio::TransportType::Websocket)
+            .namespace("/ws") // .opening_header("jwt", cookie.unwrap_or("Nil"))
             .on("open", |_, client| async move{
                 client.emit("join", json!({"room": "RIV"})).await.unwrap();
             }.boxed())
@@ -457,22 +392,28 @@ impl ComputerData{
         
         // Spawn a task or run a loop that listens for a shutdown signal
         // tokio::spawn(async move {
-            loop{
-                sleep(Duration::from_secs(1)).await;
-    
-                socket.emit("clientSysInfo", json_payload.clone())
-                    .await
-                    .unwrap();
-    
-                debug!("in loop");
-    
-                if app.lock().await.finish {
-                    break;
-                }
+        loop{
+            sleep(Duration::from_secs(1)).await;
+
+            let socket_event = socket.emit("clientSysInfo", json_payload.clone())
+                .await;
+            match socket_event{
+                Ok(_) => info!("Received Socket event"),
+                Err(err) => debug!("SocketIO error: {err:?}"),
             }
+
+            debug!("in loop");
+
+            if app.lock().await.finish {
+                break;
+            }
+        }
         // });
-        socket.disconnect().await.unwrap()
+        socket.disconnect().await.unwrap();
+        });
+       
     }
+    
     async fn get_sysinfo() -> SystemInformation {
         let mut sys = System::new_all();
         // First we update all information of our `System` struct.

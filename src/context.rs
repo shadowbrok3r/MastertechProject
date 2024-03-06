@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc, SecondsFormat};
 use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
 use log::{debug, info};
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
@@ -1195,17 +1196,34 @@ impl MastertechContext {
                 } // example
             );
             let client = self.client.clone();
-            spawn(async move{
-                let mut output = String::new();
-                let x = send_payload(payload, client).await;
-                match x{
-                    Ok(o) => {
-                        output = o;
-                    },
-                    Err(e) => debug!("Error {e:?}"),
-                }
-                info!("output: {output}");
-            });
+
+            
+            let cookies = CookieStore::default();
+            let cookie_store = CookieStoreMutex::new(cookies);
+            let cookie_store  = Arc::new(cookie_store);
+
+            let client_build = reqwest::Client::builder()
+                .cookie_provider(std::sync::Arc::clone(&cookie_store))
+                .build();
+            
+            match client_build{
+                Ok(client) => {
+                    debug!("Sending reqwest");
+                    spawn(async move {
+                        
+                        let mut output = String::new();
+                        let x = send_payload(payload, client, cookie_store).await;
+                        match x{
+                            Ok(o) => {
+                                output = o;
+                            },
+                            Err(e) => debug!("Error {e:?}"),
+                        }
+                        info!("output: {output}");
+                    });
+                }, Err(err) => debug!("Error with client_build => {err:?}"),
+            };
+            
         }
         self.specs_first_run = false;
 
