@@ -1318,8 +1318,9 @@ impl MastertechContext {
                 body.rows(
                 20.0,  // Replace with your desired row height
                 self.disk_num,
-                |disk_index, mut row| 
-                {                                                           // this is stupid..
+                |mut row| 
+                {                                            
+                    let disk_index = row.index();               // this is stupid..
                     if let Some(disk) = self.disks.get(disk_index){
                         let disk_letter = format!("{}", disk
                             .get("drive_letter")
