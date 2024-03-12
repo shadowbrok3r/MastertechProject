@@ -19,6 +19,7 @@ use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel,
 use egui_dock::{DockArea, Style};
 use self_update::cargo_crate_version;
 use data::ComputerData;
+use catppuccin_egui::{set_theme, MOCHA};
 // use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 #[tokio::main]
@@ -69,7 +70,8 @@ pub(crate) fn load_icon() -> egui::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        util::colors::set_theme(ctx, util::colors::MOCHA);
+        set_theme(ctx, MOCHA);
+        // util::colors::set_theme(ctx, util::colors::MOCHA);
         // let theme = CarlDark;
         // let style: Style = theme.custom_style();
         // ctx.set_style(Arc::new(style));
