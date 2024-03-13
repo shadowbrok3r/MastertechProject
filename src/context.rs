@@ -7,6 +7,7 @@ use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
+use uuid::Uuid;
 use crate::{data::{PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests, LocalSebData, GetKeysResponse}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest, SendReq}, request::request_seb_info}};
 use tokio::{sync::mpsc::unbounded_channel, spawn, task::spawn_blocking};
 use egui_extras::{*, DatePickerButton, Column};
@@ -59,6 +60,7 @@ pub struct MastertechContext {
 
     pub output_text: String,
     
+    pub client_uuid: Uuid,
     pub system_info: ComputerData,
     pub disks: Value,
     pub disk_num: usize,
@@ -147,7 +149,7 @@ impl Default for MasterTechApp {
 
         let ticket_information = PreTicketData::default();
 
-
+        let client_uuid = Uuid::new_v4();
         let context = MastertechContext {
             so_number: "".to_string(),
             recommendations: "".to_string(),
@@ -178,7 +180,7 @@ impl Default for MasterTechApp {
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
             // minidump_app,
             output_text: "".to_string(),
-
+            client_uuid,
             rx: Some(rx),
 
             //////////////////////////////////////////
@@ -663,18 +665,18 @@ impl MastertechContext {
                                         self.spinner = true;
 
                                         egui::Window::new("Spinner Window")
-                                        .enabled(self.spinner)
-                                        .open(&mut self.spinner)
-                                        .title_bar(false)
-                                        .fixed_size(vec2(10.0,10.0))
-                                        // .constrain_to(ctx.available_rect())
-                                        .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
-                                        .show(&self.ctx, |ui|{
-                                            ui.add(
-                                                Spinner::new()
-                                                .color(Color32::LIGHT_RED)
-                                                .size(20.0)
-                                            );
+                                            .enabled(self.spinner)
+                                            .open(&mut self.spinner)
+                                            .title_bar(false)
+                                            .fixed_size(vec2(10.0,10.0))
+                                            // .constrain_to(ctx.available_rect())
+                                            .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+                                            .show(&self.ctx, |ui|{
+                                                ui.add(
+                                                    Spinner::new()
+                                                    .color(Color32::LIGHT_RED)
+                                                    .size(20.0)
+                                                );
                                     });
                                         
 
@@ -1053,7 +1055,7 @@ impl MastertechContext {
 
                                             self.spinner = false;
                                             
-                                            // self.output_text += "\nSent Ticket";
+                                            self.output_text += "\nSent Ticket";
                                         }
                                         else{
                                             self.output_text.clear();
@@ -1144,11 +1146,26 @@ impl MastertechContext {
     
     fn system_information(&mut self, ui: &mut Ui){
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
+        egui::Window::new("Spinner Window")
+            .enabled(self.spinner)
+            .open(&mut self.spinner)
+            .title_bar(false)
+            .fixed_size(vec2(10.0,10.0))
+            // .constrain_to(ctx.available_rect())
+            .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+            .show(&self.ctx, |ui|{
+                ui.add(
+                    Spinner::new()
+                    .color(Color32::LIGHT_RED)
+                    .size(20.0)
+                );
+            });
+
         if ui
         .add(
             Button::new
             (
-                RichText::new("Test Server")
+                RichText::new("Send to Master-Tech.app")
                     .strong()
                     .italics()
             )

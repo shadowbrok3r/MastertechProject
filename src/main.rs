@@ -93,8 +93,10 @@ impl eframe::App for MasterTechApp {
         // });
         
         if self.context.specs_first_run == true{
-            let mut run_once = true;
-            ComputerData::initiate_websocket(&mut run_once);
+
+            let x = ComputerData::initialize_websocket(self.context.client_uuid);
+            // ViewportBuilder
+            self.context.output_text += &x;
             
             let specs = ComputerData::get_computer_data();
             match specs{

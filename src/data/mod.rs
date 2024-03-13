@@ -243,7 +243,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
     debug!("Sending reqwest");
     let params = json!({
         "name": "Logan",
-        "email": "logan@test.com",
+        "email": "logan.lees@pclaptops.com",
         "password": "Poolparty10!9",
         "store": "RIV",
         "everest_initials": "LL"
