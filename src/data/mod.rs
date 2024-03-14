@@ -1,7 +1,7 @@
 use std::{collections::HashMap, error::Error, sync::Arc};
 
 use dotenv::dotenv;
-use log::debug;
+use log::{debug, info};
 use reqwest::header::{COOKIE, CONTENT_TYPE, ACCEPT, HeaderValue};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Serialize, Deserialize};
@@ -223,7 +223,7 @@ impl TicketResponse{
             computer_data: computer_data.clone() 
         };
 
-        debug!("Ticket Response: {ticket_response:#?}");
+        info!("Ticket Response: {ticket_response:#?}");
         
         ticket_response
     }
@@ -233,11 +233,11 @@ impl TicketResponse{
 pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cookie_store: Arc<CookieStoreMutex>)  
 -> core::result::Result<String, Box<dyn Error>> {
 
-    let api_url = dotenv::var("API_URL").unwrap();
-    let submit_ticket_url = format!("{}/api/submitTicket", api_url.clone());
+    // let api_url = dotenv::var("API_URL").unwrap();
+    // let submit_ticket_url = format!("{}/api/submitTicket", api_url.clone());
+    let api_url = "https://axum.master-tech.app";
 
-
-    debug!("Sending reqwest");
+    
     let params = json!({
         "name": "Logan",
         "email": "logan.lees@pclaptops.com",
@@ -249,6 +249,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
     // spawn(async move{
         
     // })
+    info!("Sending signin req");
     let signin_response = client.post(format!("{api_url}/login")) 
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
@@ -258,16 +259,16 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
 
     let mut cookie_string = String::new();
     let mut cookie: &str = "";
-
+    info!("Sent signin req");
     match signin_response{
         Ok(response) => {
-            debug!("Response => {response:?}");
+            info!("Response => {response:?}");
 
             let cookie = get_cookie(cookie_store.lock().unwrap());
 
 
             let response = client
-                .post(submit_ticket_url) //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+                .post(format!("{api_url}/api/submitTicket")) //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
                 .header(CONTENT_TYPE, "application/json")
                 .header(ACCEPT, "application/json")
                 .header(COOKIE, HeaderValue::from_str(cookie.as_str()).unwrap())
@@ -278,7 +279,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
             Ok(response.unwrap().text().await.unwrap_or("default".to_string()))
         },
         Err(err) => {
-            debug!("error with mastertech.app req => {err:?}");
+            info!("error with mastertech.app req => {err:?}");
             Err(Box::new(err))
         }
     }
@@ -291,13 +292,14 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
     //         Ok(text_response)
     //     },
     //     Err(e) => {
-    //         debug!("Boxed error: {e:?}");
+    //         info!("Boxed error: {e:?}");
     //         Err(Box::new(e))
     //     },
     // }
 }
 
 fn get_cookie(cookie_store: std::sync::MutexGuard<'_, CookieStore>) -> String{
+    info!("getting cookie");
     let next_cookie = cookie_store.iter_any().next();
     let cookie_string = next_cookie.unwrap().to_string();
     cookie_string
