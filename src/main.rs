@@ -91,13 +91,14 @@ impl eframe::App for MasterTechApp {
         //             .size(20.0)
         //         );
         // });
-        
-        if self.context.specs_first_run == true{
-
+        if self.context.connect_to_ws{
             let x = ComputerData::initialize_websocket(self.context.client_uuid);
             // ViewportBuilder
             self.context.output_text += &x;
-            
+            self.context.connect_to_ws = false;
+        }
+
+        if self.context.specs_first_run{
             let specs = ComputerData::get_computer_data();
             match specs{
                 Ok(computer_data) => {
