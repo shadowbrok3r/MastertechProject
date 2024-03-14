@@ -9,9 +9,6 @@ use serde_json::json;
 use tokio::spawn;
 use crate::ticket_request::Store;
 
-const URL: &str = "wss://axum.master-tech.app";
-const SIGNIN_URL: &str = "https://axum.master-tech.app/login";
-
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PreTicketData{
     pub cust_code: String,
@@ -237,7 +234,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
 -> core::result::Result<String, Box<dyn Error>> {
 
     let api_url = dotenv::var("API_URL").unwrap();
-    let submit_ticket_url = format!("{api_url}/api/submitTicket");
+    let submit_ticket_url = format!("{}/api/submitTicket", api_url.clone());
 
 
     debug!("Sending reqwest");
@@ -252,7 +249,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
     // spawn(async move{
         
     // })
-    let signin_response = client.post(SIGNIN_URL) 
+    let signin_response = client.post(format!("{api_url}/login")) 
         .header(CONTENT_TYPE, "application/json")
         .header(ACCEPT, "application/json")
         .json(&params)

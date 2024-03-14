@@ -30,7 +30,7 @@ cpu_fix = []
 [dependencies]
 chrono = "0.4.31"
 eframe = { version="0.26.2", features=["persistence", "puffin", "wgpu"] } #
-egui = { version = "0.26.2", features = ["callstack"]} # , "deadlock_detection"
+egui = { version = "0.26.2" } # , features = ["callstack"]"deadlock_detection"
 egui_dock = "0.11.4"
 egui_extras = { version = "0.26.2", features = ["datepicker"]}
 reqwest = { version = "0.11.20", features = ["json", "stream", "blocking", "cookies"] }
@@ -85,6 +85,7 @@ egui-aesthetix = { version = "0.2.0", features = [ "carl" ] }
 shell-words = "1.1.0"
 rust_socketio = { version = "0.4.4", features = ["async"] }
 reqwest_cookie_store = "0.6.0"
+anyhow = "1.0.81"
 
 
 [target.'cfg(target_os = "linux")'.dependencies]

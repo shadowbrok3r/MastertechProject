@@ -61,6 +61,7 @@ pub struct MastertechContext {
     pub output_text: String,
     
     pub client_uuid: Uuid,
+    pub connect_to_ws: bool,
     pub system_info: ComputerData,
     pub disks: Value,
     pub disk_num: usize,
@@ -180,6 +181,8 @@ impl Default for MasterTechApp {
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
             // minidump_app,
             output_text: "".to_string(),
+
+            connect_to_ws: false,
             client_uuid,
             rx: Some(rx),
 
@@ -1187,7 +1190,7 @@ impl MastertechContext {
             let ram_test = format!("{:?}", &self.ram_test_cbox);
             let ssd_test = format!("{:?}", &self.ssd_test_cbox);
 
-            let mut pre_ticket = self.ticket_info.clone();
+            let mut pre_ticket: PreTicketData = self.ticket_info.clone();
 
             pre_ticket.due_date = Some(
                 self.date.unwrap_or(
@@ -1242,6 +1245,21 @@ impl MastertechContext {
             };
             
         }
+        
+        if ui.add(
+            Button::new
+            (
+            RichText::new("Connect to WS")
+                .strong()
+                .italics()
+            )
+        )
+        .clicked()
+        {  
+            self.connect_to_ws = true;
+        }
+
+
         self.specs_first_run = false;
 
         let computer_data = &self.system_info;

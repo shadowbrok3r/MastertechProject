@@ -1,5 +1,6 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 use std::{collections::HashMap, error::Error, fmt::Display, path::Path, process::{Output, Stdio}, str, sync::{mpsc::Sender, Arc}, time::Duration};
+use dotenv::dotenv;
 use log::{debug, info};
 use reqwest::{header::{HeaderValue, ACCEPT, CONTENT_TYPE, COOKIE}, Client};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
@@ -24,8 +25,6 @@ use uuid::Uuid;
 use crate::{data::{ComputerData, DriveData, SystemInformation}, ticket_request::request::request_seb_info};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const URL: &str = "wss://axum.master-tech.app";
-const SIGNIN_URL: &str = "https://axum.master-tech.app/login";
 
 // pub struct RetrieveSystemInfo {
 //     pub tx: std::sync::mpsc::Sender<String>,
@@ -308,9 +307,11 @@ impl ComputerData{
         let event_app: Arc<Mutex<WebSocket>> = app.clone();
 
         // let mut response = String::new();
+        let socket_io_url = dotenv::var("WS_URL").unwrap();
+
 
         tokio::spawn(async move{
-            let socket = ClientBuilder::new(URL)
+            let socket = ClientBuilder::new(socket_io_url)
                 .transport_type(rust_socketio::TransportType::Websocket)
                 .namespace("/ws") // .opening_header("jwt", cookie.unwrap_or("Nil"))
                 .on("open", |_, client| async move{
