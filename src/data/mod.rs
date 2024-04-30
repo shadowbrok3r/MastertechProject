@@ -235,7 +235,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
 
     // let api_url = dotenv::var("API_URL").unwrap();
     // let submit_ticket_url = format!("{}/api/submitTicket", api_url.clone());
-    let api_url = "https://axum.master-tech.app";
+    let api_url = "http://localhost:4000";// "https://axum.master-tech.app";
 
     
     let params = json!({
