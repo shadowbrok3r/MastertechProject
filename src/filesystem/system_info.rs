@@ -308,7 +308,7 @@ impl ComputerData{
 
         // let mut response = String::new();
         // let socket_io_url = dotenv::var("WS_URL").unwrap();
-        let socket_io_url = "wss://axum.master-tech.app";
+        let socket_io_url = "ws://localhost:4000";// "wss://axum.master-tech.app";
 
         tokio::spawn(async move{
             let socket = ClientBuilder::new(socket_io_url)
