@@ -246,9 +246,6 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
         "everest_initials": "LL"
     });
 
-    // spawn(async move{
-        
-    // })
     info!("Sending signin req");
     let signin_response = client.post(format!("{api_url}/login")) 
         .header(CONTENT_TYPE, "application/json")
@@ -298,7 +295,7 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
     // }
 }
 
-fn get_cookie(cookie_store: std::sync::MutexGuard<'_, CookieStore>) -> String{
+pub fn get_cookie(cookie_store: std::sync::MutexGuard<'_, CookieStore>) -> String{
     info!("getting cookie");
     let next_cookie = cookie_store.iter_any().next();
     let cookie_string = next_cookie.unwrap().to_string();

@@ -1,5 +1,6 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
 use std::{collections::HashMap, error::Error, fmt::Display, path::Path, process::{Output, Stdio}, str, sync::{mpsc::Sender, Arc}, time::Duration};
+use anyhow::anyhow;
 use dotenv::dotenv;
 use log::{debug, info};
 use reqwest::{header::{HeaderValue, ACCEPT, CONTENT_TYPE, COOKIE}, Client};
@@ -22,7 +23,7 @@ use rust_socketio::{
 };
 use uuid::Uuid;
 
-use crate::{data::{ComputerData, DriveData, SystemInformation}, ticket_request::request::request_seb_info};
+use crate::{data::{get_cookie, ComputerData, DriveData, SystemInformation}, ticket_request::request::request_seb_info};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -309,10 +310,36 @@ impl ComputerData{
         // let mut response = String::new();
         // let socket_io_url = dotenv::var("WS_URL").unwrap();
         let socket_io_url = "ws://localhost:4000";// "wss://axum.master-tech.app";
+        let (tx, mut rx) = mpsc::channel::<String>(10);
+        let sender = tx.clone();
+        let mut cookies = String::new();
+        tokio::spawn(async move {
+            match get_auth().await{
+                Ok(cookie) => {
+                    match sender.send(cookie).await{
+                        Ok(_) => {
+                            debug!("Send cookie");
+                        },
+                        Err(err) => {
+                            debug!("Error sending cookie: {:?}", err.0);
+
+                        },
+                    };
+                },
+                Err(err) => {debug!("Could not retrieve cookie: {err:?}");},
+            }
+        });
+        
+
+        while let Some(cookie) = rx.blocking_recv(){
+            cookies = cookie.clone();
+            debug!("Got a cookie: {cookie:?}");
+        };
 
         tokio::spawn(async move{
             let socket = ClientBuilder::new(socket_io_url)
                 .transport_type(rust_socketio::TransportType::Websocket)
+                .auth(json!({"jwt": cookies}))
                 .namespace("/ws") // .opening_header("jwt", cookie.unwrap_or("Nil"))
                 .on("open", |_, client| async move{
                     client.emit("join", json!({"room": "RIV"})).await.unwrap();
@@ -329,7 +356,8 @@ impl ComputerData{
                 .on("command", | payload: Payload, client: SocketClient | async move {
                     match payload{
                         Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
-                        Payload::String(string_payload) => { Self::handle_command_payload(string_payload, client).await; }
+                        Payload::Text(text_payload) => { debug!("Got a Text payload: {:?}", text_payload.clone()); /* Self::handle_command_payload(string_payload, client).await; */ },
+                        Payload::String(string_payload) => { Self::handle_command_payload(string_payload, client).await; },
                     }
                 }.boxed())
                 .on("error", move|err, client| {
@@ -568,7 +596,60 @@ impl ComputerData{
     }
 }
 
+async fn get_auth() -> Result<String, anyhow::Error>{
+    let api_url = "http://localhost:4000";// "https://axum.master-tech.app";
 
+
+    let params = json!({
+        "name": "Logan",
+        "email": "logan.lees@pclaptops.com",
+        "password": "Poolparty10!9",
+        "store": "RIV",
+        "everest_initials": "LL"
+    });
+
+    info!("Sending signin req");
+
+    let cookies = CookieStore::default();
+    let cookie_store = CookieStoreMutex::new(cookies);
+    let cookie_store  = Arc::new(cookie_store);
+
+    let client_build = reqwest::Client::builder()
+        .cookie_provider(std::sync::Arc::clone(&cookie_store))
+        .build();
+
+    let client = match client_build{
+        Ok(client) => {
+            debug!("Sending reqwest");
+            Ok(client)
+        }, Err(err) => {debug!("Error with client_build => {err:?}"); Err(err)},
+    };
+
+    let signin_response = client.unwrap().post(format!("{api_url}/login")) 
+        .header(CONTENT_TYPE, "application/json")
+        .header(ACCEPT, "application/json")
+        .json(&params)
+        .send()
+        .await;
+
+    let mut cookie_string = String::new();
+    let mut cookie: &str = "";
+
+    info!("Sent signin req");
+
+    match signin_response{
+        Ok(response) => {
+            info!("Response => {response:?}");
+
+            let cookie = get_cookie(cookie_store.lock().unwrap());
+            Ok(cookie)
+        },
+        Err(err) => {
+            info!("error with mastertech.app req => {err:?}");
+            Err(anyhow!(err))
+        }
+    }
+}
 
 impl Display for SystemInformation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
