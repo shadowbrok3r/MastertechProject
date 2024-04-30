@@ -27,7 +27,7 @@ async fn main() -> eframe::Result<()> {
     puffin::set_scopes_on(true);
 
     // Configure log level and log file
-    let log_level = LevelFilter::Info; 
+    let log_level = LevelFilter::Debug; 
     let log_file = File::create("output.log").unwrap();
 
     // Init the logger
@@ -70,7 +70,7 @@ pub(crate) fn load_icon() -> egui::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        set_theme(ctx, MOCHA);
+        // set_theme(ctx, MOCHA);
         // util::colors::set_theme(ctx, util::colors::MOCHA);
         // let theme = CarlDark;
         // let style: Style = theme.custom_style();

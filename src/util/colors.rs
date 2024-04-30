@@ -1,8 +1,8 @@
 use egui::{
     epaint, style, Color32, epaint::Shadow,
-    style::{Interaction, Margin, Selection, Spacing, WidgetVisuals, Widgets},
+    style::{Interaction, Selection, Spacing, WidgetVisuals, Widgets},
     Rounding, Stroke, Style, Vec2, Visuals};
-
+// use epaint::margin::Margin;
 
 /// Apply the given theme to a [`Context`](egui::Context).
 pub fn set_theme(ctx: &egui::Context, theme: Theme) {
@@ -429,8 +429,8 @@ pub fn style() -> Style {
                 se: 6.0,
             },
             window_shadow: Shadow {
-                extrusion: 32.0,
                 color: Color32::from_rgba_premultiplied(0, 0, 0, 96),
+                ..Default::default()
             },
             window_fill: Color32::from_rgba_premultiplied(11, 13, 17, 128),
             window_stroke: Stroke {
@@ -445,8 +445,8 @@ pub fn style() -> Style {
             },
             panel_fill: Color32::from_rgba_premultiplied(15, 16, 19, 255),
             popup_shadow: Shadow {
-                extrusion: 16.0,
                 color: Color32::from_rgba_premultiplied(0, 0, 0, 96),
+                ..Default::default()
             },
             resize_corner_size: 10.399999618530273,
             text_cursor_preview: true,

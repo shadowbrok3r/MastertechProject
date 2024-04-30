@@ -7,7 +7,7 @@ build = "build.rs"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "2.0"
-embed-resource = "2.2.0"
+embed-resource = "2.4.2"
 
 [package.metadata]
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
@@ -29,11 +29,11 @@ cpu_fix = []
 
 [dependencies]
 chrono = "0.4.31"
-eframe = { version="0.26.2", features=["persistence", "puffin", "wgpu"] } #
-egui = { version = "0.26.2" } # , features = ["callstack"]"deadlock_detection"
-egui_dock = "0.11.4"
-egui_extras = { version = "0.26.2", features = ["datepicker"]}
-reqwest = { version = "0.11.20", features = ["json", "stream", "blocking", "cookies"] }
+eframe = { version="0.27.2", features=["persistence", "puffin", "wgpu"] } #
+egui = { version = "0.27.2" } # , features = ["callstack"]"deadlock_detection"
+egui_dock = "0.12.0"
+egui_extras = { version = "0.27.2", features = ["datepicker"]}
+reqwest = { version = "0.12.4", features = ["json", "stream", "blocking", "cookies"] }
 sysinfo = "0.30.7"
 tokio = { version = "1.36.0", features = ["full"] }
 serde = { version = "1.0.188", features = ["derive"] }
@@ -47,10 +47,10 @@ pollster = "0.3.0"
 crossbeam = "0.8.2"
 regex = "1.9.5"
 image = "0.25.0"
-egui_file = "0.16.3"
-self_update = "0.39.0"
+egui_file = "0.17.0"
+self_update = "0.40.0"
 puffin = { version = "0.19.0", features = ["packing"] }
-puffin_egui = "0.26.0"
+puffin_egui = "0.27.0"
 uuid = { version = "1.7.0", features = ["v4"] }
 
 num-format = "0.4.4"
@@ -60,11 +60,11 @@ log = "0.4.20"
 rayon = "1.8.0"
 quick-xml = { version="0.31.0", features = ["serialize"]}
 
-memmap2 = "0.5.10"
-breakpad-symbols = { version = "0.18.0" }
-minidump = { version = "0.18.0" }
-minidump-common = { version = "0.18.0" }
-minidump-processor = { version = "0.18.0", features = ["http", "dump_syms"] }
+# memmap2 = "0.9.4"
+# breakpad-symbols = { version = "0.21.1" }
+# minidump = { version = "0.21.1" }
+# minidump-common = { version = "0.21.1" }
+# minidump-processor = { version = "0.21.1", features = ["http", "dump_syms"] }
 
 num-traits = "0.2.16"
 rfd = "0.14.0"
@@ -72,19 +72,19 @@ tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = "0.3.14"
 linked-hash-map = "0.5.6"
 clap = { version = "4.4.4", features = ["derive"] }
-minidump-unwind = "0.19.1"
+minidump-unwind = "0.21.1"
 
 egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
-egui-winit = { version = "0.26.2", optional = true, default-features = false }
+egui-winit = { version = "0.27.2", optional = true, default-features = false }
 softbuffer = {version = "0.4.0", optional = true}
-skia-safe = {version = "0.71.0", optional = true}
+skia-safe = {version = "0.73.0", optional = true}
 dotenv = "0.15.0"
 lettre = "0.11.2"
 async-trait = "0.1.74"
 egui-aesthetix = { version = "0.2.0", features = [ "carl" ] }
 shell-words = "1.1.0"
-rust_socketio = { version = "0.4.4", features = ["async"] }
-reqwest_cookie_store = "0.6.0"
+rust_socketio = { version = "0.6.0", features = ["async"] }
+reqwest_cookie_store = "0.7.0"
 anyhow = "1.0.81"
 
 
