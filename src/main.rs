@@ -7,15 +7,14 @@ mod minidump;
 mod data;
 mod util;
 
-use std::{fs::File, time::Duration};
+use std::fs::File;
 use github::self_updater;
 use log::debug;
-use tokio::time::sleep;
 // use util::colors::style;
 use crate::ticket_request::scaffold;
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{Context, vec2, Spinner, Align2, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
+use eframe::egui::{Context, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
 use egui_dock::{DockArea, Style};
 use self_update::cargo_crate_version;
 use data::ComputerData;
@@ -27,7 +26,7 @@ async fn main() -> eframe::Result<()> {
     puffin::set_scopes_on(true);
 
     // Configure log level and log file
-    let log_level = LevelFilter::Debug; 
+    let log_level = LevelFilter::Info; 
     let log_file = File::create("output.log").unwrap();
 
     // Init the logger
