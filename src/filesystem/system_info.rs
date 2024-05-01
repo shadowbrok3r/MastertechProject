@@ -23,7 +23,7 @@ use rust_socketio::{
 };
 use uuid::Uuid;
 
-use crate::{data::{get_cookie, ComputerData, DriveData, SystemInformation}, ticket_request::request::request_seb_info};
+use crate::{data::{get_cookie, ComputerData, DriveData, SystemInformation}, ticket_request::{request::request_seb_info, Store}};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -84,6 +84,13 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
     // }
 // }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Auth {
+    pub session_id: Option<String>,
+    pub username: String,
+    pub room: Store,
+}
+
 struct WebSocket {
     pub finish: bool,
 }
@@ -94,7 +101,7 @@ impl WebSocket {
     }
 
     async fn on_message(&mut self, payload: Payload, socket: SocketClient) {
-        println!("error: {:#?}", payload);
+        info!("error: {:#?}", payload);
         socket
             .emit("disconnect", "received message")
             .await
@@ -137,7 +144,7 @@ impl ComputerData{
             let seb_data = request_seb_info(client)
                 .await
                 .or_else(|err|{
-                    debug!("Error: {:?}", err.to_string());
+                    info!("Error: {:?}", err.to_string());
                     Err(err)
                 }).and_then(|data|{
                     info!("Pulled SEB Data successfully: {data:#?}");
@@ -185,7 +192,7 @@ impl ComputerData{
 
                 match tx.send(system_info){
                     Ok(_) => info!("sent computer data"),
-                    Err(e) => debug!("Error sending computer data: {e:?}"),
+                    Err(e) => info!("Error sending computer data: {e:?}"),
                 }
             }
 
@@ -221,7 +228,7 @@ impl ComputerData{
 
                 match tx.send(system_info){
                     Ok(_) => info!("sent computer data"),
-                    Err(e) => debug!("Error sending computer data: {:?}", e.0),
+                    Err(e) => info!("Error sending computer data: {:?}", e.0),
                 }
             }
         });
@@ -232,7 +239,7 @@ impl ComputerData{
                 Ok(data)
             },
             Err(e) => {
-                debug!("Error receiving data: {e}");
+                info!("Error receiving data: {e}");
                 Err(Box::new(e))
             },
         }
@@ -307,56 +314,57 @@ impl ComputerData{
         let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::new()));
         let event_app: Arc<Mutex<WebSocket>> = app.clone();
 
-        // let mut response = String::new();
-        // let socket_io_url = dotenv::var("WS_URL").unwrap();
         let socket_io_url = "ws://localhost:4000";// "wss://axum.master-tech.app";
-        let (tx, mut rx) = mpsc::channel::<String>(10);
-        let sender = tx.clone();
-        let mut cookies = String::new();
-        tokio::spawn(async move {
-            match get_auth().await{
-                Ok(cookie) => {
-                    match sender.send(cookie).await{
-                        Ok(_) => {
-                            debug!("Send cookie");
-                        },
-                        Err(err) => {
-                            debug!("Error sending cookie: {:?}", err.0);
-
-                        },
-                    };
-                },
-                Err(err) => {debug!("Could not retrieve cookie: {err:?}");},
-            }
-        });
-        
-
-        while let Some(cookie) = rx.blocking_recv(){
-            cookies = cookie.clone();
-            debug!("Got a cookie: {cookie:?}");
-        };
 
         tokio::spawn(async move{
+            let cookie = match get_auth().await{
+                Ok(cookie) => {
+                    Ok(cookie)
+                },
+                Err(err) => {
+                    info!("Could not retrieve cookie: {err:?}");
+                    Err(err)
+                },
+            };
+
+            let cookie_clone = cookie.unwrap().clone();
+            let mut auth = Auth{username: "Mastertech".to_string(), room: Store::RIV, session_id: None };
+
             let socket = ClientBuilder::new(socket_io_url)
                 .transport_type(rust_socketio::TransportType::Websocket)
-                .auth(json!({"jwt": cookies}))
+                .auth(serde_json::to_value(auth).unwrap())
+                .opening_header("cookie", cookie_clone)
                 .namespace("/ws") // .opening_header("jwt", cookie.unwrap_or("Nil"))
                 .on("open", |_, client| async move{
+                    info!("open => socket opened");
                     client.emit("join", json!({"room": "RIV"})).await.unwrap();
+                    info!("connect => sent join event");
                 }.boxed())
                 .on("connect", |_, client| async move{
+                    info!("connect => client connected");
                     client.emit("join", json!({"room": "RIV"})).await.unwrap();
                 }.boxed())
                 .on("close", |_, client| async move { 
+                    info!("close => attempting reconnect");
                     sleep(Duration::from_secs(3)).await;
                     client.emit("join", json!({"room": "RIV"})).await.unwrap();
-                    println!("Disconnected");
+                    info!("Disconnected");
                 }.boxed())
-                .on("join", |msg, _| async move { println!("Joined") }.boxed())
+                .on("join", |msg, _| async move { info!("Joined") }.boxed())
+                .on("session", |msg: Payload, _| async move { 
+                    match msg{
+                        Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
+                        Payload::Text(text_payload) => { info!("Got a Text payload: {:?}", text_payload.clone()); /* Self::handle_command_payload(string_payload, client).await; */ },
+                        Payload::String(string_payload) => { 
+                            let _auth = Auth{session_id: Some(string_payload), username: "Mastertech".to_string(), room: Store::RIV};
+                         },
+                    }
+                    
+                }.boxed())
                 .on("command", | payload: Payload, client: SocketClient | async move {
                     match payload{
                         Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
-                        Payload::Text(text_payload) => { debug!("Got a Text payload: {:?}", text_payload.clone()); /* Self::handle_command_payload(string_payload, client).await; */ },
+                        Payload::Text(text_payload) => { info!("Got a Text payload: {:?}", text_payload.clone()); /* Self::handle_command_payload(string_payload, client).await; */ },
                         Payload::String(string_payload) => { Self::handle_command_payload(string_payload, client).await; },
                     }
                 }.boxed())
@@ -365,11 +373,11 @@ impl ComputerData{
                     async move { x.lock().await.on_message(err, client).await }.boxed()
                 })
                 .on("message", |msg, _| {
-                    async move { debug!("Received message: {:#?}", msg) }.boxed()
+                    async move { info!("Received message: {:#?}", msg) }.boxed()
                 })
                 .connect()
                 .await
-                .expect("Connection failed");
+                .unwrap();
             
         
             socket.emit("join", json!({"room": "RIV"})).await.unwrap();
@@ -382,7 +390,7 @@ impl ComputerData{
             loop{
                 sleep(Duration::from_secs(1)).await;
 
-                let systeminfo = Self::get_sysinfo().await;
+                let systeminfo: SystemInformation = Self::get_sysinfo().await;
 
                 let json_payload = json!({
                     "room": "RIV",
@@ -391,17 +399,9 @@ impl ComputerData{
                 }); 
 
                 let socket_event = socket.emit("clientSysInfo", json_payload.clone())
-                    .await;
-                match socket_event{
-                    Ok(_) => {
-                        info!("Received Socket event");
-                    },
-                    Err(err) => {
-                        debug!("SocketIO error: {:?}", err);
-                    },
-                }
+                    .await.unwrap();
 
-                debug!("in loop");
+                info!("in loop");
 
                 if app.lock().await.finish {
                     break;
@@ -459,14 +459,14 @@ impl ComputerData{
 
                         match socket_emit{
                             Ok(_) => info!("Emit socket event successfully"),
-                            Err(e) => debug!("Error emitting socket event: {e:?}"),
+                            Err(e) => info!("Error emitting socket event: {e:?}"),
                         }
                     },
-                    Err(e) => debug!("Error reading Output => {e:?}")
+                    Err(e) => info!("Error reading Output => {e:?}")
                 }
             },
             Err(err) =>{
-                debug!("Error in process => {err:?}");
+                info!("Error in process => {err:?}");
             },
         }
     }
@@ -496,14 +496,14 @@ impl ComputerData{
 
                         match socket_emit{
                             Ok(_) => info!("Emit socket event successfully"),
-                            Err(e) => debug!("Error emitting socket event: {e:?}"),
+                            Err(e) => info!("Error emitting socket event: {e:?}"),
                         }
                     },
-                    Err(e) => debug!("Error reading Output => {e:?}")
+                    Err(e) => info!("Error reading Output => {e:?}")
                 }
             },
             Err(err) =>{
-                debug!("Error in process => {err:?}");
+                info!("Error in process => {err:?}");
             },
         }
     }
@@ -590,9 +590,8 @@ impl ComputerData{
             number_of_cpus,
             network_interfaces,
         };
-        // println!("SystemInfo: \n{sysinf}");
+        info!("SystemInfo: \n{sysinf}");
         return sysinf;
-        //}
     }
 }
 
@@ -620,9 +619,9 @@ async fn get_auth() -> Result<String, anyhow::Error>{
 
     let client = match client_build{
         Ok(client) => {
-            debug!("Sending reqwest");
+            info!("Sending reqwest");
             Ok(client)
-        }, Err(err) => {debug!("Error with client_build => {err:?}"); Err(err)},
+        }, Err(err) => {info!("Error with client_build => {err:?}"); Err(err)},
     };
 
     let signin_response = client.unwrap().post(format!("{api_url}/login")) 
