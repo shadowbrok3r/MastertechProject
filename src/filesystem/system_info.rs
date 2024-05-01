@@ -388,7 +388,7 @@ impl ComputerData{
                     "client_uuid": client_uuid.to_string()
                 }); 
 
-                let socket_event = socket.emit("clientSysInfo", json_payload.clone())
+                let _ = socket.emit("clientSysInfo", json_payload.clone())
                     .await.unwrap();
 
                 info!("in loop");
