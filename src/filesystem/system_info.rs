@@ -314,7 +314,7 @@ impl ComputerData{
         let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::new()));
         let event_app: Arc<Mutex<WebSocket>> = app.clone();
 
-        let socket_io_url = "ws://localhost:4000";// "wss://axum.master-tech.app";
+        let socket_io_url = "wss://axum.master-tech.app";// "ws://localhost:4000";// "wss://axum.master-tech.app";
 
         tokio::spawn(async move{
             let cookie = match get_auth().await{
@@ -332,7 +332,7 @@ impl ComputerData{
 
             let socket = ClientBuilder::new(socket_io_url)
                 .transport_type(rust_socketio::TransportType::Websocket)
-                .auth(serde_json::to_value(auth).unwrap())
+                // .auth(serde_json::to_value(auth).unwrap())
                 .opening_header("cookie", cookie_clone)
                 .namespace("/ws") // .opening_header("jwt", cookie.unwrap_or("Nil"))
                 .on("open", |_, client| async move{
@@ -351,16 +351,6 @@ impl ComputerData{
                     info!("Disconnected");
                 }.boxed())
                 .on("join", |msg, _| async move { info!("Joined") }.boxed())
-                .on("session", |msg: Payload, _| async move { 
-                    match msg{
-                        Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
-                        Payload::Text(text_payload) => { info!("Got a Text payload: {:?}", text_payload.clone()); /* Self::handle_command_payload(string_payload, client).await; */ },
-                        Payload::String(string_payload) => { 
-                            let _auth = Auth{session_id: Some(string_payload), username: "Mastertech".to_string(), room: Store::RIV};
-                         },
-                    }
-                    
-                }.boxed())
                 .on("command", | payload: Payload, client: SocketClient | async move {
                     match payload{
                         Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
@@ -590,13 +580,13 @@ impl ComputerData{
             number_of_cpus,
             network_interfaces,
         };
-        info!("SystemInfo: \n{sysinf}");
+        // info!("SystemInfo: \n{sysinf}");
         return sysinf;
     }
 }
 
 async fn get_auth() -> Result<String, anyhow::Error>{
-    let api_url = "http://localhost:4000";// "https://axum.master-tech.app";
+    let api_url = "https://axum.master-tech.app"; // "http://localhost:4000";// "https://axum.master-tech.app";
 
 
     let params = json!({
