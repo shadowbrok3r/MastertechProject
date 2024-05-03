@@ -14,6 +14,7 @@ use std::{error::Error, path::PathBuf, fs::{File, self}, io::BufReader, collecti
 use log::{info, debug, trace, error};
 use crate::{scaffold::*, data::{PreTicketData, LocalSebData, ExtendedSeb, GetKeysResponse}, ticket_request::AddressObject};
 use std::result::Result;
+use std::fmt::Debug;
 use super::{GetTicketResponse, AsanaResponse, Store, request_builder::{AsanaTask, TaskAssignee}};
 
 pub struct SendRequest {
@@ -397,41 +398,67 @@ async fn request_ticket_info(so_number: String, client: reqwest::Client)
     }
 }
 
-pub async fn request_seb_info(client: reqwest::Client) -> Result<LocalSebData, Box<dyn Error>>{
-    // supereasybackup.com/downloads/SuperEasyBackup.exe
-    let file_path = "C:\\DCProtectData\\Shared\\Logs\\InstallationTracking.log"; // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log"; 
+pub async fn request_seb_info<T>(client: reqwest::Client, customer_email: Option<String>) 
+-> Result<T, Box<dyn Error>> 
+    where T: Debug + Serialize + for<'a> Deserialize<'a> + Clone + std::convert::From<LocalSebData>
+{
+    if let Some(customer_email) = customer_email{
+        let params = serde_json::json!({
+            "user_email": "logan.lees@pclaptops.com",
+            "user_password": "Poolparty1",
+            "action": "search",
+            "application": "carbonite",
+            "search": customer_email.as_str()
+        });
 
-    // Read the file content
-    let file_content = fs::read_to_string(file_path)?;
+        let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .json(&params)
+            .send()
+            .await?;
 
-    // Deserialize the XML content
-    let mut result: LocalSebData = from_str(&file_content)?;
-
-    let params = serde_json::json!({
-        "user_email": "logan.lees@pclaptops.com",
-        "user_password": "Poolparty1",
-        "action": "search",
-        "application": "carbonite",
-        "search": result.InstalledDeviceId.as_str()
-    });
-
-    let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(&params)
-        .send()
-        .await?;
-
-        let respone_json: Vec<ExtendedSeb> = response.json().await?;
+        let response_json: Vec<T> = response.json().await?;
         
-        let actual_response = respone_json.get(0);
+        Ok(response_json.get(0).unwrap().clone())
+    }else{
+        // supereasybackup.com/downloads/SuperEasyBackup.exe
+        let file_path = "C:\\DCProtectData\\Shared\\Logs\\InstallationTracking.log"; // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log"; 
+
+        // Read the file content
+        let file_content = fs::read_to_string(file_path)?;
+
+        // Deserialize the XML content
+        let mut result: LocalSebData = from_str(&file_content)?;
+
+        let params = serde_json::json!({
+            "user_email": "logan.lees@pclaptops.com",
+            "user_password": "Poolparty1",
+            "action": "search",
+            "application": "carbonite",
+            "search": result.InstalledDeviceId.as_str()
+        });
+
+        let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .json(&params)
+            .send()
+            .await?;
+
+        let response_json: Vec<ExtendedSeb> = response.json().await?; // ExtendedSeb
+        
+        let actual_response = response_json.get(0);
 
         if let Some(extended_seb) = actual_response{
             println!("Carbonite response: {extended_seb:#?}");
 
             result.ExtendedSeb = Some(extended_seb.clone());
         }
-        
-    Ok(result)
+
+        let res: T = result.try_into().unwrap();
+
+        Ok(res)
+    }
 }
 
