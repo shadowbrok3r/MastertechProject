@@ -8,6 +8,7 @@ mod data;
 mod util;
 
 use std::fs::File;
+use egui::{vec2, Align2, Spinner};
 use github::self_updater;
 use log::debug;
 // use util::colors::style;
@@ -76,20 +77,20 @@ impl eframe::App for MasterTechApp {
         // ctx.set_style(Arc::new(style));
         // if self.context.spinner{
         // }
-        // egui::Window::new("Spinner Window")
-        //     .enabled(self.spinner)
-        //     .open(&mut self.spinner)
-        //     .title_bar(false)
-        //     .fixed_size(vec2(10.0,10.0))
-        //     // .constrain_to(ctx.available_rect())
-        //     .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
-        //     .show(&self.ctx, |ui|{
-        //         ui.add(
-        //             Spinner::new()
-        //             .color(Color32::LIGHT_RED)
-        //             .size(20.0)
-        //         );
-        // });
+        egui::Window::new("Spinner Window")
+            .enabled(self.context.spinner)
+            .open(&mut self.context.spinner)
+            .title_bar(false)
+            .fixed_size(vec2(10.0,10.0))
+            // .constrain_to(ctx.available_rect())
+            .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+            .show(&self.context.ctx, |ui|{
+                ui.add(
+                    Spinner::new()
+                    .color(Color32::LIGHT_RED)
+                    .size(20.0)
+                );
+        });
         if self.context.connect_to_ws{
             let x = ComputerData::initialize_websocket(self.context.client_uuid);
             // ViewportBuilder
