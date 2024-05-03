@@ -479,22 +479,7 @@ impl MastertechContext {
                                                     
                                                     if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
-                                                        // if fs::read_dir("").is_ok() && self.seb_info.is_none(){
-                                                        //     let seb_data = request_seb_info(self.client).or_else(|err|{
-                                                        //         debug!("Error: {:?}", err.to_string());
-                                                        //         self.output_text += format!("Couldnt pull SEB info: \n {err:?}").as_str();
-                                                        //         Err(err)
-                                                        //     }).and_then(|data|{
-                                                        //         self.output_text += format!("{data:#?}").as_str();
-                                                        //         Ok(data)
-                                                        //     }); 
-    
-                                                        //     if let Ok(seb_info) = seb_data{
-                                                        //         self.seb_info = Some(seb_info);
-                                                        //     }
-                                                        // }else{
-                                                        //     self.output_text += "Already pulled SEB data";
-                                                        // }
+                                                        // request_seb_info(self.client, Some(self.ticket_info.customer_email)).await.unwrap();
                                                     }
                         
                                                     ui.end_row();

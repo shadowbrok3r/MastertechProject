@@ -141,7 +141,7 @@ impl ComputerData{
                 }   
             }
             let client = Client::new();
-            let seb_data = request_seb_info(client)
+            let seb_data = request_seb_info(client, None)
                 .await
                 .or_else(|err|{
                     info!("Error: {:?}", err.to_string());

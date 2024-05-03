@@ -9,6 +9,8 @@ use serde_json::json;
 use tokio::spawn;
 use crate::ticket_request::Store;
 
+pub mod database;
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PreTicketData{
     pub cust_code: String,
