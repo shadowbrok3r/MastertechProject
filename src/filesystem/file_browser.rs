@@ -1,4 +1,3 @@
-use egui::text::LayoutJob;
 use tokio::{
     fs, 
     sync::mpsc::{
@@ -7,7 +6,7 @@ use tokio::{
         unbounded_channel
     }
 };
-use eframe::egui::{*, collapsing_header::CollapsingState};
+use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
 use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
 use num_format::{Locale, ToFormattedString};
 use walkdir::WalkDir;

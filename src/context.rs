@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf, fs}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use std::{collections::HashSet, fs, path::PathBuf, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, SecondsFormat};
 use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
@@ -8,7 +8,7 @@ use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
-use crate::{data::{PreTicketData, TicketResponse, TicketData, send_payload, CustomerData, HardwareTests, LocalSebData, GetKeysResponse}, ticket_request::{request_builder::{/*asana_html_builder, */ TaskAssignee, AsanaTask, Info}, scaffold::{Salesman, Techs, HardwareTest, SendReq}, request::request_seb_info}};
+use crate::{data::{send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, scripts::Scripts, ticket_request::{request::request_seb_info, request_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}};
 use tokio::{sync::mpsc::unbounded_channel, spawn, task::spawn_blocking};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -90,6 +90,7 @@ pub struct MastertechContext {
     pub text_color: Color32,
     pub border_stroke_color: Stroke,
     pub frame_counter: u64,
+    pub show_deferred_viewport: Arc<AtomicBool>
 }
 
 pub struct MasterTechApp {
@@ -217,6 +218,7 @@ impl Default for MasterTechApp {
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
 
             frame_counter: 0,
+            show_deferred_viewport: Arc::new(AtomicBool::new(false)),
         };
 
         Self { context, tree }
@@ -341,8 +343,8 @@ impl MastertechContext {
                                         if ui.add(
                                             Button::new(RichText::new("Get Ticket")
                                                 .color(Color32::from_rgb(255, 204, 255))
-                                                .strong()
-                                                .italics()
+                                                
+                                                
                                             )
                                             .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
                                         )
@@ -485,9 +487,8 @@ impl MastertechContext {
                                                     ui.end_row();
                                                     
                                                                         /*     ROW 5     */
-                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.webroot_key)).size(9.0)
-                                                    .color(Color32::from_rgb(102, 255, 153))
-                                                    .strong())
+                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.webroot_key))//.size()
+                                                    .color(Color32::from_rgb(102, 255, 153)))
                                                     .min_size(vec2(self.widget_size + 2.0, 15.0)))
                                                     .on_hover_text("Click To Copy Webroot Key to Clipboard")
                                                     .clicked(){ 
@@ -495,15 +496,13 @@ impl MastertechContext {
                                                         ui.output_mut(|o| o.copied_text = webroot);
                                                     }
                                                         
-                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.superanti_key)).size(9.0)
-                                                    .color(Color32::from_rgb(255, 61, 126))
-                                                    .strong())
+                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.superanti_key))//.size()
+                                                    .color(Color32::from_rgb(255, 61, 126)))
                                                     .min_size(vec2(self.widget_size + 2.0, 15.0)))
                                                     .on_hover_text("Click To Copy SAS Key to Clipboard")
                                                     .clicked(){ 
                                                         let sas = self.keys.superanti_key.clone();
                                                         ui.output_mut(|o| o.copied_text = sas);
-
                                                     }
 
                                                     ui.end_row();
@@ -643,10 +642,8 @@ impl MastertechContext {
                                         (
                                             RichText::new("Submit TUR Sheet")
                                                 .color(Color32::from_rgb(255, 204, 255))
-                                                .strong()
-                                                .italics()
                                         )
-                                            .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+                                            .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
                                     )
                                     .clicked()
                                     {  
@@ -663,7 +660,7 @@ impl MastertechContext {
                                                 ui.add(
                                                     Spinner::new()
                                                     .color(Color32::LIGHT_RED)
-                                                    .size(20.0)
+                                                    //.size()
                                                 );
                                     });
                                         
@@ -1079,7 +1076,7 @@ impl MastertechContext {
                             .show(ui, |ui|{
                                 ui.add_sized(
                                     vec2(ui.available_width()-4.0, ui.available_height()),
-                                    TextEdit::multiline(&mut self.ticket_info.checkin_notes.clone())
+                                    TextEdit::multiline(&mut self.ticket_info.checkin_notes)
                                     .hint_text(RichText::new("Checkin Notes").weak())
                                     .desired_rows(15)
                                 );
@@ -1124,7 +1121,6 @@ impl MastertechContext {
                 ui.add(
                     Spinner::new()
                     .color(Color32::LIGHT_RED)
-                    .size(20.0)
                 );
             });
         });
@@ -1145,7 +1141,7 @@ impl MastertechContext {
                 ui.add(
                     Spinner::new()
                     .color(Color32::LIGHT_RED)
-                    .size(20.0)
+                    //.size()
                 );
             });
 
@@ -1154,8 +1150,8 @@ impl MastertechContext {
             Button::new
             (
                 RichText::new("Send to Master-Tech.app")
-                    .strong()
-                    .italics()
+                    
+                    
             )
         )
         .clicked()
@@ -1235,8 +1231,8 @@ impl MastertechContext {
             Button::new
             (
             RichText::new("Connect to WS")
-                .strong()
-                .italics()
+                
+                
             )
         )
         .clicked()
@@ -1396,55 +1392,93 @@ impl MastertechContext {
         ui.shrink_height_to_current();
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
-
-        struct Scripts {
-            wrsa: String,
-            sas: String,
-            check_driver: String,
-            running_tasks: String,
-        }
-
-        let mut scripts = HashMap::new();
-
-        scripts.insert("wrsa", "Install Webroot".to_string());
-        scripts.insert("sas", "Install SAS".to_string());
-        scripts.insert("check_driver", "Check Driver Issues".to_string());
-        scripts.insert("running_tasks", "Running Tasks".to_string());
+        let scripts = Scripts::default();
     
+        let script_names = [
+            scripts.wrsa,
+            scripts.sas,
+            scripts.check_driver,
+            scripts.running_tasks,
+        ];
+        
+        let mut show_deferred_viewport = self.show_deferred_viewport.load(Ordering::Relaxed);
+        self.show_deferred_viewport.store(show_deferred_viewport, Ordering::Relaxed);
 
-        // ui.with_layout(
-        //     Layout::left_to_right(Align::Center),|ui|
-        // {     
-            let mut script_string = "";
-
-            Grid::new("scripts")
-                .spacing(vec2(2.0, 10.0))
-                .min_col_width(self.widget_size)
-                .num_columns(3)
-                .striped(true)
-                .min_row_height(10.0)
-                .show(ui, |ui| {
-                    let mut counter = 0;  // Initialize a counter
-
-                    for (key, value) in scripts{
-                        let button = Button::new(RichText::new(&value).color(Color32::from_rgb(255, 204, 255))
-                            .strong()).stroke(Stroke::new(1.2, Color32::from_rgb(191, 33, 101)));
+        ui.checkbox(&mut show_deferred_viewport, "Show deferred child viewport").clicked();
 
 
-                        if ui.add(button).clicked(){
-                            println!("Button: {value}");
-                            
-                        }
 
-                        counter += 1;  // Increment the counter
+        Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).show(
+        ui, |ui| {
 
-                        if counter % 4 == 0 {
-                            ui.end_row();  // End the row after every 2 buttons
-                        }
-                    }
-            }); // Grid   
-        // });
+            let mut counter = 0;  // Initialize a counter
+            for value in script_names{
+                let button = Button::new(
+                    RichText::new(&value))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)));
 
+
+                if ui.add(button).clicked(){
+
+                }
+
+                counter += 1;  // Increment the counter
+
+                if counter % 4 == 0 {
+                    ui.end_row();  // End the row after every 2 buttons
+                }
+            }
+        }); // Grid
+
+        // if self.show_deferred_viewport.load(Ordering::Relaxed) {
+        //     let show_deferred_viewport = self.show_deferred_viewport.clone();
+
+        //     self.ctx.show_viewport_deferred(
+        //         egui::ViewportId::from_hash_of("deferred_viewport"),
+        //         egui::ViewportBuilder::default()
+        //             .with_title("Deferred Viewport")
+        //             .with_inner_size([200.0, 100.0]),
+        //         move |ctx, class| {
+
+        //             egui::CentralPanel::default().show(ctx, |ui| {
+        //                 let scripts = Scripts::default();
+    
+        //                 let script_names = [
+        //                     scripts.wrsa,
+        //                     scripts.sas,
+        //                     scripts.check_driver,
+        //                     scripts.running_tasks,
+        //                 ];
+
+        //                 Grid::new("scripts").min_col_width(134.0).num_columns(3).min_row_height(10.0).show(
+        //                     ui, |ui| {
+                    
+        //                         let mut counter = 0;  // Initialize a counter
+        //                         for value in script_names{
+        //                             let button = Button::new(
+        //                                 RichText::new(&value))
+        //                                     .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)));
+                    
+                    
+        //                             if ui.add(button).clicked(){
+                    
+        //                             }
+                    
+        //                             counter += 1;  // Increment the counter
+                    
+        //                             if counter % 4 == 0 {
+        //                                 ui.end_row();  // End the row after every 2 buttons
+        //                             }
+        //                         }
+        //                     }); // Grid
+        //             });
+        //             if ctx.input(|i| i.viewport().close_requested()) {
+        //                 // Tell parent to close us.
+        //                 show_deferred_viewport.store(false, Ordering::Relaxed);
+        //             }
+        //         },
+        //     );
+        // }
      }
 
     fn puffin_profiler(&mut self, ui: &mut Ui){
