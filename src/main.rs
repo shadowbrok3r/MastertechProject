@@ -1,26 +1,24 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
+use std::{fs::File, sync::Arc};
+use github::self_updater;
+use log::debug;
+use crate::ticket_request::scaffold;
+use context::MasterTechApp;
+use simplelog::{WriteLogger, Config, LevelFilter};
+use eframe::egui::{style::Style, vec2, Align2, CentralPanel, Color32, Context, FontId, Frame, IconData, Spinner, TopBottomPanel, Vec2, ViewportBuilder, Window};
+use egui_dock::{DockArea, Style as DockStyle};
+use self_update::cargo_crate_version;
+use data::ComputerData;
+use egui_aesthetix::{themes::CarlDark, Aesthetix};
+
+
 mod filesystem;
 mod ticket_request;
 mod context;
 pub mod github;
 mod minidump;
 mod data;
-mod util;
-
-use std::fs::File;
-use egui::{vec2, Align2, Spinner};
-use github::self_updater;
-use log::debug;
-// use util::colors::style;
-use crate::ticket_request::scaffold;
-use context::MasterTechApp;
-use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{Context, TopBottomPanel, CentralPanel, Color32, Frame, ViewportBuilder};
-use egui_dock::{DockArea, Style};
-use self_update::cargo_crate_version;
-use data::ComputerData;
-use catppuccin_egui::{set_theme, MOCHA};
-// use egui_aesthetix::{themes::CarlDark, Aesthetix};
+mod scripts;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -50,7 +48,7 @@ async fn main() -> eframe::Result<()> {
     )
 }
 
-pub(crate) fn load_icon() -> egui::IconData {
+pub(crate) fn load_icon() -> IconData {
 	let (icon_rgba, icon_width, icon_height) = {
 		let icon = include_bytes!("assets/masterlogoV2.ico");
 		let image = image::load_from_memory(icon)
@@ -61,7 +59,7 @@ pub(crate) fn load_icon() -> egui::IconData {
 		(rgba, width, height)
 	};
 	
-	egui::IconData {
+	eframe::egui::IconData {
 		rgba: icon_rgba,
 		width: icon_width,
 		height: icon_height,
@@ -70,27 +68,36 @@ pub(crate) fn load_icon() -> egui::IconData {
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // set_theme(ctx, MOCHA);
-        // util::colors::set_theme(ctx, util::colors::MOCHA);
-        // let theme = CarlDark;
-        // let style: Style = theme.custom_style();
-        // ctx.set_style(Arc::new(style));
+        let theme = CarlDark;
+        let mut custom_style: Style = theme.custom_style();
+        custom_style.spacing.button_padding.x = 2.0;
+        custom_style.spacing.button_padding.y = 2.0;
+        custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
+        let mut font = FontId::default();
+        font.size = 12.0;
+        custom_style.override_font_id = Some(font);
+        custom_style.spacing.combo_height = 60.0; // widget_size = 135.0
+        custom_style.spacing.combo_width = 135.0;
+
+        let arc_style = Arc::new(custom_style);
+        ctx.set_style(arc_style);
         // if self.context.spinner{
         // }
-        egui::Window::new("Spinner Window")
-            .enabled(self.context.spinner)
-            .open(&mut self.context.spinner)
-            .title_bar(false)
-            .fixed_size(vec2(10.0,10.0))
-            // .constrain_to(ctx.available_rect())
-            .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
-            .show(&self.context.ctx, |ui|{
-                ui.add(
-                    Spinner::new()
-                    .color(Color32::LIGHT_RED)
-                    .size(20.0)
-                );
-        });
+        // Window::new("Spinner Window")
+        //     .enabled(self.context.spinner)
+        //     .open(&mut self.context.spinner)
+        //     .title_bar(false)
+        //     .fixed_size(vec2(10.0,10.0))
+        //     // .constrain_to(ctx.available_rect())
+        //     .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+        //     .show(&self.context.ctx, |ui|{
+        //         ui.add(
+        //             Spinner::new()
+        //             .color(Color32::LIGHT_RED)
+        //             .size(20.0)
+        //         );
+        // });
+        
         if self.context.connect_to_ws{
             let x = ComputerData::initialize_websocket(self.context.client_uuid);
             // ViewportBuilder
@@ -201,7 +208,7 @@ impl eframe::App for MasterTechApp {
         }
     
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            eframe::egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
                     for tab in &[
@@ -233,7 +240,7 @@ impl eframe::App for MasterTechApp {
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
             .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
             .show(ctx, |ui| {
-                let mut style = self.context.style.get_or_insert(Style::from_egui(ui.style())).clone();
+                let mut style = self.context.style.get_or_insert(DockStyle::from_egui(ui.style())).clone();
                 style.overlay.selection_color = Color32::from_rgb(92,0,87);
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
                 style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
@@ -283,7 +290,7 @@ impl MasterTechApp{
     fn update(&mut self, ctx: &Context){
         catppuccin_egui::set_theme(ctx, MOCHA);
         if self.context.spinner == true{
-            egui::Window::new("Spinner Window")
+            eframe::egui::Window::new("Spinner Window")
             .title_bar(false)
             .fixed_size(vec2(10.0,10.0))
             .anchor(Align2::RIGHT_TOP, [2.0, 2.0])
@@ -429,7 +436,7 @@ impl MasterTechApp{
         }
     
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            eframe::egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
                     for tab in &[
@@ -461,7 +468,7 @@ impl MasterTechApp{
         CentralPanel::default()// When displaying a DockArea in another UI, it looks better
             .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
             .show(ctx, |ui| {
-                let mut style = self.context.style.get_or_insert(Style::from_egui(ui.style())).clone();
+                let mut style = self.context.style.get_or_insert(DockStyle::from_egui(ui.style())).clone();
                 style.selection_color = Color32::from_rgb(92,0,87);
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
                 style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
