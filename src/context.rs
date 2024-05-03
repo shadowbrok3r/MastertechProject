@@ -1412,19 +1412,26 @@ impl MastertechContext {
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
-        let scripts = [
-            "Install Webroot",
-            "Install SAS",
-            "Check Driver Issues",
-            "Running Tasks",
-            "Test",
-            "Test",
-            "Test"
-        ];
+        struct Scripts {
+            wrsa: String,
+            sas: String,
+            check_driver: String,
+            running_tasks: String,
+        }
+
+        let mut scripts = HashMap::new();
+
+        scripts.insert("wrsa", "Install Webroot".to_string());
+        scripts.insert("sas", "Install SAS".to_string());
+        scripts.insert("check_driver", "Check Driver Issues".to_string());
+        scripts.insert("running_tasks", "Running Tasks".to_string());
+    
 
         // ui.with_layout(
         //     Layout::left_to_right(Align::Center),|ui|
         // {     
+            let mut script_string = "";
+
             Grid::new("scripts")
                 .spacing(vec2(2.0, 10.0))
                 .min_col_width(self.widget_size)
@@ -1434,13 +1441,14 @@ impl MastertechContext {
                 .show(ui, |ui| {
                     let mut counter = 0;  // Initialize a counter
 
-                    for script in scripts{
-                        let button = Button::new(RichText::new(script).color(Color32::from_rgb(255, 204, 255))
+                    for (key, value) in scripts{
+                        let button = Button::new(RichText::new(&value).color(Color32::from_rgb(255, 204, 255))
                             .strong()).stroke(Stroke::new(1.2, Color32::from_rgb(191, 33, 101)));
 
 
                         if ui.add(button).clicked(){
-                            println!("Button: {script}")
+                            println!("Button: {value}");
+                            
                         }
 
                         counter += 1;  // Increment the counter
