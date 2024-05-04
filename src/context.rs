@@ -5,7 +5,7 @@ use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2
 use log::{debug, info};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
-use eframe::egui;
+use eframe::egui::{self, TextBuffer};
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
 use crate::{data::{send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, scripts::{Scripts, SCRIPT_ACTIONS}, ticket_request::{request::request_seb_info, request_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}};
@@ -461,22 +461,18 @@ impl MastertechContext {
                                                             }
                                                         });
 
-                                                        // spawn_blocking(||{
-                                                            match rx.recv(){
-                                                                Ok(keys) => {
-                                                                    if keys.webroot_key.contains("Error"){
-                                                                        self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
-                                                                    }
-                                                                    self.keys = keys;
-                                                                },
-                                                                Err(err) => {
-                                                                    debug!("GetKeysClick Receive Error -> {err:?}");
-                                                                    self.output_text = format!("GetKeysClick -> Error receiving keys -> {err:?}");
+                                                        match rx.recv(){
+                                                            Ok(keys) => {
+                                                                if keys.webroot_key.contains("Error"){
+                                                                    self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
                                                                 }
+                                                                self.keys = keys;
+                                                            },
+                                                            Err(err) => {
+                                                                debug!("GetKeysClick Receive Error -> {err:?}");
+                                                                self.output_text = format!("GetKeysClick -> Error receiving keys -> {err:?}");
                                                             }
-                                                        // });
-                                                        
-                                                        
+                                                        }
                                                     }
                                                     
                                                     if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
@@ -1378,13 +1374,18 @@ impl MastertechContext {
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
-
-        
         let mut show_deferred_viewport = self.show_deferred_viewport.load(Ordering::Relaxed);
         ui.checkbox(&mut show_deferred_viewport, "Show deferred child viewport").clicked();
         self.show_deferred_viewport.store(show_deferred_viewport, Ordering::Relaxed);
 
+        let service_num = &self.so_number;
+        self.spinner = true;
+        let service_str = service_num.as_str();
 
+        if self.so_number.is_empty(){
+            self.output_text += "You need to enter a service number for Webroot/SuperAnti auto install to work";
+        }
+       
         
         Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).show(
         ui, |ui| {
@@ -1400,7 +1401,7 @@ impl MastertechContext {
                     info!("Clicked button");
                     let action_clone = action.clone();
                     tokio::spawn(async move {
-                        let scripts = Scripts::default();
+                        let scripts = Scripts::new(service_str.to_string());
                         action_clone.execute(&scripts).await.unwrap();
                     });
                 }
