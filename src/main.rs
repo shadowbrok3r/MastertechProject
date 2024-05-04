@@ -70,37 +70,19 @@ impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let theme = CarlDark;
         let mut custom_style: Style = theme.custom_style();
+        let mut font = FontId::default();
         custom_style.spacing.button_padding.x = 2.0;
         custom_style.spacing.button_padding.y = 2.0;
         custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
-        let mut font = FontId::default();
         font.size = 12.0;
         custom_style.override_font_id = Some(font);
-        custom_style.spacing.combo_height = 60.0; // widget_size = 135.0
+        custom_style.spacing.combo_height = 60.0; 
         custom_style.spacing.combo_width = 135.0;
-
         let arc_style = Arc::new(custom_style);
         ctx.set_style(arc_style);
-        // if self.context.spinner{
-        // }
-        // Window::new("Spinner Window")
-        //     .enabled(self.context.spinner)
-        //     .open(&mut self.context.spinner)
-        //     .title_bar(false)
-        //     .fixed_size(vec2(10.0,10.0))
-        //     // .constrain_to(ctx.available_rect())
-        //     .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
-        //     .show(&self.context.ctx, |ui|{
-        //         ui.add(
-        //             Spinner::new()
-        //             .color(Color32::LIGHT_RED)
-        //             .size(20.0)
-        //         );
-        // });
         
         if self.context.connect_to_ws{
             let x = ComputerData::initialize_websocket(self.context.client_uuid);
-            // ViewportBuilder
             self.context.output_text += &x;
             self.context.connect_to_ws = false;
         }
@@ -130,7 +112,7 @@ impl eframe::App for MasterTechApp {
                 Err(e) => {
                     self.context.output_text = format!("{}", e.to_string());
                 }
-            }
+            };
 
             #[cfg(target_os="windows")]
             {
@@ -248,10 +230,6 @@ impl eframe::App for MasterTechApp {
                 style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
                 style.main_surface_border_rounding.nw = 15.0;
                 style.main_surface_border_rounding.ne = 15.0;
-                // style.
-                // style.tab.text_color_active_focused = Color32::from_rgba_premultiplied(0, 254, 158, 255);
-                // style.tab.text_color_active_unfocused = Color32::from_rgba_premultiplied(0, 255, 255, 255);
-                // style.tab.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
     
                 DockArea::new(&mut self.tree)

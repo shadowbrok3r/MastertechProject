@@ -1141,19 +1141,11 @@ impl MastertechContext {
                 ui.add(
                     Spinner::new()
                     .color(Color32::LIGHT_RED)
-                    //.size()
                 );
             });
 
         if ui
-        .add(
-            Button::new
-            (
-                RichText::new("Send to Master-Tech.app")
-                    
-                    
-            )
-        )
+        .add(Button::new( RichText::new("Send to Master-Tech.app")))
         .clicked()
         {  
             let tech = match self.techs_cbox{
@@ -1176,10 +1168,7 @@ impl MastertechContext {
             pre_ticket.due_date = Some(
                 self.date.unwrap_or(
                     DateTime::default()
-                ).to_rfc3339_opts(
-                    SecondsFormat::Secs, 
-                    true
-                )
+                ).to_rfc3339_opts(SecondsFormat::Secs,  true)
             );
             
             let payload = TicketResponse::serialize_payload(
@@ -1228,15 +1217,11 @@ impl MastertechContext {
         }
         
         if ui.add(
-            Button::new
-            (
-            RichText::new("Connect to WS")
-                
-                
+            Button::new(
+                RichText::new("Connect to WS")
             )
         )
-        .clicked()
-        {  
+        .clicked(){
             self.connect_to_ws = true;
         }
 
