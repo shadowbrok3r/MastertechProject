@@ -91,7 +91,7 @@ impl Scripts{
     
     pub async fn install_sas(&self) -> Result<(), Box<dyn Error>> {
         info!("running install_sas!");
-        let response = self.client.get(format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")) 
+        let response = self.client.get(format!("https://secure.superantispyware.com/SUPERAntiSpyware.exe")) 
         .send()
         .await?;
 
