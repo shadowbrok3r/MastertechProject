@@ -5,6 +5,8 @@ use lazy_static::lazy_static;
 use async_trait::async_trait;
 use tokio::{fs, io, process::Command};
 
+use crate::{data::GetKeysResponse, ticket_request::request::SendRequest};
+
 #[async_trait]
 pub trait ScriptAction {
     async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>>;
@@ -12,6 +14,7 @@ pub trait ScriptAction {
 
 
 pub struct Scripts{
+    pub service_number: Option<String>,
     pub client: Client,
     pub wrsa: String,
     pub sas: String,
@@ -44,6 +47,7 @@ impl Default for Scripts{
     fn default() -> Self{
         
         Self{
+            service_number: None,
             client: Client::new(),
             wrsa: "Install Webroot".to_string(),
             sas: "Install SAS".to_string(),
@@ -54,51 +58,82 @@ impl Default for Scripts{
 }
 
 impl Scripts{
-    // pub fn new(client: Client) -> Self{
-    //     Self{
-    //         client,
-    //         wrsa: "Install Webroot".to_string(),
-    //         sas: "Install SAS".to_string(),
-    //         check_driver: "Check Driver Issues".to_string(),
-    //         running_tasks: "Running Tasks".to_string()
-    //     }
-    // }
+    pub fn new(service_number: String) -> Self{
+        Self{
+            service_number: Some(service_number),
+            client: Client::new(),
+            wrsa: "Install Webroot".to_string(),
+            sas: "Install SAS".to_string(),
+            check_driver: "Check Driver Issues".to_string(),
+            running_tasks: "Running Tasks".to_string()
+        }
+    }
 
     pub async fn install_webroot(&self) -> Result<(), Box<dyn Error>> {
         info!("running install_webroot!");
         
-        let response = self.client.get(format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")) 
+        let response = self.client.get(
+            format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")
+        ) 
         .send()
         .await?;
+        
+        if let Some(service_number) = &self.service_number{
+            let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
 
-        let temp_directory = std::env::temp_dir();
-        let wrv_path = format!("{}\\wrv.exe", temp_directory.display());
-        let mut file = fs::File::create(wrv_path.clone()).await?;
-        let mut content =  Cursor::new(response.bytes().await?);
-        io::copy(&mut content, &mut file).await?;
+            let cps_keys =  cps_request.await.unwrap_or(GetKeysResponse::default());
 
-        let cmd_stdout = Command::new(format!("{wrv_path}"))
-            .arg("/keycode={{}}")
-            .arg("/silent")
-            .spawn()?
-            .stdout;
+            let temp_directory = std::env::temp_dir();
+            let wrv_path = format!("{}\\wrv.exe", temp_directory.display());
 
-        let x: tokio::process::ChildStdout = cmd_stdout.unwrap();
-        info!("Executed command.\nOutput: {x:?}");
+            let mut file = fs::File::create(wrv_path.clone()).await?;
+            let mut content =  Cursor::new(response.bytes().await?);
+            io::copy(&mut content, &mut file).await?;
+
+            let cmd_stdout = Command::new(format!("{wrv_path}"))
+                .arg(format!("/keycode={}", cps_keys.webroot_key))
+                .arg("/silent")
+                .spawn()?
+                .stdout;
+
+            let x: tokio::process::ChildStdout = cmd_stdout.unwrap();
+            info!("Executed command.\nOutput: {x:?}");
+        }
+       
+
+        
 
         Ok(())
     }
     
     pub async fn install_sas(&self) -> Result<(), Box<dyn Error>> {
         info!("running install_sas!");
-        let response = self.client.get(format!("https://secure.superantispyware.com/SUPERAntiSpyware.exe")) 
+        let response = self.client.get(
+            format!("https://secure.superantispyware.com/SUPERAntiSpyware.exe")
+        ) 
         .send()
         .await?;
 
-        let temp_directory = std::env::temp_dir();
-        let mut file = fs::File::create(format!("{}\\wrv.exe", temp_directory.display())).await?;
-        let mut content =  Cursor::new(response.bytes().await?);
-        io::copy(&mut content, &mut file).await?;
+        if let Some(service_number) = &self.service_number{
+            let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
+
+            let cps_keys =  cps_request.await.unwrap_or(GetKeysResponse::default());
+
+            let temp_directory = std::env::temp_dir();
+            let sas_path = format!("{}\\sas.exe", temp_directory.display());
+            let mut file = fs::File::create(sas_path.clone()).await?;
+            let mut content =  Cursor::new(response.bytes().await?);
+            io::copy(&mut content, &mut file).await?;
+
+            let cmd_stdout = Command::new(format!("{sas_path}"))
+                .arg(format!("/REGCODE={}", cps_keys.superanti_key))
+                .arg("/silent")
+                .spawn()?
+                .stdout;
+
+            let x: tokio::process::ChildStdout = cmd_stdout.unwrap();
+            info!("Executed command.\nOutput: {x:?}");
+        }
 
         
         Ok(())
