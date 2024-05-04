@@ -8,7 +8,7 @@ use serde_json::Value;
 use eframe::egui;
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
-use crate::{data::{send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, scripts::Scripts, ticket_request::{request::request_seb_info, request_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}};
+use crate::{data::{send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, scripts::{Scripts, SCRIPT_ACTIONS}, ticket_request::{request::request_seb_info, request_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}};
 use tokio::{sync::mpsc::unbounded_channel, spawn, task::spawn_blocking};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -1377,34 +1377,32 @@ impl MastertechContext {
         ui.shrink_height_to_current();
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
-        let scripts = Scripts::default();
-    
-        let script_names = [
-            scripts.wrsa,
-            scripts.sas,
-            scripts.check_driver,
-            scripts.running_tasks,
-        ];
+
+
         
         let mut show_deferred_viewport = self.show_deferred_viewport.load(Ordering::Relaxed);
+        ui.checkbox(&mut show_deferred_viewport, "Show deferred child viewport").clicked();
         self.show_deferred_viewport.store(show_deferred_viewport, Ordering::Relaxed);
 
-        ui.checkbox(&mut show_deferred_viewport, "Show deferred child viewport").clicked();
 
-
-
+        
         Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).show(
         ui, |ui| {
 
             let mut counter = 0;  // Initialize a counter
-            for value in script_names{
+            for (name, action) in &*SCRIPT_ACTIONS{
                 let button = Button::new(
-                    RichText::new(&value))
+                    RichText::new(*name))
                         .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)));
 
 
                 if ui.add(button).clicked(){
-
+                    info!("Clicked button");
+                    let action_clone = action.clone();
+                    tokio::spawn(async move {
+                        let scripts = Scripts::default();
+                        action_clone.execute(&scripts).await.unwrap();
+                    });
                 }
 
                 counter += 1;  // Increment the counter
@@ -1415,55 +1413,7 @@ impl MastertechContext {
             }
         }); // Grid
 
-        // if self.show_deferred_viewport.load(Ordering::Relaxed) {
-        //     let show_deferred_viewport = self.show_deferred_viewport.clone();
 
-        //     self.ctx.show_viewport_deferred(
-        //         egui::ViewportId::from_hash_of("deferred_viewport"),
-        //         egui::ViewportBuilder::default()
-        //             .with_title("Deferred Viewport")
-        //             .with_inner_size([200.0, 100.0]),
-        //         move |ctx, class| {
-
-        //             egui::CentralPanel::default().show(ctx, |ui| {
-        //                 let scripts = Scripts::default();
-    
-        //                 let script_names = [
-        //                     scripts.wrsa,
-        //                     scripts.sas,
-        //                     scripts.check_driver,
-        //                     scripts.running_tasks,
-        //                 ];
-
-        //                 Grid::new("scripts").min_col_width(134.0).num_columns(3).min_row_height(10.0).show(
-        //                     ui, |ui| {
-                    
-        //                         let mut counter = 0;  // Initialize a counter
-        //                         for value in script_names{
-        //                             let button = Button::new(
-        //                                 RichText::new(&value))
-        //                                     .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)));
-                    
-                    
-        //                             if ui.add(button).clicked(){
-                    
-        //                             }
-                    
-        //                             counter += 1;  // Increment the counter
-                    
-        //                             if counter % 4 == 0 {
-        //                                 ui.end_row();  // End the row after every 2 buttons
-        //                             }
-        //                         }
-        //                     }); // Grid
-        //             });
-        //             if ctx.input(|i| i.viewport().close_requested()) {
-        //                 // Tell parent to close us.
-        //                 show_deferred_viewport.store(false, Ordering::Relaxed);
-        //             }
-        //         },
-        //     );
-        // }
      }
 
     fn puffin_profiler(&mut self, ui: &mut Ui){

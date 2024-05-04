@@ -1,17 +1,50 @@
-use std::{error::Error, io::Cursor};
-
+use std::{collections::HashMap, error::Error, io::Cursor, sync::Arc};
+use log::info;
 use reqwest::Client;
+use lazy_static::lazy_static;
+use async_trait::async_trait;
+use tokio::{fs, io, process::Command};
+
+#[async_trait]
+pub trait ScriptAction {
+    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>>;
+}
+
 
 pub struct Scripts{
+    pub client: Client,
     pub wrsa: String,
     pub sas: String,
     pub check_driver: String,
     pub running_tasks: String,
 }
 
+pub struct InstallWebroot;
+pub struct InstallSAS;
+pub struct CheckDriverIssues;
+pub struct RunningTasks;
+
+lazy_static! {
+    pub static ref SCRIPT_ACTIONS: HashMap<&'static str, Arc<dyn ScriptAction + Send + Sync>> = {
+        let mut m = HashMap::new();
+        let install_webroot: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallWebroot {});
+        let install_sas: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallSAS {});
+        let check_drivers: Arc<dyn ScriptAction + Send + Sync> = Arc::new(CheckDriverIssues {});
+        let running_tasks: Arc<dyn ScriptAction + Send + Sync> = Arc::new(RunningTasks{});
+
+        m.insert("Install Webroot", install_webroot);
+        m.insert("Install SAS", install_sas);
+        m.insert("Check Driver Issues", check_drivers);
+        m.insert("Running Tasks", running_tasks);
+        m
+    };
+}
+
 impl Default for Scripts{
     fn default() -> Self{
+        
         Self{
+            client: Client::new(),
             wrsa: "Install Webroot".to_string(),
             sas: "Install SAS".to_string(),
             check_driver: "Check Driver Issues".to_string(),
@@ -21,18 +54,94 @@ impl Default for Scripts{
 }
 
 impl Scripts{
-    async fn run_script(client: Client, script: String) -> Result<String, Box<dyn Error>>{
+    // pub fn new(client: Client) -> Self{
+    //     Self{
+    //         client,
+    //         wrsa: "Install Webroot".to_string(),
+    //         sas: "Install SAS".to_string(),
+    //         check_driver: "Check Driver Issues".to_string(),
+    //         running_tasks: "Running Tasks".to_string()
+    //     }
+    // }
 
-
-        let response = client.get(format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")) 
-            .send()
-            .await?;
-    
-        let mut file = std::fs::File::create("%temp%\\wrv.exe")?;
-        let mut content =  Cursor::new(response.bytes().await?);
-        std::io::copy(&mut content, &mut file)?;
+    pub async fn install_webroot(&self) -> Result<(), Box<dyn Error>> {
+        info!("running install_webroot!");
         
-        // tokio::process::Command::new("")
-        Ok("".to_string())
+        let response = self.client.get(format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")) 
+        .send()
+        .await?;
+
+        let temp_directory = std::env::temp_dir();
+        let wrv_path = format!("{}\\wrv.exe", temp_directory.display());
+        let mut file = fs::File::create(wrv_path.clone()).await?;
+        let mut content =  Cursor::new(response.bytes().await?);
+        io::copy(&mut content, &mut file).await?;
+
+        let cmd_stdout = Command::new(format!("{wrv_path}"))
+            .arg("/keycode={{}}")
+            .arg("/silent")
+            .spawn()?
+            .stdout;
+
+        let x: tokio::process::ChildStdout = cmd_stdout.unwrap();
+        info!("Executed command.\nOutput: {x:?}");
+
+        Ok(())
+    }
+    
+    pub async fn install_sas(&self) -> Result<(), Box<dyn Error>> {
+        info!("running install_sas!");
+        let response = self.client.get(format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")) 
+        .send()
+        .await?;
+
+        let temp_directory = std::env::temp_dir();
+        let mut file = fs::File::create(format!("{}\\wrv.exe", temp_directory.display())).await?;
+        let mut content =  Cursor::new(response.bytes().await?);
+        io::copy(&mut content, &mut file).await?;
+
+        
+        Ok(())
+    }
+    
+    pub async fn check_driver_issues(&self) -> Result<(), Box<dyn Error>> {
+        info!("running check_driver_issues!");
+        Ok(())
+    }
+    
+    pub async fn running_tasks(&self) -> Result<(), Box<dyn Error>> {
+        info!("running running_tasks!");
+        Ok(())
     }
 }
+
+
+
+#[async_trait]
+impl ScriptAction for InstallWebroot {
+    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+        Scripts::install_webroot(scripts).await
+    }
+}
+
+#[async_trait]
+impl ScriptAction for InstallSAS {
+    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+        Scripts::install_sas(scripts).await
+    }
+}
+
+#[async_trait]
+impl ScriptAction for CheckDriverIssues {
+    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+        Scripts::check_driver_issues(scripts).await
+    }
+}
+
+#[async_trait]
+impl ScriptAction for RunningTasks {
+    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+        Scripts::running_tasks(scripts).await
+    }
+}
+

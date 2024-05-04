@@ -25,6 +25,7 @@ dependencies = [
  "futures",
  "futures-util",
  "image 0.25.0",
+ "lazy_static",
  "lettre",
  "libatasmart",
  "linked-hash-map",

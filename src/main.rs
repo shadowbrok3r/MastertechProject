@@ -1,11 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{fs::File, sync::Arc};
+use std::{fs::File, sync::{atomic::Ordering, Arc}};
 use github::self_updater;
 use log::debug;
+use scripts::Scripts;
 use crate::ticket_request::scaffold;
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{style::Style, vec2, Align2, CentralPanel, Color32, Context, FontId, Frame, IconData, Spinner, TopBottomPanel, Vec2, ViewportBuilder, Window};
+use eframe::egui::{style::Style, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Spinner, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
 use data::ComputerData;
@@ -189,6 +190,57 @@ impl eframe::App for MasterTechApp {
             }
         }
     
+
+        if self.context.show_deferred_viewport.load(Ordering::Relaxed) {
+            let show_deferred_viewport = self.context.show_deferred_viewport.clone();
+
+            ctx.show_viewport_deferred(
+                ViewportId::from_hash_of("deferred_viewport"),
+                ViewportBuilder::default()
+                    .with_title("Deferred Viewport")
+                    .with_inner_size([200.0, 100.0]),
+                move |ctx, _class| {
+
+                    CentralPanel::default().show(ctx, |ui| {
+                        let scripts = Scripts::default();
+    
+                        let script_names = [
+                            scripts.wrsa,
+                            scripts.sas,
+                            scripts.check_driver,
+                            scripts.running_tasks,
+                        ];
+
+                        Grid::new("scripts").min_col_width(134.0).num_columns(3).min_row_height(10.0).show(
+                            ui, |ui| {
+                    
+                                let mut counter = 0;  // Initialize a counter
+                                for value in script_names{
+                                    let button = Button::new(
+                                        RichText::new(&value))
+                                            .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)));
+                    
+                    
+                                    if ui.add(button).clicked(){
+                    
+                                    }
+                    
+                                    counter += 1;  // Increment the counter
+                    
+                                    if counter % 4 == 0 {
+                                        ui.end_row();  // End the row after every 2 buttons
+                                    }
+                                }
+                            }); // Grid
+                    });
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        // Tell parent to close us.
+                        show_deferred_viewport.store(false, Ordering::Relaxed);
+                    }
+                },
+            );
+        }
+
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             eframe::egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
