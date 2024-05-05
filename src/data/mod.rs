@@ -10,6 +10,7 @@ use tokio::spawn;
 use crate::ticket_request::Store;
 
 pub mod database;
+pub mod schema;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PreTicketData{

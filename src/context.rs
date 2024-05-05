@@ -135,48 +135,41 @@ impl Default for MasterTechApp {
             }
         }
 
-        let client = reqwest::Client::new();
-
         // Create watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         let tx_scaffold = tx.clone();
-        let tx_sysinfo = tx.clone();
 
 
-        let scaffold_request = SendRequest{
-            tx: tx_scaffold,
-        };
+        let scaffold_request = SendRequest{ tx: tx_scaffold };
 
         // let minidump_app = MiniDumpApp::default();
 
-        let ticket_information = PreTicketData::default();
-
-        let client_uuid = Uuid::new_v4();
         let context = MastertechContext {
             so_number: "".to_string(),
             recommendations: "".to_string(),
 
-            ticket_info: ticket_information,
+            ticket_info: PreTicketData::default(),
 
             keys: GetKeysResponse { 
                 webroot_key: "Webroot Key".to_string(), 
                 superanti_key: "SuperAnti Key".to_string() 
             },
+
             seb_info: None,
             system_info: ComputerData::default(),
             disks: Value::Array(vec![]),
             disk_num: 0,
 
             scaffold_request,
-            client,
+            client: reqwest::Client::new(),
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
             current_antivirus: "".to_string(),
             opened_file: None,
             open_file_dialog: None,
-            // I should just make this section take
-            // the whole enum
+
             salesman_cbox: scaffold::Salesman::Jake, 
             techs_cbox: scaffold::Techs::Logan, 
+            
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
@@ -184,7 +177,7 @@ impl Default for MasterTechApp {
             output_text: "".to_string(),
 
             connect_to_ws: false,
-            client_uuid,
+            client_uuid: Uuid::new_v4(),
             rx: Some(rx),
 
             //////////////////////////////////////////
@@ -209,12 +202,8 @@ impl Default for MasterTechApp {
             get_specs: false,
             spinner: false,
 
-            //////////////////////////////////////////
-            /*          UI Colors                   */
-            //////////////////////////////////////////
             style: None,
-            text_color: Color32::from_rgb(255, 204, 230),//(200,200,200),
-            // bg_color: Color32::from_rgb(28,30,36),
+            text_color: Color32::from_rgb(255, 204, 230),
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
 
             frame_counter: 0,
@@ -1181,7 +1170,7 @@ impl MastertechContext {
                     ram_test,
                 } // example
             );
-            let client = self.client.clone();
+            // let client = self.client.clone();
 
             
             let cookies = CookieStore::default();
@@ -1377,23 +1366,12 @@ impl MastertechContext {
         let mut show_deferred_viewport = self.show_deferred_viewport.load(Ordering::Relaxed);
         ui.checkbox(&mut show_deferred_viewport, "Show deferred child viewport").clicked();
         self.show_deferred_viewport.store(show_deferred_viewport, Ordering::Relaxed);
-
-  
-        
-        // let so_number = Arc::new(self.so_number.to_string());
-        
-
-        if self.so_number.is_empty(){
-            self.output_text += "You need to enter a service number for Webroot/SuperAnti auto install to work";
-        }
-       
         
         Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).show(
         ui, |ui| {
 
             let mut counter = 0;  // Initialize a counter
             for (name, action) in &*SCRIPT_ACTIONS{
-                let so_number = self.so_number.clone();
 
                 let button = Button::new(
                     RichText::new(*name))
@@ -1404,8 +1382,8 @@ impl MastertechContext {
                     info!("Clicked button");
 
                     let action_clone = action.clone();
-                    let so_num = Arc::new(so_number);
-
+                    let so_num = Arc::new(self.so_number.clone());
+                    info!("SO number: {}", &so_num);
                     tokio::spawn(async move {
                         let y = Arc::clone(&so_num);
                         let scripts = Scripts::new(y.to_string()).await;

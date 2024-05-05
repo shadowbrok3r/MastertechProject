@@ -1,12 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
 use std::{fs::File, sync::{atomic::Ordering, Arc}};
 use github::self_updater;
-use log::debug;
+use log::{debug, info};
 use scripts::Scripts;
 use crate::ticket_request::scaffold;
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{style::Style, vec2, Align2, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Spinner, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
+use eframe::egui::{style::Style, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
 use data::ComputerData;
@@ -49,24 +49,6 @@ async fn main() -> eframe::Result<()> {
     )
 }
 
-pub(crate) fn load_icon() -> IconData {
-	let (icon_rgba, icon_width, icon_height) = {
-		let icon = include_bytes!("assets/masterlogoV2.ico");
-		let image = image::load_from_memory(icon)
-			.expect("Failed to open icon path")
-			.into_rgba8();
-		let (width, height) = image.dimensions();
-		let rgba = image.into_raw();
-		(rgba, width, height)
-	};
-	
-	eframe::egui::IconData {
-		rgba: icon_rgba,
-		width: icon_width,
-		height: icon_height,
-	}
-}
-
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let theme = CarlDark;
@@ -83,13 +65,36 @@ impl eframe::App for MasterTechApp {
         ctx.set_style(arc_style);
         
         if self.context.connect_to_ws{
-            let x = ComputerData::initialize_websocket(self.context.client_uuid);
-            self.context.output_text += &x;
+            let uuid = self.context.client_uuid;
+            tokio::spawn(async move{
+                let x = ComputerData::initialize_websocket(uuid.clone()).await;
+            });
+
+            // self.context.output_text += &x;
             self.context.connect_to_ws = false;
         }
 
         if self.context.specs_first_run{
-            let specs = ComputerData::get_computer_data();
+            let (tx, rx) = std::sync::mpsc::channel();
+            tokio::spawn(async move {
+                let system_info = ComputerData::get_computer_data().await;
+
+                match tx.send(system_info.unwrap()){
+                    Ok(_) => info!("sent computer data"),
+                    Err(e) => info!("Error sending computer data: {e:?}"),
+                }
+            });
+            let specs = match rx.recv(){
+                Ok(data) => {
+                    info!("Received computer data");
+                    Ok(data)
+                },
+                Err(e) => {
+                    info!("Error receiving data: {e}");
+                    Err(e)
+                },
+            };
+
             match specs{
                 Ok(computer_data) => {
                     self.context.system_info = computer_data;
@@ -118,18 +123,16 @@ impl eframe::App for MasterTechApp {
             #[cfg(target_os="windows")]
             {
                 let mut cps = self.context.current_antivirus.clone();
-                let mut new_out_text = String::new();
     
                 let installed_antivirus = ComputerData::get_antivirus()
                 .map_err(|e| 
-                    new_out_text = format!("Error checking antivirus: {e}\n")
+                    cps += format!("Error checking antivirus: {e}\n").as_str()
                 ).unwrap();
     
     
                 for (name, is_installed) in installed_antivirus {
                     match is_installed {
                         Some(true) => {
-                            new_out_text += &format!("{name} detected");
                             cps += "\n";
                             cps += &format!("{name}");
                         },
@@ -335,22 +338,6 @@ impl MasterTechApp{
         }
     
         if self.context.specs_first_run == true{
-            /*             
-            let (tx, rx) = crossbeam::channel::bounded(1);
-            tokio::task::spawn_blocking(move || {
-                match run(){
-                    Ok(response) => {
-                        match tx.send((response.0, response.1)){
-                            Ok(_) => drop(tx),
-                            Err(e) => println!("{e}"),
-                        }
-                    },
-                    Err(e) => println!("err: {e}"),
-                }
-            });
-            if let Ok(res) = rx.recv(){
-                self.context.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
-            } */
     
             let specs_sender = self.context.sysinfo_request.tx.clone();
             RetrieveSystemInfo::get_system_specs(specs_sender);
@@ -622,4 +609,23 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
             _ => {}
         }
     })
+}
+
+
+pub(crate) fn load_icon() -> IconData {
+	let (icon_rgba, icon_width, icon_height) = {
+		let icon = include_bytes!("assets/masterlogoV2.ico");
+		let image = image::load_from_memory(icon)
+			.expect("Failed to open icon path")
+			.into_rgba8();
+		let (width, height) = image.dimensions();
+		let rgba = image.into_raw();
+		(rgba, width, height)
+	};
+	
+	eframe::egui::IconData {
+		rgba: icon_rgba,
+		width: icon_width,
+		height: icon_height,
+	}
 }
