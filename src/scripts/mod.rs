@@ -3,7 +3,7 @@ use log::info;
 use reqwest::Client;
 use lazy_static::lazy_static;
 use async_trait::async_trait;
-use tokio::{fs, io, process::Command};
+use tokio::{fs, io, process::Command, sync::Mutex};
 
 use crate::{data::GetKeysResponse, ticket_request::request::SendRequest};
 
@@ -58,7 +58,7 @@ impl Default for Scripts{
 }
 
 impl Scripts{
-    pub fn new(service_number: String) -> Self{
+    pub async fn new(service_number: String) -> Self{
         Self{
             service_number: Some(service_number),
             client: Client::new(),

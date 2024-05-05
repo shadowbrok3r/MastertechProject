@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fs, path::PathBuf, sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use std::{collections::HashSet, fs, path::PathBuf, sync::{atomic::{AtomicBool, Ordering}, Arc}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, SecondsFormat};
 use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
@@ -9,7 +9,7 @@ use eframe::egui::{self, TextBuffer};
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
 use crate::{data::{send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, scripts::{Scripts, SCRIPT_ACTIONS}, ticket_request::{request::request_seb_info, request_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}};
-use tokio::{sync::mpsc::unbounded_channel, spawn, task::spawn_blocking};
+use tokio::{spawn, sync::{mpsc::unbounded_channel, Mutex, RwLock}, task::spawn_blocking};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
@@ -1378,9 +1378,10 @@ impl MastertechContext {
         ui.checkbox(&mut show_deferred_viewport, "Show deferred child viewport").clicked();
         self.show_deferred_viewport.store(show_deferred_viewport, Ordering::Relaxed);
 
-        let service_num = &self.so_number;
-        self.spinner = true;
-        let service_str = service_num.as_str();
+  
+        
+        // let so_number = Arc::new(self.so_number.to_string());
+        
 
         if self.so_number.is_empty(){
             self.output_text += "You need to enter a service number for Webroot/SuperAnti auto install to work";
@@ -1392,6 +1393,8 @@ impl MastertechContext {
 
             let mut counter = 0;  // Initialize a counter
             for (name, action) in &*SCRIPT_ACTIONS{
+                let so_number = self.so_number.clone();
+
                 let button = Button::new(
                     RichText::new(*name))
                         .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)));
@@ -1399,9 +1402,13 @@ impl MastertechContext {
 
                 if ui.add(button).clicked(){
                     info!("Clicked button");
+
                     let action_clone = action.clone();
+                    let so_num = Arc::new(so_number);
+
                     tokio::spawn(async move {
-                        let scripts = Scripts::new(service_str.to_string());
+                        let y = Arc::clone(&so_num);
+                        let scripts = Scripts::new(y.to_string()).await;
                         action_clone.execute(&scripts).await.unwrap();
                     });
                 }
