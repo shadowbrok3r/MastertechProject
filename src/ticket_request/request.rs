@@ -172,10 +172,9 @@ impl SendRequest{
         
     }
        
-    pub async fn get_cps(so_number: String, client: reqwest::Client
-    ) -> core::result::Result<GetKeysResponse, reqwest::Error>{
-        
-        let join = tokio::spawn(async move{
+    pub async fn get_cps(so_number: String, client: reqwest::Client) 
+        -> anyhow::Result<GetKeysResponse, anyhow::Error>
+    {
 
             let params: Value = serde_json::json!({
                 "user_email": "logan.lees@pclaptops.com", 
@@ -191,70 +190,46 @@ impl SendRequest{
                 .header(ACCEPT, "application/json")
                 .json(&params)
                 .send()
-                .await;
+                .await?;
         
-            match response{
-                Ok(res) => {
-                    let mut response_text = res.text().await.unwrap_or("get_cps() -> Error unwrapping response".to_string());
-                    debug!("response: {:?}", response_text);
-        
-                    let mut webroot_key = "";
-                    let mut superanti_key = "";
-        
-                    if response_text.contains("WRAV: ") || response_text.contains("SAS: "){
-                        let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
-        
-                        let _: String = response_text.drain(..wrav_offset).collect(); 
-        
-                        let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
-        
-                        let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
-        
-                        webroot_key = split_wrav[1].trim();
-                        superanti_key = split_lines[1].trim();
-                    }
-                    else{
-                        webroot_key = "Error";
-                        superanti_key = "Check console";
-                    }
-        
-                    let response_keys = GetKeysResponse {
-                        webroot_key: webroot_key.to_string(),
-                        superanti_key: superanti_key.to_string(),
-                    };
-    
+            let mut response_text = response.text().await?;
+            debug!("response: {:?}", response_text);
 
-                    Ok(response_keys)
-                },
-                Err(e) => {
-                    debug!("get_cps() -> Error: {e:?}");
-                    Err(e)
-                }
+            let mut webroot_key = "";
+            let mut superanti_key = "";
+
+            if response_text.contains("WRAV: ") || response_text.contains("SAS: "){
+                let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
+
+                response_text.drain(..wrav_offset); 
+
+                let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
+
+                let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
+
+                webroot_key = split_wrav[1].trim();
+                superanti_key = split_lines[1].trim();
             }
-        })
-        .await
-        .unwrap_or(Ok(GetKeysResponse::default()));
-
-
-        match join{
-            Ok(keys) => {
-                Ok(keys)
-            },
-            Err(e) => {
-                debug!("Error: {e:?}");
-                Err(e)
+            else{
+                webroot_key = "Error";
+                superanti_key = "Check console";
             }
-        }
+
+            let response_keys = GetKeysResponse {
+                webroot_key: webroot_key.to_string(),
+                superanti_key: superanti_key.to_string(),
+            };
+        Ok(response_keys)
     }
 
-    pub fn send_ticket_request(
+    pub async fn send_ticket_request(
         tx: std::sync::mpsc::Sender<String>, 
         client: reqwest::Client, 
         asana_task: AsanaTask,
         due_date: DateTime<Utc>,
-    ) //-> core::result::Result<String, reqwest::Error>
+    )
+        -> anyhow::Result<(), anyhow::Error>
     {
-        let (sender, receiver) = channel::bounded::<String>(5);
         let send = tx.clone();
 
         let mut assigned_salesman = "1202792432658520".to_string(); // Jake
@@ -271,91 +246,67 @@ impl SendRequest{
             Techs::Taco => { assigned_tech = "1202792432551073".to_string()},
         };
 
-        tokio::spawn(async move{
-            // ideally, id like to also add the functionality to search for a task by the SO number
-            // so we can update the ticket or delete it, or add an attachment
-            // i should use create_attachment_for_task,
-            //  dependencies: Option<Vec<AsanaResource>> 
-            // to add spo as dependancy to task
 
-            let params = serde_json::json!({
-                "data": {
-                    "name": asana_task.task_name,
-                    "html_notes": asana_task.html_notes,
-                    "followers": [
-                        assigned_salesman,
-                        assigned_tech
-                    ],
-                    "due_at": due_date.to_rfc3339_opts(SecondsFormat::Secs, true),
-                    "workspace": "13314583095021",
-                    "assignee": assigned_salesman,
-                    "projects": ["1202792139600600"]
-                }
-            });
 
-            
-            let response = client
-                .post("https://app.asana.com/api/1.0/tasks") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-                .header(CONTENT_TYPE, "application/json")
-                .header(ACCEPT, "application/json")
-                .header(AUTHORIZATION, "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
-                .json(&params)
-                .send()
-                .await;
-            
-            match response{
-                Ok(res) => {
-                    let res_body: Value = res.json().await.unwrap();
-                    println!("Asana Response Body: {res_body:?}");
-                    let gid: Value = res_body.get("gid").unwrap_or(&Value::default()).clone();
-
-                    println!("Asana Response: {gid:?}");
-
-                    let file = asana_task.file_attachment.clone();
-
-                    if let Some(file) = file{
-                        let file_name = file.file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or("no file name");
-                        
-                        let file_attachment = asana_task.file_attachment.clone();
-                        let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
-                        
-                        // let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
-                        // let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
-
-                        let mut form = HashMap::new();
-                        form.insert("file", "part"); //part
-                        form.insert("parent", "gid"); //text
-
-                        let response = client
-                            .post("https://app.asana.com/api/1.0/attachments")
-                            .header("Authorization", "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
-                            .header(ACCEPT, "application/json")
-                            .form(&form)
-                            .send()
-                            .await?;
-                    }
-                    
-                    Ok("Successfully retrieved response".to_string())
-                },
-                Err(err) => {
-                    debug!("send_ticket_request -> Asana request error: {err:?}");
-                    Err(err)
-                },
+        let params = serde_json::json!({
+            "data": {
+                "name": asana_task.task_name,
+                "html_notes": asana_task.html_notes,
+                "followers": [
+                    assigned_salesman,
+                    assigned_tech
+                ],
+                "due_at": due_date.to_rfc3339_opts(SecondsFormat::Secs, true),
+                "workspace": "13314583095021",
+                "assignee": assigned_salesman,
+                "projects": ["1202792139600600"]
             }
         });
-        let now = Instant::now();
 
-        if let Ok(message) = receiver.recv_deadline(now + Duration::from_secs(3)){
-            let msg = message.clone();
-            trace!("message: {msg}");
-            match send.send(msg){
-                Ok(_) => drop(send),
-                Err(e) => error!("{e}")
-            }
-            info!("received: {message}");
+        
+        let response = client
+            .post("https://app.asana.com/api/1.0/tasks") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .header(AUTHORIZATION, "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
+            .json(&params)
+            .send()
+            .await?;
+        
+        let res_body: Value = response.json().await.unwrap();
+        println!("Asana Response Body: {res_body:?}");
+        let gid: Value = res_body.get("gid").unwrap_or(&Value::default()).clone();
+
+        println!("Asana Response: {gid:?}");
+
+        let file = asana_task.file_attachment.clone();
+
+        if let Some(file) = file{
+            let file_name = file.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("no file name");
+            
+            let file_attachment = asana_task.file_attachment.clone();
+            let new_path = file_attachment.as_ref().map(|p| p.as_path().to_owned());
+            
+            // let byte_content = tokio::fs::read(new_path.unwrap()).await.unwrap();
+            // let part = Part::bytes(byte_content).file_name(format!("{file_name}"));
+
+            let mut form = HashMap::new();
+            form.insert("file", "part"); //part
+            form.insert("parent", "gid"); //text
+
+            let response = client
+                .post("https://app.asana.com/api/1.0/attachments")
+                .header("Authorization", "Bearer 1/1199992640930465:629a6fec5c395f50c92e878dcf1d32e2")
+                .header(ACCEPT, "application/json")
+                .form(&form)
+                .send()
+                .await?;
         }
+        
+        Ok(())
+        
     }
 }
 
@@ -399,7 +350,7 @@ async fn request_ticket_info(so_number: String, client: reqwest::Client)
 }
 
 pub async fn request_seb_info<T>(client: reqwest::Client, customer_email: Option<String>) 
--> Result<T, Box<dyn Error>> 
+-> anyhow::Result<T, anyhow::Error> 
     where T: Debug + Serialize + for<'a> Deserialize<'a> + Clone + std::convert::From<LocalSebData>
 {
     if let Some(customer_email) = customer_email{

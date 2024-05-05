@@ -4,6 +4,7 @@ use serde_json::Value;
 pub mod request;
 pub mod scaffold;
 pub mod request_builder;
+pub mod prestashop;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AsanaResponse{

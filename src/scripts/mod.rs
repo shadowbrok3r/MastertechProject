@@ -1,11 +1,14 @@
 use std::{collections::HashMap, error::Error, io::Cursor, sync::Arc};
+use futures::StreamExt;
 use log::info;
-use reqwest::Client;
+use reqwest::{header::CONTENT_LENGTH, Client};
 use lazy_static::lazy_static;
 use async_trait::async_trait;
-use tokio::{fs, io, process::Command, sync::Mutex};
+use sha2::{Sha256, Digest};
+use tokio::{fs, io::{self, AsyncWriteExt}, process::Command, sync::Mutex};
 
 use crate::{data::GetKeysResponse, ticket_request::request::SendRequest};
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[async_trait]
 pub trait ScriptAction {
@@ -72,70 +75,113 @@ impl Scripts{
     pub async fn install_webroot(&self) -> Result<(), Box<dyn Error>> {
         info!("running install_webroot!");
         
-        let response = self.client.get(
-            format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")
-        ) 
-        .send()
-        .await?;
-        
         if let Some(service_number) = &self.service_number{
-            let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
-
-            let cps_keys =  cps_request.await.unwrap_or(GetKeysResponse::default());
+            let response = self.client.get(
+                format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")
+                ) 
+                .send()
+                .await?;
+                
+            let total_length = response
+                .content_length()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Content-Length header is missing"))?;
+            let mut downloaded_bytes: u64 = 0;
 
             let temp_directory = std::env::temp_dir();
             let wrv_path = format!("{}\\wrv.exe", temp_directory.display());
 
             let mut file = fs::File::create(wrv_path.clone()).await?;
-            let mut content =  Cursor::new(response.bytes().await?);
-            io::copy(&mut content, &mut file).await?;
+            let mut sha = sha2::Sha256::new();
 
-            let cmd_stdout = Command::new(format!("{wrv_path}"))
-                .arg(format!("/keycode={}", cps_keys.webroot_key))
-                .arg("/silent")
-                .spawn()?
-                .stdout;
+            let mut stream = response.bytes_stream();
 
-            let x: tokio::process::ChildStdout = cmd_stdout.unwrap();
-            info!("Executed command.\nOutput: {x:?}");
+            while let Some(item) = stream.next().await{
+                let chunk = item?;
+                file.write_all(&chunk).await?;
+                sha.update(&chunk);
+                downloaded_bytes += chunk.len() as u64;
+            }
+
+            if downloaded_bytes == total_length {
+                let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
+                let cps_keys =  cps_request.await.unwrap_or(GetKeysResponse::default());
+
+                info!("cps_keys: {:?}", cps_keys.clone());
+
+                let hash = sha.finalize();
+                info!("Download complete. SHA-256: {:x}", hash);
+    
+                let cmd_stdout = Command::new("cmd")
+                    .arg("/c ")
+                    .arg(wrv_path)
+                    .arg(format!("/keycode={}", cps_keys.webroot_key))
+                    .arg("/silent")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()?
+                    .stdout;
+
+                info!("cmd_stdout: {:?}", cmd_stdout);
+            }
+        }else{
+            info!("No service number found");
         }
-       
-
-        
-
         Ok(())
     }
     
     pub async fn install_sas(&self) -> Result<(), Box<dyn Error>> {
         info!("running install_sas!");
-        let response = self.client.get(
-            format!("https://secure.superantispyware.com/SUPERAntiSpyware.exe")
-        ) 
-        .send()
-        .await?;
 
         if let Some(service_number) = &self.service_number{
-            let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
-
-            let cps_keys =  cps_request.await.unwrap_or(GetKeysResponse::default());
+            let response = self.client.get(
+                format!("https://secure.superantispyware.com/SUPERAntiSpyware.exe")
+                ) 
+                .send()
+                .await?;
+                
+            let total_length = response
+                .content_length()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Content-Length header is missing"))?;
+            let mut downloaded_bytes: u64 = 0;
 
             let temp_directory = std::env::temp_dir();
             let sas_path = format!("{}\\sas.exe", temp_directory.display());
+
             let mut file = fs::File::create(sas_path.clone()).await?;
-            let mut content =  Cursor::new(response.bytes().await?);
-            io::copy(&mut content, &mut file).await?;
+            let mut sha = sha2::Sha256::new();
 
-            let cmd_stdout = Command::new(format!("{sas_path}"))
-                .arg(format!("/REGCODE={}", cps_keys.superanti_key))
-                .arg("/silent")
-                .spawn()?
-                .stdout;
+            let mut stream = response.bytes_stream();
 
-            let x: tokio::process::ChildStdout = cmd_stdout.unwrap();
-            info!("Executed command.\nOutput: {x:?}");
+            while let Some(item) = stream.next().await{
+                let chunk = item?;
+                file.write_all(&chunk).await?;
+                sha.update(&chunk);
+                downloaded_bytes += chunk.len() as u64;
+            }
+
+            if downloaded_bytes == total_length {
+                let cps_request = SendRequest::get_cps(service_number.clone(), self.client.clone());
+                let cps_keys =  cps_request.await.unwrap_or(GetKeysResponse::default());
+
+                info!("cps_keys: {:?}", cps_keys.clone());
+
+                let hash = sha.finalize();
+                info!("Download complete. SHA-256: {:x}", hash);
+
+                let cmd_stdout = Command::new("cmd")
+                    .arg("/c ")
+                    .arg(sas_path)
+                    .arg(format!("/REGCODE={}", cps_keys.superanti_key))
+                    .arg("/silent")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()?
+                    .stdout;
+
+                info!("cmd_stdout: {:?}", cmd_stdout);
+            }
+        }else{
+            info!("No service number found");
         }
 
-        
         Ok(())
     }
     
