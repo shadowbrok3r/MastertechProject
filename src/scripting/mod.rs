@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use sha2::{Sha256, Digest};
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command, sync::Mutex};
 
-use crate::{data::GetKeysResponse, ticket_request::request::SendRequest};
+use crate::{surrealdb::GetKeysResponse, handle_api::api_request::SendRequest};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[async_trait]
