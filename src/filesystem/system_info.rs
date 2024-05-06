@@ -23,7 +23,7 @@ use rust_socketio::{
 };
 use uuid::Uuid;
 
-use crate::{data::{get_cookie, ComputerData, DriveData, SystemInformation}, ticket_request::{request::request_seb_info, Store}};
+use crate::{surrealdb::{get_cookie, ComputerData, DriveData, SystemInformation}, handle_api::{api_request::request_seb_info, Store}};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -91,7 +91,7 @@ impl ComputerData{
                 Ok(data)
         }); 
 
-        let seb_info: Option<crate::data::LocalSebData>;
+        let seb_info: Option<crate::surrealdb::LocalSebData>;
 
         if let Ok(seb) = seb_data{seb_info = Some(seb);
         }else {seb_info = None;}

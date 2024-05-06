@@ -2,24 +2,24 @@
 use std::{fs::File, sync::{atomic::Ordering, Arc}};
 use github::self_updater;
 use log::{debug, info};
-use scripts::Scripts;
-use crate::ticket_request::scaffold;
+use scripting::Scripts;
+use crate::handle_api::scaffold;
 use context::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
-use data::ComputerData;
+use surrealdb::ComputerData;
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 
 mod filesystem;
-mod ticket_request;
+mod handle_api;
 mod context;
 pub mod github;
 mod minidump;
-mod data;
-mod scripts;
+mod surrealdb;
+mod scripting;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -146,7 +146,7 @@ impl eframe::App for MasterTechApp {
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            if let Ok(info) = serde_json::from_str::<data::PreTicketData>(&message) {
+            if let Ok(info) = serde_json::from_str::<surrealdb::PreTicketData>(&message) {
     
                 self.context.output_text.clear();
     
@@ -166,13 +166,13 @@ impl eframe::App for MasterTechApp {
                 self.context.spinner = false;
     
             }             
-            else if let Ok(info) = serde_json::from_str::<data::GetKeysResponse>(&message) {
+            else if let Ok(info) = serde_json::from_str::<surrealdb::GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
                     self.context.keys = info;
                 }
                 self.context.spinner = false;
             }
-            else if let Ok(info) = serde_json::from_str::<crate::ticket_request::AsanaResponse>(&message) { 
+            else if let Ok(info) = serde_json::from_str::<crate::handle_api::AsanaResponse>(&message) { 
                 if let Some(e) = info.status{
                     self.context.output_text = format!("Status Code: {e:#?}");
                 };

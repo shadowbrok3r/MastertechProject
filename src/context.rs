@@ -8,7 +8,7 @@ use serde_json::Value;
 use eframe::egui::{self, TextBuffer};
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
-use crate::{data::{send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, scripts::{Scripts, SCRIPT_ACTIONS}, ticket_request::{request::request_seb_info, request_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}};
+use crate::{surrealdb::{send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, scripting::{Scripts, SCRIPT_ACTIONS}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}};
 use tokio::{spawn, sync::{mpsc::unbounded_channel, Mutex, RwLock}, task::spawn_blocking};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -18,19 +18,19 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use serde::Serialize;
 use crate::{
-    data::ComputerData,
+    surrealdb::ComputerData,
     filesystem::{
         file_browser::FileBrowser,
     }, 
-    ticket_request::{
-        request::SendRequest,
+    handle_api::{
+        api_request::SendRequest,
         scaffold, Store
     },
     self_updater::run,
     // minidump::minidump_main::MiniDumpApp,
     // puffin_profiler::start_puffin_server,
 };
-use crate::ticket_request::request_builder::email_builder;
+use crate::handle_api::email_builder::email_builder;
 
 
 pub struct MastertechContext { 
