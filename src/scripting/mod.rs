@@ -7,6 +7,9 @@ use async_trait::async_trait;
 use sha2::{Sha256, Digest};
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command, sync::Mutex};
 
+#[cfg(target_os="windows")]
+use wmi::{COMLibrary, WMIConnection, variant::Variant};
+
 use crate::{surrealdb::GetKeysResponse, handle_api::api_request::SendRequest};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -110,17 +113,19 @@ impl Scripts{
 
                 let hash = sha.finalize();
                 info!("Download complete. SHA-256: {:x}", hash);
-    
-                let cmd_stdout = Command::new("cmd")
-                    .arg("/c ")
-                    .arg(wrv_path)
-                    .arg(format!("/keycode={}", cps_keys.webroot_key))
-                    .arg("/silent")
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .spawn()?
-                    .stdout;
 
-                info!("cmd_stdout: {:?}", cmd_stdout);
+                #[cfg(target_os="windows")]{
+                    let cmd_stdout = Command::new("cmd")
+                        .arg("/c ")
+                        .arg(wrv_path)
+                        .arg(format!("/keycode={}", cps_keys.webroot_key))
+                        .arg("/silent")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .spawn()?
+                        .stdout;
+                
+                    info!("cmd_stdout: {:?}", cmd_stdout);
+                }
             }
         }else{
             info!("No service number found");
@@ -166,17 +171,18 @@ impl Scripts{
 
                 let hash = sha.finalize();
                 info!("Download complete. SHA-256: {:x}", hash);
+                #[cfg(target_os="windows")]{
+                    let cmd_stdout = Command::new("cmd")
+                        .arg("/c ")
+                        .arg(sas_path)
+                        .arg(format!("/REGCODE={}", cps_keys.superanti_key))
+                        .arg("/silent")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .spawn()?
+                        .stdout;
 
-                let cmd_stdout = Command::new("cmd")
-                    .arg("/c ")
-                    .arg(sas_path)
-                    .arg(format!("/REGCODE={}", cps_keys.superanti_key))
-                    .arg("/silent")
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .spawn()?
-                    .stdout;
-
-                info!("cmd_stdout: {:?}", cmd_stdout);
+                    info!("cmd_stdout: {:?}", cmd_stdout);
+                }
             }
         }else{
             info!("No service number found");
@@ -192,6 +198,24 @@ impl Scripts{
     
     pub async fn running_tasks(&self) -> Result<(), Box<dyn Error>> {
         info!("running running_tasks!");
+        Ok(())
+    }
+
+    #[cfg(target_os="windows")]
+    pub async fn query_antivirus(&self) -> Result<(), Box<dyn Error>>{
+        // Initialize the COM Library
+        let com_con = COMLibrary::new()?;
+        let wmi_con = WMIConnection::new(com_con.into())?;
+
+        // Perform a WMI query
+        let results: Vec<HashMap<String, Variant>> = wmi_con.raw_query("SELECT displayName, productState FROM AntiVirusProduct")?;
+
+        for result in results {
+            let display_name = result.get("displayName").and_then(Variant::as_string).unwrap_or_default();
+            let product_state = result.get("productState").and_then(Variant::as_u32).unwrap_or_default();
+
+            println!("Antivirus: {}, Product State: {:X}", display_name, product_state);
+        }
         Ok(())
     }
 }
