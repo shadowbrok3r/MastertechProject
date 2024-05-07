@@ -1,13 +1,12 @@
 use std::{collections::HashMap, error::Error, sync::Arc};
-
-use dotenv::dotenv;
 use log::{debug, info};
 use reqwest::header::{COOKIE, CONTENT_TYPE, ACCEPT, HeaderValue};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Serialize, Deserialize};
 use serde_json::json;
-use tokio::spawn;
-use crate::handle_api::Store;
+use crate::{database::schema::{CustomerData, TicketData, TicketPayload, TicketResponse}, handle_api::Store};
+
+use self::schema::{ComputerData, HardwareTests};
 
 pub mod database;
 pub mod schema;
@@ -37,18 +36,18 @@ pub struct PreTicketData{
     //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct TicketData{
-    #[serde(flatten)]
-    pub pre_ticket_data: PreTicketData,
+// #[derive(Serialize, Deserialize, Debug, Default)]
+// pub struct TicketData{
+//     #[serde(flatten)]
+//     pub pre_ticket_data: PreTicketData,
 
-    pub current_antivirus: Vec<String>,
-    pub service_number: i32,
-    pub recommendations: String,
-    pub tech: String,
-    pub salesman: String,
-    pub hardware_test_results: HardwareTests
-}
+//     pub current_antivirus: Vec<String>,
+//     pub service_number: i32,
+//     pub recommendations: String,
+//     pub tech: String,
+//     pub salesman: String,
+//     pub hardware_test_results: HardwareTests
+// }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct GetKeysResponse{
@@ -56,103 +55,90 @@ pub struct GetKeysResponse{
     pub superanti_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-#[allow(non_snake_case)]
-#[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
-#[serde(rename = "xml")]
-pub struct LocalSebData {
-    pub InstalledDeviceId: String,
-    pub InstallInstanceId: String,
-    pub HasIssues: String,
-    pub InstallationStage: String,
-    pub ReasonCode: String,
-    pub ActivationCode: String,
-    pub InstallVersion: String,
-    pub MachineName: String,
-    pub ExtendedSeb: Option<ExtendedSeb>,
-}
+// #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+// #[allow(non_snake_case)]
+// #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
+// #[serde(rename = "xml")]
+// pub struct LocalSebData {
+//     pub InstalledDeviceId: String,
+//     pub InstallInstanceId: String,
+//     pub HasIssues: String,
+//     pub InstallationStage: String,
+//     pub ReasonCode: String,
+//     pub ActivationCode: String,
+//     pub InstallVersion: String,
+//     pub MachineName: String,
+//     pub ExtendedSeb: Option<ExtendedSeb>,
+// }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct ExtendedSeb {
-    pub email: String,
-    pub phone: String,
-    pub userid: String,
-    pub device_name: String,
-    pub device_id: String,
-    pub state: String,
-    pub usage_gb: String,
-    pub date_device_created: String,
-    pub activated: String,
-    pub activation_code: String,
-    pub last_complete_backup: String,
-    pub last_client_status_update: String,
-    pub id_recurly_account: String,
-    pub date_last_scan: String,
-    pub date_email_sent: String,
-    pub date_canceled_account: String,
-    pub date_deleted_account: String,
-    pub current_period_ends_at: String,
-    pub date_modified: String,
-    pub date_created: String,
-}
+// #[derive(Debug, Serialize, Deserialize, Default, Clone)]
+// pub struct ExtendedSeb {
+//     pub email: String,
+//     pub phone: String,
+//     pub userid: String,
+//     pub device_name: String,
+//     pub device_id: String,
+//     pub state: String,
+//     pub usage_gb: String,
+//     pub date_device_created: String,
+//     pub activated: String,
+//     pub activation_code: String,
+//     pub last_complete_backup: String,
+//     pub last_client_status_update: String,
+//     pub id_recurly_account: String,
+//     pub date_last_scan: String,
+//     pub date_email_sent: String,
+//     pub date_canceled_account: String,
+//     pub date_deleted_account: String,
+//     pub current_period_ends_at: String,
+//     pub date_modified: String,
+//     pub date_created: String,
+// }
 
-#[derive(Serialize, Deserialize, Default, Debug, Clone)]
-pub struct ComputerData{
-    pub hostname: String,
-    pub operating_system: String,
-    pub cpu: String,
-    pub gpu: Option<String>,
-    pub ram: String,
-    pub drives: Vec<DriveData>,
-    pub seb_info: Option<LocalSebData>
-}
+// #[derive(Serialize, Deserialize, Default, Debug, Clone)]
+// pub struct ComputerData{
+//     pub hostname: String,
+//     pub operating_system: String,
+//     pub cpu: String,
+//     pub gpu: Option<String>,
+//     pub ram: String,
+//     pub drives: Vec<DriveData>,
+//     pub seb_info: Option<LocalSebData>
+// }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TicketResponse{
-    pub ticket_data: TicketData,
-    pub customer_data: CustomerData,
-    pub computer_data: ComputerData
-}
+// #[derive(Serialize, Deserialize, Debug)]
+// pub struct TicketResponse{
+//     pub ticket_data: TicketData,
+//     pub customer_data: CustomerData,
+//     pub computer_data: ComputerData
+// }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CustomerData{
-    pub cust_code: i32,
-    pub name: String,
-    pub phone_number: String,
-    pub phone_number_2: String,
-    pub email: String, 
-    pub li_doc: i32,
-    pub li_amnt: String,
-    pub num_inv: i32,
-}
+// #[derive(Serialize, Deserialize, Debug)]
+// pub struct CustomerData{
+//     pub cust_code: i32,
+//     pub name: String,
+//     pub phone_number: String,
+//     pub phone_number_2: String,
+//     pub email: String, 
+//     pub li_doc: i32,
+//     pub li_amnt: String,
+//     pub num_inv: i32,
+// }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct HardwareTests{
-    pub hdd_test: String,
-    pub ssd_test: String,
-    pub ram_test: String
-}
+// #[derive(Serialize, Deserialize, Debug, Default)]
+// pub struct HardwareTests{
+//     pub hdd_test: String,
+//     pub ssd_test: String,
+//     pub ram_test: String
+// }
 
-impl ComputerData{
-    pub fn new() -> Self{
-        ComputerData{
-            drives: Vec::new(),
-            ..Default::default()
-        }
-    }
-
-    pub fn add_disk(&mut self, disk: DriveData){
-        self.drives.push(disk);
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct DriveData{
-    pub drive_letter: String,
-    pub drive_type: String,
-    pub total_size: String,
-    pub space_left: String,
-}
+// #[derive(Serialize, Deserialize, Debug, Clone)]
+// pub struct DriveData{
+//     pub drive_letter: String,
+//     pub drive_type: String,
+//     pub total_size: String,
+//     pub space_left: String,
+// }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SystemInformation {
@@ -191,11 +177,14 @@ impl TicketResponse{
         recommendations: &String,
         tech: String,
         salesman: String, 
-        hardware_results: HardwareTests,
+        hardware_test_results: HardwareTests,
     ) -> Self{
         let pre_ticket_clone = pre_ticket.clone();
 
         let customer_data = CustomerData{
+            id: None,
+            computers: None,
+            services: None,
             cust_code: pre_ticket_clone.cust_code.parse::<i32>().unwrap_or(0),
             name: pre_ticket_clone.customer_name,
             phone_number: pre_ticket_clone.customer_phone_1,
@@ -204,31 +193,74 @@ impl TicketResponse{
             li_doc: pre_ticket_clone.last_invoice_number.parse::<i32>().unwrap_or(0),
             li_amnt: pre_ticket_clone.last_invoice_amount,
             num_inv: pre_ticket_clone.total_invoice_count.parse::<i32>().unwrap_or(0),
+            /*
+                pub created_at: Option<String>,
+                pub id: Option<TicketId>,
+                pub due_date: String,
+                pub customer: Option<CustomerId>,
+                pub computer: Option<ComputerId>,
+                pub service_task: Option<TaskId>,
+                pub service_number: i32,
+                /// Person that checked computer in
+                pub checkin_rep: String,
+                /// This is main initials on ticket
+                pub sales_rep: String,
+                pub checkin_notes: String,
+                pub recommendations: String,
+                pub tech: String,
+                pub salesman: String,
+                pub dep: String, // Store
+                pub terms: String,
+                pub ticket_total: String,
+                pub doc_alias: String, // type of order (service,sales,transfer)
+                pub current_antivirus: Option<Vec<String>>,
+                pub hardware_test_results: HardwareTests,
+             */
         };
 
         let mut current_antivirus: Vec<String> = Vec::new();
         current_antivirus.push("webroot".to_string());
         current_antivirus.push("superantiSpyware".to_string());
 
-        let ticket_data = TicketData{
-            pre_ticket_data: pre_ticket.clone(),
-            current_antivirus, //.clone(),
-            service_number: service_number.parse::<i32>().unwrap_or(0),
-            recommendations: recommendations.clone(),
+        /*
+                        pre_ticket_data: pre_ticket.clone(),
+                current_antivirus, //.clone(),
+                service_number: service_number.parse::<i32>().unwrap_or(0),
+                recommendations: recommendations.clone(),
+                tech,
+                salesman,
+                hardware_test_results: hardware_results,
+        */
+
+        let ticket_data = TicketData {
+            created_at: None,
+            id: None,
+            due_date: pre_ticket_clone.due_date.unwrap(),
+            customer: None,
+            computer: None,
+            service_task: None,
+            service_number: service_number.parse::<i32>().unwrap(),
+            checkin_rep: pre_ticket_clone.checkin_rep,
+            sales_rep: pre_ticket_clone.sales_rep,
+            checkin_notes: pre_ticket_clone.checkin_notes,
+            recommendations: recommendations.to_string(),
             tech,
             salesman,
-            hardware_test_results: hardware_results,
+            dep: pre_ticket_clone.dep.as_str().to_string(),
+            terms: pre_ticket_clone.terms,
+            ticket_total: pre_ticket_clone.ticket_total,
+            doc_alias: pre_ticket_clone.doc_alias,
+            current_antivirus: Some(current_antivirus),
+            hardware_test_results
         };
 
-        let ticket_response = TicketResponse { 
-            ticket_data, 
-            customer_data, 
-            computer_data: computer_data.clone() 
-        };
+        let ticket_payload = TicketPayload { ticket_data, customer_data: customer_data.clone(), computer_data: computer_data.clone()};
+
+        let ticket_response = TicketResponse { ticket_response: ticket_payload, customer_data: customer_data, computer_data: computer_data.clone() };
 
         info!("Ticket Response: {ticket_response:#?}");
         
-        ticket_response
+        ticket_response // ticket_response
     }
 
  }

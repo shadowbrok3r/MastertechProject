@@ -115,13 +115,12 @@ pub struct TicketData{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
-
+    pub cust_code: i32,
     pub computers: Option<Vec<ComputerId>>,
     pub services: Option<Vec<TicketId>>,
-    pub cust_code: i32,
     pub name: String,
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>
@@ -131,7 +130,7 @@ pub struct CustomerData{
     pub num_inv: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ComputerData{
     pub id: Option<ComputerId>,
     pub customer: Option<CustomerId>,
@@ -186,12 +185,25 @@ pub struct ExtendedSeb {
     pub date_created: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DriveData{
     pub drive_letter: String,
     pub drive_type: String,
     pub total_size: String,
     pub space_left: String,
+}
+
+impl ComputerData{
+    pub fn new() -> Self{
+        ComputerData{
+            drives: Vec::new(),
+            ..Default::default()
+        }
+    }
+
+    pub fn add_disk(&mut self, disk: DriveData){
+        self.drives.push(disk);
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
