@@ -8,7 +8,7 @@ use lettre::{Message, SmtpTransport, Transport};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
-use crate::surrealdb::{PreTicketData, ComputerData};
+use crate::database::{PreTicketData, ComputerData};
 
 use super::scaffold::{Salesman, Techs};
 

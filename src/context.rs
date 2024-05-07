@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fs, path::PathBuf, sync::{atomic::{AtomicBool, Ordering}, Arc}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use std::{collections::HashSet, fs, path::PathBuf, sync::{atomic::{AtomicBool, Ordering}, mpsc::{channel, Receiver, Sender}, Arc}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, SecondsFormat};
 use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
@@ -8,7 +8,7 @@ use serde_json::Value;
 use eframe::egui::{self, TextBuffer};
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
-use crate::{surrealdb::{send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, scripting::{Scripts, SCRIPT_ACTIONS}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}};
+use crate::{database::{database::{handle_db_data, Database}, schema, send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
 use tokio::{spawn, sync::{mpsc::unbounded_channel, Mutex, RwLock}, task::spawn_blocking};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -18,7 +18,7 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use serde::Serialize;
 use crate::{
-    surrealdb::ComputerData,
+    database::ComputerData,
     filesystem::{
         file_browser::FileBrowser,
     }, 
@@ -66,6 +66,7 @@ pub struct MastertechContext {
     pub disks: Value,
     pub disk_num: usize,
 
+    pub database: Option<Database>,
     pub rx: Option<std::sync::mpsc::Receiver<String>>,
     pub ctx: egui::Context,
     pub widget_size: f32,
@@ -167,6 +168,8 @@ impl Default for MasterTechApp {
             opened_file: None,
             open_file_dialog: None,
 
+            database: None,
+
             salesman_cbox: scaffold::Salesman::Jake, 
             techs_cbox: scaffold::Techs::Logan, 
             
@@ -228,6 +231,7 @@ impl TabViewer for MastertechContext {
             "Minidump Analysis" => self.mini_dump(ui),
             "Profiler" => self.puffin_profiler(ui),
             "QC ☑️" => self.quality_check(ui),
+            "Mastertech Website" => self.mastertech_website(ui),
             _ => {
                 let sysinfo_tab = &"System Information".to_string();
                 if ui.label(tab.as_str()).clicked(){
@@ -1414,4 +1418,28 @@ impl MastertechContext {
     }
 
     fn quality_check(&mut self, ui: &mut Ui){ }
+
+    fn mastertech_website(&mut self, ui: &mut Ui){ 
+        ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
+        ui.vertical(|ui|{ui.add_space(8.0);});
+        ui.horizontal(|ui|{ui.add_space(8.0);});
+
+        let (db_data_sender, db_data_receiver) = channel::<schema::TaskPayload>();
+
+        if let Some(db) = &self.database{
+            let database = Arc::new( db.clone());
+
+            tokio::spawn(async move {
+
+                let db = Arc::clone(&database);
+                let _ = handle_db_data(db, db_data_sender).await.unwrap();
+            });
+        }
+
+        if let Ok(task_payload) = db_data_receiver.recv(){
+            info!("Received task_payload from thread: {task_payload:?}");
+        }
+    }
 }
