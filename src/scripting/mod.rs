@@ -10,7 +10,7 @@ use tokio::{fs, io::{self, AsyncWriteExt}, process::Command, sync::Mutex};
 #[cfg(target_os="windows")]
 use wmi::{COMLibrary, WMIConnection, variant::Variant};
 
-use crate::{surrealdb::GetKeysResponse, handle_api::api_request::SendRequest};
+use crate::{database::GetKeysResponse, handle_api::api_request::SendRequest};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[async_trait]
@@ -51,7 +51,6 @@ lazy_static! {
 
 impl Default for Scripts{
     fn default() -> Self{
-        
         Self{
             service_number: None,
             client: Client::new(),
@@ -88,6 +87,7 @@ impl Scripts{
             let total_length = response
                 .content_length()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Content-Length header is missing"))?;
+
             let mut downloaded_bytes: u64 = 0;
 
             let temp_directory = std::env::temp_dir();
@@ -103,6 +103,7 @@ impl Scripts{
                 file.write_all(&chunk).await?;
                 sha.update(&chunk);
                 downloaded_bytes += chunk.len() as u64;
+                
             }
 
             if downloaded_bytes == total_length {
@@ -211,10 +212,10 @@ impl Scripts{
         let results: Vec<HashMap<String, Variant>> = wmi_con.raw_query("SELECT displayName, productState FROM AntiVirusProduct")?;
 
         for result in results {
-            let display_name = result.get("displayName").and_then(Variant::as_string).unwrap_or_default();
-            let product_state = result.get("productState").and_then(Variant::as_u32).unwrap_or_default();
+            // let display_name = result.get("displayName").and_then(Variant::as_string).unwrap_or_default();
+            // let product_state = result.get("productState").and_then(Variant::as_u32).unwrap_or_default();
 
-            println!("Antivirus: {}, Product State: {:X}", display_name, product_state);
+            // println!("Antivirus: {}, Product State: {:X}", display_name, product_state);
         }
         Ok(())
     }

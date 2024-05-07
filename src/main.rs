@@ -9,7 +9,7 @@ use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
-use surrealdb::ComputerData;
+use database::{database::Database, ComputerData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 
@@ -18,7 +18,7 @@ mod handle_api;
 mod context;
 pub mod github;
 mod minidump;
-mod surrealdb;
+mod database;
 mod scripting;
 
 #[tokio::main]
@@ -76,14 +76,29 @@ impl eframe::App for MasterTechApp {
 
         if self.context.specs_first_run{
             let (tx, rx) = std::sync::mpsc::channel();
+            let (db_sender, db_receiver) = std::sync::mpsc::channel();
+
             tokio::spawn(async move {
                 let system_info = ComputerData::get_computer_data().await;
-
+                let database = Database::new().await;
                 match tx.send(system_info.unwrap()){
                     Ok(_) => info!("sent computer data"),
                     Err(e) => info!("Error sending computer data: {e:?}"),
+                };
+
+                match db_sender.send(database){
+                    Ok(_) => info!("Sent db connection across thread"),
+                    Err(err) => debug!("Error sending db connection: {err:?}"),
                 }
+
+                
             });
+
+            if let Ok(db) = db_receiver.recv(){
+                info!("Received DB connection from thread");
+                self.context.database = Some(db);
+            }
+
             let specs = match rx.recv(){
                 Ok(data) => {
                     info!("Received computer data");
@@ -146,7 +161,7 @@ impl eframe::App for MasterTechApp {
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            if let Ok(info) = serde_json::from_str::<surrealdb::PreTicketData>(&message) {
+            if let Ok(info) = serde_json::from_str::<database::PreTicketData>(&message) {
     
                 self.context.output_text.clear();
     
@@ -166,7 +181,7 @@ impl eframe::App for MasterTechApp {
                 self.context.spinner = false;
     
             }             
-            else if let Ok(info) = serde_json::from_str::<surrealdb::GetKeysResponse>(&message) {
+            else if let Ok(info) = serde_json::from_str::<database::GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
                     self.context.keys = info;
                 }

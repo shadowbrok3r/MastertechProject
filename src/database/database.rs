@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use surrealdb::{
     engine::remote::ws::{Client as WsClient, Wss}, sql::Thing, Error, Surreal
@@ -33,8 +36,8 @@ pub struct Record {
 
 impl Database{
     pub async fn new() -> Self {
-        let db_url = dotenv::var("DB_URL").expect("No Env var for DB_URL");
-        println!("db: {db_url}");
+        // let db_url = dotenv::var("DB_URL").expect("No Env var for DB_URL");
+        // println!("db: {db_url}");
         
 
         let database: Surreal<WsClient> = Surreal::new::<Wss>("wss://surreal.master-tech.app") // localhost:8000
@@ -77,4 +80,20 @@ impl Database{
             .await.unwrap();
         Ok(result)
     }
+}
+
+
+pub async fn handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: Arc<Database>, tx: std::sync::mpsc::Sender<T>) 
+    -> anyhow::Result<(), anyhow::Error>
+{
+    let task_data: Vec<T> = database.select("task").await?;
+    for task_data in task_data.iter(){
+        
+        match tx.send(task_data.clone()){
+            Ok(_) => info!("Sent db connection across thread"),
+            Err(err) => debug!("Error sending db connection: {err:?}"),
+        }
+    }
+
+    Ok(())
 }
