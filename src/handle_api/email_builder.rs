@@ -1,15 +1,5 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc::Sender;
-
-use lettre::message::header::ContentType;
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::{Message, SmtpTransport, Transport};
-use reqwest::Client;
 use serde::Serialize;
-use serde_json::Value;
-use crate::database::{PreTicketData, ComputerData};
-
 use super::scaffold::{Salesman, Techs};
 
 #[derive(Serialize)]

@@ -23,7 +23,7 @@ use rust_socketio::{
 };
 use uuid::Uuid;
 
-use crate::{database::{get_cookie, ComputerData, DriveData, SystemInformation}, handle_api::{api_request::request_seb_info, Store}};
+use crate::{database::{get_cookie, schema::{ComputerData, DriveData, LocalSebData}, SystemInformation}, handle_api::{api_request::request_seb_info, Store}};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -91,7 +91,7 @@ impl ComputerData{
                 Ok(data)
         }); 
 
-        let seb_info: Option<crate::database::LocalSebData>;
+        let seb_info: Option<LocalSebData>;
 
         if let Ok(seb) = seb_data{seb_info = Some(seb);
         }else {seb_info = None;}
@@ -117,13 +117,15 @@ impl ComputerData{
 
 
             let system_info = ComputerData{
+                id: None,
+                customer: None,
                 cpu,
                 ram,
                 operating_system,
                 drives: data.drives,
-                gpu: Some(new_gpu_name.to_string()),
+                gpu: new_gpu_name.to_string(),
                 hostname,
-                seb_info,
+                seb_info
             };
 
             Ok(system_info)

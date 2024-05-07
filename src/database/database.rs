@@ -8,8 +8,6 @@ use surrealdb::{
     
 };
 
-use super::{schema::TaskPayload, TicketData};
-
 
 #[derive(Clone)]
 pub struct Database{

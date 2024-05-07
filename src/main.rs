@@ -9,7 +9,7 @@ use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
-use database::{database::{handle_db_data, Database}, schema, ComputerData};
+use database::{database::{handle_db_data, Database}, schema::{self, ComputerData}};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 
@@ -137,7 +137,7 @@ impl eframe::App for MasterTechApp {
                         }
                         
                     }
-                    self.context.output_text += format!("{:#?}", self.context.system_info.clone().seb_info.unwrap_or_default()).as_str();
+                    self.context.output_text += format!("{:#?}", &self.context.system_info.seb_info.as_mut()).as_str();
                 },
                 Err(e) => {
                     self.context.output_text = format!("{}", e.to_string());

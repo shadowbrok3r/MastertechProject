@@ -8,17 +8,15 @@ use serde_json::Value;
 use eframe::egui::{self, TextBuffer};
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
-use crate::{database::{database::{handle_db_data, Database}, schema::{self, TaskPayload}, send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
-use tokio::{spawn, sync::{mpsc::unbounded_channel, Mutex, RwLock}, task::spawn_blocking};
+use crate::{database::{database::Database, schema::{ComputerData, HardwareTests, LocalSebData, TaskPayload, TicketData, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
+use tokio::{spawn, sync::Mutex};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
-use serde::Serialize;
 use crate::{
-    database::ComputerData,
     filesystem::{
         file_browser::FileBrowser,
     }, 
@@ -83,6 +81,7 @@ pub struct MastertechContext {
     pub animate_progress_bar: bool,
     pub specs_first_run: bool,
     pub file_browse_run: bool,
+    pub query_tasks_first_run: bool,
     pub get_specs: bool,
     pub send_specs: bool,
     pub spinner: bool,
@@ -202,6 +201,7 @@ impl Default for MasterTechApp {
 
             specs_first_run: true,
             file_browse_run: false,
+            query_tasks_first_run: true,
             get_specs: false,
             spinner: false,
 
@@ -756,7 +756,7 @@ impl MastertechContext {
                                                 let os = &self.system_info.operating_system;
                                                 let cpu_name = &self.system_info.cpu;
                                                 let total_ram = &self.system_info.ram;
-                                                let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
+                                                let gpu = &self.system_info.gpu.clone();
 
                                                 for index in 0..self.disk_num
                                                 {
@@ -904,7 +904,7 @@ impl MastertechContext {
                                                 let system_name = &self.system_info.hostname;
                                                 let cpu_name = &self.system_info.cpu;
                                                 let total_ram = &self.system_info.ram;
-                                                let gpu = &self.system_info.gpu.clone().unwrap_or("no gpu detected".to_string());
+                                                let gpu = &self.system_info.gpu.clone();
                                                 let mut final_disk = String::new();
                                                 let mut each_disk = String::new();
 
@@ -1219,7 +1219,7 @@ impl MastertechContext {
 
         let computer_data = &self.system_info;
 
-        let gpu = computer_data.gpu.clone().unwrap_or("no GPU found".to_string());
+        let gpu = computer_data.gpu.clone();
         
         ui.push_id("table 1",|ui|{
             let table = TableBuilder::new(ui)
@@ -1426,27 +1426,35 @@ impl MastertechContext {
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
-        let (db_data_sender, db_data_receiver) = channel::<Vec<Value>>();
+        let (db_data_sender, db_data_receiver) = channel::<Vec<TaskPayload>>();
 
         if let Some(db) = &self.database{
             let database = Arc::new( db.clone());
+            if self.query_tasks_first_run{
+                tokio::spawn(async move {
 
-            tokio::spawn(async move {
-
-                let db = Arc::clone(&database);
-                let x: Vec<Value> = database
-                    .query(
-                        "SELECT * FROM task  ORDER BY due_date DESC FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note"
-                    ).await.unwrap();
-
-                match db_data_sender.send(x){
-                    Ok(_) => debug!("Sent ok"),
-                    Err(err) => debug!("Send error: {err:?}"),
-                }
-            });
+                    // let db = Arc::clone(&database);
+                    let x: Vec<TaskPayload> = database
+                        .query(
+                            "SELECT * FROM task" // ORDER BY due_date DESC FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note
+                        ).await.and_then(|x| {
+                            debug!("DATA: {x:?}");
+                            Ok(x)
+                        }).map_err(|e| {
+                            debug!("ERROR: {e:?}");
+                            e
+                        }).unwrap();
+    
+                    match db_data_sender.send(x){
+                        Ok(_) => debug!("Sent ok"),
+                        Err(err) => debug!("Send error: {err:?}"),
+                    }
+                });
+                self.query_tasks_first_run = false;
+            }
         }
 
-        if let Ok(ticket_data) = db_data_receiver.recv(){
+        if let Ok(mut ticket_data) = db_data_receiver.recv(){ // drop(db_data_sender)
             info!("Received task_payload from thread: {ticket_data:?}");
 
             Grid::new("scripts").min_col_width(self.widget_size).num_columns(4).min_row_height(10.0).show(
@@ -1455,8 +1463,9 @@ impl MastertechContext {
                     let ticket_count = ticket_data.len();
                     let mut count = 0;
         
-                    for ticket in ticket_data.iter(){
-                        // ui.heading(format!("{}", ticket.service_number.unwrap_or(0)));
+                    for ticket in ticket_data.iter_mut(){
+                        ui.heading(format!("{}", ticket.service_number.unwrap()));
+
                         info!("ticket: {ticket:?}");
                         
                         count += 1;  // Increment the counter
