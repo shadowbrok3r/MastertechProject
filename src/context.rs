@@ -1372,10 +1372,8 @@ impl MastertechContext {
 
             let mut counter = 0;  // Initialize a counter
             for (name, action) in &*SCRIPT_ACTIONS{
-
-                let button = Button::new(
-                    RichText::new(*name))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)));
+                let color = Color32::from_rgb(191, 33, 101);
+                let button = Button::new(RichText::new(*name)).stroke(Stroke::new(1.0, color));
 
 
                 if ui.add(button).clicked(){
