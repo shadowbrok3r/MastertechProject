@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{fs::File, sync::{atomic::Ordering, Arc}};
+use std::{fs::File, sync::{atomic::Ordering, mpsc::channel, Arc}};
 use github::self_updater;
 use log::{debug, info};
 use scripting::Scripts;
@@ -9,7 +9,7 @@ use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
-use database::{database::Database, ComputerData};
+use database::{database::{handle_db_data, Database}, schema, ComputerData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 
@@ -75,12 +75,16 @@ impl eframe::App for MasterTechApp {
         }
 
         if self.context.specs_first_run{
-            let (tx, rx) = std::sync::mpsc::channel();
-            let (db_sender, db_receiver) = std::sync::mpsc::channel();
+            self.context.specs_first_run = false;
+            let (tx, rx) = channel();
+            let (db_sender, db_receiver) = channel();
+            let (db_data_sender, db_data_receiver) = channel::<schema::TaskPayload>();
 
             tokio::spawn(async move {
                 let system_info = ComputerData::get_computer_data().await;
                 let database = Database::new().await;
+                let _ = handle_db_data(database.clone(), db_data_sender).await.unwrap();
+
                 match tx.send(system_info.unwrap()){
                     Ok(_) => info!("sent computer data"),
                     Err(e) => info!("Error sending computer data: {e:?}"),
@@ -92,11 +96,16 @@ impl eframe::App for MasterTechApp {
                 }
 
                 
+                
             });
 
             if let Ok(db) = db_receiver.recv(){
                 info!("Received DB connection from thread");
                 self.context.database = Some(db);
+            }
+
+            if let Ok(task_payload) = db_data_receiver.recv(){
+                info!("Received task_payload from thread: {task_payload:#?}");
             }
 
             let specs = match rx.recv(){
@@ -157,7 +166,7 @@ impl eframe::App for MasterTechApp {
             }
         }
     
-        self.context.specs_first_run = false;
+        
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
@@ -271,6 +280,8 @@ impl eframe::App for MasterTechApp {
                         &"File Browser 📂".to_string(),
                         &"Minidump Analysis".to_string(),
                         &"Profiler".to_string(),
+                        &"QC".to_string(),
+                        &"Mastertech Website".to_string(),
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)

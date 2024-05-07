@@ -86,7 +86,7 @@ shell-words = "1.1.0"
 rust_socketio = { version = "0.6.0", features = ["async"] }
 reqwest_cookie_store = "0.7.0"
 anyhow = "1.0.81"
-surrealdb = { version = "1.4.2", features = ["protocol-ws"] }
+surrealdb = { version = "1.4.2", features = ["default"] }
 lazy_static = "1.4.0"
 sha2 = { version = "0.10.8", features = ["std"] }
 wmi = "0.13.3"

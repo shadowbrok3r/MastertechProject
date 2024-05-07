@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use eframe::egui::Ui;
 use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use surrealdb::{
     engine::remote::ws::{Client as WsClient, Wss}, sql::Thing, Error, Surreal
     
 };
+
+use super::{schema::TaskPayload, TicketData};
 
 
 #[derive(Clone)]
@@ -36,12 +39,9 @@ pub struct Record {
 
 impl Database{
     pub async fn new() -> Self {
-        // let db_url = dotenv::var("DB_URL").expect("No Env var for DB_URL");
-        // println!("db: {db_url}");
-        
-
-        let database: Surreal<WsClient> = Surreal::new::<Wss>("wss://surreal.master-tech.app") // localhost:8000
+        let database: Surreal<WsClient> = Surreal::new::<Wss>("surreal.master-tech.app/rpc") // localhost:8000
             .await.unwrap();
+
         // Select a specific namespace / database
         database
             .use_ns("Mastertech")
@@ -65,7 +65,7 @@ impl Database{
         let result: Vec<T> = self.database.select(table).await?;
         Ok(result)
     }
-    pub async fn sql<T: DeserializeOwned>(&self, sql_query: &str) -> Result<Vec<T>, Error> {
+    pub async fn query<T: DeserializeOwned>(&self, sql_query: &str) -> Result<Vec<T>, Error> {
         let query: Vec<T> = self.database
             .query(sql_query)
             .await?
@@ -83,7 +83,7 @@ impl Database{
 }
 
 
-pub async fn handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: Arc<Database>, tx: std::sync::mpsc::Sender<T>) 
+pub async fn handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: Database, tx: std::sync::mpsc::Sender<T>) 
     -> anyhow::Result<(), anyhow::Error>
 {
     let task_data: Vec<T> = database.select("task").await?;
@@ -97,3 +97,4 @@ pub async fn handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: A
 
     Ok(())
 }
+

@@ -8,7 +8,7 @@ use serde_json::Value;
 use eframe::egui::{self, TextBuffer};
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
-use crate::{database::{database::{handle_db_data, Database}, schema, send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
+use crate::{database::{database::{handle_db_data, Database}, schema::{self, TaskPayload}, send_payload, CustomerData, GetKeysResponse, HardwareTests, LocalSebData, PreTicketData, TicketData, TicketResponse}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
 use tokio::{spawn, sync::{mpsc::unbounded_channel, Mutex, RwLock}, task::spawn_blocking};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -1426,7 +1426,7 @@ impl MastertechContext {
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
-        let (db_data_sender, db_data_receiver) = channel::<schema::TaskPayload>();
+        let (db_data_sender, db_data_receiver) = channel::<Vec<Value>>();
 
         if let Some(db) = &self.database{
             let database = Arc::new( db.clone());
@@ -1434,12 +1434,40 @@ impl MastertechContext {
             tokio::spawn(async move {
 
                 let db = Arc::clone(&database);
-                let _ = handle_db_data(db, db_data_sender).await.unwrap();
+                let x: Vec<Value> = database
+                    .query(
+                        "SELECT * FROM task  ORDER BY due_date DESC FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note"
+                    ).await.unwrap();
+
+                match db_data_sender.send(x){
+                    Ok(_) => debug!("Sent ok"),
+                    Err(err) => debug!("Send error: {err:?}"),
+                }
             });
         }
 
-        if let Ok(task_payload) = db_data_receiver.recv(){
-            info!("Received task_payload from thread: {task_payload:?}");
+        if let Ok(ticket_data) = db_data_receiver.recv(){
+            info!("Received task_payload from thread: {ticket_data:?}");
+
+            Grid::new("scripts").min_col_width(self.widget_size).num_columns(4).min_row_height(10.0).show(
+                ui, |ui| {
+        
+                    let ticket_count = ticket_data.len();
+                    let mut count = 0;
+        
+                    for ticket in ticket_data.iter(){
+                        // ui.heading(format!("{}", ticket.service_number.unwrap_or(0)));
+                        info!("ticket: {ticket:?}");
+                        
+                        count += 1;  // Increment the counter
+        
+                        if count % 4 == 0 {
+                            ui.end_row();  // End the row after every 2 buttons
+                        }
+                    }
+                }); // Grid
         }
+
+        
     }
 }
