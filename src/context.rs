@@ -5,9 +5,9 @@ use eframe::egui::{Context, RawInput, Window, Ui, WidgetText, Layout, Align, But
 use log::{debug, info};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
-use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
+use egui_dock::{surface_index, DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, HardwareTests, LocalSebData, TaskPayload, TicketData, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{query_antivirus, Scripts, SCRIPT_ACTIONS}};
+use crate::{app_state::MastertechContext, database::{database::Database, schema::{ComputerData, HardwareTests, LocalSebData, TaskPayload, TicketData, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{query_antivirus, Scripts, SCRIPT_ACTIONS}};
 use tokio::{spawn, sync::Mutex};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -22,191 +22,6 @@ use crate::{
 };
 
 
-pub struct MastertechContext { 
-    pub so_number: String,
-    pub recommendations: String,
-
-    pub ticket_info: PreTicketData,
-    pub keys: GetKeysResponse,
-
-    pub file_browser: Arc<Mutex<FileBrowser>>,
-    pub client: reqwest::Client,
-
-    /// Sends requests and retrieves data from scaffold
-    scaffold_request: SendRequest,
-
-    pub current_antivirus: String,
-    pub seb_info: Option<LocalSebData>,
-    pub opened_file: Option<PathBuf>,
-    pub open_file_dialog: Option<FileDialog>,
-    // pub minidump_app: MiniDumpApp,
-
-    pub salesman_cbox: scaffold::Salesman,
-    pub techs_cbox: scaffold::Techs,
-    pub ram_test_cbox: scaffold::HardwareTest, // We just need one of these...
-    pub hdd_test_cbox: scaffold::HardwareTest,
-    pub ssd_test_cbox: scaffold::HardwareTest,
-
-    pub output_text: String,
-    
-    pub client_uuid: Uuid,
-    pub connect_to_ws: bool,
-    pub system_info: ComputerData,
-    pub disks: Value,
-    pub disk_num: usize,
-
-    pub database: Option<Database>,
-    pub rx: Option<std::sync::mpsc::Receiver<String>>,
-    pub ctx: Context,
-    pub widget_size: f32,
-    pub open_tabs: HashSet<String>,
-    pub show_close_buttons: bool,
-    pub show_add_buttons: bool,
-    pub draggable_tabs: bool,
-    pub show_tab_name_on_hover: bool,
-
-    pub date: Option<DateTime<Utc>>,
-    
-    pub reader_bytes: u32,
-
-    pub animate_progress_bar: bool,
-    pub specs_first_run: bool,
-    pub file_browse_run: bool,
-    pub query_tasks_first_run: bool,
-    pub get_specs: bool,
-    pub send_specs: bool,
-    pub spinner: bool,
-    
-    pub style: Option<egui_dock::Style>,
-    pub text_color: Color32,
-    pub border_stroke_color: Stroke,
-    pub frame_counter: u64,
-    pub show_deferred_viewport: Arc<AtomicBool>
-}
-
-pub struct MasterTechApp {
-    pub context: MastertechContext,
-    pub tree: DockState<String>,
-}
-
-impl Default for MasterTechApp {
-    fn default() -> Self {
-        let mut tree = DockState::new(
-            vec!["TUR Sheet".to_owned(), 
-            "File Browser 📂".to_owned(),
-            "Scripts".to_owned()
-        ]);
-
-        tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
-
-        let [a, b] = tree
-            .main_surface_mut()
-            .split_left(
-                NodeIndex::root(),
-                0.32, 
-                vec![
-                    "Console".to_owned(),
-        ]);
-
-        let [_, _] = tree
-            .main_surface_mut()
-            .split_below(
-            b,
-            0.4,
-            vec!["System Information".to_owned()],
-        );
-
-        let mut open_tabs = HashSet::new();
-
-        for node in tree[SurfaceIndex::main()].iter() {
-            if let Node::Leaf { tabs, .. } = node {
-                for tab in tabs {
-                    open_tabs.insert(tab.clone());
-                }
-            }
-        }
-
-        // Create watch channel with a default value
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-        let tx_scaffold = tx.clone();
-
-
-        let scaffold_request = SendRequest{ tx: tx_scaffold };
-
-        // let minidump_app = MiniDumpApp::default();
-
-        let context = MastertechContext {
-            so_number: "".to_string(),
-            recommendations: "".to_string(),
-
-            ticket_info: PreTicketData::default(),
-
-            keys: GetKeysResponse { 
-                webroot_key: "Webroot Key".to_string(), 
-                superanti_key: "SuperAnti Key".to_string() 
-            },
-
-            seb_info: None,
-            system_info: ComputerData::default(),
-            disks: Value::Array(vec![]),
-            disk_num: 0,
-
-            scaffold_request,
-            client: reqwest::Client::new(),
-            file_browser: Arc::new(Mutex::new(FileBrowser::new())),
-            current_antivirus: "".to_string(),
-            opened_file: None,
-            open_file_dialog: None,
-
-            database: None,
-
-            salesman_cbox: scaffold::Salesman::Jake, 
-            techs_cbox: scaffold::Techs::Logan, 
-            
-            ram_test_cbox: scaffold::HardwareTest::RamNotTested,
-            hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
-            ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
-            // minidump_app,
-            output_text: "".to_string(),
-
-            connect_to_ws: false,
-            client_uuid: Uuid::new_v4(),
-            rx: Some(rx),
-
-            //////////////////////////////////////////
-            /*          Widgets and UI elements     */
-            //////////////////////////////////////////
-            ctx: Context::default(),
-            widget_size: 135.0,
-            open_tabs,
-            show_close_buttons: true,
-            show_add_buttons: true,
-            draggable_tabs: true,
-            show_tab_name_on_hover: false,
-    
-            date: None,
-            animate_progress_bar: false,
-            reader_bytes: 0,
-
-            send_specs: false,
-
-            specs_first_run: true,
-            file_browse_run: false,
-            query_tasks_first_run: true,
-            get_specs: false,
-            spinner: false,
-
-            style: None,
-            text_color: Color32::from_rgb(255, 204, 230),
-            border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
-
-            frame_counter: 0,
-            show_deferred_viewport: Arc::new(AtomicBool::new(false)),
-        };
-
-        Self { context, tree }
-    }
-}
 
 impl TabViewer for MastertechContext {
     type Tab = String;
@@ -254,7 +69,15 @@ impl TabViewer for MastertechContext {
     }
     
     fn on_add(&mut self, surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        //self.open_tabs.add(tab)
+        
+        // for node in tree[SurfaceIndex::main()].iter() {
+        //     if let Node::Leaf { tabs, .. } = node {
+        //         for tab in tabs {
+        //             open_tabs.insert(tab.clone());
+        //         }
+        //     }
+        // }
+        // self.open_tabs.insert(surface_index.);
     }
 }
 
@@ -1425,10 +1248,8 @@ impl MastertechContext {
                     //     let anti = query_antivirus().unwrap(); // info!("Antivirus: {anti:?}");
                     //     for x in anti{ info!("{:?} - {:x?}", x.display_name, x.product_state); }
 
-                    let x: Vec<TaskPayload> = database
-                        .query(
-                            "SELECT * FROM task" // ORDER BY due_date DESC FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note
-                        ).await.and_then(|x| {
+                    let x: Vec<TaskPayload> = database.query("SELECT * FROM task").await
+                        .and_then(|x| {
                             debug!("DATA: {x:?}");
                             Ok(x)
                         }).map_err(|e| {
@@ -1437,7 +1258,7 @@ impl MastertechContext {
                     }).unwrap();
     
                     match db_data_sender.send(x){
-                        Ok(_) => debug!("Sent ok"),
+                        Ok(_) => drop(db_data_sender),
                         Err(err) => debug!("Send error: {err:?}"),
                     }
                 });
@@ -1446,29 +1267,60 @@ impl MastertechContext {
             }
         }
 
-        if let Ok(mut ticket_data) = db_data_receiver.recv(){ // drop(db_data_sender)
-            info!("Received task_payload from thread: {ticket_data:?}");
+        let x = std::thread::spawn(move || {
+            match db_data_receiver.recv(){ 
+                Ok(ticket_data) => {
+                    Some(ticket_data)
+                },
+                Err(e) => {
+                    debug!("Error: {e:?}");
+                    None
+                }
+            }
+        });    
 
-            Grid::new("scripts").min_col_width(self.widget_size).num_columns(4).min_row_height(10.0)
-            .show(
-                ui, |ui| {
-        
-                    let ticket_count = ticket_data.len();
-                    let mut count = 0;
-        
-                    for ticket in ticket_data.iter(){
-                        ui.colored_label(Color32::from_rgb(255, 204, 230),  ticket.task_name.clone());
-                        // ui.heading(format!("{}", ticket.service_number.unwrap()));
+        if let Some(data) = x.join().expect("Error joining threads"){
+            self.ticket_data = Some(data.clone());
+            info!("Received task_payload from thread: {data:?}");
 
-                        info!("ticket: {ticket:?}");
-                        
-                        count += 1;  // Increment the counter
-        
-                        if count % 4 == 0 {
-                            ui.end_row();  // End the row after every 2 buttons
-                        }
-                    }
-            }); // Grid
+            // ui.push_id("tasks",|ui|{
+            //     let table = TableBuilder::new(ui)
+            //         .striped(true)
+            //         .resizable(true)
+            //         .cell_layout(Layout::left_to_right(Align::Center))
+            //         .column(Column::initial(100.0).range(50.0..=300.0).clip(true))
+            //         .column(Column::remainder())
+            //         .min_scrolled_height(0.0);
+    
+            //     table
+            //     .header(20.0, |mut header|{
+            //         header.col(|ui| {
+            //             ui.strong("Task");
+            //         });
+            //         header.col(|ui| {
+            //             ui.strong("SO #");
+            //         });
+            //     }).body(|mut body| {
+            //         for ticket in data.iter(){
+            //             body.row(20.0, |mut row| {
+            //                 row.col(|ui|{
+            //                     ui.label("System Name");
+            //                 });
+            //                 row.col(|ui|{
+            //                     ui.label(&ticket.task_name);
+            //                 });
+            //             });
+            //             body.row(20.0, |mut row| {
+            //                 row.col(|ui|{
+            //                     ui.label("CPU Name");
+            //                 });
+            //                 row.col(|ui|{
+            //                     ui.label(format!("{}", &ticket.service_number.unwrap()));
+            //                 });
+            //             });
+            //         }
+            //     });
+            // });
         }
     }
 }

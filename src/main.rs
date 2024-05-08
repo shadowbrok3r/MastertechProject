@@ -4,7 +4,7 @@ use github::self_updater;
 use log::{debug, info};
 use scripting::Scripts;
 use crate::handle_api::scaffold;
-use context::MasterTechApp;
+use app_state::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
 use egui_dock::{DockArea, Style as DockStyle};
@@ -20,6 +20,7 @@ pub mod github;
 mod minidump;
 mod database;
 mod scripting;
+pub mod app_state;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
