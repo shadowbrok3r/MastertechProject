@@ -154,9 +154,11 @@ impl ComputerData{
                 ram,
                 hostname,
                 drives: data.drives,
-                gpu: Some( "Todo".to_string() ),// gpu_name),
+                gpu: gpu_name,// gpu_name),
                 operating_system,
                 seb_info,
+                id: None,
+                customer: None,
             };
 
             Ok(system_info)

@@ -12,8 +12,7 @@ use futures::stream::TryStreamExt;
 use crate::{database::GetKeysResponse, handle_api::api_request::SendRequest};
 
 #[cfg(target_os="windows")]
-use wmi::{COMLibrary, WMIConnection, variant::Variant};
-use wmi::WMIError;
+use wmi::{COMLibrary, WMIConnection, variant::Variant, WMIError};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 

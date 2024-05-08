@@ -4,12 +4,15 @@ use eframe::egui::{Context, Color32, Stroke};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload, TicketData}, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{query_antivirus, Scripts, SCRIPT_ACTIONS}};
+use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload, TicketData}, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
 use egui_file::FileDialog;
 use crate::{
     filesystem::file_browser::FileBrowser,
     handle_api::{ api_request::SendRequest, scaffold}
 };
+
+#[cfg(target_os="windows")]
+use crate::scripting::query_antivirus;
 
 
 pub struct MastertechContext { 
@@ -72,8 +75,10 @@ pub struct MastertechContext {
     pub border_stroke_color: Stroke,
     pub frame_counter: u64,
     pub show_deferred_viewport: Arc<AtomicBool>,
-    pub ticket_data: Option<Vec<TaskPayload>>
+    pub ticket_data: Option<Vec<TaskPayload>>,
 
+    pub db_data_receiver: crossbeam::channel::Receiver<Vec<TaskPayload>>,
+    pub db_data_sender: crossbeam::channel::Sender<Vec<TaskPayload>>,
 }
 
 pub struct MasterTechApp {
@@ -121,7 +126,7 @@ impl Default for MasterTechApp {
         // Create watch channel with a default value
         let (tx, rx) = std::sync::mpsc::channel::<String>();
         let tx_scaffold = tx.clone();
-
+        let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
 
         let scaffold_request = SendRequest{ tx: tx_scaffold };
 
@@ -194,7 +199,9 @@ impl Default for MasterTechApp {
 
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
-            ticket_data: None
+            ticket_data: None,
+            db_data_receiver, 
+            db_data_sender
         };
 
         Self { context, tree }

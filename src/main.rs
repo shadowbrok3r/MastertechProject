@@ -12,7 +12,7 @@ use self_update::cargo_crate_version;
 use database::{database::{handle_db_data, Database}, schema::{self, ComputerData}};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
-
+mod ui_helpers;
 mod filesystem;
 mod handle_api;
 mod context;
@@ -27,7 +27,7 @@ async fn main() -> eframe::Result<()> {
     puffin::set_scopes_on(true);
 
     // Configure log level and log file
-    let log_level = LevelFilter::Info; 
+    let log_level = LevelFilter::Debug; 
     let log_file = File::create("output.log").unwrap();
 
     // Init the logger
