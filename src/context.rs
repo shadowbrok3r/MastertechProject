@@ -1,14 +1,13 @@
-use std::{collections::HashSet, fs, path::PathBuf, sync::{atomic::{AtomicBool, Ordering}, mpsc::{channel, Receiver, Sender}, Arc}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use std::{collections::HashSet, path::PathBuf, sync::{atomic::{AtomicBool, Ordering}, mpsc::channel, Arc}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, SecondsFormat};
-use egui::{Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
+use eframe::egui::{Context, RawInput, Window, Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
 use log::{debug, info};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
-use eframe::egui::{self, TextBuffer};
 use egui_dock::{Node, NodeIndex, TabViewer, SurfaceIndex, DockState};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, HardwareTests, LocalSebData, TaskPayload, TicketData, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
+use crate::{database::{database::Database, schema::{ComputerData, HardwareTests, LocalSebData, TaskPayload, TicketData, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{query_antivirus, Scripts, SCRIPT_ACTIONS}};
 use tokio::{spawn, sync::Mutex};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
@@ -17,18 +16,10 @@ use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use crate::{
-    filesystem::{
-        file_browser::FileBrowser,
-    }, 
-    handle_api::{
-        api_request::SendRequest,
-        scaffold, Store
-    },
-    self_updater::run,
-    // minidump::minidump_main::MiniDumpApp,
-    // puffin_profiler::start_puffin_server,
+    filesystem::file_browser::FileBrowser,
+    handle_api::{ api_request::SendRequest, scaffold, Store },
+    self_updater::run, handle_api::email_builder::email_builder, // minidump::minidump_main::MiniDumpApp, puffin_profiler::start_puffin_server,
 };
-use crate::handle_api::email_builder::email_builder;
 
 
 pub struct MastertechContext { 
@@ -66,7 +57,7 @@ pub struct MastertechContext {
 
     pub database: Option<Database>,
     pub rx: Option<std::sync::mpsc::Receiver<String>>,
-    pub ctx: egui::Context,
+    pub ctx: Context,
     pub widget_size: f32,
     pub open_tabs: HashSet<String>,
     pub show_close_buttons: bool,
@@ -185,7 +176,7 @@ impl Default for MasterTechApp {
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
-            ctx: egui::Context::default(),
+            ctx: Context::default(),
             widget_size: 135.0,
             open_tabs,
             show_close_buttons: true,
@@ -638,7 +629,7 @@ impl MastertechContext {
                                     {  
                                         self.spinner = true;
 
-                                        egui::Window::new("Spinner Window")
+                                        Window::new("Spinner Window")
                                             .enabled(self.spinner)
                                             .open(&mut self.spinner)
                                             .title_bar(false)
@@ -1048,8 +1039,7 @@ impl MastertechContext {
 
                 strip.empty();
 
-                strip
-                .strip(|builder|
+                strip.strip(|builder|
                 {
                     builder
                     .size(Size::exact(300.0)) // allocates checkinNotes info from left -> right
@@ -1097,10 +1087,10 @@ impl MastertechContext {
     }
 
     fn output_console(&mut self, ui: &mut Ui) { 
-        let input = egui::RawInput::default();
+        let input = RawInput::default();
 
         let _ = self.ctx.run(input, |ctx|{
-            egui::Window::new("Spinner Window")
+            Window::new("Spinner Window")
             .enabled(self.spinner)
             .open(&mut self.spinner)
             .title_bar(false)
@@ -1119,7 +1109,7 @@ impl MastertechContext {
     
     fn system_information(&mut self, ui: &mut Ui){
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
-        egui::Window::new("Spinner Window")
+        Window::new("Spinner Window")
             .enabled(self.spinner)
             .open(&mut self.spinner)
             .title_bar(false)
@@ -1225,7 +1215,7 @@ impl MastertechContext {
             let table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .cell_layout(Layout::left_to_right(Align::Center))
                 .column(Column::initial(100.0).range(50.0..=300.0).clip(true))
                 .column(Column::remainder())
                 .min_scrolled_height(0.0);
@@ -1432,8 +1422,9 @@ impl MastertechContext {
             let database = Arc::new( db.clone());
             if self.query_tasks_first_run{
                 tokio::spawn(async move {
+                    //     let anti = query_antivirus().unwrap(); // info!("Antivirus: {anti:?}");
+                    //     for x in anti{ info!("{:?} - {:x?}", x.display_name, x.product_state); }
 
-                    // let db = Arc::clone(&database);
                     let x: Vec<TaskPayload> = database
                         .query(
                             "SELECT * FROM task" // ORDER BY due_date DESC FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note
@@ -1443,13 +1434,14 @@ impl MastertechContext {
                         }).map_err(|e| {
                             debug!("ERROR: {e:?}");
                             e
-                        }).unwrap();
+                    }).unwrap();
     
                     match db_data_sender.send(x){
                         Ok(_) => debug!("Sent ok"),
                         Err(err) => debug!("Send error: {err:?}"),
                     }
                 });
+
                 self.query_tasks_first_run = false;
             }
         }
@@ -1457,14 +1449,16 @@ impl MastertechContext {
         if let Ok(mut ticket_data) = db_data_receiver.recv(){ // drop(db_data_sender)
             info!("Received task_payload from thread: {ticket_data:?}");
 
-            Grid::new("scripts").min_col_width(self.widget_size).num_columns(4).min_row_height(10.0).show(
+            Grid::new("scripts").min_col_width(self.widget_size).num_columns(4).min_row_height(10.0)
+            .show(
                 ui, |ui| {
         
                     let ticket_count = ticket_data.len();
                     let mut count = 0;
         
-                    for ticket in ticket_data.iter_mut(){
-                        ui.heading(format!("{}", ticket.service_number.unwrap()));
+                    for ticket in ticket_data.iter(){
+                        ui.colored_label(Color32::from_rgb(255, 204, 230),  ticket.task_name.clone());
+                        // ui.heading(format!("{}", ticket.service_number.unwrap()));
 
                         info!("ticket: {ticket:?}");
                         
@@ -1474,9 +1468,7 @@ impl MastertechContext {
                             ui.end_row();  // End the row after every 2 buttons
                         }
                     }
-                }); // Grid
+            }); // Grid
         }
-
-        
     }
 }

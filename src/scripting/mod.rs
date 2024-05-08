@@ -4,21 +4,23 @@ use log::info;
 use reqwest::{header::CONTENT_LENGTH, Client};
 use lazy_static::lazy_static;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command, sync::Mutex};
+use anyhow::Context;
+use futures::stream::TryStreamExt;
+use crate::{database::GetKeysResponse, handle_api::api_request::SendRequest};
 
 #[cfg(target_os="windows")]
 use wmi::{COMLibrary, WMIConnection, variant::Variant};
+use wmi::WMIError;
 
-use crate::{database::GetKeysResponse, handle_api::api_request::SendRequest};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[async_trait]
 pub trait ScriptAction {
     async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>>;
 }
-
-
 pub struct Scripts{
     pub service_number: Option<String>,
     pub client: Client,
@@ -202,26 +204,7 @@ impl Scripts{
         Ok(())
     }
 
-    #[cfg(target_os="windows")]
-    pub async fn query_antivirus(&self) -> Result<(), Box<dyn Error>>{
-        // Initialize the COM Library
-        let com_con = COMLibrary::new()?;
-        let wmi_con = WMIConnection::new(com_con.into())?;
-
-        // Perform a WMI query
-        let results: Vec<HashMap<String, Variant>> = wmi_con.raw_query("SELECT displayName, productState FROM AntiVirusProduct")?;
-
-        for result in results {
-            // let display_name = result.get("displayName").and_then(Variant::as_string).unwrap_or_default();
-            // let product_state = result.get("productState").and_then(Variant::as_u32).unwrap_or_default();
-
-            // println!("Antivirus: {}, Product State: {:X}", display_name, product_state);
-        }
-        Ok(())
-    }
 }
-
-
 
 #[async_trait]
 impl ScriptAction for InstallWebroot {
@@ -251,3 +234,33 @@ impl ScriptAction for RunningTasks {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct Antivirus {
+    pub product_state: String,
+    pub display_name: String,
+}
+
+#[cfg(target_os="windows")]
+pub fn query_antivirus() -> anyhow::Result<Vec<Antivirus>, WMIError>{
+    // Initialize the COM Library
+
+    
+    let com_con = COMLibrary::new()?;
+    let wmi_con = WMIConnection::new(com_con.into())?;
+
+    // Perform a WMI query
+    let results: Vec<Antivirus> = wmi_con.raw_query("SELECT * FROM Win32_OperatingSystem")?; // ("SELECT displayName, productState FROM AntiVirusProduct")?;
+
+    drop(wmi_con);
+    // let mut antivirus: Antivirus = Default::default();
+    // for result in &results {
+        //     let display_name = result.get("displayName").context("Could not get displayName").unwrap();
+        //     let product_state = result.get("productState").context("Could not get productState").unwrap();
+        //     let product_state = format!("{:X?}", product_state);
+        //     let display_name = format!("{:?}", display_name);
+        //     info!("Antivirus: {:?}, Product State: {:X?}", display_name.clone(), product_state.clone());
+        // antivirus { product_state, display_name };
+    // }
+
+    Ok(results)
+}
