@@ -29,8 +29,7 @@ cpu_fix = []
 
 [dependencies]
 chrono = "0.4.38"
-eframe = { version="0.27.2", features=["persistence", "puffin", "wgpu"] } #
-# egui = { version = "0.27.2" } # , features = ["callstack"]"deadlock_detection"
+eframe = { version="0.27.2", features=["persistence", "puffin", "wgpu"] } # "deadlock_detection", "callstack"
 egui_dock = "0.12.0"
 egui_extras = { version = "0.27.2", features = ["datepicker"]}
 reqwest = { version = "0.12.4", features = ["json", "stream", "blocking", "cookies"] }
@@ -96,7 +95,10 @@ wmi = "0.13.3"
 openssl = { version = "0.10", features = ["vendored"] }
 libatasmart = "0.3.1"
 
-# [profile.dev]
+[profile.dev]
+debug = true
+lto = false
+strip = false
 # opt-level = 2
 
 # [profile.dev.package."*"]

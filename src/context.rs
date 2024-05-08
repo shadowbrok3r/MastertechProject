@@ -1,14 +1,13 @@
-use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::{AtomicBool, Ordering}, mpsc::channel, Arc}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use std::{path::PathBuf, sync::{atomic::Ordering, mpsc::{channel, sync_channel}, Arc, Mutex}, thread::JoinHandle}; 
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, SecondsFormat};
-use eframe::egui::{Context, RawInput, Window, Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
-use log::{debug, info};
+use chrono::{DateTime, SecondsFormat};
+use eframe::egui::{RawInput, Window, Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Align2, };
+use log::{debug, error, info};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
-use egui_dock::{surface_index, DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use uuid::Uuid;
-use crate::{app_state::MastertechContext, database::{database::Database, schema::{ComputerData, HardwareTests, LocalSebData, TaskPayload, TicketData, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{query_antivirus, Scripts, SCRIPT_ACTIONS}};
-use tokio::{spawn, sync::{mpsc::unbounded_channel}};
+use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
+use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}, ui_helpers::task_cards::task_card};
+use tokio::{spawn, sync::mpsc::unbounded_channel};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
@@ -20,7 +19,8 @@ use crate::{
     handle_api::{ api_request::SendRequest, scaffold, Store },
     self_updater::run, handle_api::email_builder::email_builder, // minidump::minidump_main::MiniDumpApp, puffin_profiler::start_puffin_server,
 };
-
+#[cfg(target_os="windows")]
+use crate::scripting::query_antivirus;
 
 
 impl TabViewer for MastertechContext {
@@ -258,7 +258,7 @@ impl MastertechContext {
                                                         let cps_request = SendRequest::get_cps(service_num, self.client.clone());
                                                         let (tx, rx) = std::sync::mpsc::channel::<GetKeysResponse>();
 
-                                                        tokio::spawn(async move{
+                                                        spawn(async move{
                                                             let sender = tx.clone();
                                                             let unwrapped_request =  cps_request.await.unwrap_or(GetKeysResponse::default());
 
@@ -1199,7 +1199,7 @@ impl MastertechContext {
                     let action_clone = action.clone();
                     let so_num = Arc::new(self.so_number.clone());
                     info!("SO number: {}", &so_num);
-                    tokio::spawn(async move {
+                    spawn(async move {
                         let y = Arc::clone(&so_num);
                         let scripts = Scripts::new(y.to_string()).await;
                         action_clone.execute(&scripts).await.unwrap();
@@ -1239,88 +1239,33 @@ impl MastertechContext {
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
-        let (db_data_sender, db_data_receiver) = channel::<Vec<TaskPayload>>();
+        let sender = self.db_data_sender.clone();
 
-        if let Some(db) = &self.database{
-            let database = Arc::new( db.clone());
-            if self.query_tasks_first_run{
-                tokio::spawn(async move {
-                    //     let anti = query_antivirus().unwrap(); // info!("Antivirus: {anti:?}");
-                    //     for x in anti{ info!("{:?} - {:x?}", x.display_name, x.product_state); }
-
-                    let x: Vec<TaskPayload> = database.query("SELECT * FROM task").await
-                        .and_then(|x| {
-                            debug!("DATA: {x:?}");
-                            Ok(x)
-                        }).map_err(|e| {
-                            debug!("ERROR: {e:?}");
-                            e
-                    }).unwrap();
-    
-                    match db_data_sender.send(x){
-                        Ok(_) => drop(db_data_sender),
-                        Err(err) => debug!("Send error: {err:?}"),
+        if self.query_tasks_first_run{
+            self.query_tasks_first_run = false;
+            if let Some(db) = &self.database{
+                let database = db.clone();
+                spawn(async move {
+                    let task_data = database.query("SELECT * FROM task").await.unwrap();
+                
+                    match sender.try_send(task_data){
+                        Ok(_) => {
+                            debug!("Sent task data");
+                        },
+                        Err(err) => debug!("Send error: {:?}", err.to_string()),
                     }
                 });
-
-                self.query_tasks_first_run = false;
             }
         }
 
-        let x = std::thread::spawn(move || {
-            match db_data_receiver.recv(){ 
-                Ok(ticket_data) => {
-                    Some(ticket_data)
-                },
-                Err(e) => {
-                    debug!("Error: {e:?}");
-                    None
-                }
-            }
-        });    
-
-        if let Some(data) = x.join().expect("Error joining threads"){
-            self.ticket_data = Some(data.clone());
-            info!("Received task_payload from thread: {data:?}");
-
-            // ui.push_id("tasks",|ui|{
-            //     let table = TableBuilder::new(ui)
-            //         .striped(true)
-            //         .resizable(true)
-            //         .cell_layout(Layout::left_to_right(Align::Center))
-            //         .column(Column::initial(100.0).range(50.0..=300.0).clip(true))
-            //         .column(Column::remainder())
-            //         .min_scrolled_height(0.0);
-    
-            //     table
-            //     .header(20.0, |mut header|{
-            //         header.col(|ui| {
-            //             ui.strong("Task");
-            //         });
-            //         header.col(|ui| {
-            //             ui.strong("SO #");
-            //         });
-            //     }).body(|mut body| {
-            //         for ticket in data.iter(){
-            //             body.row(20.0, |mut row| {
-            //                 row.col(|ui|{
-            //                     ui.label("System Name");
-            //                 });
-            //                 row.col(|ui|{
-            //                     ui.label(&ticket.task_name);
-            //                 });
-            //             });
-            //             body.row(20.0, |mut row| {
-            //                 row.col(|ui|{
-            //                     ui.label("CPU Name");
-            //                 });
-            //                 row.col(|ui|{
-            //                     ui.label(format!("{}", &ticket.service_number.unwrap()));
-            //                 });
-            //             });
-            //         }
-            //     });
-            // });
+        if let Ok(data) = self.db_data_receiver.try_recv(){
+            self.ticket_data = Some(data);
         }
+
+        if let Some(tasks) = &self.ticket_data{
+            let _ = task_card(tasks.to_vec(), ui);
+        }
+        
+
     }
 }
