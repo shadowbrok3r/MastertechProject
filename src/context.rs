@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf, sync::{atomic::{AtomicBool, Ordering}, mpsc::channel, Arc}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::{AtomicBool, Ordering}, mpsc::channel, Arc}}; // use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
 use std::collections::HashMap;
 use chrono::{DateTime, Utc, SecondsFormat};
 use eframe::egui::{Context, RawInput, Window, Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Rect, Align2, };
@@ -8,7 +8,7 @@ use serde_json::Value;
 use egui_dock::{surface_index, DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use uuid::Uuid;
 use crate::{app_state::MastertechContext, database::{database::Database, schema::{ComputerData, HardwareTests, LocalSebData, TaskPayload, TicketData, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{query_antivirus, Scripts, SCRIPT_ACTIONS}};
-use tokio::{spawn, sync::Mutex};
+use tokio::{spawn, sync::{mpsc::unbounded_channel}};
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
@@ -1166,11 +1166,11 @@ impl MastertechContext {
     }
 
     fn file_browse(&mut self, ui: &mut Ui) {
-        // let (command_tx, command_rx) = unbounded_channel();
-        // // Lock the Mutex and show the GUI
-        // let file_browser_clone = Arc::clone(&self.file_browser);
-        // let mut file_browser = file_browser_clone.lock().unwrap();
-        // file_browser.show(ui, command_tx, command_rx);
+        let (command_tx, command_rx) = unbounded_channel();
+        // Lock the Mutex and show the GUI
+        let file_browser_clone = Arc::clone(&self.file_browser);
+        let mut file_browser = file_browser_clone.lock().unwrap();
+        file_browser.show(ui, command_tx, command_rx);
     }
     
     fn scripts(&mut self, ui: &mut Ui){
