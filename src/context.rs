@@ -51,25 +51,13 @@ impl MastertechContext {
     }
 
     pub fn file_browser_popup(&mut self, ui: &mut Ui) {
-        if ui.button("Detach File Browser").clicked(){
-            let (tx, rx) = crossbeam::channel::bounded(1);
+        let current_state = self.show_deferred_viewport.load(Ordering::Relaxed);
+        let new_state = !current_state; // Toggle the state: if it's true, make it false, and vice versa
 
-            tokio::task::spawn_blocking(move || {
-                match run(){
-                    Ok(response) => {
-                        match tx.send((response.0, response.1)){
-                            Ok(_) => drop(tx),
-                            Err(e) => println!("{e}"),
-                        }
-                    },
-                    Err(e) => println!("err: {e}"),
-                }
-            });
-            if let Ok(res) = rx.recv(){
-                self.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
-            }
-            
-
+        if current_state{
+            if ui.button("Attach File Browser").clicked(){self.show_deferred_viewport.store(new_state, Ordering::Relaxed);}
+        }else {
+            if ui.button("Detach File Browser").clicked(){self.show_deferred_viewport.store(new_state, Ordering::Relaxed);}
         }
     }
 
@@ -1130,11 +1118,13 @@ impl MastertechContext {
     }
 
     pub fn file_browse(&mut self, ui: &mut Ui) {
-        let (command_tx, command_rx) = unbounded_channel();
-        // Lock the Mutex and show the GUI
-        let file_browser_clone = Arc::clone(&self.file_browser);
-        let mut file_browser = file_browser_clone.lock().unwrap();
-        file_browser.show(ui, command_tx, command_rx);
+        if !self.show_deferred_viewport.load(Ordering::Relaxed) {
+            let (command_tx, command_rx) = crossbeam::channel::unbounded();
+            // Lock the Mutex and show the GUI
+            let file_browser_clone = Arc::clone(&self.file_browser);
+            let mut file_browser = file_browser_clone.lock().unwrap();
+            file_browser.show(ui, command_tx, command_rx);
+        }
     }
     
     pub fn scripts(&mut self, ui: &mut Ui){
@@ -1144,10 +1134,6 @@ impl MastertechContext {
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
-        let mut show_deferred_viewport = self.show_deferred_viewport.load(Ordering::Relaxed);
-        ui.checkbox(&mut show_deferred_viewport, "Show deferred child viewport").clicked();
-        self.show_deferred_viewport.store(show_deferred_viewport, Ordering::Relaxed);
-        
         Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).show(
         ui, |ui| {
 

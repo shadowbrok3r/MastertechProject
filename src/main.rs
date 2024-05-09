@@ -3,6 +3,7 @@ use std::{fs::File, sync::{atomic::Ordering, mpsc::channel, Arc}};
 use github::self_updater;
 use log::{debug, info};
 use scripting::Scripts;
+use tokio::sync::mpsc::unbounded_channel;
 use crate::handle_api::scaffold;
 use app_state::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
@@ -27,7 +28,7 @@ async fn main() -> eframe::Result<()> {
     puffin::set_scopes_on(true);
     
     // Configure log level and log file
-    let log_level = LevelFilter::Debug; 
+    let log_level = LevelFilter::Info; 
     let log_file = File::create("output.log").unwrap();
 
     // Init the logger
@@ -220,17 +221,16 @@ impl eframe::App for MasterTechApp {
     
 
         if self.context.show_deferred_viewport.load(Ordering::Relaxed) {
+            let file_browser_clone = Arc::clone(&self.context.file_browser);
             let show_deferred_viewport = self.context.show_deferred_viewport.clone();
-
-            ctx.show_viewport_deferred(
-                ViewportId::from_hash_of("deferred_viewport"),
-                ViewportBuilder::default()
-                    .with_title("Deferred Viewport")
-                    .with_inner_size([200.0, 100.0]),
-                move |ctx, _class| {
-
+            let viewport_id = ViewportId::from_hash_of("deferred_viewport");
+            let viewport_builder = ViewportBuilder::default().with_title("File Browser").with_inner_size([400.0, 500.0]);
+            ctx.show_viewport_deferred(viewport_id,viewport_builder,move |ctx, _class| {
                     CentralPanel::default().show(ctx, |ui| {
-
+                        let (command_tx, command_rx) = crossbeam::channel::unbounded();
+                        // Lock the Mutex and show the GUI
+                        let mut file_browser = file_browser_clone.lock().unwrap();
+                        file_browser.show(ui, command_tx, command_rx);
                     });
                     if ctx.input(|i| i.viewport().close_requested()) {
                         // Tell parent to close us.

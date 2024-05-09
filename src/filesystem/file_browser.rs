@@ -1,3 +1,4 @@
+use log::info;
 use tokio::{
     fs, 
     sync::mpsc::{
@@ -272,8 +273,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
     pub fn show(
         &mut self, 
         ui: &mut Ui,
-        command_tx: UnboundedSender<Option<Command>>,
-        mut command_rx: UnboundedReceiver<Option<Command>>
+        command_tx: crossbeam::channel::Sender<Option<Command>>, //UnboundedSender<Option<Command>>,
+        mut command_rx: crossbeam::channel::Receiver<Option<Command>> //UnboundedReceiver<Option<Command>>
     ) {     
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
@@ -446,32 +447,36 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     ui.label("Loading...")
                 },
             }).inner_rect;
-            if ui.rect_contains_pointer(file_browser_area){ // || ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
-                let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
-                let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::V);
+            
+            if ui.interact_bg(Sense{click: true, drag: true, focusable: true}).hovered(){
+                info!("CONTAINS POINTER");
+                let copy = Key::Copy;
+                let paste = Key::Paste;
                 
-                if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
+                // let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, copy);
+                // let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, paste);
+
+                
+                if ui.input(|i| i.key_pressed(copy))
                 { 
                     self.copied_items_src = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
-                    println!("CTRL+C pressed");
+                    println!("Copied Items: {:?}", self.copied_items_src);
                 }
-                if ui.input_mut(|i| i.consume_shortcut(&paste_shortcut))
+                if ui.input(|i| i.key_pressed(paste))
                 {
-                    println!("CTRL+V pressed");
+                    
                     self.animated_progress = true;
                     self.copied_items_dest = PathBuf::from(&self.path_edit);
                     let cloned_dest = self.copied_items_dest.clone();
                     let cloned_src = self.copied_items_src.clone();
                     let progress_tx = self.progress_tx.clone();
-                    {
-                        puffin::profile_scope!("Copying_items");
-                        tokio::spawn(async move{
-                            let _ = match copy_selected_items(cloned_src, cloned_dest, progress_tx.clone()).await{
-                                Ok(_) => println!("copy_selected_items ran successfully"),
-                                Err(e) => println!("copy_selected_items failed: {e:?}"),
-                            };
-                        });
-                    }
+                    println!("CTRL+V pressed {:?}", self.copied_items_dest.clone());
+                    // tokio::spawn(async move{
+                    //     let _ = match copy_selected_items(cloned_src, cloned_dest, progress_tx.clone()).await{
+                    //         Ok(_) => println!("copy_selected_items ran successfully"),
+                    //         Err(e) => println!("copy_selected_items failed: {e:?}"),
+                    //     };
+                    // });
                 }
             }
             while let Ok(progress) = self.progress_rx.try_recv() {
@@ -490,10 +495,10 @@ impl FileBrowser{ // sender: UnboundedSender<>
         &self,
         ui: &mut Ui,
         path: &PathBuf,
-        command_tx: UnboundedSender<Option<Command>>,
+        command_tx: crossbeam::channel::Sender<Option<Command>>,
     ){
         puffin::profile_scope!("display_path");
-        ui.separator();
+        // ui.separator();
         let command_sender = command_tx.clone();
         let command_sender2 = command_tx.clone();
         let command_sender3 = command_tx.clone();
@@ -816,3 +821,10 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
     result
 }
 
+
+
+fn circle_icon(ui: &mut Ui, openness: f32, response: &Response) {
+    let stroke = ui.style().interact(&response).fg_stroke;
+    let radius = lerp(2.0..=3.0, openness);
+    ui.painter().circle_filled(response.rect.center(), radius, stroke.color);
+}
