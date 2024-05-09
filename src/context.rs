@@ -1,11 +1,10 @@
-use std::{path::PathBuf, sync::{atomic::Ordering, mpsc::{channel, sync_channel}, Arc, Mutex}, thread::JoinHandle}; 
+use std::{path::PathBuf, sync::{atomic::Ordering, Arc}}; 
 use std::collections::HashMap;
 use chrono::{DateTime, SecondsFormat};
-use eframe::egui::{RawInput, Window, Ui, WidgetText, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Align2, };
+use eframe::egui::{RawInput, Window, Ui, Layout, Align, Button, RichText, Grid, TextEdit, vec2, ComboBox, Id, Spinner, ScrollArea, Color32, Stroke, Align2, };
 use log::{debug, error, info};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
-use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}, ui_helpers::task_cards::task_card};
 use tokio::{spawn, sync::mpsc::unbounded_channel};
 use egui_extras::{*, DatePickerButton, Column};
@@ -17,72 +16,14 @@ use lettre::{Message, SmtpTransport, Transport};
 use crate::{
     filesystem::file_browser::FileBrowser,
     handle_api::{ api_request::SendRequest, scaffold, Store },
-    self_updater::run, handle_api::email_builder::email_builder, // minidump::minidump_main::MiniDumpApp, puffin_profiler::start_puffin_server,
+    self_updater::run, handle_api::email_builder::email_builder, // puffin_profiler::start_puffin_server,
 };
 #[cfg(target_os="windows")]
 use crate::scripting::query_antivirus;
 
 
-impl TabViewer for MastertechContext {
-    type Tab = String;
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-
-        match tab.as_str() {
-            "TUR Sheet" => self.tur_sheet(ui),
-            "Console" => self.output_console(ui),
-            "Scripts" => self.scripts(ui),
-            "File Browser 📂" => self.file_browse(ui),
-            "System Information" => self.system_information(ui),
-            "Minidump Analysis" => self.mini_dump(ui),
-            "Profiler" => self.puffin_profiler(ui),
-            "QC ☑️" => self.quality_check(ui),
-            "Mastertech Website" => self.mastertech_website(ui),
-            _ => {
-                let sysinfo_tab = &"System Information".to_string();
-                if ui.label(tab.as_str()).clicked(){
-                    if tab.as_str() == sysinfo_tab{
-                        self.specs_first_run = true;
-                    }
-                };
-            }
-        }
-    }
-
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        match tab.as_str() {
-            "TUR Sheet" => self.simple_demo_menu(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
-    }
-    
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-    
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
-    }
-    
-    fn on_add(&mut self, surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        
-        // for node in tree[SurfaceIndex::main()].iter() {
-        //     if let Node::Leaf { tabs, .. } = node {
-        //         for tab in tabs {
-        //             open_tabs.insert(tab.clone());
-        //         }
-        //     }
-        // }
-        // self.open_tabs.insert(surface_index.);
-    }
-}
-
 impl MastertechContext {
-    fn simple_demo_menu(&mut self, ui: &mut Ui) {
+    pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
         ui.label("Secret menu... -.-");
         ui.menu_button("Sub menu", |ui| {
             ui.label("(.)(.)");
@@ -109,7 +50,30 @@ impl MastertechContext {
         }
     }
 
-    fn tur_sheet(&mut self, ui: &mut Ui) {
+    pub fn file_browser_popup(&mut self, ui: &mut Ui) {
+        if ui.button("Detach File Browser").clicked(){
+            let (tx, rx) = crossbeam::channel::bounded(1);
+
+            tokio::task::spawn_blocking(move || {
+                match run(){
+                    Ok(response) => {
+                        match tx.send((response.0, response.1)){
+                            Ok(_) => drop(tx),
+                            Err(e) => println!("{e}"),
+                        }
+                    },
+                    Err(e) => println!("err: {e}"),
+                }
+            });
+            if let Ok(res) = rx.recv(){
+                self.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
+            }
+            
+
+        }
+    }
+
+    pub fn tur_sheet(&mut self, ui: &mut Ui) {
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
@@ -909,7 +873,7 @@ impl MastertechContext {
         }); // UI layout
     }
 
-    fn output_console(&mut self, ui: &mut Ui) { 
+    pub fn output_console(&mut self, ui: &mut Ui) { 
         let input = RawInput::default();
 
         let _ = self.ctx.run(input, |ctx|{
@@ -930,7 +894,7 @@ impl MastertechContext {
         ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text.to_string()).hint_text("Output"));
     }
     
-    fn system_information(&mut self, ui: &mut Ui){
+    pub fn system_information(&mut self, ui: &mut Ui){
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
         Window::new("Spinner Window")
             .enabled(self.spinner)
@@ -1165,7 +1129,7 @@ impl MastertechContext {
         });
     }
 
-    fn file_browse(&mut self, ui: &mut Ui) {
+    pub fn file_browse(&mut self, ui: &mut Ui) {
         let (command_tx, command_rx) = unbounded_channel();
         // Lock the Mutex and show the GUI
         let file_browser_clone = Arc::clone(&self.file_browser);
@@ -1173,7 +1137,7 @@ impl MastertechContext {
         file_browser.show(ui, command_tx, command_rx);
     }
     
-    fn scripts(&mut self, ui: &mut Ui){
+    pub fn scripts(&mut self, ui: &mut Ui){
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
@@ -1217,22 +1181,22 @@ impl MastertechContext {
 
      }
 
-    fn puffin_profiler(&mut self, ui: &mut Ui){
+    pub fn puffin_profiler(&mut self, ui: &mut Ui){
         puffin::profile_function!();
         puffin::GlobalProfiler::lock().new_frame(); // call once per frame!
         puffin_egui::profiler_ui(ui);
     }
 
-    fn mini_dump(&mut self, ui: &mut Ui){ 
-        //let mut minidump = self.minidump_app;
-        // self.minidump_app.poll_processor_state();
-        // self.minidump_app.update_ui(&self.ctx, ui);
-        // self.minidump_app.last_status = self.minidump_app.cur_status;
+    pub fn mini_dump(&mut self, ui: &mut Ui){ 
+        
+        self.minidump_app.poll_processor_state();
+        self.minidump_app.update_ui(&self.ctx, ui);
+        self.minidump_app.last_status = self.minidump_app.cur_status;
     }
 
-    fn quality_check(&mut self, ui: &mut Ui){ }
+    pub fn quality_check(&mut self, ui: &mut Ui){ }
 
-    fn mastertech_website(&mut self, ui: &mut Ui){ 
+    pub fn mastertech_website(&mut self, ui: &mut Ui){ 
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();

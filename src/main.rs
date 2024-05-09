@@ -25,7 +25,7 @@ pub mod app_state;
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     puffin::set_scopes_on(true);
-
+    
     // Configure log level and log file
     let log_level = LevelFilter::Debug; 
     let log_file = File::create("output.log").unwrap();
@@ -230,36 +230,7 @@ impl eframe::App for MasterTechApp {
                 move |ctx, _class| {
 
                     CentralPanel::default().show(ctx, |ui| {
-                        let scripts = Scripts::default();
-    
-                        let script_names = [
-                            scripts.wrsa,
-                            scripts.sas,
-                            scripts.check_driver,
-                            scripts.running_tasks,
-                        ];
 
-                        Grid::new("scripts").min_col_width(134.0).num_columns(3).min_row_height(10.0).show(
-                            ui, |ui| {
-                    
-                                let mut counter = 0;  // Initialize a counter
-                                for value in script_names{
-                                    let button = Button::new(
-                                        RichText::new(&value))
-                                            .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)));
-                    
-                    
-                                    if ui.add(button).clicked(){
-                    
-                                    }
-                    
-                                    counter += 1;  // Increment the counter
-                    
-                                    if counter % 4 == 0 {
-                                        ui.end_row();  // End the row after every 2 buttons
-                                    }
-                                }
-                            }); // Grid
                     });
                     if ctx.input(|i| i.viewport().close_requested()) {
                         // Tell parent to close us.
@@ -301,8 +272,8 @@ impl eframe::App for MasterTechApp {
             })
         });
     
-        CentralPanel::default()// When displaying a DockArea in another UI, it looks better
-            .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
+        CentralPanel::default() // When displaying a DockArea in another UI, it looks better
+            .frame(Frame::central_panel(&ctx.style()).inner_margin(4.)) // to set inner margins to 0.
             .show(ctx, |ui| {
                 let mut style = self.context.style.get_or_insert(DockStyle::from_egui(ui.style())).clone();
                 style.overlay.selection_color = Color32::from_rgb(92,0,87);

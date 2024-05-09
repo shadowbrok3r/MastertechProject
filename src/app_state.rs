@@ -1,19 +1,79 @@
 use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::AtomicBool, Arc}}; 
 use chrono::{DateTime, Utc};
-use eframe::egui::{Context, Color32, Stroke};
+use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
-use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState};
+use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
 use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload, TicketData}, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
 use egui_file::FileDialog;
 use crate::{
     filesystem::file_browser::FileBrowser,
-    handle_api::{ api_request::SendRequest, scaffold}
+    handle_api::{ api_request::SendRequest, scaffold},
+    minidump::minidump_main::MiniDumpApp
 };
 
 #[cfg(target_os="windows")]
 use crate::scripting::query_antivirus;
 
+
+impl TabViewer for MastertechContext {
+    type Tab = String;
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+
+        match tab.as_str() {
+            "TUR Sheet" => self.tur_sheet(ui),
+            "Console" => self.output_console(ui),
+            "Scripts" => self.scripts(ui),
+            "File Browser 📂" => self.file_browse(ui),
+            "System Information" => self.system_information(ui),
+            "Minidump Analysis" => self.mini_dump(ui),
+            "Profiler" => self.puffin_profiler(ui),
+            "QC ☑️" => self.quality_check(ui),
+            "Mastertech Website" => self.mastertech_website(ui),
+            _ => {
+                let sysinfo_tab = &"System Information".to_string();
+                if ui.label(tab.as_str()).clicked(){
+                    if tab.as_str() == sysinfo_tab{
+                        self.specs_first_run = true;
+                    }
+                };
+            }
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        match tab.as_str() {
+            "TUR Sheet" => self.simple_demo_menu(ui),
+            "File Browser" => self.file_browse(ui),
+            _ => {
+                ui.label(tab.to_string());
+                ui.label("This is a context menu");
+            }
+        }
+    }
+    
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.as_str().into()
+    }
+    
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        self.open_tabs.remove(tab);
+        true
+    }
+    
+    fn on_add(&mut self, surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        
+        // for node in tree[SurfaceIndex::main()].iter() {
+        //     if let Node::Leaf { tabs, .. } = node {
+        //         for tab in tabs {
+        //             open_tabs.insert(tab.clone());
+        //         }
+        //     }
+        // }
+        // self.open_tabs.insert(surface_index.);
+    }
+}
 
 pub struct MastertechContext { 
     pub so_number: String,
@@ -32,7 +92,7 @@ pub struct MastertechContext {
     pub seb_info: Option<LocalSebData>,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
-    // pub minidump_app: MiniDumpApp,
+    pub minidump_app: MiniDumpApp,
 
     pub salesman_cbox: Salesman,
     pub techs_cbox: Techs,
@@ -130,7 +190,7 @@ impl Default for MasterTechApp {
 
         let scaffold_request = SendRequest{ tx: tx_scaffold };
 
-        // let minidump_app = MiniDumpApp::default();
+        let minidump_app = MiniDumpApp::default();
 
         let context = MastertechContext {
             so_number: "".to_string(),
@@ -163,7 +223,7 @@ impl Default for MasterTechApp {
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
-            // minidump_app,
+            minidump_app,
             output_text: "".to_string(),
 
             connect_to_ws: false,
