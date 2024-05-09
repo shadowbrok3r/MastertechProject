@@ -140,7 +140,6 @@ impl FileBrowser{ // sender: UnboundedSender<>
     }
     
     pub async fn run_command(&mut self, command: Command) {
-        puffin::profile_scope!("run_command");
         match command{
             Command::Select(file) => self.select(file),
 
@@ -403,9 +402,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
         });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
             ui.shrink_width_to_current();ui.shrink_height_to_current();
-            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
+            // ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
@@ -757,7 +755,6 @@ extern "C" {
 
 /** Returns a Vec<PathBuf> of current directory contents and files. */
 fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
-    puffin::profile_scope!("read_folder");
     //#[cfg(windows)]
     // let drives = {
     //   let mut drives = unsafe { GetLogicalDrives() };

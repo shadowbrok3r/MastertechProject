@@ -1,11 +1,14 @@
 #![allow(clippy::too_many_arguments)]
-use crate::minidump::{processor::ProcessingStatus, minidump_main::{MiniDumpApp, Tab, threadname, frame_signature}};
+
+use super::minidump_main::{frame_signature, MiniDumpApp, Tab};
+use super::processor::ProcessingStatus;
 use eframe::egui;
-use egui::{Color32, ComboBox, Context, FontId, Frame, ScrollArea, Ui, Align, FontDefinitions, text::Fonts};
-use egui_extras::{Size, TableBody, TableBuilder, Column};
+use eframe::epaint::Fonts;
+use egui::{Color32, ComboBox, Context, FontId, Frame, ScrollArea, Ui};
+use egui_extras::{Column, Size, TableBody, TableBuilder};
 use minidump_common::utils::basename;
 use minidump_processor::ProcessState;
-use minidump_unwind::{CallStack, StackFrame, FrameTrust};
+use minidump_unwind::{CallStack, StackFrame};
 
 pub struct ProcessedUiState {
     pub cur_thread: usize,
@@ -14,11 +17,11 @@ pub struct ProcessedUiState {
 
 use inline_shim::*;
 
-use super::minidump_main::{listing, frame_source};
+use super::minidump_main::{frame_source, listing, threadname};
 #[cfg(feature = "inline")]
 mod inline_shim {
-    pub use minidump_processor::InlineFrame;
-    use minidump_processor::StackFrame;
+    pub use minidump_unwind::InlineFrame;
+    use minidump_unwind::StackFrame;
     pub fn get_inline_frames(frame: &StackFrame) -> &[InlineFrame] {
         &frame.inlines
     }
@@ -26,7 +29,7 @@ mod inline_shim {
 
 #[cfg(not(feature = "inline"))]
 mod inline_shim {
-    use crate::minidump::ui_processed::StackFrame;
+    use minidump_unwind::StackFrame;
 
     /// A stack frame in an inlined function.
     #[derive(Debug, Clone)]
@@ -47,7 +50,6 @@ mod inline_shim {
 impl MiniDumpApp {
     pub fn ui_processed(&mut self, ui: &mut Ui, ctx: &egui::Context) {
         if let Some(Err(e)) = &self.minidump {
-            println!("minidump couldnt be read: {e:?}");
             ui.label("Minidump couldn't be read!");
             ui.label(e.to_string());
             return;
@@ -58,7 +60,6 @@ impl MiniDumpApp {
                     self.ui_processed_good(ui, ctx, &state.clone());
                 }
                 Err(e) => {
-                    println!("minidump couldnt be read: {e:?}");
                     ui.label("Minidump couldn't be processed!");
                     ui.label(e.to_string());
                 }
@@ -67,7 +68,7 @@ impl MiniDumpApp {
     }
 
     fn ui_processed_good(&mut self, ui: &mut Ui, ctx: &Context, state: &ProcessState) {
-        //let is_symbolicated = self.cur_status == ProcessingStatus::Done;
+        // let is_symbolicated = self.cur_status == ProcessingStatus::Done;
         egui::TopBottomPanel::top("info")
             .resizable(true)
             .default_height((ui.available_height() / 2.0).round())
@@ -159,8 +160,9 @@ impl MiniDumpApp {
                             (
                                 "Crash Reason".to_owned(),
                                 state
-                                    .exception_info.as_ref() //.crash_reason
-                                    .map(|r| r.reason.to_string())
+                                    .exception_info
+                                    .as_ref()
+                                    .map(|e| e.reason.to_string())
                                     .unwrap_or_default(),
                             ),
                             (
@@ -170,9 +172,10 @@ impl MiniDumpApp {
                             (
                                 "Crash Address".to_owned(),
                                 state
-                                    .exception_info .as_ref()// .crash_address
-                                    .map(|addr| self.format_addr(addr.address.0))
-                                    .unwrap_or_default(),
+                                .exception_info
+                                .as_ref()
+                                .map(|e| self.format_addr(e.address.0))
+                                .unwrap_or_default(),
                             ),
                             ("Crashing Thread".to_owned(), cur_threadname.clone()),
                         ],
@@ -265,7 +268,7 @@ impl MiniDumpApp {
         let font = egui::style::TextStyle::Body.resolve(ui.style());
         TableBuilder::new(ui)
             .striped(true)
-            .cell_layout(egui::Layout::left_to_right(Align::LEFT).with_cross_align(Align::Center))
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Min).with_cross_align(egui::Align::Center))
             .column(Column::initial(60.0).at_least(40.0))
             .column(Column::initial(80.0).at_least(40.0))
             .column(Column::initial(160.0).at_least(40.0))
@@ -326,26 +329,26 @@ impl MiniDumpApp {
         let col5_width = widths[4];
 
         let (col1, col2, col3, col4, col5, row_height) = {
-            let fonts = Fonts::new(8.0, 5, FontDefinitions::default()); // ctx.fonts(|font_reader| font_reader);
+            let fonts = ctx.fonts(|x| x.clone());
             let col1 = {
                 fonts.layout(
                     frame_num.to_string(),
                     font.clone(),
-                    Color32::BLACK,
+                    Color32::WHITE,
                     col1_width,
                 )
             };
             let col2 = {
                 let trust = match frame.trust {
-                    FrameTrust::None => "none",
-                    FrameTrust::Scan => "scan",
-                    FrameTrust::CfiScan => "cfi scan",
-                    FrameTrust::FramePointer => "frame pointer",
-                    FrameTrust::CallFrameInfo => "cfi",
-                    FrameTrust::PreWalked => "prewalked",
-                    FrameTrust::Context => "context",
+                    minidump_unwind::FrameTrust::None => "none",
+                    minidump_unwind::FrameTrust::Scan => "scan",
+                    minidump_unwind::FrameTrust::CfiScan => "cfi scan",
+                    minidump_unwind::FrameTrust::FramePointer => "frame pointer",
+                    minidump_unwind::FrameTrust::CallFrameInfo => "cfi",
+                    minidump_unwind::FrameTrust::PreWalked => "prewalked",
+                    minidump_unwind::FrameTrust::Context => "context",
                 };
-                fonts.layout(trust.to_owned(), font.clone(), Color32::BLACK, col2_width)
+                fonts.layout(trust.to_owned(), font.clone(), Color32::WHITE, col2_width)
             };
             let col3 = {
                 let label = if let Some(module) = &frame.module {
@@ -353,17 +356,17 @@ impl MiniDumpApp {
                 } else {
                     String::new()
                 };
-                fonts.layout(label, font.clone(), Color32::BLACK, col3_width)
+                fonts.layout(label, font.clone(), Color32::WHITE, col3_width)
             };
             let col4 = {
                 let mut label = String::new();
                 frame_source(&mut label, frame).unwrap();
-                fonts.layout(label, font.clone(), Color32::BLACK, col4_width)
+                fonts.layout(label, font.clone(), Color32::WHITE, col4_width)
             };
             let col5 = {
                 let mut label = String::new();
                 frame_signature(&mut label, frame).unwrap();
-                fonts.layout(label, font.clone(), Color32::BLACK, col5_width)
+                fonts.layout(label, font.clone(), Color32::WHITE, col5_width)
             };
 
             let row_height = col1
@@ -424,18 +427,18 @@ impl MiniDumpApp {
         let col4_width = widths[3];
         let col5_width = widths[4];
         let (col1, col2, col3, col4, col5, row_height) = {
-            let fonts = Fonts::new(8.0, 5, FontDefinitions::default()); // ctx.fonts(|font_reader| font_reader);
+            let fonts = ctx.fonts(|x|x.clone());
             let col1 = {
                 fonts.layout(
                     frame_num.to_string(),
                     font.clone(),
-                    Color32::BLACK,
+                    Color32::WHITE,
                     col1_width,
                 )
             };
             let col2 = {
                 let trust = "inlined";
-                fonts.layout(trust.to_owned(), font.clone(), Color32::BLACK, col2_width)
+                fonts.layout(trust.to_owned(), font.clone(), Color32::WHITE, col2_width)
             };
             let col3 = {
                 let label = if let Some(module) = &real_frame.module {
@@ -443,7 +446,7 @@ impl MiniDumpApp {
                 } else {
                     String::new()
                 };
-                fonts.layout(label, font.clone(), Color32::BLACK, col3_width)
+                fonts.layout(label, font.clone(), Color32::WHITE, col3_width)
             };
             let col4 = {
                 let label = if let (Some(source_file), Some(line)) =
@@ -453,11 +456,11 @@ impl MiniDumpApp {
                 } else {
                     String::new()
                 };
-                fonts.layout(label, font.clone(), Color32::BLACK, col4_width)
+                fonts.layout(label, font.clone(), Color32::WHITE, col4_width)
             };
             let col5 = {
                 let label = frame.function_name.clone();
-                fonts.layout(label, font.clone(), Color32::BLACK, col5_width)
+                fonts.layout(label, font.clone(), Color32::WHITE, col5_width)
             };
 
             let row_height = col1

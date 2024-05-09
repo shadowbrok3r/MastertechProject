@@ -37,7 +37,7 @@ sysinfo = "0.30.11"
 tokio = { version = "1.34.0", features = ["full"] }
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
-# catppuccin-egui = "5.0.0"
+catppuccin-egui = "5.1.1"
 futures-util = "0.3.28"
 bytes = "1.5.0"
 walkdir = "2.4.0"
@@ -59,11 +59,11 @@ log = "0.4.20"
 rayon = "1.8.0"
 quick-xml = { version="0.31.0", features = ["serialize"]}
 
-# memmap2 = "0.9.4"
-# breakpad-symbols = { version = "0.21.1" }
-# minidump = { version = "0.21.1" }
-# minidump-common = { version = "0.21.1" }
-# minidump-processor = { version = "0.21.1", features = ["http", "dump_syms"] }
+memmap2 = "0.9.4"
+breakpad-symbols = { version = "0.21.1" }
+minidump = { version = "0.21.1" }
+minidump-common = { version = "0.21.1" }
+minidump-processor = { version = "0.21.1", features = ["http"] }
 
 num-traits = "0.2.16"
 rfd = "0.14.0"
