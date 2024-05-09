@@ -19,13 +19,13 @@ use std::fmt::Debug;
 use super::{GetTicketResponse, AsanaResponse, Store, email_builder::{AsanaTask, TaskAssignee}};
 
 pub struct SendRequest {
-    pub tx: std::sync::mpsc::Sender<String>,
+    pub tx: crossbeam::channel::Sender<String>,
 }
 
 impl SendRequest{
     pub fn get_ticket(
         so_number: String, 
-        tx: std::sync::mpsc::Sender<String>, 
+        tx: crossbeam::channel::Sender<String>, 
         client: reqwest::Client)
     {
         debug!("Getting Ticket");
@@ -224,7 +224,7 @@ impl SendRequest{
     }
 
     pub async fn send_ticket_request(
-        tx: std::sync::mpsc::Sender<String>, 
+        tx: crossbeam::channel::Sender<String>, 
         client: reqwest::Client, 
         asana_task: AsanaTask,
         due_date: DateTime<Utc>,

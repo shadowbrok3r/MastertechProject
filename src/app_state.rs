@@ -45,7 +45,7 @@ impl TabViewer for MastertechContext {
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
-            "File Browser" => self.file_browse(ui),
+            "File Browser 📂" => self.file_browser_popup(ui),
             _ => {
                 ui.label(tab.to_string());
                 ui.label("This is a context menu");
@@ -109,7 +109,7 @@ pub struct MastertechContext {
     pub disk_num: usize,
 
     pub database: Option<Database>,
-    pub rx: Option<std::sync::mpsc::Receiver<String>>,
+    pub rx: Option<crossbeam::channel::Receiver<String>>,
     pub ctx: Context,
     pub widget_size: f32,
     pub open_tabs: HashSet<String>,
@@ -184,7 +184,7 @@ impl Default for MasterTechApp {
         }
 
         // Create watch channel with a default value
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
         let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
 
