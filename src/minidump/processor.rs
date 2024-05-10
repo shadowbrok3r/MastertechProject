@@ -5,12 +5,11 @@ use std::{
 
 use memmap2::Mmap;
 use minidump::Minidump;
-use minidump_processor::{
-    PendingProcessorStatSubscriptions, PendingProcessorStats, 
-    ProcessState, ProcessorOptions
+use minidump_processor::{ProcessState, ProcessorOptions, PendingProcessorStatSubscriptions, PendingProcessorStats,};
+use minidump_unwind::{
+    http_symbol_supplier,
+    PendingSymbolStats,  Symbolizer,
 };
-use minidump_unwind::http_symbol_supplier;
-use breakpad_symbols::{PendingSymbolStats, Symbolizer}; //, HttpSymbolSupplier};
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProcessingStatus {
@@ -71,7 +70,7 @@ pub struct ProcessDump {
 pub fn run_processor(
     task_receiver: std::sync::Arc<(std::sync::Mutex<Option<ProcessorTask>>, std::sync::Condvar)>,
     analysis_sender: std::sync::Arc<MinidumpAnalysis>,
-    logger: crate::minidump::logger::MapLogger,
+    logger: super::logger::MapLogger,
 ) {
     loop {
         let (lock, condvar) = &*task_receiver;
@@ -89,9 +88,8 @@ pub fn run_processor(
             }
             ProcessorTask::ReadDump(path) => {
                 // Read the dump
-                let dump = Some(Minidump::read_path(path).map(Arc::new));
-
-                *analysis_sender.minidump.lock().unwrap() = dump; // expected enum `std::option::Option<Result<Arc<Minidump<'static, Mmap>>, minidump::Error>>`
+                let dump = Minidump::read_path(path).map(Arc::new);
+                *analysis_sender.minidump.lock().unwrap() = Some(dump);
             }
             ProcessorTask::ProcessDump(settings) => {
                 // Reset all stats

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::*;
 use std::error::Error;
 
-const TOKEN: &str = "Bearer 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";
+const TOKEN: &str = "";
 
 async fn create_new_issue(title: String, body: String, client: reqwest::Client)  
 /* -> core::result::Result<Box<dyn Error>> */ {
