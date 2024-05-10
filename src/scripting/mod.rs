@@ -27,12 +27,14 @@ pub struct Scripts{
     pub sas: String,
     pub check_driver: String,
     pub running_tasks: String,
+    pub query_antivirus: String,
 }
 
 pub struct InstallWebroot;
 pub struct InstallSAS;
 pub struct CheckDriverIssues;
 pub struct RunningTasks;
+pub struct QueryAntivirus;
 
 lazy_static! {
     pub static ref SCRIPT_ACTIONS: HashMap<&'static str, Arc<dyn ScriptAction + Send + Sync>> = {
@@ -46,6 +48,7 @@ lazy_static! {
         m.insert("Install SAS", install_sas);
         m.insert("Check Driver Issues", check_drivers);
         m.insert("Running Tasks", running_tasks);
+        
         m
     };
 }
@@ -58,7 +61,8 @@ impl Default for Scripts{
             wrsa: "Install Webroot".to_string(),
             sas: "Install SAS".to_string(),
             check_driver: "Check Driver Issues".to_string(),
-            running_tasks: "Running Tasks".to_string()
+            running_tasks: "Running Tasks".to_string(),
+            query_antivirus: "Query Antivirus".to_string()
         }
     }
 }
@@ -71,11 +75,25 @@ impl Scripts{
             wrsa: "Install Webroot".to_string(),
             sas: "Install SAS".to_string(),
             check_driver: "Check Driver Issues".to_string(),
-            running_tasks: "Running Tasks".to_string()
+            running_tasks: "Running Tasks".to_string(),
+            query_antivirus: "Query Antivirus".to_string()
         }
     }
+    pub fn get_scripts(&self) -> HashMap<&'static str, Arc<dyn ScriptAction + Send + Sync>> {
+        let mut m = HashMap::new();
+        let install_webroot: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallWebroot {});
+        let install_sas: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallSAS {});
+        let check_drivers: Arc<dyn ScriptAction + Send + Sync> = Arc::new(CheckDriverIssues {});
+        let running_tasks: Arc<dyn ScriptAction + Send + Sync> = Arc::new(RunningTasks{});
 
-    pub async fn install_webroot(&self) -> Result<(), Box<dyn Error>> {
+        m.insert("Install Webroot", install_webroot);
+        m.insert("Install SAS", install_sas);
+        m.insert("Check Driver Issues", check_drivers);
+        m.insert("Running Tasks", running_tasks);
+        m
+    }
+
+    pub async fn install_webroot(&self) -> Result<(), Box<dyn std::error::Error>> {
         info!("running install_webroot!");
         
         if let Some(service_number) = &self.service_number{
@@ -135,7 +153,7 @@ impl Scripts{
         Ok(())
     }
     
-    pub async fn install_sas(&self) -> Result<(), Box<dyn Error>> {
+    pub async fn install_sas(&self) -> Result<(), Box<dyn std::error::Error>> {
         info!("running install_sas!");
 
         if let Some(service_number) = &self.service_number{
@@ -193,12 +211,12 @@ impl Scripts{
         Ok(())
     }
     
-    pub async fn check_driver_issues(&self) -> Result<(), Box<dyn Error>> {
+    pub async fn check_driver_issues(&self) -> Result<(), Box<dyn std::error::Error>> {
         info!("running check_driver_issues!");
         Ok(())
     }
     
-    pub async fn running_tasks(&self) -> Result<(), Box<dyn Error>> {
+    pub async fn running_tasks(&self) -> Result<(), Box<dyn std::error::Error>> {
         info!("running running_tasks!");
         Ok(())
     }
