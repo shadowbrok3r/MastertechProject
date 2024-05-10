@@ -6,3 +6,4 @@ output.log
 .idea/Mastertech4.0.iml
 .idea/modules.xml
 .idea/vcs.xml
+Cargo.lock
