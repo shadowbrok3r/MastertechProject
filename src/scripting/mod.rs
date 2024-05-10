@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
-use tokio::{fs, io::{self, AsyncWriteExt}, process::Command, sync::Mutex};
+use tokio::{fs, io::{self, AsyncWriteExt}};
 use anyhow::Context;
 use futures::stream::TryStreamExt;
 use crate::{database::GetKeysResponse, handle_api::api_request::SendRequest};
@@ -68,7 +68,7 @@ impl Default for Scripts{
 }
 
 impl Scripts{
-    pub async fn new(service_number: String) -> Self{
+    pub fn new(service_number: String) -> Self{
         Self{
             service_number: Some(service_number),
             client: Client::new(),
@@ -248,6 +248,14 @@ impl ScriptAction for CheckDriverIssues {
 impl ScriptAction for RunningTasks {
     async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
         Scripts::running_tasks(scripts).await
+    }
+}
+
+#[cfg(target_os="windows")]
+#[async_trait]
+impl ScriptAction for QueryAntivirus {
+    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+        Scripts::query_antivirus(scripts).await
     }
 }
 

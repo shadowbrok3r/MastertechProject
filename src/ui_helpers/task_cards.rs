@@ -1,60 +1,60 @@
-use eframe::egui::{collapsing_header::CollapsingState, Align, CollapsingHeader, Layout, Ui};
-use egui_extras::{Column, TableBuilder};
+use eframe::egui::{collapsing_header::CollapsingState, Align, Button, CollapsingHeader, Color32, Grid, Layout, RadioButton, Ui, Vec2, Widget};
+use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 
 use crate::database::schema::TaskPayload;
 
+pub struct TaskLayout{
+    selected: bool
+}
 
+impl Default for TaskLayout{
+    fn default() -> Self {
+        Self {
+            selected: false
+        }
+    }
+}
 
-pub fn task_card(task_data: Vec<TaskPayload>, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error>{
+impl TaskLayout{
+    pub fn task_card(task_data: Vec<TaskPayload>, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error> {
 
-    let header_id = ui.make_persistent_id("my_collapsing_header");
-
-    let mut stuff = false;
-    CollapsingState::load_with_default_open(ui.ctx(), header_id, true)
-    .show_header(ui, |ui| {
-        ui.toggle_value(&mut stuff, "Click to select/unselect");
-        ui.radio_value(&mut stuff, false, "");
-        ui.radio_value(&mut stuff, true, "");
-    })
-    .body(|ui| {
-        ui.label("The body is always custom");
-    });
-
-    CollapsingHeader::new("Normal collapsing header for comparison").show(ui, |ui| {
-        ui.label("Nothing exciting here");
-    });
-
-    ui.push_id("tasks",|ui|{
-        let table = TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .cell_layout(Layout::left_to_right(Align::Center))
-            .column(Column::initial(100.0).range(50.0..=300.0).clip(true))
-            .column(Column::remainder())
-            .min_scrolled_height(0.0);
-
-        table
-        .header(20.0, |mut header|{
+        let mut selected = false;
+    
+        TableBuilder::new(ui)
+            .column(Column::remainder().resizable(true))
+            .column(Column::remainder().resizable(true))
+            .header(20.0, |mut header| 
+        {
             header.col(|ui| {
-                ui.strong("Task ID");
+                ui.heading("Task Name");
             });
             header.col(|ui| {
-                ui.strong("Task Name");
+                ui.heading("Due");
             });
-        }).body(|mut body| {
+        }).body(|mut body| 
+        {
             for task_data in task_data.iter(){
-                
-                body.row(20.0, |mut row| {
-                    row.col(|ui|{
-                        ui.label(format!("{}", &task_data.id.clone().unwrap().0.id));
+                body.row(30.0, |mut row| {
+                    row.col(|ui| {
+                        ui.toggle_value(&mut selected, &task_data.task_name);
                     });
-                    row.col(|ui|{
-                        ui.label(format!("{}", &task_data.task_name));
+                    row.col(|ui| {
+                        ui.label(&task_data.due_date);
                     });
                 });
             }
-            
         });
+    
+/* 
+    let header_id = ui.make_persistent_id(&task_data.task_name);
+    CollapsingState::load_with_default_open(ui.ctx(), header_id, false)
+    .show_header(ui, |ui| {
+        ui.toggle_value(&mut stuff, &task_data.task_name);
+    })
+    .body_unindented(|ui| {
+        ui.label("The body is always custom");
     });
-    Ok(())
+*/
+        Ok(())
+    }
 }
