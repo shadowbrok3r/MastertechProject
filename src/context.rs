@@ -3,7 +3,6 @@ use crate::{app_state::MastertechContext, database::{database::Database, schema:
 use std::{path::PathBuf, sync::{atomic::Ordering, Arc}, collections::HashMap}; 
 use chrono::{DateTime, SecondsFormat};
 use log::{debug, error, info};
-use ratframe::RataguiBackend;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
 use tokio::spawn;
@@ -861,24 +860,10 @@ impl MastertechContext {
     }
 
     pub fn output_console(&mut self, ui: &mut Ui) { 
-        setup_terminal(ui, &self.output_text).unwrap();
+        self.ctx.request_repaint();
+        // setup_terminal(ui, &self.output_text).unwrap();
 
-        // let input = RawInput::default();
-        // let _ = self.ctx.run(input, |ctx|{
-        //     Window::new("Spinner Window")
-        //     .enabled(self.spinner)
-        //     .open(&mut self.spinner)
-        //     .title_bar(false)
-        //     .fixed_size(vec2(20.0,20.0))
-        //     .anchor(Align2::CENTER_TOP, [0.0, 0.0])
-        //     .show(&ctx, |ui|{
-        //         ui.add(
-        //             Spinner::new()
-        //             .color(Color32::LIGHT_RED)
-        //         );
-        //     });
-        // });
-        // ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text.to_string()).hint_text("Output"));
+        ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text.to_string()).hint_text("Output"));
     }
     
     pub fn system_information(&mut self, ui: &mut Ui){
