@@ -7,92 +7,104 @@ build = "build.rs"
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "2.0"
-embed-resource = "2.2.0"
+embed-resource = "2.4.2"
 
 [package.metadata]
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
 resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 
+[package.metadata.winres]
+OriginalFilename = "Mastertech.EXE"
+LegalCopyright = "Copyright © 2024"
+
+[profile.release]
+# strip = "debuginfo"
+debug = true
+
+[features]
+default=["winit", "cpu_fix"]
+winit = ["dep:egui-winit"]
+compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
+cpu_fix = []
+
 [dependencies]
-chrono = "0.4.26"
-eframe = { version="0.22.0", features=["persistence", "puffin", "wgpu"] } #
-egui = "0.22.0"
-egui_dock = "0.6.3"
-egui_extras = { version = "0.22.0", features = ["datepicker"]}
-reqwest = { version = "0.11.18", features = ["json", "stream", "blocking"] }
-sysinfo = "0.29.2"
-tokio = { version = "1.32.0", features = ["full"] }
-serde = { version = "1.0.164", features = ["derive"] }
-serde_json = "1.0"
-catppuccin-egui = "3.0.0"
+chrono = "0.4.38"
+eframe = { version="0.27.2", features=["persistence", "puffin", "wgpu"] } # "deadlock_detection", "callstack"
+egui_dock = "0.12.0"
+egui_extras = { version = "0.27.2", features = ["datepicker"]}
+reqwest = { version = "0.12.4", features = ["json", "stream", "blocking", "cookies"] }
+sysinfo = "0.30.11"
+tokio = { version = "1.34.0", features = ["full"] }
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+catppuccin-egui = "5.1.1"
 futures-util = "0.3.28"
-bytes = "1.4.0"
-walkdir = "2.3.3"
+bytes = "1.5.0"
+walkdir = "2.4.0"
 futures = "0.3.28"
 pollster = "0.3.0"
 crossbeam = "0.8.2"
-asana = "0.1.1"
-regex = "1.9.1"
-image = "0.24.6"
-egui_file = "0.10.0"
-self_update = "0.38.0"
-puffin = { version = "0.16.0", features = ["packing"] }
+regex = "1.9.5"
+image = "0.25.0"
+egui_file = "0.17.0"
+self_update = "0.40.0"
+puffin = { version = "0.19.0", features = ["packing"] }
+puffin_egui = "0.27.0"
+uuid = { version = "1.7.0", features = ["v4"] }
 
 num-format = "0.4.4"
 fs_extra = "1.3.0"
-cached = "0.45.1"
-log = "0.4.20"
 simplelog = "0.12.1"
-rayon = "1.7.0"
+log = "0.4.20"
+rayon = "1.8.0"
+quick-xml = { version="0.31.0", features = ["serialize"]}
 
-memmap2 = "0.5.10"
-breakpad-symbols = { version = "0.18.0" }
-minidump = { version = "0.18.0" }
-minidump-common = { version = "0.18.0" }
-minidump-processor = { version = "0.18.0", features = ["http", "dump_syms"] }
+memmap2 = "0.9.4"
+breakpad-symbols = { version = "0.21.1" }
+minidump = { version = "0.21.1" }
+minidump-common = { version = "0.21.1" }
+minidump-processor = { version = "0.21.1", features = ["http"] }
 
-num-traits = "0.2.15"
-rfd = "0.12.0"
-tempfile = "3.3.0"
-tracing = { version = "0.1.34", features = ["log"] }
+num-traits = "0.2.16"
+rfd = "0.14.0"
+tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = "0.3.14"
 linked-hash-map = "0.5.6"
-clap = { version = "4.4.2", features = ["derive"] }
-minidump-unwind = "0.18.0"
-win_dbg_logger = "0.1.0"
-puffin_egui = "0.22.0"
-egui_skia = { version = "0.3.0", features = ["winit"] }
-egui-winit = "0.22.0"
-softbuffer = "0.2.1"
-skia-safe = "0.66.2"
+clap = { version = "4.4.4", features = ["derive"] }
+minidump-unwind = "0.21.1"
+
+egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
+egui-winit = { version = "0.27.2", optional = true, default-features = false }
+softbuffer = {version = "0.4.0", optional = true}
+skia-safe = {version = "0.73.0", optional = true}
+dotenv = "0.15.0"
+lettre = "0.11.2"
+async-trait = "0.1.74"
+egui-aesthetix = { version = "0.2.3", features = ["carl"] }
+shell-words = "1.1.0"
+rust_socketio = { version = "0.6.0", features = ["async"] }
+reqwest_cookie_store = "0.7.0"
+anyhow = "1.0.81"
+surrealdb = { version = "1.4.2", features = ["default"] }
+lazy_static = "1.4.0"
+sha2 = { version = "0.10.8", features = ["std"] }
+wmi = "0.13.3"
+ratatui = "0.26.2"
+crossterm = "0.27.0"
+tui-term = "0.1.11"
+portable-pty = "0.8.1"
+
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
 libatasmart = "0.3.1"
 
-
-[package.metadata.winres]
-OriginalFilename = "Mastertech.EXE"
-LegalCopyright = "Copyright © 2023"
-
-[profile.release]
-strip = "debuginfo"
-
-# [profile.dev]
+[profile.dev]
+debug = true
+lto = false
+strip = false
 # opt-level = 2
 
 # [profile.dev.package."*"]
 # opt-level = 3
-
-#[features]
-#default = ["winit"]
-#winit = []
-
-# winres = "0.1.12"
-# opener = "0.6.1"
-# directories = "5.0.1"
-# jwalk = "0.8.1"
-# egui_file = "0.9.0"
-# libatasmart-sys = "0.2.0"
-# env_logger = "0.10.0"
 

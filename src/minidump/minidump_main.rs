@@ -1,25 +1,30 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+
 use clap::Parser;
-use eframe::egui;
-use egui::{Color32, Ui, text::Fonts, FontDefinitions};
-use egui_extras::{TableBuilder, Column};
-use crate::minidump::logger::MapLogger;
+use eframe::{egui::{self, scroll_area::ScrollBarVisibility, FontDefinitions}, epaint::Fonts};
+use egui::{Color32, Ui, Vec2};
+use egui_extras::{Column, Size, TableBuilder};
 use memmap2::Mmap;
 use minidump::{format::MINIDUMP_STREAM_TYPE, system_info::PointerWidth, Minidump, Module};
 use minidump_common::utils::basename;
 use minidump_processor::ProcessState;
 use minidump_unwind::{CallStack, StackFrame};
-use crate::minidump::processor::{MaybeMinidump, MaybeProcessed, MinidumpAnalysis, ProcessDump, ProcessingStatus, ProcessorTask, };
-use super::processor;
-
+use super::processor::{
+    self, MaybeMinidump, MaybeProcessed, MinidumpAnalysis, ProcessDump, ProcessingStatus, ProcessorTask
+};
 use std::{
     cmp::Ordering,
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
 };
 use tracing_subscriber::prelude::*;
-use crate::minidump::ui_logs::LogUiState;
-use crate::minidump::ui_processed::ProcessedUiState;
-use crate::minidump::ui_raw_dump::RawDumpUiState;
+use super::ui_logs::LogUiState;
+use super::ui_processed::ProcessedUiState;
+use super::ui_raw_dump::RawDumpUiState;
+
+use super::logger::MapLogger;
+
+
 
 pub struct MiniDumpApp {
     pub logger: MapLogger,
@@ -28,11 +33,13 @@ pub struct MiniDumpApp {
     pub raw_dump_ui_state: RawDumpUiState,
     pub processed_ui_state: ProcessedUiState,
     pub log_ui_state: LogUiState,
+
     pub cur_status: ProcessingStatus,
     pub last_status: ProcessingStatus,
     pub minidump: MaybeMinidump,
     pub processed: MaybeProcessed,
     pub pointer_width: PointerWidth,
+
     pub task_sender: Arc<(Mutex<Option<ProcessorTask>>, Condvar)>,
     pub analysis_state: Arc<MinidumpAnalysis>,
 }
@@ -56,7 +63,7 @@ pub enum Tab {
 }
 
 #[derive(Parser)]
-struct Cli {
+pub struct Cli {
     #[clap(action, long)]
     symbols_url: Vec<String>,
     #[clap(action, long)]
@@ -144,15 +151,14 @@ impl Default for MiniDumpApp{
     }
 }
 
+
 // Core State Updating
 impl MiniDumpApp {
     pub fn poll_processor_state(&mut self) {
         // Fetch updates from processing thread
         let new_minidump = self.analysis_state.minidump.lock().unwrap().take();
         if let Some(dump) = new_minidump {
-            println!("There IS Some(dump) in new_minidump");
             if let Ok(dump) = &dump {
-                println!("Got dump ok");
                 self.process_dump(dump.clone());
             }
             self.minidump = Some(dump);
@@ -169,7 +175,6 @@ impl MiniDumpApp {
                 self.cur_status = ProcessingStatus::Symbolicating;
 
                 if let Some(crashed_thread) = state.requesting_thread {
-                    println!("crashed thread: {crashed_thread}");
                     self.processed_ui_state.cur_thread = crashed_thread;
                 }
                 self.processed = Some(Ok(Arc::new(state)));
@@ -215,7 +220,6 @@ impl MiniDumpApp {
         let path = self.settings.available_paths[idx].clone();
         self.cur_status = ProcessingStatus::ReadingDump;
         self.settings.picked_path = Some(path.display().to_string());
-        // println!("picked path {:?}", &self.settings.picked_path);
         let (lock, condvar) = &*self.task_sender;
         let mut new_task = lock.lock().unwrap();
         *new_task = Some(ProcessorTask::ReadDump(path));
@@ -229,7 +233,6 @@ impl MiniDumpApp {
         let (lock, condvar) = &*self.task_sender;
         let mut new_task = lock.lock().unwrap();
         self.cur_status = ProcessingStatus::RawProcessing;
-        println!("Status is Raw Processing");
 
         let symbol_paths = self
             .settings
@@ -324,19 +327,19 @@ pub fn listing(
         TableBuilder::new(ui)
             .striped(true)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center).with_cross_align(egui::Align::Center))
-            .column(Column::initial(120.0).at_least(40.0))// Size::initial(120.0).at_least(40.0))
-            .column(Column::remainder().at_least(60.0))
+            .column(Column::initial(120.0).at_least(40.0)) //Size::initial(120.0).at_least(40.0))
+            .column(Column::remainder().at_least(60.0)) // Size::remainder().at_least(60.0))
             .resizable(true)
-            //.scroll(false)
+            .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
             .body(|mut body| {
                 let widths = body.widths();
                 let col1_width = widths[0];
                 let col2_width = widths[1];
                 for (lhs, rhs) in items {
                     let (col1, col2, row_height) = {
-                        let fonts = Fonts::new(8.0, 5, FontDefinitions::default()); // ctx.fonts(|font_reader| font_reader);
-                        let col1 = fonts.layout(lhs, body_font.clone(), Color32::BLACK, col1_width);
-                        let col2 = fonts.layout(rhs, mono_font.clone(), Color32::BLACK, col2_width);
+                        let fonts = ctx.fonts(|x| x.clone());
+                        let col1 = fonts.layout(lhs, body_font.clone(), Color32::WHITE, col1_width);
+                        let col2 = fonts.layout(rhs, mono_font.clone(), Color32::WHITE, col2_width);
                         let row_height = col1.rect.height().max(col2.rect.height()) + 6.0;
                         (col1, col2, row_height)
                     };
