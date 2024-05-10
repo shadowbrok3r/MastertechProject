@@ -22,6 +22,7 @@ mod minidump;
 mod database;
 mod scripting;
 pub mod app_state;
+pub mod terminal;
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
