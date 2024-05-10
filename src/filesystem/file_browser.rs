@@ -311,8 +311,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     }
 
                     ScrollArea::new([false, false])
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| 
+                    {
                         let response = ui.add_sized(
                             ui.available_size_before_wrap(),
                             TextEdit::singleline(&mut self.path_edit)
@@ -330,7 +331,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
                         }
 
-                    }); //.inner_rect;
+                    });
                     // if ui.rect_contains_pointer(top_bar){}
                 });
             });
@@ -403,9 +404,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            ui.shrink_width_to_current();ui.shrink_height_to_current();
-            // ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
-
+            ui.shrink_width_to_current();ui.shrink_height_to_current();// ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
             if self.first_refresh_contents{
@@ -456,6 +455,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 // let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, copy);
                 // let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, paste);
 
+                if InputState::default().consume_key(Modifiers::CTRL, Key::C){
+                    info!("Detected Key press");
+                }
                 
                 if ui.input(|i| i.key_pressed(copy))
                 { 

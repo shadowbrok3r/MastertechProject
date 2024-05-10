@@ -1,5 +1,5 @@
 use eframe::egui::{vec2, Align, Align2, Button, CentralPanel, Color32, ComboBox, Grid, Id, Key, Layout, RawInput, RichText, ScrollArea, Spinner, Stroke, TextEdit, Ui, Window };
-use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}, terminal::setup_terminal, ui_helpers::task_cards::TaskLayout};
+use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::Scripts, terminal::setup_terminal, ui_helpers::task_cards::TaskLayout};
 use std::{path::PathBuf, sync::{atomic::Ordering, Arc}, collections::HashMap}; 
 use chrono::{DateTime, SecondsFormat};
 use log::{debug, error, info};
@@ -402,20 +402,20 @@ impl MastertechContext {
                                     {  
                                         self.spinner = true;
 
-                                        Window::new("Spinner Window")
-                                            .enabled(self.spinner)
-                                            .open(&mut self.spinner)
-                                            .title_bar(false)
-                                            .fixed_size(vec2(10.0,10.0))
-                                            // .constrain_to(ctx.available_rect())
-                                            .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
-                                            .show(&self.ctx, |ui|{
-                                                ui.add(
-                                                    Spinner::new()
-                                                    .color(Color32::LIGHT_RED)
-                                                    //.size()
-                                                );
-                                    });
+                                        // Window::new("Spinner Window")
+                                        //     .enabled(self.spinner)
+                                        //     .open(&mut self.spinner)
+                                        //     .title_bar(false)
+                                        //     .fixed_size(vec2(10.0,10.0))
+                                        //     // .constrain_to(ctx.available_rect())
+                                        //     .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+                                        //     .show(&self.ctx, |ui|{
+                                        //         ui.add(
+                                        //             Spinner::new()
+                                        //             .color(Color32::LIGHT_RED)
+                                        //             //.size()
+                                        //         );
+                                        // });
                                         
 
                                         let cust = &self.ticket_info.customer_name;
@@ -651,14 +651,18 @@ impl MastertechContext {
                                                     }, 
                                                     file_attachment: self.opened_file.clone() 
                                                 };
+                                                let tx = self.scaffold_request.tx.clone();
+                                                let client = self.client.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = SendRequest::send_ticket_request(
+                                                        tx, 
+                                                        client, 
+                                                        task,
+                                                        date,
+                                                    ).await.unwrap();
+                                                    info!("After tokio spawn in send_ticket_request");
+                                                });
 
-
-                                                SendRequest::send_ticket_request(
-                                                    self.scaffold_request.tx.clone(), 
-                                                    self.client.clone(), 
-                                                    task,
-                                                    date,
-                                                );
 
                                             }else{
                                                 let mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());

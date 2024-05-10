@@ -228,8 +228,7 @@ impl SendRequest{
         client: reqwest::Client, 
         asana_task: AsanaTask,
         due_date: DateTime<Utc>,
-    )
-        -> anyhow::Result<(), anyhow::Error>
+    ) -> anyhow::Result<(), anyhow::Error>
     {
         let send = tx.clone();
 
@@ -274,11 +273,11 @@ impl SendRequest{
             .send()
             .await?;
         
-        let res_body: Value = response.json().await.unwrap();
-        println!("Asana Response Body: {res_body:?}");
+        let res_body: Value = response.json().await?;
+        debug!("Asana Response Body: {res_body:?}");
         let gid: Value = res_body.get("gid").unwrap_or(&Value::default()).clone();
 
-        println!("Asana Response: {gid:?}");
+        debug!("Asana Response: {gid:?}");
 
         let file = asana_task.file_attachment.clone();
 
@@ -403,12 +402,12 @@ pub async fn request_seb_info<T>(client: reqwest::Client, customer_email: Option
         let actual_response = response_json.get(0);
 
         if let Some(extended_seb) = actual_response{
-            println!("Carbonite response: {extended_seb:#?}");
+            debug!("Carbonite response: {extended_seb:#?}");
 
             result.ExtendedSeb = Some(extended_seb.clone());
         }
 
-        let res: T = result.try_into().unwrap();
+        let res: T = result.try_into()?;
 
         Ok(res)
     }
