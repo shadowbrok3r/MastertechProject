@@ -1,307 +1,27 @@
-use std::{sync::{Arc, Mutex}, collections::HashSet, path::PathBuf};
-use std::collections::HashMap;
-//use crossbeam::{scope, channel::TryRecvError};
+use eframe::egui::{vec2, Align, Align2, Button, CentralPanel, Color32, ComboBox, Grid, Id, Key, Layout, RawInput, RichText, ScrollArea, Spinner, Stroke, TextEdit, Ui, Window };
+use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}, terminal::setup_terminal, ui_helpers::task_cards::task_card};
+use std::{path::PathBuf, sync::{atomic::Ordering, Arc}, collections::HashMap}; 
+use chrono::{DateTime, SecondsFormat};
+use log::{debug, error, info};
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde_json::Value;
-use eframe::egui;
-use egui::*;
-use egui_dock::{Node, NodeIndex, Tree, TabViewer};
-use scaffold::PulledKeys;
-use tokio::sync::mpsc::unbounded_channel;
+use tokio::spawn;
 use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
-// use libatasmart::{Disk as SmartDisk, smart_test_to_string, get_smart_status_as_string, IdentifyParsedData};
+use lettre::{{Message, SmtpTransport, Transport}, transport::smtp::authentication::Credentials, message::header::ContentType};
 
 use crate::{
-    file_browser::FileBrowser, 
-    system_info, 
-    scaffold_calls::{
-        request::SendRequest,
-        scaffold
-    },
-    system_info::RetrieveSystemInfo,
-    self_updater::run,
-    minidump::minidump_main::MiniDumpApp,
-    // puffin_profiler::start_puffin_server,
+    filesystem::file_browser::FileBrowser,
+    handle_api::{ api_request::SendRequest, scaffold, Store },
+    self_updater::run, handle_api::email_builder::email_builder
 };
-use scaffold::TicketInformation;
 
-/** 
-TODO, dont make all of these public, maybe we
-need a getter/setter, or use some Higher-level Methods: 
-Instead of manipulating the fields of your struct directly, 
-consider whether you can introduce higher-level methods that 
-perform the operations you need.
-
-For example, instead of getting a Vec field and pushing an 
-element to it, you might introduce a add_element method:
-
-pub struct MyStruct {
-    vec_field: Vec<i32>,
-    // other fields...
-}
-
-impl MyStruct {
-    pub fn add_element(&mut self, element: i32) {
-        self.vec_field.push(element);
-    }
-    // other methods...
-}
-
-*/
-pub struct MastertechContext { 
-    pub so_number: String,
-    pub recommendations: String,
-
-    pub ticket_info: TicketInformation,
-    pub keys: PulledKeys,
-    pub file_browser: Arc<Mutex<FileBrowser>>,
-    pub client: reqwest::Client,
-    scaffold_request: SendRequest,
-    pub sysinfo_request: system_info::RetrieveSystemInfo,
-    pub antivirus_installed: String,
-    pub opened_file: Option<PathBuf>,
-    pub open_file_dialog: Option<FileDialog>,
-    pub minidump_app: MiniDumpApp,
-    
-    //pub system_information: SystemInformation,
-    pub salesman_cbox: scaffold::Salesman,
-    pub techs_cbox: scaffold::Techs,
-    pub ram_test_cbox: scaffold::HardwareTest,
-    pub hdd_test_cbox: scaffold::HardwareTest,
-    pub ssd_test_cbox: scaffold::HardwareTest,
-
-    pub output_text: String,
-    
-    pub cpu_name: String,
-    pub total_ram: String,
-    pub system_name: String,
-    pub gpu: Option<String>,
-    pub disks: Value,
-    pub disk_num: usize,
-
-    pub tur_sheet_tab: String,
-    pub output_console_tab: String,
-    pub system_info_tab: String,
-    pub file_browser_tab: String,
-    pub scripts_tab: String,
-
-    pub rx: Option<std::sync::mpsc::Receiver<String>>,
-    pub ctx: egui::Context,
-    pub widget_size: f32,
-    pub open_tabs: HashSet<String>,
-    pub show_close_buttons: bool,
-    pub show_add_buttons: bool,
-    pub draggable_tabs: bool,
-    pub show_tab_name_on_hover: bool,
-
-    pub date: Option<chrono::NaiveDate>,
-    
-    pub reader_bytes: u32,
-
-    pub animate_progress_bar: bool,
-    pub specs_first_run: bool,
-    pub file_browse_run: bool,
-    pub get_specs: bool,
-    pub send_specs: bool,
-    pub spinner: bool,
-    
-    pub style: Option<egui_dock::Style>,
-    pub text_color: Color32,
-    pub border_stroke_color: Stroke,
-    pub bg_color: Color32,
-    pub frame_counter: u64,
-}
-
-impl TabViewer for MastertechContext {
-    type Tab = String;
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-
-        match tab.as_str() {
-            "TUR Sheet" => self.tur_sheet(ui),
-            "Console" => self.output_console(ui),
-            "Scripts" => self.scripts(ui),
-            "File Browser 📂" => self.file_browse(ui),
-            "System Information" => self.system_information(ui),
-            "Minidump Analysis" => self.mini_dump(ui),
-            "Profiler" => self.puffin_profiler(ui),
-            _ => {
-                let sysinfo_tab = &self.system_info_tab.to_string();
-                if ui.label(tab.as_str()).clicked(){
-                    if tab.as_str() == sysinfo_tab{
-                        self.specs_first_run = true;
-                    }
-                };
-            }
-        }
-    }
-
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        match tab.as_str() {
-            "TUR Sheet" => self.simple_demo_menu(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
-    }
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
-    }
-    fn on_add(&mut self, _node: NodeIndex) {
-        //self.open_tabs.add(tab)
-    }
-}
-pub struct MasterTechApp {
-    pub context: MastertechContext,
-    pub tree: Tree<String>,
-}
-
-impl Default for MasterTechApp {
-    fn default() -> Self {
-        let mut tree = Tree::new(vec!["TUR Sheet".to_owned(), "System Information".to_owned()]);
-        let [a, _] = tree.split_left(NodeIndex::root(), 0.3, vec!["File Browser 📂".to_owned(), "Scripts".to_owned()]);
-        let [_, _] = tree.split_below(
-            a,
-            0.72,
-            vec!["Console".to_owned()],
-        );//let [_, _] = tree.split_below(b, 0.5, vec!["Scripts".to_owned()]);
-
-        let mut open_tabs = HashSet::new();
-
-        for node in tree.iter() {
-            if let Node::Leaf { tabs, .. } = node {
-                for tab in tabs {
-                    open_tabs.insert(tab.clone());
-                }
-            }
-        }
-
-        let client = reqwest::Client::new();
-
-        // Create watch channel with a default value
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-        let tx_scaffold = tx.clone();
-        let tx_sysinfo = tx.clone();
-
-        let sysinfo_request = system_info::RetrieveSystemInfo{
-            tx: tx_sysinfo,
-        };
-
-        let scaffold_request = SendRequest{
-            tx: tx_scaffold,
-        };
-
-        let minidump_app = MiniDumpApp::default();
-
-        let ticket_information = TicketInformation {
-            cust_code: "".to_string(),
-            user_id: "".to_string(),
-            terms: "".to_string(),
-            doc_alias: "".to_string(),
-            department: "".to_string(),
-            jurisdiction: "".to_string(),
-            invoice_amnt: "".to_string(),
-            customer_name: "".to_string(),
-            customer_phone_1: "".to_string(),
-            customer_phone_2: "".to_string(),
-            customer_email: "".to_string(),
-            last_invoice_number: "".to_string(),
-            last_invoice_amount: "".to_string(),
-            total_invoice_count: "".to_string(),
-            checkin_notes: "".to_string(),
-            item_codes: "".to_string(),
-        };
-        
-        //let system_information = SystemInformation {};
-
-        let context = MastertechContext {
-            so_number: "".to_string(),
-            recommendations: "".to_string(),
-
-            ticket_info: ticket_information,
-            keys: PulledKeys { 
-                webroot_key: "Webroot Key".to_string(), 
-                superanti_key: "SuperAnti Key".to_string() 
-            },
-            scaffold_request,
-            sysinfo_request,
-            client,
-            file_browser: Arc::new(Mutex::new(FileBrowser::new())),
-            antivirus_installed: "".to_string(),
-            opened_file: None,
-            open_file_dialog: None,
-            // I should just make this section take
-            // the whole enum
-            salesman_cbox: scaffold::Salesman::Jake, 
-            techs_cbox: scaffold::Techs::Logan, 
-            ram_test_cbox: scaffold::HardwareTest::RamNotTested,
-            hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
-            ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
-            minidump_app,
-            output_text: "".to_string(),
-
-            
-            cpu_name: "".to_string(),
-            total_ram: "".to_string(),
-            system_name: "".to_string(),
-            disks: Value::Array(vec![]),
-            gpu: Some("".to_string()),
-            disk_num: 0,
-
-
-            rx: Some(rx),
-
-            //////////////////////////////////////////
-            /*          Widgets and UI elements     */
-            //////////////////////////////////////////
-            ctx: egui::Context::default(),
-            widget_size: 135.0,
-            open_tabs,
-            show_close_buttons: true,
-            show_add_buttons: true,
-            draggable_tabs: true,
-            show_tab_name_on_hover: false,
-            tur_sheet_tab: "TUR Sheet".to_string(),
-            output_console_tab: "Console".to_string(),
-            system_info_tab: "System Information".to_string(),
-            scripts_tab: "Scripts".to_string(),
-            file_browser_tab: "File Browser 📂".to_string(),
-            date: None,
-            animate_progress_bar: false,
-            reader_bytes: 0,
-
-            send_specs: false,
-
-            specs_first_run: true,
-            file_browse_run: false,
-            get_specs: false,
-            spinner: false,
-
-            
-
-            //////////////////////////////////////////
-            /*          UI Colors                   */
-            //////////////////////////////////////////
-            style: None,
-            text_color: Color32::from_rgb(255, 204, 230),//(200,200,200),
-            bg_color: Color32::from_rgb(28,30,36),
-            border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
-
-            frame_counter: 0,
-        };
-
-        Self { context, tree }
-    }
-}
+#[cfg(target_os="windows")]
+use crate::scripting::query_antivirus;
 
 impl MastertechContext {
-    fn simple_demo_menu(&mut self, ui: &mut Ui) {
+    pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
         ui.label("Secret menu... -.-");
         ui.menu_button("Sub menu", |ui| {
             ui.label("(.)(.)");
@@ -328,16 +48,23 @@ impl MastertechContext {
         }
     }
 
-    fn tur_sheet(&mut self, ui: &mut Ui) {
-        ui.visuals_mut().override_text_color = Some(self.text_color);
+    pub fn file_browser_popup(&mut self, ui: &mut Ui) {
+        let current_state = self.show_deferred_viewport.load(Ordering::Relaxed);
+        let new_state = !current_state; // Toggle the state: if it's true, make it false, and vice versa
+
+        if current_state{
+            if ui.button("Attach File Browser").clicked(){self.show_deferred_viewport.store(new_state, Ordering::Relaxed);}
+        }else {
+            if ui.button("Detach File Browser").clicked(){self.show_deferred_viewport.store(new_state, Ordering::Relaxed);}
+        }
+    }
+
+    pub fn tur_sheet(&mut self, ui: &mut Ui) {
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
-        ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
-        ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
         ui.vertical(|ui|{ui.add_space(8.0);});
         
-
         ui.with_layout(
             Layout::left_to_right(Align::Center),|ui|
         {     
@@ -373,8 +100,8 @@ impl MastertechContext {
                                         if ui.add(
                                             Button::new(RichText::new("Get Ticket")
                                                 .color(Color32::from_rgb(255, 204, 255))
-                                                .strong()
-                                                .italics()
+                                                
+                                                
                                             )
                                             .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
                                         )
@@ -382,12 +109,13 @@ impl MastertechContext {
                                         { 
                                             self.output_text.clear();
                                             let service_num = self.so_number.clone();
-                                            if !service_num.is_empty(){
+                                            if !service_num.is_empty() && service_num.len() == 8{
                                                 self.output_text = "Its Everest, this may take a 'moment'".to_string();
                                                 self.spinner = true;
+ 
                                                 SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
                                             }else{
-                                                self.output_text = "You need to enter an SO number before submitting TUR sheet".to_string();
+                                                self.output_text = "Didn't enter SO number or SO number < 8 digits".to_string();
                                             }
 
                                         } 
@@ -476,21 +204,44 @@ impl MastertechContext {
                                                     .clicked(){ 
                                                         let service_num = self.so_number.clone();
                                                         self.spinner = true;
-                                                        SendRequest::get_cps(service_num, self.scaffold_request.tx.clone(), self.client.clone());
+
+                                                        let cps_request = SendRequest::get_cps(service_num, self.client.clone());
+                                                        let (tx, rx) = std::sync::mpsc::channel::<GetKeysResponse>();
+
+                                                        spawn(async move{
+                                                            let sender = tx.clone();
+                                                            let unwrapped_request =  cps_request.await.unwrap_or(GetKeysResponse::default());
+
+                                                            match sender.send(unwrapped_request){
+                                                                Ok(_) => info!("GetKeysClick -> sent keys successfully"),
+                                                                Err(err) => debug!("GetKeysClick -> Error propogating GetKeysResponse to callee -> {err:?}")
+                                                            }
+                                                        });
+
+                                                        match rx.recv(){
+                                                            Ok(keys) => {
+                                                                if keys.webroot_key.contains("Error"){
+                                                                    self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
+                                                                }
+                                                                self.keys = keys;
+                                                            },
+                                                            Err(err) => {
+                                                                debug!("GetKeysClick Receive Error -> {err:?}");
+                                                                self.output_text = format!("GetKeysClick -> Error receiving keys -> {err:?}");
+                                                            }
+                                                        }
                                                     }
                                                     
                                                     if ui.add(Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
-                                                        
-                                                        //check_seb_info
+                                                        // request_seb_info(self.client, Some(self.ticket_info.customer_email)).await.unwrap();
                                                     }
                         
                                                     ui.end_row();
                                                     
                                                                         /*     ROW 5     */
-                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.webroot_key)).size(9.0)
-                                                    .color(Color32::from_rgb(102, 255, 153))
-                                                    .strong())
+                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.webroot_key))//.size()
+                                                    .color(Color32::from_rgb(102, 255, 153)))
                                                     .min_size(vec2(self.widget_size + 2.0, 15.0)))
                                                     .on_hover_text("Click To Copy Webroot Key to Clipboard")
                                                     .clicked(){ 
@@ -498,15 +249,13 @@ impl MastertechContext {
                                                         ui.output_mut(|o| o.copied_text = webroot);
                                                     }
                                                         
-                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.superanti_key)).size(9.0)
-                                                    .color(Color32::from_rgb(255, 61, 126))
-                                                    .strong())
+                                                    if ui.add(Button::new(RichText::new(format!("{}", self.keys.superanti_key))//.size()
+                                                    .color(Color32::from_rgb(255, 61, 126)))
                                                     .min_size(vec2(self.widget_size + 2.0, 15.0)))
                                                     .on_hover_text("Click To Copy SAS Key to Clipboard")
                                                     .clicked(){ 
                                                         let sas = self.keys.superanti_key.clone();
                                                         ui.output_mut(|o| o.copied_text = sas);
-
                                                     }
 
                                                     ui.end_row();
@@ -580,8 +329,9 @@ impl MastertechContext {
                                         .num_columns(2)
                                         .show(ui, |ui| {
                                             let date = self.date.get_or_insert_with(|| 
-                                                chrono::offset::Utc::now().date_naive());
-                                            ui.add(DatePickerButton::new(date));
+                                                chrono::offset::Utc::now());
+                                                // 
+                                            ui.add(DatePickerButton::new(&mut date.date_naive()));
 
                                             ui.checkbox(&mut self.send_specs, "Send System Info");
 
@@ -631,8 +381,6 @@ impl MastertechContext {
                                         dialog.open();
                                         self.open_file_dialog = Some(dialog);
                                     };
-
-
                                 }); // group
 
                                 ui.vertical(|ui|{ui.add_space(3.0);});
@@ -647,32 +395,40 @@ impl MastertechContext {
                                         (
                                             RichText::new("Submit TUR Sheet")
                                                 .color(Color32::from_rgb(255, 204, 255))
-                                                .strong()
-                                                .italics()
                                         )
-                                            .stroke(Stroke::new(2.0, Color32::from_rgb(191, 33, 101)))
+                                            .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
                                     )
                                     .clicked()
-                                    {
+                                    {  
+                                        self.spinner = true;
+
+                                        Window::new("Spinner Window")
+                                            .enabled(self.spinner)
+                                            .open(&mut self.spinner)
+                                            .title_bar(false)
+                                            .fixed_size(vec2(10.0,10.0))
+                                            // .constrain_to(ctx.available_rect())
+                                            .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+                                            .show(&self.ctx, |ui|{
+                                                ui.add(
+                                                    Spinner::new()
+                                                    .color(Color32::LIGHT_RED)
+                                                    //.size()
+                                                );
+                                    });
+                                        
+
                                         let cust = &self.ticket_info.customer_name;
                                         let so_num = &self.so_number;
                 
                                         if !cust.is_empty() && !so_num.is_empty()
                                         {
-                                            self.spinner = true;
 
-                                            if self.spinner == true{
-                                                ui.add(
-                                                    Spinner::new()
-                                                    .color(Color32::LIGHT_RED)
-                                                    .size(20.0)
-                                                );
-                                            }
                                             let mut salesman_map = HashMap::new();
                                             let mut tech_map = HashMap::new();
 
                                             let salesman = &format!("{:?}", &self.salesman_cbox);
-                                            let checkin_rep = &self.ticket_info.user_id;
+                                            let checkin_rep = &self.ticket_info.checkin_rep;
                                             let technician = &format!("{:?}", &self.techs_cbox);
 
                                             salesman_map.insert("Jake", "1202792432658520");
@@ -681,32 +437,36 @@ impl MastertechContext {
                                             tech_map.insert("Bread", "1202792432421640");
                                             tech_map.insert("Taco", "1202792432551073");
 
-                                            //let assigned_salesman = salesman_map.get(salesman.as_str()).unwrap_or(&"1202792432658520").to_string();
-                                            //let assigned_tech = tech_map.get(technician.as_str()).unwrap_or(&"1199992640930465").to_string();
+                                            // let assigned_salesman = salesman_map.get(salesman.as_str()).unwrap_or(&"1202792432658520").to_string();
+                                            // let assigned_tech = tech_map.get(technician.as_str()).unwrap_or(&"1199992640930465").to_string();
 
                                             let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
                                             let ram_test = &format!("{:?}", &self.ram_test_cbox);
                                             let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
+
                                             let checkin_notes = &self.ticket_info.checkin_notes;
                                             let recommendations = &self.recommendations;   
-                                            let task_name = (cust, so_num);
-                                            let assignees = (salesman, technician);
-                                            let date = format!("{}", self.date.unwrap());
+
+                                            let date = self.date.unwrap_or(DateTime::default());
                                             let mut attached_file: Option<PathBuf> = None;
                                             if let Some(file) = &self.opened_file{
                                                 attached_file = Some(file.to_path_buf());
                                             }
 
                                             let mut specs = String::new();
-                                            let cps = self.antivirus_installed.clone();
+                                            let cps = self.current_antivirus.clone();
+                                            let seb_info = self.seb_info.clone().unwrap_or_default();
+
+                                            
+
                                             let mut final_disk = String::new();
                                             let mut each_disk = String::new();
                                                                                     
                                             let cust_code = &self.ticket_info.cust_code;
                                             let doc_alias = &self.ticket_info.doc_alias;
-                                            //let department = &self.ticket_info.department;
-                                            //let juris = &self.ticket_info.jurisdiction;
-                                            let inv_amt = &self.ticket_info.invoice_amnt;
+                                            let department = &self.ticket_info.dep;
+                                            //let juris = &self.ticket_info.juris;
+                                            let ticket_total = &self.ticket_info.ticket_total;
                                             let cust_email = &self.ticket_info.customer_email;
                                             let last_inv_num = &self.ticket_info.last_invoice_number;
                                             let last_inv_amt = &self.ticket_info.last_invoice_amount;
@@ -720,12 +480,7 @@ impl MastertechContext {
                                                 <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{phone2}</td>
                                                 </tr>");
                                             }
-                                            /*      
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Depart/Juris</td>
-                                                <td style=\"padding:1px 1px\">{department}/{juris}</td>
-                                            </tr>
-                                            */
+
                                             let extra_customer_info = format!
                                             ("
                                             <tr>
@@ -743,7 +498,7 @@ impl MastertechContext {
                                             </tr>
                                             <tr>
                                                 <td style=\"padding:1px 1px\">Current Total</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">${inv_amt}</td>
+                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">${ticket_total}</td>
                                             </tr>
                                             <tr>
                                                 <td style=\"padding:1px 1px\">Last SI#</td>
@@ -761,30 +516,27 @@ impl MastertechContext {
                                             if self.send_specs == true{
                                                 self.output_text.clear();
                                                 self.output_text += "pulling system information. Please wait a moment..\n";
-                                                let system_name = &self.system_name;
-                                                let cpu_name = &self.cpu_name;
-                                                let total_ram = &self.total_ram;
-                                                let gpu = &self.gpu.clone().unwrap_or("no gpu detected".to_string());
+                                                let system_name = &self.system_info.hostname;
+                                                let os = &self.system_info.operating_system;
+                                                let cpu_name = &self.system_info.cpu;
+                                                let total_ram = &self.system_info.ram;
+                                                let gpu = &self.system_info.gpu.clone();
 
                                                 for index in 0..self.disk_num
                                                 {
                                                     if let Some(disk) = self.disks.get(index)
                                                     {
-                                                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
-                                                        let disk_available = format!
-                                                        (
-                                                            "{} Gb", disk.get("available space").and_then(Value::as_str).unwrap_or("")
-                                                        );
-                                                        let disk_total = format!
-                                                        (
-                                                            "{} Gb", disk.get("total space").and_then(Value::as_str).unwrap_or("")
-                                                        );
+                                                        let drive_letter = format!("{}", disk.get("drive_letter").and_then(Value::as_str).unwrap_or(""));
+                                                        let drive_type = disk.get("drive_type").and_then(Value::as_str).unwrap_or("");
+                                                        let space_left = format!("{} Gb", disk.get("space_left").and_then(Value::as_str).unwrap_or(""));
+                                                        let total_size = format!("{} Gb", disk.get("total_size").and_then(Value::as_str).unwrap_or(""));
 
                                                         each_disk += &format!("
                                                         <tr>
-                                                        <td style=\"padding:1px 1px\">        {disk_letter}</td>
-                                                        <td style=\"padding:1px 1px\">        {disk_available}</td>
-                                                        <td style=\"padding:1px 1px\">        {disk_total}</td>
+                                                        <td style=\"padding:1px 1px\">        {drive_letter}</td>
+                                                        <td style=\"padding:1px 1px\">        {drive_type}</td>
+                                                        <td style=\"padding:1px 1px\">        {space_left}</td>
+                                                        <td style=\"padding:1px 1px\">        {total_size}</td>
                                                         </tr>
                                                         ");
 
@@ -792,6 +544,7 @@ impl MastertechContext {
                                                             ("
                                                             <tr>
                                                                 <td style=\"padding:1px 4px\">Letter</td>
+                                                                <td style=\"padding:1px 4px\">Drive Type</td>
                                                                 <td style=\"padding:1px 4px\">Avail Space</td>
                                                                 <td style=\"padding:1px 4px\">Total Space</td>
                                                             </tr>
@@ -808,8 +561,12 @@ impl MastertechContext {
                                                         >              <code>       Computer Info        </code></td>
                                                     </tr>
                                                     <tr>
-                                                        <td>OS</td>
+                                                        <td>PC Name</td>
                                                         <td colspan=\"2\" data-cell-widths=\"150,150\">{system_name}</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>OS</td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{os}</td>
                                                     </tr>
                                                     <tr>
                                                         <td>CPU</td>
@@ -829,7 +586,7 @@ impl MastertechContext {
                                                     </tr>
                                                     <tr>
                                                         <td>SEB</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\"></td>
+                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{seb_info:#?}</td>
                                                     </tr>
                                                     <tr>
                                                     <td colspan=
@@ -878,22 +635,162 @@ impl MastertechContext {
                                                     <ul><li><strong>        Checkin Notes:      </strong>     \n{checkin_notes}</li>
                                                         <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",
                                             );
-                                                /*
-                                                <ul>
-                                                <li><strong>Salesman:</strong>              {salesman}</li>
-                                                <li><strong>Checkin rep:</strong>           {checkin_rep}</li>
-                                                <li><strong>Technician:</strong>            {technician}</li></ul>
-                                                */
-                
-                                            SendRequest::send_ticket_request(
-                                                self.scaffold_request.tx.clone(), 
-                                                self.client.clone(), 
-                                                task_name,
-                                                html_notes,
-                                                assignees,
-                                                date,
-                                                attached_file
-                                            );
+
+                                            let store: &Store = &self.ticket_info.dep;
+
+                                            if store.as_str() == "RIV"{
+                                                let sm = self.salesman_cbox;
+                                                let tech = self.techs_cbox;
+
+                                                let task = AsanaTask { 
+                                                    task_name: format!("{cust} - {so_num}"), 
+                                                    html_notes,
+                                                    assignee: TaskAssignee { 
+                                                        salesman: sm, 
+                                                        tech
+                                                    }, 
+                                                    file_attachment: self.opened_file.clone() 
+                                                };
+
+
+                                                SendRequest::send_ticket_request(
+                                                    self.scaffold_request.tx.clone(), 
+                                                    self.client.clone(), 
+                                                    task,
+                                                    date,
+                                                );
+
+                                            }else{
+                                                let mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
+                                                let mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
+                                                let store_email = store.store_email();
+
+                                                let system_name = &self.system_info.hostname;
+                                                let cpu_name = &self.system_info.cpu;
+                                                let total_ram = &self.system_info.ram;
+                                                let gpu = &self.system_info.gpu.clone();
+                                                let mut final_disk = String::new();
+                                                let mut each_disk = String::new();
+
+                                                for index in 0..self.disk_num
+                                                {
+                                                    if let Some(disk) = self.disks.get(index)
+                                                    {
+                                                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
+                                                        let drive_type = disk.get("drive_type").and_then(Value::as_str).unwrap_or("");
+                                                        let disk_available = format!("{} Gb", disk.get("space_left").and_then(Value::as_str).unwrap_or(""));
+                                                        let disk_total = format!("{} Gb", disk.get("total_size").and_then(Value::as_str).unwrap_or(""));
+
+                                                        each_disk += &format!("
+                                                        <tr>
+                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_letter}</td>
+                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{drive_type}</td>
+                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_available}</td>
+                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_total}</td>
+                                                        </tr>
+                                                        ");
+
+                                                        final_disk = format!
+                                                            ("
+                                                            <tr>
+                                                                <td style=\"padding:1px 4px; text-align: center; \">Letter</td>
+                                                                <td style=\"padding:1px 4px; text-align: center; \">Type</td>
+                                                                <td style=\"padding:1px 4px; text-align: center; \">Avail Space</td>
+                                                                <td style=\"padding:1px 4px; text-align: center; \">Total Space</td>
+                                                            </tr>
+                                                            {each_disk}
+                                                        ");
+
+                                                    }
+                                                }
+
+                                                specs = format!("
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><strong>CPU</strong></td>
+                                                    <td style=\"text-align: center; color: #ffffff;\">{cpu_name}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><strong>GPU</strong></td>
+                                                    <td style=\"text-align: center; color: #ffffff;\">{gpu}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><strong>RAM</strong></td>
+                                                    <td style=\"text-align: center; color: #ffffff;\">{total_ram} Gb</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><b>System Name</b></td>
+                                                    <td>
+                                                        <p style=\"text-align: center; color: #ffffff;\">{system_name}</p>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td style=\"color: #ffffff;\"><b>CPS</b></td>
+                                                    <td>
+                                                        <p style=\"text-align: center; color: #ffffff;\">{cps}</p>
+                                                    </td>
+                                                </tr>
+                                                ");
+
+
+
+                                                let info = Info{
+                                                    customer_name: cust.to_string(),
+                                                    so_num: so_num.to_string(),
+                                                    hdd_test: hdd_test.to_string(),
+                                                    ram_test: ram_test.to_string(),
+                                                    ssd_test: ssd_test.to_string(),
+                                                    checkin_notes: checkin_notes.to_string(),
+                                                    recommendations: recommendations.to_string(),
+                                                    specs,
+                                                    cps,
+                                                    cust_code: cust_code.to_string(),
+                                                    doc_alias: doc_alias.to_string(),
+                                                    inv_amt: ticket_total.to_string(),
+                                                    cust_email: cust_email.to_string(),
+                                                    last_inv_num: last_inv_num.to_string(),
+                                                    last_inv_amt: last_inv_amt.to_string(),
+                                                    total_inv_num: total_inv_num.to_string(),
+                                                    phone1: phone1.to_string(),
+                                                    phone2: phone2.to_string(),
+
+                                                    final_disk,
+
+                                                    salesman: salesman.to_string(),
+                                                    checkin_rep: checkin_rep.to_string(),
+                                                    technician: technician.to_string(),
+                                                    extra_customer_info,
+                                                };
+
+                                                let html = email_builder(info);
+                                                
+                                                let email = Message::builder()
+                                                    .from("TUR SHEET <pcl.mastertech@gmail.com>".parse().unwrap())
+                                                    .to(store_email.parse().unwrap())
+                                                    .subject(format!("{cust} - {so_num}"))
+                                                    .header(ContentType::TEXT_HTML)
+                                                    .body(html)
+                                                    .unwrap();
+
+                                                let creds = Credentials::new("pcl.mastertech@gmail.com".to_owned(), "pgumcgekyrcqadah".to_owned());
+
+                                                // Open a remote connection to gmail
+                                                let mailer = SmtpTransport::relay("smtp.gmail.com")
+                                                    .unwrap()
+                                                    .credentials(creds)
+                                                    .build();
+
+                                                self.output_text += format!("\n {store_email} {cust_email}").as_str();
+
+                                                // Send the email
+                                                match mailer.send(&email) {
+                                                    Ok(_) => println!("Email sent successfully!"),
+                                                    Err(e) => {
+                                                        self.output_text += format!("\n{e:?}").as_str();
+                                                        //println!("Could not send email: {e:?}")
+                                                    },
+                                                }
+                                            }
+
                                             self.spinner = false;
                                             
                                             self.output_text += "\nSent Ticket";
@@ -902,6 +799,10 @@ impl MastertechContext {
                                             self.output_text.clear();
                                             self.output_text = "You need to enter a customer name or Service number".to_string();
                                         }
+                                    
+
+                                        self.spinner = false;
+                                        self.ctx.request_repaint();
                                     }
                                 }); // vertical center justified
                             }); // vertical center
@@ -911,8 +812,7 @@ impl MastertechContext {
 
                 strip.empty();
 
-                strip
-                .strip(|builder|
+                strip.strip(|builder|
                 {
                     builder
                     .size(Size::exact(300.0)) // allocates checkinNotes info from left -> right
@@ -959,36 +859,122 @@ impl MastertechContext {
         }); // UI layout
     }
 
-    fn output_console(&mut self, ui: &mut Ui) { 
+    pub fn output_console(&mut self, ui: &mut Ui) { 
+        self.ctx.request_repaint();
+        // setup_terminal(ui, &self.output_text).unwrap();
+
         ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text.to_string()).hint_text("Output"));
-        }
+    }
     
-    fn system_information(&mut self, ui: &mut Ui){
-        ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,self.bg_color);
-        ui.painter().rect_stroke(ui.available_rect_before_wrap(),10.0, self.border_stroke_color);
+    pub fn system_information(&mut self, ui: &mut Ui){
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
+        Window::new("Spinner Window")
+            .enabled(self.spinner)
+            .open(&mut self.spinner)
+            .title_bar(false)
+            .fixed_size(vec2(10.0,10.0))
+            // .constrain_to(ctx.available_rect())
+            .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
+            .show(&self.ctx, |ui|{
+                ui.add(
+                    Spinner::new()
+                    .color(Color32::LIGHT_RED)
+                );
+            });
 
-        if self.specs_first_run == true{
-            self.spinner = true;
-            let specs_sender = self.sysinfo_request.tx.clone();
-            RetrieveSystemInfo::get_system_specs(specs_sender);
+        if ui
+        .add(Button::new( RichText::new("Send to Master-Tech.app")))
+        .clicked()
+        {  
+            let tech = match self.techs_cbox{
+                Techs::Logan => "Logan".to_string(),
+                Techs::Bread => "Brett".to_string(),
+                Techs::Taco => "Taco".to_string(),
+            };
+
+            let salesman = match self.salesman_cbox{
+                Salesman::Jake => "Jake".to_string(),
+                Salesman::Danny => "Danny".to_string(),
+            };
+            
+            let hdd_test = format!("{:?}", &self.hdd_test_cbox);
+            let ram_test = format!("{:?}", &self.ram_test_cbox);
+            let ssd_test = format!("{:?}", &self.ssd_test_cbox);
+
+            let mut pre_ticket: PreTicketData = self.ticket_info.clone();
+
+            pre_ticket.due_date = Some(
+                self.date.unwrap_or(
+                    DateTime::default()
+                ).to_rfc3339_opts(SecondsFormat::Secs,  true)
+            );
+            
+            let payload = TicketResponse::serialize_payload(
+                &pre_ticket,
+                &self.system_info,
+                &self.so_number,
+                &self.current_antivirus,
+                &self.recommendations,
+                tech,
+                salesman, 
+                HardwareTests{
+                    hdd_test,
+                    ssd_test,
+                    ram_test,
+                } // example
+            );
+            // let client = self.client.clone();
+
+            
+            let cookies = CookieStore::default();
+            let cookie_store = CookieStoreMutex::new(cookies);
+            let cookie_store  = Arc::new(cookie_store);
+
+            let client_build = reqwest::Client::builder()
+                .cookie_provider(std::sync::Arc::clone(&cookie_store))
+                .build();
+            
+            match client_build{
+                Ok(client) => {
+                    debug!("Sending reqwest");
+                    spawn(async move {
+                        
+                        let mut output = String::new();
+                        let x = send_payload(payload, client, cookie_store).await;
+                        match x{
+                            Ok(o) => {
+                                output = o;
+                            },
+                            Err(e) => debug!("Error {e:?}"),
+                        }
+                        info!("output: {output}");
+                    });
+                }, Err(err) => debug!("Error with client_build => {err:?}"),
+            };
+            
         }
-        self.specs_first_run = false;
         
-        if self.spinner == true{
-            ui.vertical_centered(|ui|{
-                ui.add(Spinner::new());
-            }); 
+        if ui.add(
+            Button::new(
+                RichText::new("Connect to WS")
+            )
+        )
+        .clicked(){
+            self.connect_to_ws = true;
         }
 
-        let gpu = &self.gpu.clone().unwrap_or("no GPU found".to_string());
 
-        //let disks = self.disks.disks.clone();
-        ui.indent("indented_sysinfo_table", |ui|{
+        self.specs_first_run = false;
+
+        let computer_data = &self.system_info;
+
+        let gpu = computer_data.gpu.clone();
+        
+        ui.push_id("table 1",|ui|{
             let table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
-                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .cell_layout(Layout::left_to_right(Align::Center))
                 .column(Column::initial(100.0).range(50.0..=300.0).clip(true))
                 .column(Column::remainder())
                 .min_scrolled_height(0.0);
@@ -1008,7 +994,7 @@ impl MastertechContext {
                         ui.label("System Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.system_name);
+                        ui.label(&computer_data.hostname);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -1016,7 +1002,7 @@ impl MastertechContext {
                         ui.label("CPU Name");
                     });
                     row.col(|ui|{
-                        ui.label(&self.cpu_name);
+                        ui.label(&computer_data.cpu);
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -1024,7 +1010,7 @@ impl MastertechContext {
                         ui.label("Total RAM");
                     });
                     row.col(|ui|{
-                        ui.label(format!("{} Gb", &self.total_ram));
+                        ui.label(format!("{} Gb", computer_data.ram));
                     });
                 });
                 body.row(20.0, |mut row| {
@@ -1040,14 +1026,15 @@ impl MastertechContext {
 
         });
         ui.vertical(|ui|{ui.add_space(20.0)});
-        ui.indent("indented_disks",|ui|{
+        ui.push_id("table 2",|ui|{
             let disks_table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(Column::exact(15.0))
-                .column(Column::exact(150.0))
-                .columns(Column::remainder(), 2);
+                .column(Column::exact(42.0))
+                .column(Column::exact(50.0))
+                .column(Column::remainder());
             
             disks_table
                 .header(20.0, |mut header|
@@ -1056,11 +1043,11 @@ impl MastertechContext {
                     ui.label("#");
                 });
                 header.col(|ui|{
-                    ui.label("Drive Letter");
+                    ui.label("Letter");
                 });
-                // header.col(|ui|{
-                //     ui.label("Space Used");
-                // });
+                header.col(|ui|{
+                    ui.label("Type");
+                });
                 header.col(|ui|{
                     ui.label("Avail / Total Space");
                 });
@@ -1070,12 +1057,19 @@ impl MastertechContext {
                 body.rows(
                 20.0,  // Replace with your desired row height
                 self.disk_num,
-                |disk_index, mut row| 
-                {                                                           // this is stupid..
+                |mut row| 
+                {                                            
+                    let disk_index = row.index();               // this is stupid..
                     if let Some(disk) = self.disks.get(disk_index){
-                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
+                        let disk_letter = format!("{}", disk
+                            .get("drive_letter")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""));
 
-                        //let disk_smart = SmartDisk::new(Path::new(disk.get("letter").unwrap()));
+                        let drive_type = disk
+                            .get("drive_type")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
 
                         row.col(|ui| {
                             ui.label(disk_index.to_string());  // Show disk index
@@ -1084,10 +1078,17 @@ impl MastertechContext {
                             ui.label(disk_letter);  // Show disk letter
                         });
                         row.col(|ui| {
+                            if !drive_type.starts_with("Unknown"){
+                                ui.label(drive_type);  // Show disk type
+                            }else{
+                                ui.label("Network Drive?");
+                            }
+                        });
+                        row.col(|ui| {
                             let disk_space = format!(
                                 "{} Gb / {} Gb",
-                                disk.get("available space").and_then(Value::as_str).unwrap_or(""),
-                                disk.get("total space").and_then(Value::as_str).unwrap_or("")
+                                disk.get("space_left").and_then(Value::as_str).unwrap_or(""),
+                                disk.get("total_size").and_then(Value::as_str).unwrap_or("")
                             );
                             ui.label(disk_space);  // Show disk space
                         });
@@ -1098,30 +1099,107 @@ impl MastertechContext {
                 });
             });
         });
-        //self.spinner = false;
     }
 
-    fn file_browse(&mut self, ui: &mut Ui) {
-        let (command_tx, command_rx) = unbounded_channel();
-        // Lock the Mutex and show the GUI
-        let file_browser_clone = Arc::clone(&self.file_browser);
-        let mut file_browser = file_browser_clone.lock().unwrap();
-        file_browser.show(ui, command_tx, command_rx);
+    pub fn file_browse(&mut self, ui: &mut Ui) {
+        if !self.show_deferred_viewport.load(Ordering::Relaxed) {
+            let (command_tx, command_rx) = crossbeam::channel::unbounded();
+            // Lock the Mutex and show the GUI
+            let file_browser_clone = Arc::clone(&self.file_browser);
+            let mut file_browser = file_browser_clone.lock().unwrap();
+            file_browser.show(ui, command_tx, command_rx);
+        }
     }
     
-    fn scripts(&mut self, _ui: &mut Ui){ }
+    pub fn scripts(&mut self, ui: &mut Ui){
+        ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
+        ui.vertical(|ui|{ui.add_space(8.0);});
+        ui.horizontal(|ui|{ui.add_space(8.0);});
 
-    fn puffin_profiler(&mut self, ui: &mut Ui){
+        Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).show(
+        ui, |ui| {
+
+            let mut counter = 0;  // Initialize a counter
+            for (name, action) in &*SCRIPT_ACTIONS{
+                let color = Color32::from_rgb(191, 33, 101);
+                let button = Button::new(RichText::new(*name)).stroke(Stroke::new(1.0, color));
+
+
+                if ui.add(button).clicked(){
+                    info!("Clicked button");
+
+                    let action_clone = action.clone();
+                    let so_num = Arc::new(self.so_number.clone());
+                    info!("SO number: {}", &so_num);
+                    spawn(async move {
+                        let y = Arc::clone(&so_num);
+                        let scripts = Scripts::new(y.to_string()).await;
+                        action_clone.execute(&scripts).await.unwrap();
+                    });
+                }
+
+                counter += 1;  // Increment the counter
+
+                if counter % 4 == 0 {
+                    ui.end_row();  // End the row after every 2 buttons
+                }
+            }
+        }); // Grid
+
+
+     }
+
+    pub fn puffin_profiler(&mut self, ui: &mut Ui){
         puffin::profile_function!();
         puffin::GlobalProfiler::lock().new_frame(); // call once per frame!
-
         puffin_egui::profiler_ui(ui);
     }
 
-    fn mini_dump(&mut self, ui: &mut Ui){ 
-        //let mut minidump = self.minidump_app;
-        // self.minidump_app.poll_processor_state();
-        // self.minidump_app.update_ui(&self.ctx, ui);
-        // self.minidump_app.last_status = self.minidump_app.cur_status;
+    pub fn mini_dump(&mut self, ui: &mut Ui){ 
+        
+        self.minidump_app.poll_processor_state();
+        self.minidump_app.update_ui(&self.ctx, ui);
+        self.minidump_app.last_status = self.minidump_app.cur_status;
+    }
+
+    pub fn quality_check(&mut self, ui: &mut Ui){ }
+
+    pub fn mastertech_website(&mut self, ui: &mut Ui){ 
+        ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
+        ui.vertical(|ui|{ui.add_space(8.0);});
+        ui.horizontal(|ui|{ui.add_space(8.0);});
+
+        let sender = self.db_data_sender.clone();
+
+        if self.query_tasks_first_run{
+            self.query_tasks_first_run = false;
+            if let Some(db) = &self.database{
+                let database = db.clone();
+                spawn(async move {
+                    let task_data = database.query("SELECT * FROM task").await.unwrap();
+                
+                    match sender.try_send(task_data){
+                        Ok(_) => {
+                            debug!("Sent task data");
+                        },
+                        Err(err) => debug!("Send error: {:?}", err.to_string()),
+                    }
+                });
+            }
+        }
+
+        if let Ok(data) = self.db_data_receiver.try_recv(){
+            self.ticket_data = Some(data);
+        }
+
+        if let Some(tasks) = &self.ticket_data{
+            let _ = task_card(tasks.to_vec(), ui);
+        }
+        
+
     }
 }

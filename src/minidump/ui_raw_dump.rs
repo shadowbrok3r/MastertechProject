@@ -1,12 +1,11 @@
-use crate::minidump::minidump_main::MiniDumpApp;
 use eframe::egui;
-use egui::{Frame, TextStyle, Ui, Align, Layout};
-use egui_extras::{Size, TableBuilder, Column};
+use egui::{Frame, TextStyle, Ui};
+use egui_extras::{Column, Size, TableBuilder};
 use memmap2::Mmap;
 use minidump::{format::MINIDUMP_STREAM_TYPE, Minidump};
 use num_traits::FromPrimitive;
 
-use super::minidump_main::stream_vendor;
+use super::minidump_main::{stream_vendor, MiniDumpApp};
 
 pub struct RawDumpUiState {
     pub cur_stream: usize,
@@ -128,7 +127,7 @@ impl MiniDumpApp {
         let row_height = 18.0;
         TableBuilder::new(ui)
             .striped(true)
-            .cell_layout(Layout::left_to_right(Align::LEFT).with_cross_align(Align::Center))
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center).with_cross_align(egui::Align::Center))
             .column(Column::initial(40.0).at_least(40.0))
             .column(Column::initial(80.0).at_least(40.0))
             .column(Column::initial(80.0).at_least(40.0))
@@ -300,8 +299,7 @@ impl MiniDumpApp {
     fn update_raw_dump_thread_list(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         let brief = self.settings.raw_dump_brief;
         let stream = dump.get_stream::<minidump::MinidumpThreadList>();
-        //let memory = dump.get_stream::<minidump::MinidumpMemoryList>();
-        let memory_type = dump.get_memory();
+        let memory = dump.get_memory();
         let system = dump.get_stream::<minidump::MinidumpSystemInfo>();
         let misc = dump.get_stream::<minidump::MinidumpMiscInfo>();
         if let Err(e) = &stream {
@@ -314,7 +312,7 @@ impl MiniDumpApp {
         stream
             .print(
                 &mut bytes,
-                memory_type.as_ref(),
+                memory.as_ref(),
                 system.as_ref().ok(),
                 misc.as_ref().ok(),
                 brief,
