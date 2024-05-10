@@ -1,5 +1,5 @@
 use eframe::egui::{vec2, Align, Align2, Button, CentralPanel, Color32, ComboBox, Grid, Id, Key, Layout, RawInput, RichText, ScrollArea, Spinner, Stroke, TextEdit, Ui, Window };
-use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}, ui_helpers::task_cards::task_card};
+use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}, terminal::setup_terminal, ui_helpers::task_cards::task_card};
 use std::{path::PathBuf, sync::{atomic::Ordering, Arc}, collections::HashMap}; 
 use chrono::{DateTime, SecondsFormat};
 use log::{debug, error, info};
@@ -11,7 +11,7 @@ use egui_extras::{*, DatePickerButton, Column};
 use egui_file::FileDialog;
 use puffin_egui;
 use lettre::{{Message, SmtpTransport, Transport}, transport::smtp::authentication::Credentials, message::header::ContentType};
-use ratatui::{prelude::{Stylize, Terminal},widgets::Paragraph};
+
 use crate::{
     filesystem::file_browser::FileBrowser,
     handle_api::{ api_request::SendRequest, scaffold, Store },
@@ -20,7 +20,6 @@ use crate::{
 
 #[cfg(target_os="windows")]
 use crate::scripting::query_antivirus;
-
 
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
@@ -862,8 +861,9 @@ impl MastertechContext {
     }
 
     pub fn output_console(&mut self, ui: &mut Ui) { 
-        // let input = RawInput::default();
+        setup_terminal(ui, &self.output_text).unwrap();
 
+        // let input = RawInput::default();
         // let _ = self.ctx.run(input, |ctx|{
         //     Window::new("Spinner Window")
         //     .enabled(self.spinner)
@@ -878,24 +878,7 @@ impl MastertechContext {
         //         );
         //     });
         // });
-       
         // ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.output_text.to_string()).hint_text("Output"));
-
-        let boop = RataguiBackend::new(100, 50);
-        let mut terminal = Terminal::new(boop).unwrap();
-        terminal.clear().expect("epic fail");
-        terminal
-            .draw(|frame| {
-                let area = frame.size();
-                frame.render_widget(Paragraph::new("Hello Rataguiii").light_cyan().on_dark_gray(), area);
-            })
-            .expect("epic fail");
-        CentralPanel::default().show_inside(ui, |ui| {
-            ui.add(terminal.backend_mut());
-            if ui.input(|i| i.key_released(Key::Q)) {
-                println!("HAVE A NICE WEEK");
-            }
-        });
     }
     
     pub fn system_information(&mut self, ui: &mut Ui){
