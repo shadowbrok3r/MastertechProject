@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
-use tokio::{fs, io::{self, AsyncWriteExt}};
+use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
 use anyhow::Context;
 use futures::stream::TryStreamExt;
 use crate::{database::GetKeysResponse, handle_api::api_request::SendRequest};
@@ -35,23 +35,6 @@ pub struct InstallSAS;
 pub struct CheckDriverIssues;
 pub struct RunningTasks;
 pub struct QueryAntivirus;
-
-lazy_static! {
-    pub static ref SCRIPT_ACTIONS: HashMap<&'static str, Arc<dyn ScriptAction + Send + Sync>> = {
-        let mut m = HashMap::new();
-        let install_webroot: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallWebroot {});
-        let install_sas: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallSAS {});
-        let check_drivers: Arc<dyn ScriptAction + Send + Sync> = Arc::new(CheckDriverIssues {});
-        let running_tasks: Arc<dyn ScriptAction + Send + Sync> = Arc::new(RunningTasks{});
-
-        m.insert("Install Webroot", install_webroot);
-        m.insert("Install SAS", install_sas);
-        m.insert("Check Driver Issues", check_drivers);
-        m.insert("Running Tasks", running_tasks);
-        
-        m
-    };
-}
 
 impl Default for Scripts{
     fn default() -> Self{
@@ -133,8 +116,7 @@ impl Scripts{
 
                 let hash = sha.finalize();
                 info!("Download complete. SHA-256: {:x}", hash);
-
-                #[cfg(target_os="windows")]{
+                #[cfg(target_os="windows")]{    
                     let cmd_stdout = Command::new("cmd")
                         .arg("/c ")
                         .arg(wrv_path)

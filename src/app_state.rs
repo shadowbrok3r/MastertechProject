@@ -4,7 +4,7 @@ use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload, TicketData}, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}};
+use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload, TicketData}, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::Scripts};
 use egui_file::FileDialog;
 use crate::{
     filesystem::file_browser::FileBrowser,
