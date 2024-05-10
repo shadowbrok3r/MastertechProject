@@ -1,4 +1,4 @@
-use egui::text::LayoutJob;
+use log::info;
 use tokio::{
     fs, 
     sync::mpsc::{
@@ -7,7 +7,7 @@ use tokio::{
         unbounded_channel
     }
 };
-use eframe::egui::{*, collapsing_header::CollapsingState};
+use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
 use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
 use num_format::{Locale, ToFormattedString};
 use walkdir::WalkDir;
@@ -21,8 +21,8 @@ use crossbeam::channel;
  * 3. when copying data, have it pull the metadata from the already existing 
  */
 use fs_extra::dir::get_size;
-use cached::proc_macro::{io_cached, cached};
-use crate::io::{
+//use cached::proc_macro::{io_cached, cached};
+use crate::filesystem::io::{
     copy_selected_items, 
     format_path_metadata, 
     MetaData,
@@ -50,7 +50,6 @@ pub enum Command {
     ReadMetadata(PathBuf),
     Home,
 }
-
 
 pub struct FileBrowser {
     /// Current opened path.
@@ -106,7 +105,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         let mut filename_edit = String::new();
 
         let path_edit = path.to_str().unwrap_or_default().to_string();
-
+        println!("filebrowser::new() {}", &path_edit);
         if path.is_file() {
             filename_edit = get_file_name(&path).to_string();
             path.pop();
@@ -217,6 +216,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             },
 
             Command::ReadDirectory(path) => {
+                puffin::profile_scope!("Command::ReadDirectory");
                 let new_contents = read_folder(
                     &path,
                     self.depth,
@@ -226,6 +226,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             }
 
             Command::ReadMetadata(path) => {
+                puffin::profile_scope!("Command::ReadMetadata");
                 let sender = self.metadata_tx.clone();
                 let cloned_path = path.clone();
                 let clone_path1 = path.clone();
@@ -254,9 +255,11 @@ impl FileBrowser{ // sender: UnboundedSender<>
                                 
                                 // Insert the metadata into the appropriate HashMap.
                                 if path.is_dir() {
-                                    self.folder_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
+                                    self.folder_metadata.borrow_mut().insert(clone_path1.clone(),
+                                        MetaData { path_size });
                                 } else {
-                                    self.file_metadata.borrow_mut().insert(clone_path1.clone(), MetaData { path_size });
+                                    self.file_metadata.borrow_mut().insert(clone_path1.clone(),
+                                        MetaData { path_size });
                                 }
                             },
                             Err(e) => println!("Error reading metadata: {:?}", e),
@@ -270,12 +273,11 @@ impl FileBrowser{ // sender: UnboundedSender<>
     pub fn show(
         &mut self, 
         ui: &mut Ui,
-        command_tx: UnboundedSender<Option<Command>>,
-        mut command_rx: UnboundedReceiver<Option<Command>>
+        command_tx: crossbeam::channel::Sender<Option<Command>>, //UnboundedSender<Option<Command>>,
+        mut command_rx: crossbeam::channel::Receiver<Option<Command>> //UnboundedReceiver<Option<Command>>
     ) {     
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-
                 ui.add_enabled_ui(
                     self.path != env::current_dir().unwrap_or_default(),
                     |ui | {
@@ -317,7 +319,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                                 .id(Id::new("path_edit"))
                                 .cursor_at_end(true),
                         ).on_hover_text(&self.path_edit);
-                       
+
                         if response.lost_focus() {
                             let path = PathBuf::from(&self.path_edit);
                             println!("Lost focus on self.path_edit");
@@ -327,7 +329,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             };
 
                         }
-                    });
+
+                    }); //.inner_rect;
+                    // if ui.rect_contains_pointer(top_bar){}
                 });
             });
             
@@ -399,14 +403,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
         });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            ui.visuals_mut().override_text_color = Some(Color32::from_rgb(255, 204, 230));
             ui.shrink_width_to_current();ui.shrink_height_to_current();
-            ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
+            // ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
-            if self.first_refresh_contents == true{
+            if self.first_refresh_contents{
                 self.refresh_contents();
+                self.first_refresh_contents = false;
             }
             
             let file_browser_area = ScrollArea::new([true, true])
@@ -443,32 +447,36 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     ui.label("Loading...")
                 },
             }).inner_rect;
-            if ui.rect_contains_pointer(file_browser_area){ // || ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
-                let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::C);
-                let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::V);
-    
-                if ui.input_mut(|i| i.consume_shortcut(&copy_shortcut))
+            
+            if ui.interact_bg(Sense{click: true, drag: true, focusable: true}).hovered(){
+                info!("CONTAINS POINTER");
+                let copy = Key::Copy;
+                let paste = Key::Paste;
+                
+                // let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, copy);
+                // let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, paste);
+
+                
+                if ui.input(|i| i.key_pressed(copy))
                 { 
                     self.copied_items_src = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
-                    println!("CTRL+C pressed");
+                    println!("Copied Items: {:?}", self.copied_items_src);
                 }
-                if ui.input_mut(|i| i.consume_shortcut(&paste_shortcut))
+                if ui.input(|i| i.key_pressed(paste))
                 {
-                    println!("CTRL+V pressed");
+                    
                     self.animated_progress = true;
                     self.copied_items_dest = PathBuf::from(&self.path_edit);
                     let cloned_dest = self.copied_items_dest.clone();
                     let cloned_src = self.copied_items_src.clone();
                     let progress_tx = self.progress_tx.clone();
-                    {
-                        puffin::profile_scope!("Copying_items");
-                        tokio::spawn(async move{
-                            let _ = match copy_selected_items(cloned_src, cloned_dest, progress_tx.clone()).await{
-                                Ok(_) => println!("copy_selected_items ran successfully"),
-                                Err(e) => println!("copy_selected_items failed: {e:?}"),
-                            };
-                        });
-                    }
+                    println!("CTRL+V pressed {:?}", self.copied_items_dest.clone());
+                    // tokio::spawn(async move{
+                    //     let _ = match copy_selected_items(cloned_src, cloned_dest, progress_tx.clone()).await{
+                    //         Ok(_) => println!("copy_selected_items ran successfully"),
+                    //         Err(e) => println!("copy_selected_items failed: {e:?}"),
+                    //     };
+                    // });
                 }
             }
             while let Ok(progress) = self.progress_rx.try_recv() {
@@ -487,10 +495,10 @@ impl FileBrowser{ // sender: UnboundedSender<>
         &self,
         ui: &mut Ui,
         path: &PathBuf,
-        command_tx: UnboundedSender<Option<Command>>,
+        command_tx: crossbeam::channel::Sender<Option<Command>>,
     ){
         puffin::profile_scope!("display_path");
-        ui.separator();
+        // ui.separator();
         let command_sender = command_tx.clone();
         let command_sender2 = command_tx.clone();
         let command_sender3 = command_tx.clone();
@@ -520,13 +528,13 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 };
 
                 ui.vertical_centered_justified(|ui| {
-                    CollapsingState::load_with_default_open(ui.ctx(), id.into(), false)
+                    CollapsingState::load_with_default_open(ui.ctx(), id, false)
                     .show_header(ui, |ui| 
                     {
                         let is_selected = self.selected_items.borrow().contains(path);
                         let selectable_label = ui.selectable_label(is_selected, &label);
                     
-                        if !self.folder_metadata.borrow().contains_key(path){
+                        if selectable_label.secondary_clicked() && !self.folder_metadata.borrow().contains_key(path){
                             match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
                                 Ok(_) => drop(command_sender5),
                                 Err(e) => println!("hovered sender error: {e:?}"),
@@ -543,7 +551,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             job.halign = Align::RIGHT;
                             job.justify = true;
                             
-                            let text = format!("{}", formatted_size.as_str());
+                            let text = formatted_size.to_string();
                             job.append(&text, 30.0, text_formatting);
                             
                             let x = WidgetText::LayoutJob(job).small().background_color(Color32::RED);
@@ -584,13 +592,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 });
 
             } 
-            else if !path.is_dir() && self.read_dirs_only == false{
-                if !self.file_metadata.borrow().contains_key(path){
-                    match command_sender4.send(Some(Command::ReadMetadata(path.clone()))) {
-                        Ok(_) => drop(command_sender4),
-                        Err(e) => println!("hovered sender error: {e:?}"),
-                    }
-                } 
+            else if !path.is_dir() && !self.read_dirs_only{
                 let is_selected = self.selected_items.borrow().contains(path);
                 let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
                 
@@ -610,6 +612,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
                         self.selected_items.borrow_mut().clear();
                         self.selected_items.borrow_mut().insert(path.clone());
                     }
+                }else if selectable_label.secondary_clicked() {
+
                 }
                 
                 if let Some(metadata) = self.file_metadata.borrow_mut().get(path)
@@ -657,6 +661,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         a folder
     */ 
     fn refresh_contents(&mut self) {
+        puffin::profile_scope!("refresh_contents");
         let new_contents = read_folder(
             &self.path,
             self.depth,
@@ -755,7 +760,6 @@ extern "C" {
 
 /** Returns a Vec<PathBuf> of current directory contents and files. */
 fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
-    puffin::profile_scope!("read_folder");
     //#[cfg(windows)]
     // let drives = {
     //   let mut drives = unsafe { GetLogicalDrives() };
@@ -817,3 +821,10 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
     result
 }
 
+
+
+fn circle_icon(ui: &mut Ui, openness: f32, response: &Response) {
+    let stroke = ui.style().interact(&response).fg_stroke;
+    let radius = lerp(2.0..=3.0, openness);
+    ui.painter().circle_filled(response.rect.center(), radius, stroke.color);
+}
