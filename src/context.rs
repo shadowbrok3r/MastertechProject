@@ -1,5 +1,5 @@
 use eframe::egui::{vec2, Align, Align2, Button, CentralPanel, Color32, ComboBox, Grid, Id, Key, Layout, RawInput, RichText, ScrollArea, Spinner, Stroke, TextEdit, Ui, Window };
-use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}, terminal::setup_terminal, ui_helpers::task_cards::task_card};
+use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::{Scripts, SCRIPT_ACTIONS}, terminal::setup_terminal, ui_helpers::task_cards::TaskLayout};
 use std::{path::PathBuf, sync::{atomic::Ordering, Arc}, collections::HashMap}; 
 use chrono::{DateTime, SecondsFormat};
 use log::{debug, error, info};
@@ -1118,24 +1118,25 @@ impl MastertechContext {
         ui.vertical(|ui|{ui.add_space(8.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
+        let scripts = Arc::new(Scripts::new(self.so_number.to_string()));
+        let iter = scripts.get_scripts();
+
         Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).show(
         ui, |ui| {
 
             let mut counter = 0;  // Initialize a counter
-            for (name, action) in &*SCRIPT_ACTIONS{
+            for (name, action) in iter.iter(){
                 let color = Color32::from_rgb(191, 33, 101);
                 let button = Button::new(RichText::new(*name)).stroke(Stroke::new(1.0, color));
-
 
                 if ui.add(button).clicked(){
                     info!("Clicked button");
 
                     let action_clone = action.clone();
                     let so_num = Arc::new(self.so_number.clone());
+                    let scripts = scripts.clone();
                     info!("SO number: {}", &so_num);
-                    spawn(async move {
-                        let y = Arc::clone(&so_num);
-                        let scripts = Scripts::new(y.to_string()).await;
+                    tokio::spawn(async move {
                         action_clone.execute(&scripts).await.unwrap();
                     });
                 }
@@ -1197,9 +1198,7 @@ impl MastertechContext {
         }
 
         if let Some(tasks) = &self.ticket_data{
-            let _ = task_card(tasks.to_vec(), ui);
+            TaskLayout::task_card(tasks.to_vec(), ui);
         }
-        
-
     }
 }
