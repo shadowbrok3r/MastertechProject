@@ -1,4 +1,4 @@
-use eframe::egui::{vec2, Align, Align2, Button, CentralPanel, Color32, ComboBox, Grid, Id, Key, Layout, RawInput, RichText, ScrollArea, Spinner, Stroke, TextEdit, Ui, Window };
+use eframe::egui::{vec2, Align, Align2, Button, CentralPanel, Color32, ComboBox, Grid, Id, Key, Layout, RawInput, RichText, ScrollArea, Spinner, Stroke, TextEdit, Ui, Vec2, Window };
 use crate::{app_state::MastertechContext, database::{database::Database, schema::{HardwareTests, TaskPayload, TicketResponse}, send_payload, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::Scripts, terminal::setup_terminal, ui_helpers::task_cards::TaskLayout};
 use std::{path::PathBuf, sync::{atomic::Ordering, Arc}, collections::HashMap}; 
 use chrono::{DateTime, SecondsFormat};
@@ -1123,37 +1123,40 @@ impl MastertechContext {
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
         let scripts = Arc::new(Scripts::new(self.so_number.to_string()));
-        let iter = scripts.get_scripts();
+        let scripts_list  = scripts.get_scripts();
+        // Collect keys and sort them
+        let mut keys: Vec<&'static str> = scripts_list.keys().cloned().collect();
+        keys.sort();  // Sort the script names alphabetically
 
-        Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).show(
-        ui, |ui| {
-
-            let mut counter = 0;  // Initialize a counter
-            for (name, action) in iter.iter(){
-                let color = Color32::from_rgb(191, 33, 101);
-                let button = Button::new(RichText::new(*name)).stroke(Stroke::new(1.0, color));
-
-                if ui.add(button).clicked(){
-                    info!("Clicked button");
-
-                    let action_clone = action.clone();
-                    let so_num = Arc::new(self.so_number.clone());
-                    let scripts = scripts.clone();
-                    info!("SO number: {}", &so_num);
-                    tokio::spawn(async move {
-                        action_clone.execute(&scripts).await.unwrap();
-                    });
-                }
-
-                counter += 1;  // Increment the counter
-
-                if counter % 4 == 0 {
-                    ui.end_row();  // End the row after every 2 buttons
+        Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).spacing([10.0, 8.0]).show(
+            ui, |ui| {
+                let mut counter = 0;  // Initialize a counter
+                for key in keys.iter() {
+                    if let Some(action) = scripts_list.get(*key) {
+                        let color = Color32::from_rgb(191, 33, 101);
+                        let button = Button::new(RichText::new(*key)).stroke(Stroke::new(1.0, color)).min_size(Vec2::new(30.0, 8.0));
+        
+                        if ui.add(button).clicked(){
+                            info!("Clicked button: {}", *key);
+        
+                            let action_clone = action.clone();
+                            let so_num = Arc::new(self.so_number.clone());
+                            let scripts = scripts.clone();
+                            info!("SO number: {}", &so_num);
+                            tokio::spawn(async move {
+                                action_clone.execute(&scripts).await.unwrap();
+                            });
+                        }
+        
+                        counter += 1;  // Increment the counter
+        
+                        if counter % 3 == 0 {
+                            ui.end_row();  // End the row after every 3 buttons
+                        }
+                    }
                 }
             }
-        }); // Grid
-
-
+        );
      }
 
     pub fn puffin_profiler(&mut self, ui: &mut Ui){
