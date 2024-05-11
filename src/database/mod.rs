@@ -142,7 +142,7 @@ pub struct GetKeysResponse{
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SystemInformation {
-    /// Live CPU usage as a percentage
+    /// Live CPU usage as a percentaget
     pub cpu_percentage: f32,
     /// Live CPU clock speed
     pub cpu_clock: u64,

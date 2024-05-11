@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use std::env;
 use pollster::block_on;
 use crossbeam::channel;
+
 /**
  * TODO:
  * 1. need to make metadata update once we do a data copy or hit the refresh button
@@ -36,7 +37,7 @@ const GB_FROM_BYTES: u64 = 1024*1024*1024;
 
 #[derive(Debug)]
 pub enum Command {
-    Copy(PathBuf, PathBuf, channel::Sender<u64>),
+    Copy(Vec<PathBuf>, PathBuf, channel::Sender<u64>),
     Move(PathBuf, PathBuf),
     Delete(PathBuf),
     Rename(PathBuf, PathBuf),
@@ -81,16 +82,16 @@ pub struct FileBrowser {
     /// MetaData of each folder
     folder_metadata: RefCell<HashMap<PathBuf, MetaData>>, 
     /// Send size of file in bytes
-    metadata_tx: crossbeam::channel::Sender<u64>, 
+    metadata_tx: channel::Sender<u64>, 
     /// Send size of folder in bytes
-    metadata_rx: crossbeam::channel::Receiver<u64>, 
+    metadata_rx: channel::Receiver<u64>, 
     
     /// Progress percentage
     progress: f64, 
     /// Send progress 
-    progress_tx: UnboundedSender<f64>, 
+    progress_tx: channel::Sender<u64>, 
     /// Retrieve progress 
-    progress_rx: UnboundedReceiver<f64>, 
+    progress_rx: channel::Receiver<u64>, 
     /// Animate the progress bar
     animated_progress: bool, 
     /// When CTRL+C is hit, get the selected files to be copied
@@ -110,8 +111,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
             filename_edit = get_file_name(&path).to_string();
             path.pop();
         }
-        let (progress_tx, mut progress_rx) = unbounded_channel();
-        let (metadata_tx, mut metadata_rx) = crossbeam::channel::unbounded();
+        let (progress_tx, mut progress_rx) = channel::unbounded();
+        let (metadata_tx, mut metadata_rx) = channel::unbounded();
 
         Self {
             path,
@@ -174,10 +175,13 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
             Command::Copy(source, destination, progress_tx) => {
                 tokio::spawn(async move{
-                    match fs::copy(&source, &destination).await {
-                        Ok(bytes_copied) => progress_tx.try_send(bytes_copied).unwrap(),
-                        Err(e) => println!("{e:?}")
+                    for files in source{
+                        match fs::copy(&files, &destination).await {
+                            Ok(bytes_copied) => progress_tx.try_send(bytes_copied).unwrap(),
+                            Err(e) => println!("{e:?}")
+                        }
                     }
+
                 });
             },
 
@@ -273,9 +277,49 @@ impl FileBrowser{ // sender: UnboundedSender<>
     pub fn show(
         &mut self, 
         ui: &mut Ui,
-        command_tx: crossbeam::channel::Sender<Option<Command>>, //UnboundedSender<Option<Command>>,
-        mut command_rx: crossbeam::channel::Receiver<Option<Command>> //UnboundedReceiver<Option<Command>>
+        command_tx: channel::Sender<Option<Command>>,
+        command_rx: channel::Receiver<Option<Command>> 
     ) {     
+        let cut = &Event::Cut;
+        let copy = &Event::Copy;
+        let mut paste = false;
+        let paste_event = &Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND };
+
+        let copy_shortcut =  ui.input_mut(|i| i.filtered_events(&EventFilter::default()).contains(copy));
+        let cut_shortcut = ui.input_mut(|i| i.filtered_events(&EventFilter::default()).contains(cut));
+        
+        for mut event in ui.input_mut(|i| i.events.clone()){
+            match event{
+                Event::Paste(ref content) => {paste = true;},
+                _ => {} // Handle other events normally
+            }
+        }
+        
+        if copy_shortcut{
+            self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
+            println!("Copied Items: {:?}", self.copied_items_src);
+        }
+        
+        if paste{
+            self.animated_progress = true;
+            self.copied_items_dest = PathBuf::from(&self.path_edit);
+            let progress_tx: crossbeam::channel::Sender<u64> = self.progress_tx.clone();
+
+            println!("Pasted {:?}\nin directory: {:?}", self.copied_items_src, self.copied_items_dest);
+
+            match command_tx.send(Some(Command::Copy(self.copied_items_src.clone(), self.copied_items_dest.clone(), progress_tx))){
+                Ok(_) => println!("Home"),
+                Err(e) => println!("{e}"),
+            }
+            ui.ctx().request_repaint();
+        }
+
+
+        while let Ok(progress) = self.progress_rx.try_recv() {
+            // println!("progress_bar: {progress}");
+            self.progress += progress as f64;
+        }
+
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(
@@ -403,8 +447,9 @@ impl FileBrowser{ // sender: UnboundedSender<>
             });
         });
 
-        CentralPanel::default().show_inside(ui, |ui| {
-            ui.shrink_width_to_current();ui.shrink_height_to_current();// ui.painter().rect_filled(ui.available_rect_before_wrap(),10.0,Color32::from_rgb(28,30,36));
+        CentralPanel::default().show_inside(ui, |ui| 
+        {
+            ui.shrink_width_to_current();ui.shrink_height_to_current();
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
             if self.first_refresh_contents{
@@ -412,7 +457,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                 self.first_refresh_contents = false;
             }
             
-            let file_browser_area = ScrollArea::new([true, true])
+            ScrollArea::new([true, true])
             .id_source("file_browser_scroll")
             .auto_shrink([false, false])
             .show_rows(ui,
@@ -445,46 +490,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     command_tx.send(Some(command)).unwrap();
                     ui.label("Loading...")
                 },
-            }).inner_rect;
-            
-            if ui.interact_bg(Sense{click: true, drag: true, focusable: true}).hovered(){
-                info!("CONTAINS POINTER");
-                let copy = Key::Copy;
-                let paste = Key::Paste;
-                
-                // let copy_shortcut = KeyboardShortcut::new(Modifiers::CTRL, copy);
-                // let paste_shortcut = KeyboardShortcut::new(Modifiers::CTRL, paste);
-
-                if InputState::default().consume_key(Modifiers::CTRL, Key::C){
-                    info!("Detected Key press");
-                }
-                
-                if ui.input(|i| i.key_pressed(copy))
-                { 
-                    self.copied_items_src = self.selected_items.borrow().iter().cloned().collect(); // Get selection from user
-                    println!("Copied Items: {:?}", self.copied_items_src);
-                }
-                if ui.input(|i| i.key_pressed(paste))
-                {
-                    
-                    self.animated_progress = true;
-                    self.copied_items_dest = PathBuf::from(&self.path_edit);
-                    let cloned_dest = self.copied_items_dest.clone();
-                    let cloned_src = self.copied_items_src.clone();
-                    let progress_tx = self.progress_tx.clone();
-                    println!("CTRL+V pressed {:?}", self.copied_items_dest.clone());
-                    // tokio::spawn(async move{
-                    //     let _ = match copy_selected_items(cloned_src, cloned_dest, progress_tx.clone()).await{
-                    //         Ok(_) => println!("copy_selected_items ran successfully"),
-                    //         Err(e) => println!("copy_selected_items failed: {e:?}"),
-                    //     };
-                    // });
-                }
-            }
-            while let Ok(progress) = self.progress_rx.try_recv() {
-                // println!("progress_bar: {progress}");
-                self.progress += progress;
-            }
+            });
         });
         if let Ok(Some(cmd)) = command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
     }
@@ -497,7 +503,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         &self,
         ui: &mut Ui,
         path: &PathBuf,
-        command_tx: crossbeam::channel::Sender<Option<Command>>,
+        command_tx: channel::Sender<Option<Command>>,
     ){
         puffin::profile_scope!("display_path");
         // ui.separator();

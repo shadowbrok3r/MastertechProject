@@ -233,13 +233,13 @@ impl ScriptAction for RunningTasks {
     }
 }
 
-#[cfg(target_os="windows")]
-#[async_trait]
-impl ScriptAction for QueryAntivirus {
-    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
-        Scripts::query_antivirus(scripts).await
-    }
-}
+// #[cfg(target_os="windows")]
+// #[async_trait]
+// impl ScriptAction for QueryAntivirus {
+//     async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+//         Scripts::query_antivirus(scripts).await
+//     }
+// }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Antivirus {
