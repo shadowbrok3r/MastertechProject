@@ -2,7 +2,6 @@ use std::{collections::HashMap, error::Error, io::Cursor, sync::Arc};
 use futures::StreamExt;
 use log::info;
 use reqwest::{header::CONTENT_LENGTH, Client};
-use lazy_static::lazy_static;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};

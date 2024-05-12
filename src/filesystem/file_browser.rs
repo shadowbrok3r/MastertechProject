@@ -1,14 +1,14 @@
-use log::info;
+use anyhow::Context;
+use futures::Future;
+use log::{debug, info};
+use sysinfo::Disks;
 use tokio::{
-    fs, 
-    sync::mpsc::{
-        UnboundedSender, 
-        UnboundedReceiver,
-        unbounded_channel
+    fs, io::{self, AsyncBufRead, BufReader, BufWriter}, sync::mpsc::{
+        unbounded_channel, UnboundedReceiver, UnboundedSender
     }
 };
 use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
-use std::{path::PathBuf, collections::{HashSet, HashMap}, cell::RefCell};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, path::{Path, PathBuf}, pin::Pin};
 use num_format::{Locale, ToFormattedString};
 use walkdir::WalkDir;
 use std::env;
@@ -31,6 +31,8 @@ use crate::filesystem::io::{
     //Progress
 };
 
+use super::file_copy::CopyBuilder;
+
 const KB_FROM_BYTES: u64 = 1024;
 const MB_FROM_BYTES: u64 = 1024*1024;
 const GB_FROM_BYTES: u64 = 1024*1024*1024;
@@ -50,6 +52,7 @@ pub enum Command {
     ReadDirectory(PathBuf),
     ReadMetadata(PathBuf),
     Home,
+    GetDrives,
 }
 
 pub struct FileBrowser {
@@ -98,6 +101,8 @@ pub struct FileBrowser {
     copied_items_src: Vec<PathBuf>, 
     /// When CTRL+V is hit, paste files in the current 'path_edit' directory
     copied_items_dest: PathBuf, 
+
+    drive_letters: Vec<String>
 }
 
 impl FileBrowser{ // sender: UnboundedSender<>
@@ -138,6 +143,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             animated_progress: false,
             copied_items_src: Vec::new(),
             copied_items_dest: PathBuf::new(),
+            drive_letters: Vec::new()
           }
     }
     
@@ -174,15 +180,22 @@ impl FileBrowser{ // sender: UnboundedSender<>
             },
 
             Command::Copy(source, destination, progress_tx) => {
-                tokio::spawn(async move{
-                    for files in source{
-                        match fs::copy(&files, &destination).await {
-                            Ok(bytes_copied) => progress_tx.try_send(bytes_copied).unwrap(),
-                            Err(e) => println!("{e:?}")
-                        }
+                // let dest_path = Path::new(&destination.to_str().unwrap());
+
+                std::thread::spawn(move ||{
+                    // Copy recursively, only including certain files:
+                    for entry in source{
+                        CopyBuilder::new(entry, destination.clone())
+                            .overwrite_if_newer(true)
+                            .overwrite_if_size_differs(true)
+                            .with_exclude_filter(".sys")
+                            .with_exclude_filter(".dat")
+                            .run(progress_tx.clone())
+                            .unwrap_or(());
                     }
 
                 });
+                    // copy_files(source, &destination, progress_tx).await.unwrap();
             },
 
             Command::Move(source, destination) => {
@@ -270,7 +283,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
                         }
                     }
                 }
-            }
+            },
+            Command::GetDrives => self.get_drives()
         }
     }
 
@@ -295,28 +309,41 @@ impl FileBrowser{ // sender: UnboundedSender<>
             }
         }
         
-        if copy_shortcut{
+        if copy_shortcut { // && self.selected_items
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             println!("Copied Items: {:?}", self.copied_items_src);
         }
         
         if paste{
             self.animated_progress = true;
-            self.copied_items_dest = PathBuf::from(&self.path_edit);
-            let progress_tx: crossbeam::channel::Sender<u64> = self.progress_tx.clone();
+            if let Some(selected_path) = &self.selected_item{
+                if selected_path.is_dir(){
+                    self.copied_items_dest = PathBuf::from(selected_path);
+                    match command_tx.send(Some(
+                            Command::Copy(
+                                self.copied_items_src.clone(), 
+                                self.copied_items_dest.clone(), 
+                                self.progress_tx.clone()
+                            )
+                        ))
+                    {
+                        Ok(_) => println!("Pasting contents"),
+                        Err(e) => println!("{e}"),
+                    }
+                }else {
+                    self.copied_items_dest = PathBuf::from(&self.path_edit);
+                }
+            }
+            
 
             println!("Pasted {:?}\nin directory: {:?}", self.copied_items_src, self.copied_items_dest);
 
-            match command_tx.send(Some(Command::Copy(self.copied_items_src.clone(), self.copied_items_dest.clone(), progress_tx))){
-                Ok(_) => println!("Home"),
-                Err(e) => println!("{e}"),
-            }
             ui.ctx().request_repaint();
         }
 
 
         while let Ok(progress) = self.progress_rx.try_recv() {
-            // println!("progress_bar: {progress}");
+            println!("progress_bar: {progress}");
             self.progress += progress as f64;
         }
 
@@ -382,7 +409,28 @@ impl FileBrowser{ // sender: UnboundedSender<>
             
             ui.horizontal_top(|ui| {
                 ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
-                ui.checkbox(&mut self.show_hidden, "Show Hidden");
+                // ui.checkbox(&mut self.show_hidden, "Show Hidden");
+                ui.with_layout(Layout::right_to_left(Align::TOP), |ui|{
+                    ui.add_space(5.0);
+                    self.drive_letters.sort_unstable_by(|b, a| a.partial_cmp(b).unwrap());
+                    for drive in self.drive_letters.iter(){
+                        let button = Button::new(RichText::new(format!("💾 {drive}")));
+                        
+                        if ui.add(
+                            button
+                        ).clicked(){
+                            println!("Button clicked: {:?}", drive);
+                            match command_tx.send(Some(Command::OpenPath(
+                                    PathBuf::from(drive)
+                                ))){
+                                Ok(_) => println!("Opening drive path"),
+                                Err(e) => println!("{e}"),
+                            }
+                        };
+                    }
+                    ui.label(RichText::new("Drive Letters -> ".to_string()));
+                });
+
             });
             ui.add_space(ui.spacing().item_spacing.y);
         });
@@ -393,14 +441,24 @@ impl FileBrowser{ // sender: UnboundedSender<>
             ui.add
             ( // Update the progress bar
                 ProgressBar::new(self.progress as f32)
-                .show_percentage()
-                .fill(Color32::from_rgb(255, 77, 210))
-                .animate(self.animated_progress)
+                    .show_percentage()
+                    .fill(Color32::from_rgb(255, 77, 210))
+                    .animate(self.animated_progress)
             );
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
             ui.horizontal(|ui| {
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.label(RichText::new(format!("Try selecting some files to copy.. ")));
+                    if copy_shortcut{
+                        ui.colored_label(Color32::LIGHT_BLUE ,RichText::new(format!("Copied files to clipboard.")));
+                    }else if paste{
+                        ui.colored_label(Color32::RED , RichText::new(format!("File Copy In Progress")));
+                    }
+                    
+                });
+
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if self.new_folder && ui.button("📁 New Folder").clicked() {
                         match command_tx.send(Some(Command::CreateDirectory)){
@@ -430,11 +488,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
                         });
                     }
                     
-
                     let result = ui.add(
-                    // ui.available_size_before_wrap(),
-                    TextEdit::singleline(&mut self.filename_edit)
-                    .id(Id::new("file_name_edit")),
+                        TextEdit::singleline(&mut self.filename_edit).id(Id::new("file_name_edit")),
                     );
 
                     if result.lost_focus()
@@ -454,6 +509,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
             if self.first_refresh_contents{
                 self.refresh_contents();
+                self.get_drives();
                 self.first_refresh_contents = false;
             }
             
@@ -739,6 +795,16 @@ impl FileBrowser{ // sender: UnboundedSender<>
         // so use the current path.
         &self.path 
     }
+
+    fn get_drives(&mut self) {
+        let mut disks = Disks::new_with_refreshed_list();
+        
+
+        for disk in &mut disks{
+            self.drive_letters.push(disk.mount_point().to_str().unwrap_or("").to_string());  
+            
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -768,22 +834,6 @@ extern "C" {
 
 /** Returns a Vec<PathBuf> of current directory contents and files. */
 fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
-    //#[cfg(windows)]
-    // let drives = {
-    //   let mut drives = unsafe { GetLogicalDrives() };
-    //   let mut letter = b'A';
-    //   let mut drive_names = Vec::new();
-    //   while drives > 0 {
-    //     if drives & 1 != 0 {
-    //       drive_names.push(format!("{}:\\", letter as char).into());
-    //     }
-    //     drives >>= 1;
-    //     letter += 1;
-    //   }
-    //   drive_names
-    // };
-
-
     let result: Vec<_> = WalkDir::new(path).min_depth(depth).max_depth(depth)
         .into_iter()
         .filter_map(|e| e.ok()) // Only retreive the resulted items
@@ -800,14 +850,6 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
           false => db.cmp(&da),
         }
     });
-
-    #[cfg(windows)]
-    // let result = {
-    //     let mut items = drives;
-    //     items.reserve(result.len());
-    //     items.append(&mut result);
-    //     items
-    // };
 
     let result = result
     .into_iter()
@@ -829,10 +871,42 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
     result
 }
 
-
-
 fn circle_icon(ui: &mut Ui, openness: f32, response: &Response) {
     let stroke = ui.style().interact(&response).fg_stroke;
     let radius = lerp(2.0..=3.0, openness);
     ui.painter().circle_filled(response.rect.center(), radius, stroke.color);
 }
+
+
+// async fn copy_files(source: Vec<PathBuf>, destination: &PathBuf, progress_tx: channel::Sender<u64>) -> io::Result<()>{
+//     if !destination.exists(){
+//         fs::create_dir_all(destination).await?;
+//     }
+//     for entry in source{
+//         println!("Path: {entry:?}");
+//         let x = fs::read_dir(entry).await?;
+//         while let Some(entry) = x.next_entry().await? {
+//             let mut src = BufReader::with_capacity(8192, entry.path());
+//             let src_path = entry.path();
+//             let dst_path = destination.join(entry.file_name());
+
+//             match io::copy(&mut src, &mut dest).await {
+//                 Ok(bytes_copied) => progress_tx.try_send(bytes_copied).unwrap(),
+//                 Err(e) => debug!("{e:?}")
+//             }
+
+//             if src_path.is_dir() {
+//                 // copy_recursively_in_chunks(src_path, dst_path, 8196).await
+//             } else {
+//                 // copy_file_in_chunks(src_path, dst_path, 8196).await
+//             }
+//         }
+
+        
+//         let mut dest = BufWriter::with_capacity(8192, fs::File::open(destination).await?);
+
+
+//     }
+//     Ok(())
+// }
+
