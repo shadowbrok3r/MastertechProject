@@ -102,7 +102,9 @@ pub struct FileBrowser {
     /// When CTRL+V is hit, paste files in the current 'path_edit' directory
     copied_items_dest: PathBuf, 
 
-    drive_letters: Vec<String>
+    drive_letters: Vec<String>,
+
+    source_dir_size: u64
 }
 
 impl FileBrowser{ // sender: UnboundedSender<>
@@ -143,7 +145,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
             animated_progress: false,
             copied_items_src: Vec::new(),
             copied_items_dest: PathBuf::new(),
-            drive_letters: Vec::new()
+            drive_letters: Vec::new(),
+            source_dir_size: 0
           }
     }
     
@@ -181,6 +184,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
             Command::Copy(source, destination, progress_tx) => {
                 // let dest_path = Path::new(&destination.to_str().unwrap());
+
+                
 
                 std::thread::spawn(move ||{
                     // Copy recursively, only including certain files:
@@ -244,6 +249,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
             Command::ReadMetadata(path) => {
                 puffin::profile_scope!("Command::ReadMetadata");
+                let mut total_size: u64 = 0;
                 let sender = self.metadata_tx.clone();
                 let cloned_path = path.clone();
                 let clone_path1 = path.clone();
@@ -274,10 +280,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
                                 if path.is_dir() {
                                     self.folder_metadata.borrow_mut().insert(clone_path1.clone(),
                                         MetaData { path_size });
+                                    total_size += path_size;
                                 } else {
                                     self.file_metadata.borrow_mut().insert(clone_path1.clone(),
                                         MetaData { path_size });
+                                    total_size += path_size;
                                 }
+                                println!("Total size: {total_size}");
+                                self.source_dir_size = total_size;
                             },
                             Err(e) => println!("Error reading metadata: {:?}", e),
                         }
@@ -312,6 +322,15 @@ impl FileBrowser{ // sender: UnboundedSender<>
         if copy_shortcut { // && self.selected_items
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             println!("Copied Items: {:?}", self.copied_items_src);
+            let command_tx = command_tx.clone();
+            
+            for path in &self.copied_items_src{
+                match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
+                    Ok(_) => info!("Getting file size"),
+                    Err(e) => println!("hovered sender error: {e:?}"),
+                }
+            }
+
         }
         
         if paste{
@@ -343,7 +362,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
 
         while let Ok(progress) = self.progress_rx.try_recv() {
-            println!("progress_bar: {progress}");
+            // println!("progress_bar: {progress}");
             self.progress += progress as f64;
         }
 
@@ -437,10 +456,10 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
-
+            
             ui.add
             ( // Update the progress bar
-                ProgressBar::new(self.progress as f32)
+                ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
                     .show_percentage()
                     .fill(Color32::from_rgb(255, 77, 210))
                     .animate(self.animated_progress)
