@@ -43,7 +43,7 @@ async fn main() -> eframe::Result<()> {
         format!("Mastertech-{}",cargo_crate_version!()).as_str(),
         eframe::NativeOptions {
             viewport: ViewportBuilder::default()
-                .with_inner_size([945.0, 560.0])
+                .with_inner_size([945.0, 750.0])
                 .with_drag_and_drop(true)
                 .with_icon(load_icon()),
             ..Default::default()
