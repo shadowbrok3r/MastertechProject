@@ -150,28 +150,46 @@ impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = DockState::new(
             vec!["TUR Sheet".to_owned(), 
-            "File Browser 📂".to_owned(),
-            "Scripts".to_owned()
         ]);
 
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
+        
         let [a, b] = tree
             .main_surface_mut()
             .split_left(
                 NodeIndex::root(),
-                0.32, 
+                0.30, 
+                vec![
+                    "File Browser 📂".to_owned(),
+        ]);
+
+        let [a, b] = tree
+            .main_surface_mut()
+            .split_below(
+                NodeIndex::root(),
+                0.6, 
                 vec![
                     "Console".to_owned(),
         ]);
 
         let [_, _] = tree
             .main_surface_mut()
-            .split_below(
+            .split_left(
             b,
-            0.4,
+            0.45,
             vec!["System Information".to_owned()],
         );
+
+        let [_, _] = tree
+            .main_surface_mut()
+            .split_left(
+            b,
+            0.20,
+            vec!["Scripts".to_owned()],
+        );
+
+
 
         let mut open_tabs = HashSet::new();
 

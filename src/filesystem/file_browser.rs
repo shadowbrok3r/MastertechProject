@@ -397,26 +397,6 @@ impl FileBrowser{
             ui.horizontal_top(|ui| {
                 ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
                 // ui.checkbox(&mut self.show_hidden, "Show Hidden");
-                ui.with_layout(Layout::right_to_left(Align::TOP), |ui|{
-                    ui.add_space(5.0);
-                    self.drive_letters.sort_unstable_by(|b, a| a.partial_cmp(b).unwrap());
-                    for drive in self.drive_letters.iter(){
-                        let button = Button::new(RichText::new(format!("💾 {drive}")));
-                        
-                        if ui.add(
-                            button
-                        ).clicked(){
-                            println!("Button clicked: {:?}", drive);
-                            match command_tx.send(Some(Command::OpenPath(
-                                    PathBuf::from(drive)
-                                ))){
-                                Ok(_) => println!("Opening drive path"),
-                                Err(e) => println!("{e}"),
-                            }
-                        };
-                    }
-                    ui.label(RichText::new("Drive Letters -> ".to_string()));
-                });
 
             });
             ui.add_space(ui.spacing().item_spacing.y);
@@ -459,9 +439,28 @@ impl FileBrowser{
             }
 
             ui.horizontal(|ui| {
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.colored_label(color ,RichText::new(display_text));
+                ui.with_layout(Layout::left_to_right(Align::BOTTOM), |ui|{
+                    ui.add_space(5.0);
+                    self.drive_letters.sort_unstable_by(|b, a| a.partial_cmp(b).unwrap());
+                    for drive in self.drive_letters.iter(){
+                        let button = Button::new(RichText::new(format!("💾 {drive}")));
+                        
+                        if ui.add(
+                            button
+                        ).clicked(){
+                            println!("Button clicked: {:?}", drive);
+                            match command_tx.send(Some(Command::OpenPath(
+                                    PathBuf::from(drive)
+                                ))){
+                                Ok(_) => println!("Opening drive path"),
+                                Err(e) => println!("{e}"),
+                            }
+                        };
+                    }
                 });
+                // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                //     ui.colored_label(color ,RichText::new(display_text));
+                // });
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if self.new_folder && ui.button("📁 New Folder").clicked() {

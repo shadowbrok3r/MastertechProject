@@ -72,7 +72,7 @@ impl MastertechContext {
             StripBuilder::new(ui)
             .cell_layout(Layout::left_to_right(Align::Center))
             .size(Size::exact(174.0)) // allocates top two strips from top -> bottom
-            .size(Size::exact(35.0)) // space between top and bottom strips
+            .size(Size::exact(20.0)) // space between top and bottom strips
             .size(Size::exact(235.0)) // allocates bottom two strips from top -> bottom
             .vertical(|mut strip|
             { 
@@ -831,10 +831,10 @@ impl MastertechContext {
                             .id_source("checkin_notes_scroll")
                             .show(ui, |ui|{
                                 ui.add_sized(
-                                    vec2(ui.available_width()-4.0, ui.available_height()),
+                                    vec2(ui.available_width()-4.0, ui.available_height() - 80.0),
                                     TextEdit::multiline(&mut self.ticket_info.checkin_notes)
                                     .hint_text(RichText::new("Checkin Notes").weak())
-                                    .desired_rows(15)
+                                    .desired_rows(4)
                                 );
                             });
                             ui.shrink_height_to_current(); 
@@ -848,11 +848,11 @@ impl MastertechContext {
                             .id_source("recomendations_scroll")
                             .show(ui, |ui|{
                                 ui.add_sized(
-                                    vec2(ui.available_width()-4.0, ui.available_height()), 
+                                    vec2(ui.available_width()-4.0, ui.available_height() - 80.0), 
                                     TextEdit::multiline(&mut self.recommendations)
                                     .hint_text(RichText::new("Recommendations")
                                     .weak())
-                                    .desired_rows(15)
+                                    .desired_rows(4)
                                 );
                             });
                             ui.shrink_height_to_current(); 
@@ -872,23 +872,10 @@ impl MastertechContext {
     
     pub fn system_information(&mut self, ui: &mut Ui){
         ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
-        Window::new("Spinner Window")
-            .enabled(self.spinner)
-            .open(&mut self.spinner)
-            .title_bar(false)
-            .fixed_size(vec2(10.0,10.0))
-            // .constrain_to(ctx.available_rect())
-            .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
-            .show(&self.ctx, |ui|{
-                ui.add(
-                    Spinner::new()
-                    .color(Color32::LIGHT_RED)
-                );
-            });
 
         if ui
-        .add(Button::new( RichText::new("Send to Master-Tech.app")))
-        .clicked()
+            .add(Button::new( RichText::new("Send to Master-Tech.app")))
+            .clicked()
         {  
             let tech = match self.techs_cbox{
                 Techs::Logan => "Logan".to_string(),
@@ -979,7 +966,7 @@ impl MastertechContext {
                 .striped(true)
                 .resizable(true)
                 .cell_layout(Layout::left_to_right(Align::Center))
-                .column(Column::initial(100.0).range(50.0..=300.0).clip(true))
+                .column(Column::initial(100.0).range(50.0..=280.0).clip(true))
                 .column(Column::remainder())
                 .min_scrolled_height(0.0);
 
@@ -1116,10 +1103,10 @@ impl MastertechContext {
     }
     
     pub fn scripts(&mut self, ui: &mut Ui){
-        ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
+        ui.style_mut().spacing.button_padding = (4.0, 6.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
-        ui.vertical(|ui|{ui.add_space(8.0);});
+        ui.vertical(|ui|{ui.add_space(6.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
         let scripts = Arc::new(Scripts::new(self.so_number.to_string()));
@@ -1128,13 +1115,18 @@ impl MastertechContext {
         let mut keys: Vec<&'static str> = scripts_list.keys().cloned().collect();
         keys.sort();  // Sort the script names alphabetically
 
-        Grid::new("scripts").min_col_width(self.widget_size).num_columns(3).min_row_height(10.0).spacing([10.0, 8.0]).show(
-            ui, |ui| {
-                let mut counter = 0;  // Initialize a counter
+        Grid::new("scripts").min_col_width(self.widget_size).num_columns(1).min_row_height(8.0).spacing([10.0, 8.0]).show(
+            ui, |ui| 
+        {
+            ui  
+                .with_layout(Layout::top_down_justified(Align::Center),|ui|
+            {
                 for key in keys.iter() {
                     if let Some(action) = scripts_list.get(*key) {
                         let color = Color32::from_rgb(191, 33, 101);
-                        let button = Button::new(RichText::new(*key)).stroke(Stroke::new(1.0, color)).min_size(Vec2::new(30.0, 8.0));
+                        let button = Button::new(RichText::new(*key).small().size(12.0))
+                            .stroke(Stroke::new(1.0, color))
+                            .min_size(Vec2::new(25.0, 6.0));
         
                         if ui.add(button).clicked(){
                             info!("Clicked button: {}", *key);
@@ -1147,16 +1139,11 @@ impl MastertechContext {
                                 action_clone.execute(&scripts).await.unwrap();
                             });
                         }
-        
-                        counter += 1;  // Increment the counter
-        
-                        if counter % 3 == 0 {
-                            ui.end_row();  // End the row after every 3 buttons
-                        }
+                        ui.end_row();
                     }
                 }
-            }
-        );
+            });
+        });
      }
 
     pub fn puffin_profiler(&mut self, ui: &mut Ui){
