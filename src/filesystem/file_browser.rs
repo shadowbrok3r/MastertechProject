@@ -1,28 +1,14 @@
-use anyhow::Context;
-use futures::Future;
 use log::{debug, info};
 use sysinfo::Disks;
-use tokio::{
-    fs, io::{self, AsyncBufRead, BufReader, BufWriter}, sync::mpsc::{
-        unbounded_channel, UnboundedReceiver, UnboundedSender
-    }
-};
+use tokio::fs;
 use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
-use std::{cell::RefCell, collections::{HashMap, HashSet}, path::{Path, PathBuf}, pin::Pin};
-use num_format::{Locale, ToFormattedString};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, path::PathBuf, time::Duration};
 use walkdir::WalkDir;
 use std::env;
 use pollster::block_on;
 use crossbeam::channel;
-
-/**
- * TODO:
- * 1. need to make metadata update once we do a data copy or hit the refresh button
- * 2. Need to move commands away from using channels, just make more fn's that impl self
- * 3. when copying data, have it pull the metadata from the already existing 
- */
 use fs_extra::dir::get_size;
-//use cached::proc_macro::{io_cached, cached};
+use super::file_copy::CopyBuilder;
 use crate::filesystem::io::{
     copy_selected_items, 
     format_path_metadata, 
@@ -31,11 +17,10 @@ use crate::filesystem::io::{
     //Progress
 };
 
-use super::file_copy::CopyBuilder;
-
-const KB_FROM_BYTES: u64 = 1024;
+//use cached::proc_macro::{io_cached, cached};
+const _KB_FROM_BYTES: u64 = 1024;
 const MB_FROM_BYTES: u64 = 1024*1024;
-const GB_FROM_BYTES: u64 = 1024*1024*1024;
+const _GB_FROM_BYTES: u64 = 1024*1024*1024;
 
 #[derive(Debug)]
 pub enum Command {
@@ -107,7 +92,7 @@ pub struct FileBrowser {
     source_dir_size: u64
 }
 
-impl FileBrowser{ // sender: UnboundedSender<>
+impl FileBrowser{
     pub fn new() -> Self{
         let mut path = env::current_dir().unwrap_or_default();
         let mut filename_edit = String::new();
@@ -118,8 +103,8 @@ impl FileBrowser{ // sender: UnboundedSender<>
             filename_edit = get_file_name(&path).to_string();
             path.pop();
         }
-        let (progress_tx, mut progress_rx) = channel::unbounded();
-        let (metadata_tx, mut metadata_rx) = channel::unbounded();
+        let (progress_tx, progress_rx) = channel::unbounded();
+        let (metadata_tx, metadata_rx) = channel::unbounded();
 
         Self {
             path,
@@ -183,12 +168,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
             },
 
             Command::Copy(source, destination, progress_tx) => {
-                // let dest_path = Path::new(&destination.to_str().unwrap());
-
-                
-
                 std::thread::spawn(move ||{
-                    // Copy recursively, only including certain files:
                     for entry in source{
                         CopyBuilder::new(entry, destination.clone())
                             .overwrite_if_newer(true)
@@ -198,9 +178,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
                             .run(progress_tx.clone())
                             .unwrap_or(());
                     }
-
-                });
-                    // copy_files(source, &destination, progress_tx).await.unwrap();
+                }); // copy_files(source, &destination, progress_tx).await.unwrap();
             },
 
             Command::Move(source, destination) => {
@@ -248,11 +226,10 @@ impl FileBrowser{ // sender: UnboundedSender<>
             }
 
             Command::ReadMetadata(path) => {
-                puffin::profile_scope!("Command::ReadMetadata");
-                let mut total_size: u64 = 0;
                 let sender = self.metadata_tx.clone();
                 let cloned_path = path.clone();
                 let clone_path1 = path.clone();
+
                 // Spawn the appropriate async task depending on whether the path is a directory or a file.
                 let read_metadata_task = if path.is_dir() {
                     tokio::spawn(async move {
@@ -262,32 +239,21 @@ impl FileBrowser{ // sender: UnboundedSender<>
                     tokio::spawn(async move {
                         tokio::fs::metadata(&cloned_path).await.unwrap().len()
                     })
-                } else {
-                    // Handle the case where the path is neither a directory nor a file.
-                    return;
-                };
-                // Use tokio::select! to wait for the metadata task to complete.
+                } else {return;};
+
                 tokio::select! {
                     result = read_metadata_task => {
                         match result {
-                            Ok(path_size) => {
-                                // Send the result through the channel.
-                                if sender.try_send(path_size).is_err() {
-                                    println!("Error sending metadata");
-                                }
+                            Ok(path_size) => { // Send the result through the channel.
+                                if sender.try_send(path_size).is_err() { println!("Error sending metadata");}
                                 
-                                // Insert the metadata into the appropriate HashMap.
-                                if path.is_dir() {
+                                if path.is_dir() { // Insert the metadata into the appropriate HashMap.
                                     self.folder_metadata.borrow_mut().insert(clone_path1.clone(),
                                         MetaData { path_size });
-                                    total_size += path_size;
                                 } else {
                                     self.file_metadata.borrow_mut().insert(clone_path1.clone(),
                                         MetaData { path_size });
-                                    total_size += path_size;
                                 }
-                                println!("Total size: {total_size}");
-                                self.source_dir_size = total_size;
                             },
                             Err(e) => println!("Error reading metadata: {:?}", e),
                         }
@@ -307,14 +273,14 @@ impl FileBrowser{ // sender: UnboundedSender<>
         let cut = &Event::Cut;
         let copy = &Event::Copy;
         let mut paste = false;
-        let paste_event = &Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND };
+        // let paste_event = &Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND };
 
         let copy_shortcut =  ui.input_mut(|i| i.filtered_events(&EventFilter::default()).contains(copy));
-        let cut_shortcut = ui.input_mut(|i| i.filtered_events(&EventFilter::default()).contains(cut));
+        let _cut_shortcut = ui.input_mut(|i| i.filtered_events(&EventFilter::default()).contains(cut));
         
-        for mut event in ui.input_mut(|i| i.events.clone()){
+        for event in ui.input_mut(|i| i.events.clone()){
             match event{
-                Event::Paste(ref content) => {paste = true;},
+                Event::Paste(ref _content) => {paste = true;},
                 _ => {} // Handle other events normally
             }
         }
@@ -338,33 +304,35 @@ impl FileBrowser{ // sender: UnboundedSender<>
             if let Some(selected_path) = &self.selected_item{
                 if selected_path.is_dir(){
                     self.copied_items_dest = PathBuf::from(selected_path);
-                    match command_tx.send(Some(
+                    match command_tx.try_send(Some(
                             Command::Copy(
                                 self.copied_items_src.clone(), 
                                 self.copied_items_dest.clone(), 
                                 self.progress_tx.clone()
                             )
-                        ))
-                    {
-                        Ok(_) => println!("Pasting contents"),
+                        )
+                    ){
+                        Ok(_) => println!("Source: {:?}\nDest: {:?}\n", self.copied_items_src, self.copied_items_dest),
                         Err(e) => println!("{e}"),
                     }
                 }else {
                     self.copied_items_dest = PathBuf::from(&self.path_edit);
                 }
             }
-            
 
-            println!("Pasted {:?}\nin directory: {:?}", self.copied_items_src, self.copied_items_dest);
+            info!("Pasted {:?}\nin directory: {:?}", self.copied_items_src, self.copied_items_dest);
 
             ui.ctx().request_repaint();
         }
 
+        while let Ok(progress) = self.progress_rx.try_recv() {self.progress += progress as f64; }
 
-        while let Ok(progress) = self.progress_rx.try_recv() {
-            // println!("progress_bar: {progress}");
-            self.progress += progress as f64;
+        let mut total_size = 0;
+        while let Ok(meta) = self.metadata_rx.try_recv(){
+            total_size += meta;
+            self.source_dir_size = total_size;
         }
+        
 
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
@@ -457,8 +425,20 @@ impl FileBrowser{ // sender: UnboundedSender<>
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
             
-            ui.add
-            ( // Update the progress bar
+            // info!("self.progress {:?}/ self.source_dir_size {:?}", self.progress, self.source_dir_size);
+            if self.progress as u64 == self.source_dir_size {self.progress = 0.0;}
+
+            // while self.progress as u64 != self.source_dir_size{
+            //     let tx = command_tx.clone();
+            //     std::thread::spawn(move || {
+            //         std::thread::sleep(Duration::from_secs(5));
+            //         match tx.try_send(Some(Command::Refresh)){
+            //             Ok(_) => debug!("Refreshing.."),
+            //             Err(e) => debug!("{e}"),
+            //         }
+            //     });
+            // }
+            ui.add( // Update the progress bar
                 ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
                     .show_percentage()
                     .fill(Color32::from_rgb(255, 77, 210))
@@ -467,15 +447,20 @@ impl FileBrowser{ // sender: UnboundedSender<>
 
             ui.add_space(ui.spacing().item_spacing.y * 2.0);
 
+            let mut display_text = format!("Try selecting some files to copy.. ");
+            let mut color = Color32::LIGHT_BLUE;
+
+            if copy_shortcut{
+                color = Color32::LIGHT_GREEN;
+                display_text = "Copied files to clipboard.".to_string();
+            }else if paste{
+                color = Color32::RED;
+                display_text = format!("File Copy In Progress: {:?} / {:?}", self.progress as u64 / MB_FROM_BYTES, self.source_dir_size / MB_FROM_BYTES as u64);
+            }
+
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.label(RichText::new(format!("Try selecting some files to copy.. ")));
-                    if copy_shortcut{
-                        ui.colored_label(Color32::LIGHT_BLUE ,RichText::new(format!("Copied files to clipboard.")));
-                    }else if paste{
-                        ui.colored_label(Color32::RED , RichText::new(format!("File Copy In Progress")));
-                    }
-                    
+                    ui.colored_label(color ,RichText::new(display_text));
                 });
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -540,33 +525,25 @@ impl FileBrowser{ // sender: UnboundedSender<>
             self.dir_contents.borrow().get(&self.path).map_or(0, |files| files.len()),
             |ui, range| match self.dir_contents.borrow().get(&self.path) //borrow().get(&self.path) 
             {
-                Some(files) => 
-                {
-                    ui.with_layout(ui.layout().with_main_justify(true), |ui| 
-                    {
-                        ui.vertical(|ui|{
-
-                            for path in files[range].iter()
-                            {
-                                self.display_path
-                                (
-                                    ui, 
-                                    path, 
-                                    command_tx.clone(),
-                                );
+                Some(files) => {
+                    ui.with_layout(ui.layout().with_main_justify(true), |ui| {
+                        ui.vertical(|ui| {
+                            for path in files[range].iter(){
+                                self.display_path(ui, path, command_tx.clone());
                             }
                         });
-                    }).response
+                    });
                 }
                 None => {
                     // There was an error fetching the directory contents
                     // Send a command to fetch them in the background
                     let command = Command::ReadDirectory(self.path.clone());
                     command_tx.send(Some(command)).unwrap();
-                    ui.label("Loading...")
+                    ui.label("Loading...");
                 },
             });
         });
+
         if let Ok(Some(cmd)) = command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
     }
     
@@ -585,7 +562,7 @@ impl FileBrowser{ // sender: UnboundedSender<>
         let command_sender = command_tx.clone();
         let command_sender2 = command_tx.clone();
         let command_sender3 = command_tx.clone();
-        let command_sender4 = command_tx.clone();
+        // let command_sender4 = command_tx.clone();
         let command_sender5 = command_tx.clone();
 
         let label = match path.is_dir() {true => "🗀 ", false => "🗋 "}.to_string() + get_file_name(path);
