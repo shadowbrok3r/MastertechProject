@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui::Ui;
 
-use crate::minidump::{processor::ProcessingStatus, minidump_main::MiniDumpApp};
+use crate::tabs::minidump::{processor::ProcessingStatus, MiniDumpApp};
 
 impl MiniDumpApp {
     pub fn ui_settings(&mut self, ui: &mut Ui, ctx: &egui::Context) {

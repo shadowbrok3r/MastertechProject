@@ -4,16 +4,8 @@ use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload}, GetKeysResponse, PreTicketData}, handle_api::scaffold::{HardwareTest, Salesman, Techs}};
+use crate::{handle_api::{api_request::SendRequest, scaffold}, database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload}, GetKeysResponse, PreTicketData}, handle_api::scaffold::HardwareTest, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp}};
 use egui_file::FileDialog;
-use crate::{
-    filesystem::file_browser::FileBrowser,
-    handle_api::{ api_request::SendRequest, scaffold},
-    minidump::minidump_main::MiniDumpApp
-};
-
-#[cfg(target_os="windows")]
-
 
 impl TabViewer for MastertechContext {
     type Tab = String;
@@ -93,8 +85,8 @@ pub struct MastertechContext {
     pub open_file_dialog: Option<FileDialog>,
     pub minidump_app: MiniDumpApp,
 
-    pub salesman_cbox: Salesman,
-    pub techs_cbox: Techs,
+    pub salesman: String,
+    pub technician: String,
     pub ram_test_cbox: HardwareTest, // We just need one of these...
     pub hdd_test_cbox: HardwareTest,
     pub ssd_test_cbox: HardwareTest,
@@ -239,8 +231,8 @@ impl Default for MasterTechApp {
 
             database: None,
 
-            salesman_cbox: scaffold::Salesman::Jake, 
-            techs_cbox: scaffold::Techs::Logan, 
+            salesman: String::new(),
+            technician: String::new(),
             
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,

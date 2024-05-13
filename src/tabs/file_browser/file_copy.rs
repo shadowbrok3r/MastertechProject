@@ -164,7 +164,7 @@ impl CopyBuilder {
     }
 
     /// Overwrite target files (off by default)
-    pub fn overwrite(self, overwrite: bool) -> CopyBuilder {
+    pub fn _overwrite(self, overwrite: bool) -> CopyBuilder {
         CopyBuilder {
             overwrite_all: overwrite,
             ..self
@@ -198,7 +198,7 @@ impl CopyBuilder {
     }
 
     /// Only copy files that contain this string.
-    pub fn with_include_filter(self, f: &str) -> CopyBuilder {
+    pub fn _with_include_filter(self, f: &str) -> CopyBuilder {
         let mut filters = self.include_filters.clone();
         filters.push(f.to_owned());
         CopyBuilder {
@@ -304,7 +304,7 @@ impl CopyBuilder {
                         entry.path().display(),
                         dest_entry.display()
                     );
-                    let target = read_link(entry.path())?;
+                    let _target = read_link(entry.path())?;
                     #[cfg(unix)]
                     std::os::unix::fs::symlink(target, dest_entry)?
                 } else {
@@ -350,7 +350,7 @@ impl CopyBuilder {
 }
 
 /// Copy a directory from `source` to `dest`, creating `dest`, with all options.
-pub fn copy_dir_advanced<P: AsRef<Path>, Q: AsRef<Path>>(
+pub fn _copy_dir_advanced<P: AsRef<Path>, Q: AsRef<Path>>(
     source: P,
     dest: Q,
     overwrite_all: bool,
@@ -373,7 +373,7 @@ pub fn copy_dir_advanced<P: AsRef<Path>, Q: AsRef<Path>>(
 }
 
 /// Copy a directory from `source` to `dest`, creating `dest`, with minimal options.
-pub fn copy_dir<P: AsRef<Path>, Q: AsRef<Path>>(source: P, dest: Q, progress_tx: crossbeam::channel::Sender<u64>) -> Result<(), std::io::Error> {
+pub fn _copy_dir<P: AsRef<Path>, Q: AsRef<Path>>(source: P, dest: Q, progress_tx: crossbeam::channel::Sender<u64>) -> Result<(), std::io::Error> {
     CopyBuilder {
         source: source.as_ref().to_path_buf(),
         destination: dest.as_ref().to_path_buf(),

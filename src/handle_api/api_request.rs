@@ -196,8 +196,8 @@ impl SendRequest{
             let mut response_text = response.text().await?;
             debug!("response: {:?}", response_text);
 
-            let mut webroot_key = "";
-            let mut superanti_key = "";
+            let mut _webroot_key = "";
+            let mut _superanti_key = "";
 
             if response_text.contains("WRAV: ") || response_text.contains("SAS: "){
                 let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
@@ -208,17 +208,17 @@ impl SendRequest{
 
                 let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
 
-                webroot_key = split_wrav[1].trim();
-                superanti_key = split_lines[1].trim();
+                _webroot_key = split_wrav[1].trim();
+                _superanti_key = split_lines[1].trim();
             }
             else{
-                webroot_key = "Error";
-                superanti_key = "Check console";
+                _webroot_key = "Error";
+                _superanti_key = "Check console";
             }
 
             let response_keys = GetKeysResponse {
-                webroot_key: webroot_key.to_string(),
-                superanti_key: superanti_key.to_string(),
+                webroot_key: _webroot_key.to_string(),
+                superanti_key: _superanti_key.to_string(),
             };
         Ok(response_keys)
     }
@@ -232,20 +232,24 @@ impl SendRequest{
     {
         let send = tx.clone();
 
-        let mut assigned_salesman = "1202792432658520".to_string(); // Jake
-        let mut assigned_tech = "1199992640930465".to_string(); // Logan
+        let mut _assigned_salesman = "1202792432658520".to_string(); // Jake
+        let mut _assigned_tech = "1199992640930465".to_string(); // Logan
 
-        match asana_task.assignee.salesman{
-            Salesman::Jake => {assigned_salesman = "1202792432658520".to_string()},
-            Salesman::Danny => {assigned_salesman = "1202791016369879".to_string()},
-        };
 
-         match asana_task.assignee.tech{
-            Techs::Logan => { assigned_tech = "1199992640930465".to_string()},
-            Techs::Bread => { assigned_tech = "1202792432421640".to_string()},
-            Techs::Taco => { assigned_tech = "1202792432551073".to_string()},
-        };
+        if asana_task.assignee.salesman == "JDH2"{
+            _assigned_salesman = "1202792432658520".to_string();
+            
+        }else if asana_task.assignee.salesman == "DMK"{
+            _assigned_salesman = "1202791016369879".to_string();
+        }
 
+        if asana_task.assignee.tech == "LL"{
+            _assigned_tech = "1199992640930465".to_string();
+        }else if asana_task.assignee.tech == "BLK"{
+            _assigned_tech = "1202792432421640".to_string();
+        }else if asana_task.assignee.tech == "TBN"{
+            _assigned_tech = "1202792432551073".to_string();
+        }
 
 
         let params = serde_json::json!({
@@ -253,12 +257,12 @@ impl SendRequest{
                 "name": asana_task.task_name,
                 "html_notes": asana_task.html_notes,
                 "followers": [
-                    assigned_salesman,
-                    assigned_tech
+                    _assigned_salesman,
+                    _assigned_tech
                 ],
                 "due_at": due_date.to_rfc3339_opts(SecondsFormat::Secs, true),
                 "workspace": "13314583095021",
-                "assignee": assigned_salesman,
+                "assignee": _assigned_salesman,
                 "projects": ["1202792139600600"]
             }
         });

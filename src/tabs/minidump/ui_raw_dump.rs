@@ -1,11 +1,11 @@
 use eframe::egui;
 use egui::{Frame, TextStyle, Ui};
-use egui_extras::{Column, Size, TableBuilder};
+use egui_extras::{Column, TableBuilder};
 use memmap2::Mmap;
 use minidump::{format::MINIDUMP_STREAM_TYPE, Minidump};
 use num_traits::FromPrimitive;
 
-use super::minidump_main::{stream_vendor, MiniDumpApp};
+use crate::tabs::minidump::{stream_vendor, MiniDumpApp};
 
 pub struct RawDumpUiState {
     pub cur_stream: usize,

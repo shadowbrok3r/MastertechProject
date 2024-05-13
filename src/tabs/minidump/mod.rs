@@ -1,29 +1,45 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
-
 use clap::Parser;
-use eframe::{egui::{self, scroll_area::ScrollBarVisibility, FontDefinitions, ScrollArea}, epaint::Fonts};
-use egui::{Color32, Ui, Vec2};
-use egui_extras::{Column, Size, TableBuilder};
+use eframe::egui::{self, scroll_area::ScrollBarVisibility, ScrollArea};
+use egui::{Color32, Ui};
+use egui_extras::{Column, TableBuilder};
 use memmap2::Mmap;
 use minidump::{format::MINIDUMP_STREAM_TYPE, system_info::PointerWidth, Minidump, Module};
 use minidump_common::utils::basename;
 use minidump_processor::ProcessState;
 use minidump_unwind::{CallStack, StackFrame};
-use super::processor::{
-    self, MaybeMinidump, MaybeProcessed, MinidumpAnalysis, ProcessDump, ProcessingStatus, ProcessorTask
+use crate::app_state::MastertechContext;
+use crate::tabs::minidump::ui_logs::LogUiState;
+
+use crate::tabs::minidump::processor::{
+    MaybeMinidump, MaybeProcessed, MinidumpAnalysis, ProcessDump, ProcessingStatus, ProcessorTask
 };
 use std::{
     cmp::Ordering,
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
 };
-use tracing_subscriber::prelude::*;
-use super::ui_logs::LogUiState;
-use super::ui_processed::ProcessedUiState;
-use super::ui_raw_dump::RawDumpUiState;
 
-use super::logger::MapLogger;
+use crate::tabs::minidump::ui_processed::ProcessedUiState;
+use crate::tabs::minidump::ui_raw_dump::RawDumpUiState;
 
+use crate::tabs::minidump::logger::MapLogger;
+
+pub mod logger;
+pub mod processor;
+pub mod ui_logs;
+pub mod ui_processed;
+pub mod ui_raw_dump;
+pub mod ui_settings;
+
+impl MastertechContext {
+    pub fn mini_dump(&mut self, ui: &mut Ui){ 
+        
+        self.minidump_app.poll_processor_state();
+        self.minidump_app.update_ui(&self.ctx, ui);
+        self.minidump_app.last_status = self.minidump_app.cur_status;
+    }
+}
 
 
 pub struct MiniDumpApp {

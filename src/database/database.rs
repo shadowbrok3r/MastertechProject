@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use eframe::egui::Ui;
 use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use surrealdb::{

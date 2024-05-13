@@ -1,6 +1,5 @@
-use fs_extra::dir::get_size;
 use futures_util::future::join_all;
-use tokio::{fs, sync::mpsc::{error::SendError, UnboundedSender, self}, task::spawn_blocking};
+use tokio::{fs, sync::mpsc::{error::SendError, UnboundedSender}};
 use num_format::{Locale, ToFormattedString};
 use eframe::egui::widgets::text_edit::*;
 use std::{io::Error, sync::{Arc, Mutex}, path::PathBuf};
@@ -33,7 +32,7 @@ impl From<SendError<f64>> for CopyError {
     }
 }
 
-pub async fn copy_selected_items(
+pub async fn _copy_selected_items(
     selected_files: Vec<PathBuf>, 
     destination_dir: PathBuf, 
     progress_tx: UnboundedSender<f64>,
@@ -109,7 +108,7 @@ pub async fn copy_selected_items(
 
 
 pub fn format_path_metadata(mut path_size: u64) -> String{
-    let mut formatted_size = "".to_string();
+    let mut _formatted_size = "".to_string();
     if path_size > 0
     {
         if path_size > GB_FROM_BYTES
@@ -121,25 +120,23 @@ pub fn format_path_metadata(mut path_size: u64) -> String{
             let y: Vec<&str> = x_as_string.split(".").collect();
             let decimal = y[1].as_str();
             let new_path_size = x.clone() as u64;
-            formatted_size = format!("{}.{decimal} Gb", new_path_size.to_formatted_string(&Locale::en));
+            _formatted_size = format!("{}.{decimal} Gb", new_path_size.to_formatted_string(&Locale::en));
         }
         else if path_size > MB_FROM_BYTES
         {
             path_size = path_size / MB_FROM_BYTES;
-            formatted_size = format!("{} Mb", path_size.to_formatted_string(&Locale::en));
+            _formatted_size = format!("{} Mb", path_size.to_formatted_string(&Locale::en));
         } 
         else if path_size > KB_FROM_BYTES
         {
             path_size = path_size / KB_FROM_BYTES;
-            formatted_size = format!("{} Kb", path_size.to_formatted_string(&Locale::en));
+            _formatted_size = format!("{} Kb", path_size.to_formatted_string(&Locale::en));
         }
         else{
-            formatted_size = format!("{} bytes", path_size.to_formatted_string(&Locale::en));
+            _formatted_size = format!("{} bytes", path_size.to_formatted_string(&Locale::en));
         }
         
-
-        
-        formatted_size
+        _formatted_size
     }
     else {
         format!("0b")

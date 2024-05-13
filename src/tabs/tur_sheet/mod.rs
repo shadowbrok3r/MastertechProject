@@ -1,62 +1,17 @@
+use crate::{app_state::MastertechContext, database::{schema::{HardwareTests, TicketPayload}, send_payload, PreTicketData}, handle_api::{api_request::SendRequest, email_builder::email_builder, scaffold::{self, Salesman, Techs}, Store}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, Grid, Id, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui };
-use crate::{app_state::MastertechContext, database::GetKeysResponse, handle_api::email_builder::{AsanaTask, Info, TaskAssignee}};
-use std::{path::PathBuf, sync::{atomic::Ordering, Arc}, collections::HashMap}; 
-use chrono::DateTime;
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
+use crate::{database::GetKeysResponse, handle_api::email_builder::{AsanaTask, Info, TaskAssignee}};
+use std::{collections::HashMap, path::PathBuf, sync::Arc}; 
+use chrono::{DateTime, SecondsFormat};
 use log::{debug, info};
 use serde_json::Value;
 use tokio::spawn;
 use egui_extras::{*, DatePickerButton};
 use egui_file::FileDialog;
-use puffin_egui;
 use lettre::{{Message, SmtpTransport, Transport}, transport::smtp::authentication::Credentials, message::header::ContentType};
 
-use crate::{
-    handle_api::{ api_request::SendRequest, scaffold, Store },
-    self_updater::run, handle_api::email_builder::email_builder
-};
-
-#[cfg(target_os="windows")]
-
-
 impl MastertechContext {
-    pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
-        ui.label("Secret menu... -.-");
-        ui.menu_button("Sub menu", |ui| {
-            ui.label("(.)(.)");
-        });
-        if ui.button("update").clicked(){
-            let (tx, rx) = crossbeam::channel::bounded(1);
-
-            tokio::task::spawn_blocking(move || {
-                match run(){
-                    Ok(response) => {
-                        match tx.send((response.0, response.1)){
-                            Ok(_) => drop(tx),
-                            Err(e) => println!("{e}"),
-                        }
-                    },
-                    Err(e) => println!("err: {e}"),
-                }
-            });
-            if let Ok(res) = rx.recv(){
-                self.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
-            }
-            
-
-        }
-    }
-
-    pub fn file_browser_popup(&mut self, ui: &mut Ui) {
-        let current_state = self.show_deferred_viewport.load(Ordering::Relaxed);
-        let new_state = !current_state; // Toggle the state: if it's true, make it false, and vice versa
-
-        if current_state{
-            if ui.button("Attach File Browser").clicked(){self.show_deferred_viewport.store(new_state, Ordering::Relaxed);}
-        }else {
-            if ui.button("Detach File Browser").clicked(){self.show_deferred_viewport.store(new_state, Ordering::Relaxed);}
-        }
-    }
-
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
@@ -179,22 +134,36 @@ impl MastertechContext {
                                                     ui.end_row();
 
                                                                         /*     ROW 3     */
-                                                    ComboBox::from_id_source("salesman_cbox").width(self.widget_size)
-                                                    .selected_text(format!("{:?}", self.salesman_cbox))
-                                                    .show_ui(ui, |ui| {
-                                                        ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Jake, "Jake");
-                                                        ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Danny, "Danny");
-                                                    });
+                                                    ui.add(
+                                                        TextEdit::singleline(&mut self.salesman)
+                                                        .hint_text("Salesman initials")
+                                                        .vertical_align(Align::Center)
+                                                        .margin(vec2(4.0, 4.0))
+                                                        .min_size(vec2(self.widget_size+2.0,14.0))
+                                                    );    
+                                                    ui.add(
+                                                        TextEdit::singleline(&mut self.technician)
+                                                        .hint_text("Technician initials")
+                                                        .vertical_align(Align::Center)
+                                                        .margin(vec2(4.0, 4.0))
+                                                        .min_size(vec2(self.widget_size+2.0,14.0))
+                                                    );    
+                                                    // ComboBox::from_id_source("salesman_cbox").width(self.widget_size)
+                                                    // .selected_text(format!("{:?}", self.salesman_cbox))
+                                                    // .show_ui(ui, |ui| {
+                                                    //     ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Jake, "Jake");
+                                                    //     ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Danny, "Danny");
+                                                    // });
 
 
-                                                    ComboBox::from_id_source("techs_cbox").width(self.widget_size)
-                                                    .selected_text(format!("{:?}", self.techs_cbox))
-                                                    .show_ui(ui, |ui| {
+                                                    // ComboBox::from_id_source("techs_cbox").width(self.widget_size)
+                                                    // .selected_text(format!("{:?}", self.techs_cbox))
+                                                    // .show_ui(ui, |ui| {
                                                         
-                                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Logan, "Logan");
-                                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Bread, "Bread");
-                                                        ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Taco, "Taco");
-                                                    });    
+                                                    //     ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Logan, "Logan");
+                                                    //     ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Bread, "Bread");
+                                                    //     ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Taco, "Taco");
+                                                    // });    
                                                     
                                                     ui.end_row();
                                                                         /*     ROW 4     */
@@ -384,15 +353,19 @@ impl MastertechContext {
                                 ui.vertical(|ui|{ui.add_space(3.0);});
 
                                 ui
-                                .vertical_centered_justified(|ui|
+                                .horizontal_top(|ui|
                                 {
-                                    
+                                    let check = !self.so_number.is_empty() 
+                                        && !self.ticket_info.customer_name.is_empty() 
+                                        && !self.ticket_info.customer_phone_1.is_empty() 
+                                        && !self.salesman.is_empty() 
+                                        && !self.technician.is_empty();                                    
                                     if ui
                                     .add_enabled(
-                                        !self.so_number.is_empty(),
+                                        check,
                                         Button::new
                                         (
-                                            RichText::new("Submit TUR Sheet")
+                                            RichText::new("Submit TUR")
                                                 .color(Color32::from_rgb(255, 204, 255))
                                         )
                                             .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
@@ -400,22 +373,6 @@ impl MastertechContext {
                                     .clicked()
                                     {  
                                         self.spinner = true;
-
-                                        // Window::new("Spinner Window")
-                                        //     .enabled(self.spinner)
-                                        //     .open(&mut self.spinner)
-                                        //     .title_bar(false)
-                                        //     .fixed_size(vec2(10.0,10.0))
-                                        //     // .constrain_to(ctx.available_rect())
-                                        //     .anchor(Align2::CENTER_CENTER, [2.0, 2.0])
-                                        //     .show(&self.ctx, |ui|{
-                                        //         ui.add(
-                                        //             Spinner::new()
-                                        //             .color(Color32::LIGHT_RED)
-                                        //             //.size()
-                                        //         );
-                                        // });
-                                        
 
                                         let cust = &self.ticket_info.customer_name;
                                         let so_num = &self.so_number;
@@ -426,9 +383,9 @@ impl MastertechContext {
                                             let mut salesman_map = HashMap::new();
                                             let mut tech_map = HashMap::new();
 
-                                            let salesman = &format!("{:?}", &self.salesman_cbox);
+                                            let salesman = &self.salesman; // &format!("{:?}", &self.salesman_cbox);
                                             let checkin_rep = &self.ticket_info.checkin_rep;
-                                            let technician = &format!("{:?}", &self.techs_cbox);
+                                            let technician = &self.technician; // &format!("{:?}", &self.techs_cbox);
 
                                             salesman_map.insert("Jake", "1202792432658520");
                                             salesman_map.insert("Danny", "1202791016369879");
@@ -638,15 +595,13 @@ impl MastertechContext {
                                             let store: &Store = &self.ticket_info.dep;
 
                                             if store.as_str() == "RIV"{
-                                                let sm = self.salesman_cbox;
-                                                let tech = self.techs_cbox;
 
                                                 let task = AsanaTask { 
                                                     task_name: format!("{cust} - {so_num}"), 
                                                     html_notes,
                                                     assignee: TaskAssignee { 
-                                                        salesman: sm, 
-                                                        tech
+                                                        salesman: self.salesman.clone(), 
+                                                        tech: self.technician.clone()
                                                     }, 
                                                     file_attachment: self.opened_file.clone() 
                                                 };
@@ -807,6 +762,82 @@ impl MastertechContext {
                                         self.spinner = false;
                                         self.ctx.request_repaint();
                                     }
+                                    ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
+                                    let check = !self.so_number.is_empty() 
+                                        && !self.ticket_info.customer_name.is_empty() 
+                                        && !self.ticket_info.customer_phone_1.is_empty() 
+                                        && !self.salesman.is_empty() 
+                                        && !self.technician.is_empty();    
+                                    if ui
+                                        .add_enabled(check, Button::new( RichText::new("Master-Tech.app")))
+                                        .clicked()
+                                    {  
+                                        
+                                        let hdd_test = format!("{:?}", &self.hdd_test_cbox);
+                                        let ram_test = format!("{:?}", &self.ram_test_cbox);
+                                        let ssd_test = format!("{:?}", &self.ssd_test_cbox);
+                            
+                                        let mut pre_ticket: PreTicketData = self.ticket_info.clone();
+                            
+                                        pre_ticket.due_date = Some(
+                                            self.date.unwrap_or(
+                                                DateTime::default()
+                                            ).to_rfc3339_opts(SecondsFormat::Secs,  true)
+                                        );
+                                        
+                                        let payload = TicketPayload::serialize_payload(
+                                            &pre_ticket,
+                                            &self.system_info,
+                                            &self.so_number,
+                                            &self.current_antivirus,
+                                            &self.recommendations,
+                                            self.technician.clone(),
+                                            self.salesman.clone(), 
+                                            HardwareTests{
+                                                hdd_test,
+                                                ssd_test,
+                                                ram_test,
+                                            } // example
+                                        );
+                                        // let client = self.client.clone();
+                            
+                                        
+                                        let cookies = CookieStore::default();
+                                        let cookie_store = CookieStoreMutex::new(cookies);
+                                        let cookie_store  = Arc::new(cookie_store);
+                            
+                                        let client_build = reqwest::Client::builder()
+                                            .cookie_provider(std::sync::Arc::clone(&cookie_store))
+                                            .build();
+                                        
+                                        match client_build{
+                                            Ok(client) => {
+                                                debug!("Sending reqwest");
+                                                spawn(async move {
+                                                    
+                                                    let mut output = String::new();
+                                                    let x = send_payload(payload, client, cookie_store).await;
+                                                    match x{
+                                                        Ok(o) => {
+                                                            output = o;
+                                                        },
+                                                        Err(e) => debug!("Error {e:?}"),
+                                                    }
+                                                    info!("output: {output}");
+                                                });
+                                            }, Err(err) => debug!("Error with client_build => {err:?}"),
+                                        };
+                                        
+                                    }
+                                    
+                                    if ui.add(
+                                        Button::new(
+                                            RichText::new("Connect WS")
+                                        )
+                                    )
+                                    .clicked(){
+                                        self.connect_to_ws = true;
+                                    }
                                 }); // vertical center justified
                             }); // vertical center
                         }); // cell
@@ -860,29 +891,6 @@ impl MastertechContext {
                 }); // strip.strip
             }); //strip builder
         }); // UI layout
-    }
-
-    pub fn file_browse(&mut self, ui: &mut Ui) {
-        if !self.show_deferred_viewport.load(Ordering::Relaxed) {
-            let (command_tx, command_rx) = crossbeam::channel::unbounded();
-            // Lock the Mutex and show the GUI
-            let file_browser_clone = Arc::clone(&self.file_browser);
-            let mut file_browser = file_browser_clone.lock().unwrap();
-            file_browser.show(ui, command_tx, command_rx);
-        }
-    }
-    
-    pub fn puffin_profiler(&mut self, ui: &mut Ui){
-        puffin::profile_function!();
-        puffin::GlobalProfiler::lock().new_frame(); // call once per frame!
-        puffin_egui::profiler_ui(ui);
-    }
-
-    pub fn mini_dump(&mut self, ui: &mut Ui){ 
-        
-        self.minidump_app.poll_processor_state();
-        self.minidump_app.update_ui(&self.ctx, ui);
-        self.minidump_app.last_status = self.minidump_app.cur_status;
     }
 
 }

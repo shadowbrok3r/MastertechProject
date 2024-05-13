@@ -1,11 +1,10 @@
 #![allow(clippy::too_many_arguments)]
 
-use super::minidump_main::{frame_signature, MiniDumpApp, Tab};
+use crate::tabs::minidump::{frame_signature, MiniDumpApp, Tab, frame_source, listing, threadname};
 use super::processor::ProcessingStatus;
 use eframe::egui;
-use eframe::epaint::Fonts;
 use egui::{Color32, ComboBox, Context, FontId, Frame, ScrollArea, Ui};
-use egui_extras::{Column, Size, TableBody, TableBuilder};
+use egui_extras::{Column, TableBody, TableBuilder};
 use minidump_common::utils::basename;
 use minidump_processor::ProcessState;
 use minidump_unwind::{CallStack, StackFrame};
@@ -17,7 +16,6 @@ pub struct ProcessedUiState {
 
 use inline_shim::*;
 
-use super::minidump_main::{frame_source, listing, threadname};
 #[cfg(feature = "inline")]
 mod inline_shim {
     pub use minidump_unwind::InlineFrame;

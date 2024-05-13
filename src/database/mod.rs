@@ -1,10 +1,10 @@
-use std::{collections::HashMap, error::Error, sync::Arc};
-use log::{debug, info};
+use std::{collections::HashMap, sync::Arc};
+use log::info;
 use reqwest::header::{COOKIE, CONTENT_TYPE, ACCEPT, HeaderValue};
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Serialize, Deserialize};
 use serde_json::json;
-use crate::{database::schema::{CustomerData, TicketData, TicketPayload, TicketResponse}, handle_api::Store};
+use crate::{database::schema::{CustomerData, TicketData, TicketPayload}, handle_api::Store};
 
 use self::schema::{ComputerData, HardwareTests};
 
@@ -36,109 +36,11 @@ pub struct PreTicketData{
     //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
 }
 
-// #[derive(Serialize, Deserialize, Debug, Default)]
-// pub struct TicketData{
-//     #[serde(flatten)]
-//     pub pre_ticket_data: PreTicketData,
-
-//     pub current_antivirus: Vec<String>,
-//     pub service_number: i32,
-//     pub recommendations: String,
-//     pub tech: String,
-//     pub salesman: String,
-//     pub hardware_test_results: HardwareTests
-// }
-
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct GetKeysResponse{
     pub webroot_key: String,
     pub superanti_key: String,
 }
-
-// #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-// #[allow(non_snake_case)]
-// #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
-// #[serde(rename = "xml")]
-// pub struct LocalSebData {
-//     pub InstalledDeviceId: String,
-//     pub InstallInstanceId: String,
-//     pub HasIssues: String,
-//     pub InstallationStage: String,
-//     pub ReasonCode: String,
-//     pub ActivationCode: String,
-//     pub InstallVersion: String,
-//     pub MachineName: String,
-//     pub ExtendedSeb: Option<ExtendedSeb>,
-// }
-
-// #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-// pub struct ExtendedSeb {
-//     pub email: String,
-//     pub phone: String,
-//     pub userid: String,
-//     pub device_name: String,
-//     pub device_id: String,
-//     pub state: String,
-//     pub usage_gb: String,
-//     pub date_device_created: String,
-//     pub activated: String,
-//     pub activation_code: String,
-//     pub last_complete_backup: String,
-//     pub last_client_status_update: String,
-//     pub id_recurly_account: String,
-//     pub date_last_scan: String,
-//     pub date_email_sent: String,
-//     pub date_canceled_account: String,
-//     pub date_deleted_account: String,
-//     pub current_period_ends_at: String,
-//     pub date_modified: String,
-//     pub date_created: String,
-// }
-
-// #[derive(Serialize, Deserialize, Default, Debug, Clone)]
-// pub struct ComputerData{
-//     pub hostname: String,
-//     pub operating_system: String,
-//     pub cpu: String,
-//     pub gpu: Option<String>,
-//     pub ram: String,
-//     pub drives: Vec<DriveData>,
-//     pub seb_info: Option<LocalSebData>
-// }
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct TicketResponse{
-//     pub ticket_data: TicketData,
-//     pub customer_data: CustomerData,
-//     pub computer_data: ComputerData
-// }
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct CustomerData{
-//     pub cust_code: i32,
-//     pub name: String,
-//     pub phone_number: String,
-//     pub phone_number_2: String,
-//     pub email: String, 
-//     pub li_doc: i32,
-//     pub li_amnt: String,
-//     pub num_inv: i32,
-// }
-
-// #[derive(Serialize, Deserialize, Debug, Default)]
-// pub struct HardwareTests{
-//     pub hdd_test: String,
-//     pub ssd_test: String,
-//     pub ram_test: String
-// }
-
-// #[derive(Serialize, Deserialize, Debug, Clone)]
-// pub struct DriveData{
-//     pub drive_letter: String,
-//     pub drive_type: String,
-//     pub total_size: String,
-//     pub space_left: String,
-// }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SystemInformation {
@@ -168,12 +70,12 @@ pub struct SystemInformation {
     pub network_interfaces: HashMap<String, String>,
 }
 
-impl TicketResponse{
+impl TicketPayload{
     pub fn serialize_payload(
         pre_ticket: &PreTicketData, 
         computer_data: &ComputerData,
         service_number: &String,
-        antivirus_installed: &String,
+        _antivirus_installed: &String,
         recommendations: &String,
         tech: String,
         salesman: String, 
@@ -222,15 +124,6 @@ impl TicketResponse{
         current_antivirus.push("webroot".to_string());
         current_antivirus.push("superantiSpyware".to_string());
 
-        /*
-                        pre_ticket_data: pre_ticket.clone(),
-                current_antivirus, //.clone(),
-                service_number: service_number.parse::<i32>().unwrap_or(0),
-                recommendations: recommendations.clone(),
-                tech,
-                salesman,
-                hardware_test_results: hardware_results,
-        */
 
         let ticket_data = TicketData {
             created_at: None,
@@ -255,18 +148,15 @@ impl TicketResponse{
         };
 
         let ticket_payload = TicketPayload { ticket_data, customer_data: customer_data.clone(), computer_data: computer_data.clone()};
-
-        let ticket_response = TicketResponse { ticket_response: ticket_payload, customer_data: customer_data, computer_data: computer_data.clone() };
-
-        info!("Ticket Response: {ticket_response:#?}");
+        info!("Ticket Response: {ticket_payload:#?}");
         
-        ticket_response // ticket_response
+        ticket_payload
     }
 
  }
 
-pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cookie_store: Arc<CookieStoreMutex>)  
--> core::result::Result<String, Box<dyn Error>> {
+pub async fn send_payload(payload: TicketPayload, client: reqwest::Client, cookie_store: Arc<CookieStoreMutex>)  
+-> anyhow::Result<String, anyhow::Error> {
 
     // let api_url = dotenv::var("API_URL").unwrap();
     // let submit_ticket_url = format!("{}/api/submitTicket", api_url.clone());
@@ -289,8 +179,6 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
         .send()
         .await;
 
-    let mut cookie_string = String::new();
-    let mut cookie: &str = "";
     info!("Sent signin req");
     match signin_response{
         Ok(response) => {
@@ -303,31 +191,18 @@ pub async fn send_payload(payload: TicketResponse, client: reqwest::Client, cook
                 .post(format!("{api_url}/api/submitTicket")) //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
                 .header(CONTENT_TYPE, "application/json")
                 .header(ACCEPT, "application/json")
-                .header(COOKIE, HeaderValue::from_str(cookie.as_str()).unwrap())
+                .header(COOKIE, HeaderValue::from_str(cookie.as_str())?)
                 .json(&payload)
                 .send()
                 .await;
 
-            Ok(response.unwrap().text().await.unwrap_or("default".to_string()))
+            Ok(response?.text().await?)
         },
         Err(err) => {
             info!("error with mastertech.app req => {err:?}");
-            Err(Box::new(err))
+            Err(err.into())
         }
     }
-
-
-
-    // match response {
-    //     Ok(res) => {
-    //         let text_response = res.text().await?;
-    //         Ok(text_response)
-    //     },
-    //     Err(e) => {
-    //         info!("Boxed error: {e:?}");
-    //         Err(Box::new(e))
-    //     },
-    // }
 }
 
 pub fn get_cookie(cookie_store: std::sync::MutexGuard<'_, CookieStore>) -> String{

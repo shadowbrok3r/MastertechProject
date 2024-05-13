@@ -1,11 +1,9 @@
-// use std::fmt::Display;
+#[allow(dead_code)]
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
-
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
 pub const USER_SCOPE: &str = "user";
-
 pub const TICKET_TABLE: &str = "service_order";
 pub const CUSTOMER_TABLE: &str = "customer";
 pub const COMPUTER_TABLE: &str = "computer";
@@ -52,11 +50,6 @@ pub struct RecordResult {
     pub record: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct GetTicketResult{
-    pub data: TicketResponse
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TaskPayload{
     pub id: Option<TaskId>,
@@ -79,13 +72,6 @@ pub struct TaskPayload{
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TicketPayload{
     pub ticket_data: TicketData,
-    pub customer_data: CustomerData,
-    pub computer_data: ComputerData
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TicketResponse{
-    pub ticket_response: TicketPayload,
     pub customer_data: CustomerData,
     pub computer_data: ComputerData
 }
