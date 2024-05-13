@@ -2,7 +2,6 @@
 use std::{fs::File, sync::{atomic::Ordering, mpsc::channel, Arc}};
 use github::self_updater;
 use log::{debug, info};
-use crate::handle_api::scaffold;
 use app_state::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, CentralPanel, Color32, Context, FontId, Frame, IconData, TopBottomPanel, Vec2, ViewportBuilder, ViewportId};
@@ -10,16 +9,14 @@ use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
 use database::{database::{handle_db_data, Database}, schema::{self, ComputerData}};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
+use crate::handle_api::scaffold;
 
+pub mod github;
+pub mod app_state;
 pub mod tabs;
 mod filesystem;
 mod handle_api;
-mod context;
-pub mod github;
-mod minidump;
 mod database;
-pub mod app_state;
-
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -178,9 +175,10 @@ impl eframe::App for MasterTechApp {
                 self.context.ticket_info = info;
                 debug!("ticket information: {:#?}", self.context.ticket_info);
 
-                if self.context.ticket_info.checkin_rep  == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
-                else if self.context.ticket_info.checkin_rep  == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
-    
+                if self.context.ticket_info.checkin_rep  == "DMK"{self.context.salesman = self.context.ticket_info.checkin_rep.clone();}
+                else if self.context.ticket_info.checkin_rep  == "JDH2"{self.context.salesman = self.context.ticket_info.checkin_rep.clone();}
+                self.context.technician = self.context.ticket_info.sales_rep.clone();
+
                 let code = &self.context.ticket_info.cust_code;
                 let email = &self.context.ticket_info.customer_email;
                 let codes = &self.context.ticket_info.item_codes;

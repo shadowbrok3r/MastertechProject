@@ -1,108 +1,17 @@
-use std::sync::Arc;
-
-use chrono::{DateTime, SecondsFormat};
-use eframe::egui::{Align, Button, Layout, RichText, Ui};
+use eframe::egui::{Align, Layout, Ui};
 use egui_extras::{Column, TableBuilder};
-use log::{debug, info};
-use reqwest_cookie_store::{CookieStoreMutex, CookieStore};
 use serde_json::Value;
-use tokio::spawn;
 
-use crate::{app_state::MastertechContext, database::{schema::{HardwareTests, TicketResponse}, send_payload, PreTicketData}, handle_api::scaffold::{Salesman, Techs}};
+use crate::app_state::MastertechContext;
 
 impl MastertechContext{
     pub fn system_information(&mut self, ui: &mut Ui){
-        ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
-
-        if ui
-            .add(Button::new( RichText::new("Send to Master-Tech.app")))
-            .clicked()
-        {  
-            let tech = match self.techs_cbox{
-                Techs::Logan => "Logan".to_string(),
-                Techs::Bread => "Brett".to_string(),
-                Techs::Taco => "Taco".to_string(),
-            };
-
-            let salesman = match self.salesman_cbox{
-                Salesman::Jake => "Jake".to_string(),
-                Salesman::Danny => "Danny".to_string(),
-            };
-            
-            let hdd_test = format!("{:?}", &self.hdd_test_cbox);
-            let ram_test = format!("{:?}", &self.ram_test_cbox);
-            let ssd_test = format!("{:?}", &self.ssd_test_cbox);
-
-            let mut pre_ticket: PreTicketData = self.ticket_info.clone();
-
-            pre_ticket.due_date = Some(
-                self.date.unwrap_or(
-                    DateTime::default()
-                ).to_rfc3339_opts(SecondsFormat::Secs,  true)
-            );
-            
-            let payload = TicketResponse::serialize_payload(
-                &pre_ticket,
-                &self.system_info,
-                &self.so_number,
-                &self.current_antivirus,
-                &self.recommendations,
-                tech,
-                salesman, 
-                HardwareTests{
-                    hdd_test,
-                    ssd_test,
-                    ram_test,
-                } // example
-            );
-            // let client = self.client.clone();
-
-            
-            let cookies = CookieStore::default();
-            let cookie_store = CookieStoreMutex::new(cookies);
-            let cookie_store  = Arc::new(cookie_store);
-
-            let client_build = reqwest::Client::builder()
-                .cookie_provider(std::sync::Arc::clone(&cookie_store))
-                .build();
-            
-            match client_build{
-                Ok(client) => {
-                    debug!("Sending reqwest");
-                    spawn(async move {
-                        
-                        let mut output = String::new();
-                        let x = send_payload(payload, client, cookie_store).await;
-                        match x{
-                            Ok(o) => {
-                                output = o;
-                            },
-                            Err(e) => debug!("Error {e:?}"),
-                        }
-                        info!("output: {output}");
-                    });
-                }, Err(err) => debug!("Error with client_build => {err:?}"),
-            };
-            
-        }
-        
-        if ui.add(
-            Button::new(
-                RichText::new("Connect to WS")
-            )
-        )
-        .clicked(){
-            self.connect_to_ws = true;
-        }
-
-
         self.specs_first_run = false;
 
         let computer_data = &self.system_info;
-
         let gpu = computer_data.gpu.clone();
-        
-        ui.push_id("table 1",|ui|{
+    
+        ui.push_id("sysinfo_table",|ui|{
             let table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
@@ -158,7 +67,7 @@ impl MastertechContext{
 
         });
         ui.vertical(|ui|{ui.add_space(20.0)});
-        ui.push_id("table 2",|ui|{
+        ui.push_id("drives_table",|ui|{
             let disks_table = TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)

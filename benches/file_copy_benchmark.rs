@@ -1,15 +1,10 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rayon::prelude::*;
-use tokio::runtime::Runtime;
-use std::fs::{self, DirEntry, File};
+use std::fs::{self,File};
 use std::path::Path;
 use std::time::Duration;
 use std::io::{self, BufReader, BufWriter, Read, Write};
-use std::io::copy;
-use std::fs::OpenOptions;
-use tokio::fs::{self as async_fs, File as asyncFile};
-use tokio::io::{self as async_io, AsyncReadExt, AsyncWriteExt};
-use criterion::async_executor::AsyncExecutor;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 criterion_group!{
     name = benches;
@@ -21,8 +16,8 @@ criterion_main!(benches);
 
 fn file_copy_benchmark(c: &mut Criterion) {
     let nvme_src_files = "D:\\Users\\Owner\\Desktop\\TestCopy\\Source";
-    let nvme_dest_folder_base = "D:\\Users\\Owner\\Desktop\\TestCopy\\Destination";
-    let hdd_src_files = "E:\\TestCopy\\Source";
+    let _nvme_dest_folder_base = "D:\\Users\\Owner\\Desktop\\TestCopy\\Destination";
+    let _hdd_src_files = "E:\\TestCopy\\Source";
     let hdd_dest_folder_base = "E:\\TestCopy\\Destination";
 
 
@@ -57,80 +52,51 @@ fn file_copy_benchmark(c: &mut Criterion) {
         ),
     ];
 
-    let async_variations = vec![
-        ("async_chunks_4096", 4096),    // Example with a chunk size of 4096 bytes
-        ("async_buffer_8192", 8192),    // Example with a buffer size of 8192 bytes
-    ];
-    // let mut group = c.benchmark_group("File Copy");
+    // let async_variations = vec![
+    //     ("async_chunks_4096", 4096),    // Example with a chunk size of 4096 bytes
+    //     ("async_buffer_8192", 8192),    // Example with a buffer size of 8192 bytes
+    // ];
+    let mut group = c.benchmark_group("File Copy");
 
     /*         USE THIS ONE FOR NON-ASYNC BENCHES           */
-    // for (name, func) in variations {
-    //     let dest = format!("{}\\{}", hdd_dest_folder_base, name);
-    //     let dest_path = Path::new(&dest);
+    for (name, func) in variations {
+        let dest = format!("{}\\{}", hdd_dest_folder_base, name);
+        let dest_path = Path::new(&dest);
 
-    //     // Setup: Ensure the destination directory exists
-    //     if dest_path.exists() {
-    //         fs::remove_dir_all(&dest_path).unwrap(); // Clear existing directory
-    //     }
-    //     fs::create_dir_all(&dest_path).expect("Failed to create destination directory");
+        // Setup: Ensure the destination directory exists
+        if dest_path.exists() {
+            fs::remove_dir_all(&dest_path).unwrap(); // Clear existing directory
+        }
+        fs::create_dir_all(&dest_path).expect("Failed to create destination directory");
 
-    //     // Define a benchmark for each function variant
-    //     group.bench_with_input(BenchmarkId::new("Copy Method", name), &source_path, |b, sp| {
-    //         b.iter(|| {
-    //             func(black_box(&sp), black_box(&dest_path))
-    //         })
-    //     });
-    //     // Teardown: Optionally clear the directory after each benchmark
-    //     // fs::remove_dir_all(&dest_path).unwrap();
-    // }
-    /*         USE THIS ONE FOR ASYNC BENCHES           */
-    let mut group = c.benchmark_group("File Copy Async Operations");
-    group.measurement_time(Duration::from_secs(60));
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-    .enable_io()
-    .build()
-    .unwrap();
-
-    for (name, chunk_size) in async_variations {
-        let x = format!("{}-{}", hdd_dest_folder_base, name);
-        let dest_path = Path::new(&x);
-        group.bench_with_input(BenchmarkId::new(name, chunk_size), &chunk_size, |b, &_chunk_size| {
-            b.to_async(&rt).iter(|| async {
-                async_copy_directory(&source_path, &dest_path, chunk_size).await.unwrap();
-            });
+        // Define a benchmark for each function variant
+        group.bench_with_input(BenchmarkId::new("Copy Method", name), &source_path, |b, sp| {
+            b.iter(|| {
+                func(black_box(&sp), black_box(&dest_path))
+            })
         });
+        // Teardown: Optionally clear the directory after each benchmark
+        // fs::remove_dir_all(&dest_path).unwrap();
     }
+
+    /*         USE THIS ONE FOR ASYNC BENCHES           */
+    // let mut group = c.benchmark_group("File Copy Async Operations");
+    // group.measurement_time(Duration::from_secs(60));
+    // let rt = tokio::runtime::Builder::new_current_thread()
+    // .enable_io()
+    // .build()
+    // .unwrap();
+    // for (name, chunk_size) in async_variations {
+    //     let x = format!("{}-{}", hdd_dest_folder_base, name);
+    //     let dest_path = Path::new(&x);
+    //     group.bench_with_input(BenchmarkId::new(name, chunk_size), &chunk_size, |b, &_chunk_size| {
+    //         b.to_async(&rt).iter(|| async {
+    //             async_copy_directory(&source_path, &dest_path, chunk_size).await.unwrap();
+    //         });
+    //     });
+    // }
 
     group.finish();
-}
-
-async fn async_copy_directory(src_dir: &Path, dst_dir: &Path, chunk_size: usize) -> io::Result<()> {
-    tokio::fs::create_dir_all(dst_dir).await?; // Ensure destination directory exists
-
-    let mut entries = tokio::fs::read_dir(src_dir).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let src_path = entry.path();
-        if src_path.is_file() {  // Make sure it's a file and not a directory
-            let dst_path = dst_dir.join(entry.file_name());
-            async_copy_file(&src_path, &dst_path, chunk_size).await?;
-        }
-    }
-    Ok(())
-}
-
-async fn async_copy_file(src: &Path, dst: &Path, chunk_size: usize) -> io::Result<()> {
-    let mut src_file = tokio::fs::File::open(src).await?;
-    let mut dst_file = tokio::fs::File::create(dst).await?;
-    let mut buffer = vec![0; chunk_size];
-    loop {
-        let n = src_file.read(&mut buffer).await?;
-        if n == 0 {
-            break;
-        }
-        dst_file.write_all(&buffer[..n]).await?;
-    }
-    Ok(())
 }
 
 
@@ -151,7 +117,7 @@ fn copy_files(source_path: &Path, dest_path: &Path) {
 
 fn copy_files_with_buffer_size(source_path: &Path, dest_path: &Path, buffer_size: usize) -> io::Result<()> {
     let source_file = File::open(source_path)?;
-    let mut dest_file = File::create(dest_path)?;
+    let dest_file = File::create(dest_path)?;
     let mut reader = BufReader::with_capacity(buffer_size, source_file);
     let mut writer = BufWriter::with_capacity(buffer_size, dest_file);
 
@@ -195,6 +161,35 @@ fn copy_files_write_through(source_path: &Path, dest_path: &Path, buffer_size: u
         }
         writer.write_all(&buffer[..bytes_read])?;
         writer.flush()?;  // Ensuring immediate disk write
+    }
+    Ok(())
+}
+
+
+async fn _async_copy_directory(src_dir: &Path, dst_dir: &Path, chunk_size: usize) -> io::Result<()> {
+    tokio::fs::create_dir_all(dst_dir).await?; // Ensure destination directory exists
+
+    let mut entries = tokio::fs::read_dir(src_dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let src_path = entry.path();
+        if src_path.is_file() {  // Make sure it's a file and not a directory
+            let dst_path = dst_dir.join(entry.file_name());
+            _async_copy_file(&src_path, &dst_path, chunk_size).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn _async_copy_file(src: &Path, dst: &Path, chunk_size: usize) -> io::Result<()> {
+    let mut src_file = tokio::fs::File::open(src).await?;
+    let mut dst_file = tokio::fs::File::create(dst).await?;
+    let mut buffer = vec![0; chunk_size];
+    loop {
+        let n = src_file.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        dst_file.write_all(&buffer[..n]).await?;
     }
     Ok(())
 }

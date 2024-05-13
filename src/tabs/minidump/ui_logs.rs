@@ -1,7 +1,6 @@
 use eframe::egui;
 use egui::{ComboBox, TextStyle, Ui};
-use crate::minidump::minidump_main::threadname;
-use super::minidump_main::{MiniDumpApp, frame_signature_from_indices};
+use crate::tabs::minidump::{MiniDumpApp, frame_signature_from_indices, threadname};
 
 pub struct LogUiState {
     pub cur_thread: Option<usize>,

@@ -1,21 +1,30 @@
+use std::{env, cell::RefCell, collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::Ordering, Arc}};
+use eframe::egui::Ui;
 use log::{debug, info};
 use sysinfo::Disks;
 use tokio::fs;
 use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
-use std::{cell::RefCell, collections::{HashMap, HashSet}, path::PathBuf, time::Duration};
 use walkdir::WalkDir;
-use std::env;
 use pollster::block_on;
 use crossbeam::channel;
 use fs_extra::dir::get_size;
-use super::file_copy::CopyBuilder;
-use crate::filesystem::io::{
-    copy_selected_items, 
-    format_path_metadata, 
-    MetaData,
-    //TransferOptions,
-    //Progress
-};
+use crate::app_state::MastertechContext;
+use self::{file_copy::CopyBuilder, io::{MetaData, format_path_metadata}};
+
+pub mod io;
+pub mod file_copy;
+
+impl MastertechContext {
+    pub fn file_browse(&mut self, ui: &mut Ui) {
+        if !self.show_deferred_viewport.load(Ordering::Relaxed) {
+            let (command_tx, command_rx) = crossbeam::channel::unbounded();
+            // Lock the Mutex and show the GUI
+            let file_browser_clone = Arc::clone(&self.file_browser);
+            let mut file_browser = file_browser_clone.lock().unwrap();
+            file_browser.show(ui, command_tx, command_rx);
+        }
+    }
+}
 
 //use cached::proc_macro::{io_cached, cached};
 const _KB_FROM_BYTES: u64 = 1024;
@@ -184,6 +193,7 @@ impl FileBrowser{
             Command::Move(source, destination) => {
                 println!("Command::Move");
                 if let Err(err) = fs::rename(&source, &destination).await {
+                    debug!("error: {err:?}");
                     //let _ = response_sender.try_send(Response::Error(FileBrowserError::Io(err)));
                 } else {
                     //let _ = response_sender.try_send(Response::Success(format!("Successfully moved from {:?} to {:?}", source, destination)));
@@ -486,7 +496,7 @@ impl FileBrowser{
                     );
 
                     if result.lost_focus() && !self.filename_edit.is_empty(){
-                        let path = self.path.join(&self.filename_edit);
+                        let _ = self.path.join(&self.filename_edit);
                     }
                 });
             });
@@ -692,13 +702,13 @@ impl FileBrowser{
 
     }
 
-    fn default_filename(mut self, filename: impl Into<String>) -> Self {
+    fn _default_filename(mut self, filename: impl Into<String>) -> Self {
         self.filename_edit = filename.into();
         self
     }
 
     /**  Resulting file path. */
-    fn path(&self) -> Option<PathBuf> {
+    fn _path(&self) -> Option<PathBuf> {
         self.selected_item.clone()
     }
 
@@ -739,7 +749,7 @@ impl FileBrowser{
         self.selected_items.borrow_mut().insert(file);
     }
 
-    fn deselect(&mut self, file: PathBuf) {
+    fn _deselect(&mut self, file: PathBuf) {
         self.selected_items.borrow_mut().remove(&file);
     }
     
@@ -816,11 +826,6 @@ fn get_file_name(path: &PathBuf) -> &str {
       .unwrap_or_default()
 }
    
-#[cfg(windows)]
-extern "C" {
-    pub fn GetLogicalDrives() -> u32;
-}
-
 /** Returns a Vec<PathBuf> of current directory contents and files. */
 fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
     let result: Vec<_> = WalkDir::new(path).min_depth(depth).max_depth(depth)
@@ -859,43 +864,3 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
 
     result
 }
-
-fn circle_icon(ui: &mut Ui, openness: f32, response: &Response) {
-    let stroke = ui.style().interact(&response).fg_stroke;
-    let radius = lerp(2.0..=3.0, openness);
-    ui.painter().circle_filled(response.rect.center(), radius, stroke.color);
-}
-
-
-// async fn copy_files(source: Vec<PathBuf>, destination: &PathBuf, progress_tx: channel::Sender<u64>) -> io::Result<()>{
-//     if !destination.exists(){
-//         fs::create_dir_all(destination).await?;
-//     }
-//     for entry in source{
-//         println!("Path: {entry:?}");
-//         let x = fs::read_dir(entry).await?;
-//         while let Some(entry) = x.next_entry().await? {
-//             let mut src = BufReader::with_capacity(8192, entry.path());
-//             let src_path = entry.path();
-//             let dst_path = destination.join(entry.file_name());
-
-//             match io::copy(&mut src, &mut dest).await {
-//                 Ok(bytes_copied) => progress_tx.try_send(bytes_copied).unwrap(),
-//                 Err(e) => debug!("{e:?}")
-//             }
-
-//             if src_path.is_dir() {
-//                 // copy_recursively_in_chunks(src_path, dst_path, 8196).await
-//             } else {
-//                 // copy_file_in_chunks(src_path, dst_path, 8196).await
-//             }
-//         }
-
-        
-//         let mut dest = BufWriter::with_capacity(8192, fs::File::open(destination).await?);
-
-
-//     }
-//     Ok(())
-// }
-

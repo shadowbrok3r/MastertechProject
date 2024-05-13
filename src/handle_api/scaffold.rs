@@ -1,11 +1,9 @@
 use std::error::Error;
 use async_trait::async_trait;
-use log::debug;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[async_trait]
-pub trait SendReq<T>{
+pub trait _SendReq<T>{
     async fn retrieve_data(&self, so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
 }
 

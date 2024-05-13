@@ -22,17 +22,8 @@ use rust_socketio::{
     Payload
 };
 use uuid::Uuid;
-
 use crate::{database::{get_cookie, schema::{ComputerData, DriveData, LocalSebData}, SystemInformation}, handle_api::{api_request::request_seb_info, Store}};
-
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Auth {
-    pub session_id: Option<String>,
-    pub username: String,
-    pub room: Store,
-}
 
 struct WebSocket {
     pub finish: bool,
@@ -236,10 +227,10 @@ impl ComputerData{
 
         let cookie = get_auth().await?;
         let cookie_clone = cookie.clone();
-        // let auth = Auth{username: "Mastertech".to_string(), room: Store::RIV, session_id: None };
+
 
         let socket = ClientBuilder::new(socket_io_url)
-            .transport_type(rust_socketio::TransportType::Websocket) // .auth(serde_json::to_value(auth)?)
+            .transport_type(rust_socketio::TransportType::Websocket)
             .opening_header("cookie", cookie_clone)
             .namespace("/ws") 
             .on("open", |_, client| async move{
@@ -257,7 +248,7 @@ impl ComputerData{
                 client.emit("join", json!({"room": "RIV"})).await.unwrap_or(());
                 info!("Disconnected");
             }.boxed())
-            .on("join", |msg, _| async move { info!("Joined") }.boxed())
+            .on("join", |_msg, _| async move { info!("Joined") }.boxed())
             .on("command", | payload: Payload, client: SocketClient | async move {
                 match payload{
                     Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
@@ -371,7 +362,6 @@ impl ComputerData{
         }
         Ok(())
     }
-
 
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         let mut sys = System::new_all();
