@@ -4,7 +4,7 @@ use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload, TicketData}, GetKeysResponse, PreTicketData}, handle_api::{api_request::request_seb_info, email_builder::{/*asana_html_builder, */ AsanaTask, Info, TaskAssignee}, scaffold::{HardwareTest, Salesman, SendReq, Techs}}, scripting::Scripts};
+use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload}, GetKeysResponse, PreTicketData}, handle_api::scaffold::{HardwareTest, Salesman, Techs}};
 use egui_file::FileDialog;
 use crate::{
     filesystem::file_browser::FileBrowser,
@@ -13,7 +13,6 @@ use crate::{
 };
 
 #[cfg(target_os="windows")]
-use crate::scripting::query_antivirus;
 
 
 impl TabViewer for MastertechContext {
@@ -30,7 +29,7 @@ impl TabViewer for MastertechContext {
             "Minidump Analysis" => self.mini_dump(ui),
             "Profiler" => self.puffin_profiler(ui),
             "QC ☑️" => self.quality_check(ui),
-            "Mastertech Website" => self.mastertech_website(ui),
+            "Tasks" => self.mastertech_website(ui),
             _ => {
                 let sysinfo_tab = &"System Information".to_string();
                 if ui.label(tab.as_str()).clicked(){
@@ -62,7 +61,7 @@ impl TabViewer for MastertechContext {
         true
     }
     
-    fn on_add(&mut self, surface_index: SurfaceIndex, _node_index: NodeIndex) {
+    fn on_add(&mut self, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
         
         // for node in tree[SurfaceIndex::main()].iter() {
         //     if let Node::Leaf { tabs, .. } = node {
@@ -149,13 +148,16 @@ pub struct MasterTechApp {
 impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = DockState::new(
-            vec!["TUR Sheet".to_owned(), 
-        ]);
+            vec![
+                "TUR Sheet".to_owned(), 
+                "Minidump Analysis".to_owned(), 
+            ]
+        );
 
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
         
-        let [a, b] = tree
+        let [_a, _b] = tree
             .main_surface_mut()
             .split_left(
                 NodeIndex::root(),
@@ -164,14 +166,16 @@ impl Default for MasterTechApp {
                     "File Browser 📂".to_owned(),
         ]);
 
-        let [a, b] = tree
+        let [_a, b] = tree
             .main_surface_mut()
             .split_below(
                 NodeIndex::root(),
-                0.6, 
+                0.65, 
                 vec![
                     "Console".to_owned(),
-        ]);
+                    "Tasks".to_owned()
+            ]
+        );
 
         let [_, _] = tree
             .main_surface_mut()

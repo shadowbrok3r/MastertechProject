@@ -2,27 +2,24 @@
 use std::{fs::File, sync::{atomic::Ordering, mpsc::channel, Arc}};
 use github::self_updater;
 use log::{debug, info};
-use scripting::Scripts;
-use tokio::sync::mpsc::unbounded_channel;
 use crate::handle_api::scaffold;
 use app_state::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{style::Style, Button, CentralPanel, Color32, Context, FontId, Frame, Grid, IconData, RichText, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId, Window};
+use eframe::egui::{style::Style, CentralPanel, Color32, Context, FontId, Frame, IconData, TopBottomPanel, Vec2, ViewportBuilder, ViewportId};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
 use database::{database::{handle_db_data, Database}, schema::{self, ComputerData}};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
-mod ui_helpers;
+pub mod tabs;
 mod filesystem;
 mod handle_api;
 mod context;
 pub mod github;
 mod minidump;
 mod database;
-mod scripting;
 pub mod app_state;
-pub mod terminal;
+
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
@@ -70,7 +67,7 @@ impl eframe::App for MasterTechApp {
         if self.context.connect_to_ws{
             let uuid = self.context.client_uuid;
             tokio::spawn(async move{
-                let x = ComputerData::initialize_websocket(uuid.clone()).await;
+                let _x = ComputerData::initialize_websocket(uuid.clone()).await;
             });
 
             // self.context.output_text += &x;
@@ -254,7 +251,7 @@ impl eframe::App for MasterTechApp {
                         &"Minidump Analysis".to_string(),
                         &"Profiler".to_string(),
                         &"QC".to_string(),
-                        &"Mastertech Website".to_string(),
+                        &"Tasks".to_string(),
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)

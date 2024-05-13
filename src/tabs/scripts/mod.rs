@@ -1,17 +1,16 @@
-use std::{collections::HashMap, error::Error, io::Cursor, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
+use eframe::egui::{Align, Button, Grid, Layout, RichText, Ui};
 use futures::StreamExt;
 use log::info;
-use reqwest::{header::CONTENT_LENGTH, Client};
+use reqwest::Client;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::Digest;
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
-use anyhow::Context;
-use futures::stream::TryStreamExt;
-use crate::{database::GetKeysResponse, handle_api::api_request::SendRequest};
+use crate::{app_state::MastertechContext, database::GetKeysResponse, handle_api::api_request::SendRequest};
 
 #[cfg(target_os="windows")]
-use wmi::{COMLibrary, WMIConnection, variant::Variant, WMIError};
+use wmi::{COMLibrary, WMIConnection, WMIError};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
@@ -34,6 +33,50 @@ pub struct InstallSAS;
 pub struct CheckDriverIssues;
 pub struct RunningTasks;
 pub struct QueryAntivirus;
+
+impl MastertechContext{
+    pub fn scripts(&mut self, ui: &mut Ui){
+        ui.style_mut().spacing.button_padding = (4.0, 6.0).into();
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
+        ui.vertical(|ui|{ui.add_space(6.0);});
+        ui.horizontal(|ui|{ui.add_space(8.0);});
+
+        let scripts = Arc::new(Scripts::new(self.so_number.to_string()));
+        let scripts_list  = scripts.get_scripts();
+        // Collect keys and sort them
+        let mut keys: Vec<&'static str> = scripts_list.keys().cloned().collect();
+        keys.sort();  // Sort the script names alphabetically
+
+        Grid::new("scripts").min_col_width(self.widget_size).num_columns(1).min_row_height(8.0).spacing([10.0, 8.0]).show(
+            ui, |ui| 
+        {
+            ui  
+                .with_layout(Layout::top_down_justified(Align::Center),|ui|
+            {
+                for key in keys.iter() {
+                    if let Some(action) = scripts_list.get(*key) {
+                        let button = Button::new(RichText::new(*key).small().size(12.0));
+                            // .min_size(Vec2::new(25.0, 6.0));
+        
+                        if ui.add(button).clicked(){
+                            info!("Clicked button: {}", *key);
+        
+                            let action_clone = action.clone();
+                            let so_num = Arc::new(self.so_number.clone());
+                            let scripts = scripts.clone();
+                            info!("SO number: {}", &so_num);
+                            tokio::spawn(async move {
+                                action_clone.execute(&scripts).await.unwrap();
+                            });
+                        }
+                        ui.end_row();
+                    }
+                }
+            });
+        });
+     }
+}
 
 impl Default for Scripts{
     fn default() -> Self{
