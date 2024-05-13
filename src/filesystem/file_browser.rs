@@ -395,19 +395,13 @@ impl FileBrowser{
             });
             
             ui.horizontal_top(|ui| {
-                ui.checkbox(&mut self.read_dirs_only, "Show Directories ONLY");
-                // ui.checkbox(&mut self.show_hidden, "Show Hidden");
-
+                ui.checkbox(&mut self.read_dirs_only, RichText::new("Directories Only").small()); // ui.checkbox(&mut self.show_hidden, "Show Hidden");
             });
             ui.add_space(ui.spacing().item_spacing.y);
         });
 
-        TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {
-            ui.add_space(ui.spacing().item_spacing.y * 2.0);
-            
-            // info!("self.progress {:?}/ self.source_dir_size {:?}", self.progress, self.source_dir_size);
+        TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {    
             if self.progress as u64 == self.source_dir_size {self.progress = 0.0;}
-
             // while self.progress as u64 != self.source_dir_size{
             //     let tx = command_tx.clone();
             //     std::thread::spawn(move || {
@@ -418,32 +412,26 @@ impl FileBrowser{
             //         }
             //     });
             // }
-            ui.add( // Update the progress bar
-                ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
-                    .show_percentage()
-                    .fill(Color32::from_rgb(255, 77, 210))
-                    .animate(self.animated_progress)
-            );
 
-            ui.add_space(ui.spacing().item_spacing.y * 2.0);
+            // let mut display_text = format!("Try selecting some files to copy.. ");
+            // let mut color = Color32::LIGHT_BLUE;
+            // if copy_shortcut{
+            //     color = Color32::LIGHT_GREEN;
+            //     display_text = "Copied files to clipboard.".to_string();
+            // }else if paste{
+            //     color = Color32::RED;
+            //     display_text = format!("File Copy In Progress: {:?} / {:?}", self.progress as u64 / MB_FROM_BYTES, self.source_dir_size / MB_FROM_BYTES as u64);
+            // }
+            // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            //     ui.colored_label(color ,RichText::new(display_text));
+            // });
 
-            let mut display_text = format!("Try selecting some files to copy.. ");
-            let mut color = Color32::LIGHT_BLUE;
-
-            if copy_shortcut{
-                color = Color32::LIGHT_GREEN;
-                display_text = "Copied files to clipboard.".to_string();
-            }else if paste{
-                color = Color32::RED;
-                display_text = format!("File Copy In Progress: {:?} / {:?}", self.progress as u64 / MB_FROM_BYTES, self.source_dir_size / MB_FROM_BYTES as u64);
-            }
-
-            ui.horizontal(|ui| {
+            ui.horizontal(|ui|{
                 ui.with_layout(Layout::left_to_right(Align::BOTTOM), |ui|{
                     ui.add_space(5.0);
-                    self.drive_letters.sort_unstable_by(|b, a| a.partial_cmp(b).unwrap());
+                    self.drive_letters.sort_unstable_by(|b, a| b.partial_cmp(a).unwrap());
                     for drive in self.drive_letters.iter(){
-                        let button = Button::new(RichText::new(format!("💾 {drive}")));
+                        let button = Button::new(RichText::new(format!("💾 {drive}")).small()).small();
                         
                         if ui.add(
                             button
@@ -458,25 +446,28 @@ impl FileBrowser{
                         };
                     }
                 });
-                // ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                //     ui.colored_label(color ,RichText::new(display_text));
-                // });
+            });
 
+            ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if self.new_folder && ui.button("📁 New Folder").clicked() {
+                    if self.new_folder && ui.button(RichText::new("📁 New Folder").small())
+                        .clicked()
+                    {
                         match command_tx.send(Some(Command::CreateDirectory)){
                             Ok(_) => println!("ok"),
                             Err(e) => print!("{e}")
                         }
-                        
                     }
 
                     if self.rename {
                         ui.add_enabled_ui(self.can_rename(), |ui| {
-                            if ui.button("Rename").clicked() {
+                            if ui.button(
+                                RichText::new("Rename").small()
+                            ).clicked() {
                                 if let Some(from) = self.selected_item.clone() {
-                                    let to = from.with_file_name(&self.filename_edit);
                                     
+                                    let to = from.with_file_name(&self.filename_edit);
+
                                     match command_tx.send(Some(Command::Rename(from, to))){
                                         Ok(_) => {
                                             println!("ok");
@@ -485,7 +476,6 @@ impl FileBrowser{
                                             print!("{e}");
                                         }
                                     }
-                                    
                                 }
                             }
                         });
@@ -495,14 +485,18 @@ impl FileBrowser{
                         TextEdit::singleline(&mut self.filename_edit).id(Id::new("file_name_edit")),
                     );
 
-                    if result.lost_focus()
-                    //&& result.ctx.input(|state| state.key_pressed(Key::Enter))
-                    && !self.filename_edit.is_empty(){
+                    if result.lost_focus() && !self.filename_edit.is_empty(){
                         let path = self.path.join(&self.filename_edit);
-
                     }
                 });
             });
+
+            ui.add( // Update the progress bar
+                ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
+                    .show_percentage()
+                    .fill(Color32::from_rgb(255, 77, 210))
+                    .animate(self.animated_progress)
+            );
         });
 
         CentralPanel::default().show_inside(ui, |ui| 
@@ -564,7 +558,7 @@ impl FileBrowser{
         // let command_sender4 = command_tx.clone();
         let command_sender5 = command_tx.clone();
 
-        let label = match path.is_dir() {true => "🗀 ", false => "🗋 "}.to_string() + get_file_name(path);
+        let label = match path.is_dir() {true => "🗀   ", false => "🗋   "}.to_string() + get_file_name(path);
         let mut formatted_size = "".to_string();            
         ui.horizontal_top(|ui| 
         {
@@ -591,7 +585,7 @@ impl FileBrowser{
                     .show_header(ui, |ui| 
                     {
                         let is_selected = self.selected_items.borrow().contains(path);
-                        let selectable_label = ui.selectable_label(is_selected, &label);
+                        let selectable_label = ui.selectable_label(is_selected, RichText::new(&label).small());
                     
                         if selectable_label.secondary_clicked() && !self.folder_metadata.borrow().contains_key(path){
                             match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
@@ -655,7 +649,7 @@ impl FileBrowser{
                 let is_selected = self.selected_items.borrow().contains(path);
                 let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
                 
-                let selectable_label = ui.selectable_label(is_selected, &label);
+                let selectable_label = ui.selectable_label(is_selected, RichText::new(&label).small());
                 if selectable_label.clicked() {
                     match command_sender3.send(Some(Command::Select(path.clone()))) {
                         Ok(_) => drop(command_sender3),

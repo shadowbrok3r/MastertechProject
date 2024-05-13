@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use clap::Parser;
-use eframe::{egui::{self, scroll_area::ScrollBarVisibility, FontDefinitions}, epaint::Fonts};
+use eframe::{egui::{self, scroll_area::ScrollBarVisibility, FontDefinitions, ScrollArea}, epaint::Fonts};
 use egui::{Color32, Ui, Vec2};
 use egui_extras::{Column, Size, TableBuilder};
 use memmap2::Mmap;
@@ -298,11 +298,15 @@ impl MiniDumpApp {
                     }
                 });
             });
-        egui::CentralPanel::default().show_inside(ui, |ui| match self.tab {
-            Tab::Settings => self.ui_settings(ui, ctx),
-            Tab::RawDump => self.ui_raw_dump(ui, ctx),
-            Tab::Processed => self.ui_processed(ui, ctx),
-            Tab::Logs => self.ui_logs(ui, ctx),
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ScrollArea::vertical().show(ui, |ui| {
+                match self.tab {
+                    Tab::Settings => self.ui_settings(ui, ctx),
+                    Tab::RawDump => self.ui_raw_dump(ui, ctx),
+                    Tab::Processed => self.ui_processed(ui, ctx),
+                    Tab::Logs => self.ui_logs(ui, ctx),
+                }
+            });
         });
     }
 

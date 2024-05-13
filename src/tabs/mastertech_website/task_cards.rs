@@ -1,5 +1,5 @@
-use eframe::egui::{collapsing_header::CollapsingState, Align, Button, CollapsingHeader, Color32, Grid, Layout, RadioButton, Ui, Vec2, Widget};
-use egui_extras::{Column, Size, StripBuilder, TableBuilder};
+use eframe::egui::{RichText, Ui,};
+use egui_extras::{Column,TableBuilder};
 
 use crate::database::schema::TaskPayload;
 
@@ -16,9 +16,9 @@ impl Default for TaskLayout{
 }
 
 impl TaskLayout{
-    pub fn task_card(task_data: Vec<TaskPayload>, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error> {
+    pub fn new(selected: bool) -> Self { Self { selected } }
 
-        let mut selected = false;
+    pub fn task_card(&self, task_data: Vec<TaskPayload>, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error> {
     
         TableBuilder::new(ui)
             .column(Column::remainder().resizable(true))
@@ -36,7 +36,9 @@ impl TaskLayout{
             for task_data in task_data.iter(){
                 body.row(30.0, |mut row| {
                     row.col(|ui| {
-                        ui.toggle_value(&mut selected, &task_data.task_name);
+                        let _x = ui.selectable_label(self.selected, 
+                            RichText::new(&task_data.task_name).small().size(12.0)
+                        );
                     });
                     row.col(|ui| {
                         ui.label(&task_data.due_date);
