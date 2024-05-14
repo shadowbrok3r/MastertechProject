@@ -23,11 +23,11 @@ debug = false
 opt-level = 3
 
 
-[features]
-default=["winit", "cpu_fix"]
-winit = ["dep:egui-winit"]
-compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
-cpu_fix = []
+# [features]
+# default=["winit", "cpu_fix"]
+# winit = ["dep:egui-winit"]
+# compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
+# cpu_fix = []
 
 [dependencies]
 chrono = "0.4.38"
