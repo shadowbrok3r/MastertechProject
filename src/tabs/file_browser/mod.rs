@@ -280,60 +280,8 @@ impl FileBrowser{
         command_tx: channel::Sender<Option<Command>>,
         command_rx: channel::Receiver<Option<Command>> 
     ) {     
-        let cut = &Event::Cut;
-        let copy = &Event::Copy;
-        let mut paste = false;
-        // let paste_event = &Event::Key { key: Key::V, physical_key: Some(Key::V), pressed: false, repeat: false, modifiers: Modifiers::COMMAND };
-
-        let copy_shortcut =  ui.input_mut(|i| i.filtered_events(&EventFilter::default()).contains(copy));
-        let _cut_shortcut = ui.input_mut(|i| i.filtered_events(&EventFilter::default()).contains(cut));
-        
-        for event in ui.input_mut(|i| i.events.clone()){
-            match event{
-                Event::Paste(ref _content) => {paste = true;},
-                _ => {} // Handle other events normally
-            }
-        }
-        
-        if copy_shortcut { // && self.selected_items
-            self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
-            println!("Copied Items: {:?}", self.copied_items_src);
-            let command_tx = command_tx.clone();
-
-            for path in &self.copied_items_src{
-                match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
-                    Ok(_) => info!("Getting file size"),
-                    Err(e) => println!("hovered sender error: {e:?}"),
-                }
-            }
-        }
-        
-        if paste{
-            self.animated_progress = true;
-            if let Some(selected_path) = &self.selected_item{
-                if selected_path.is_dir(){
-                    self.copied_items_dest = PathBuf::from(selected_path);
-                    match command_tx.try_send(Some(
-                            Command::Copy(
-                                self.copied_items_src.clone(), 
-                                self.copied_items_dest.clone(), 
-                                self.progress_tx.clone()
-                            )
-                        )
-                    ){
-                        Ok(_) => println!("Source: {:?}\nDest: {:?}\n", self.copied_items_src, self.copied_items_dest),
-                        Err(e) => println!("{e}"),
-                    }
-                }else {
-                    self.copied_items_dest = PathBuf::from(&self.path_edit);
-                }
-            }
-
-            info!("Pasted {:?}\nin directory: {:?}", self.copied_items_src, self.copied_items_dest);
-
-            ui.ctx().request_repaint();
-        }
-
+        self.handle_keyboard_events(ui, command_tx.clone());
+    
         while let Ok(progress) = self.progress_rx.try_recv() {self.progress += progress as f64; }
 
         let mut total_size = 0;
@@ -801,6 +749,66 @@ impl FileBrowser{
         for disk in &mut disks{
             self.drive_letters.push(disk.mount_point().to_str().unwrap_or("").to_string());  
             
+        }
+    }
+
+    fn handle_keyboard_events(&mut self, ui: &mut Ui, command_tx: channel::Sender<Option<Command>>){
+        let cut = ui.input_mut(|i| i.key_pressed(Key::X));
+        let copy = ui.input_mut(|i| i.key_pressed(Key::C));
+        let paste = ui.input_mut(|i| i.key_pressed(Key::V));
+        let shift = ui.input_mut(|i| i.modifiers.shift);
+        
+        if copy { // && self.selected_items
+            self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
+            println!("Copied Items: {:?}", self.copied_items_src);
+            let command_tx = command_tx.clone();
+
+            for path in &self.copied_items_src{
+                match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
+                    Ok(_) => info!("Getting file size"),
+                    Err(e) => println!("hovered sender error: {e:?}"),
+                }
+            }
+        }
+        
+        if cut{
+            self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
+            info!("Copied Items: {:?}", self.copied_items_src);
+            let command_tx = command_tx.clone();
+
+            for path in &self.copied_items_src{
+                match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
+                    Ok(_) => info!("Getting file size"),
+                    Err(e) => println!("hovered sender error: {e:?}"),
+                }
+            }
+        }
+
+
+        if paste{
+            self.animated_progress = true;
+            if let Some(selected_path) = &self.selected_item{
+                if selected_path.is_dir(){
+                    self.copied_items_dest = PathBuf::from(selected_path);
+                    match command_tx.try_send(Some(
+                            Command::Copy(
+                                self.copied_items_src.clone(), 
+                                self.copied_items_dest.clone(), 
+                                self.progress_tx.clone()
+                            )
+                        )
+                    ){
+                        Ok(_) => println!("Source: {:?}\nDest: {:?}\n", self.copied_items_src, self.copied_items_dest),
+                        Err(e) => println!("{e}"),
+                    }
+                }else {
+                    self.copied_items_dest = PathBuf::from(&self.path_edit);
+                }
+            }
+
+            info!("Pasted {:?}\nin directory: {:?}", self.copied_items_src, self.copied_items_dest);
+
+            ui.ctx().request_repaint();
         }
     }
 }
