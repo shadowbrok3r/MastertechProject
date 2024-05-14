@@ -299,14 +299,13 @@ impl FileBrowser{
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             println!("Copied Items: {:?}", self.copied_items_src);
             let command_tx = command_tx.clone();
-            
+
             for path in &self.copied_items_src{
                 match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
                     Ok(_) => info!("Getting file size"),
                     Err(e) => println!("hovered sender error: {e:?}"),
                 }
             }
-
         }
         
         if paste{
@@ -854,10 +853,10 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
                 return false;
             }
         }
-        #[cfg(unix)]
-        if !show_hidden && get_file_name(path).starts_with('.') {
-            return false;
-        }
+        // #[cfg(unix)]
+        // if !show_hidden && get_file_name(path).starts_with('.') {
+        //     return false;
+        // }
         true
     })
     .collect();
