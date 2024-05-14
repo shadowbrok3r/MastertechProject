@@ -3,9 +3,10 @@ use log::info;
 
 use crate::app_state::MastertechContext;
 
-use self::resources::Resources;
+use self::{api::PrestashopData, resources::{Employees, Orders, Resources}};
 pub mod api;
 pub mod resources;
+pub mod deserializer;
 
 impl MastertechContext {
     pub fn presta_api(&mut self, ui: &mut Ui){ 
@@ -28,29 +29,18 @@ impl MastertechContext {
                     let tx = self.prestashop_api_tx.clone();
                     tokio::spawn(async move {
                         let api_call = self::api::Prestashop::default();
-                        let tx1 = tx.clone();
-                        let tx2 = tx.clone();
-                        let tx3 = tx.clone();
 
-                        // match tx.try_send(api_call.request_resource("addresses".to_string()).await.unwrap()){
+                        let employees: Employees = api_call.request_resource("employees".to_string(), None).await.unwrap();
+
+                        // match tx.try_send(PrestashopData::Orders(orders)){
                         //     Ok(_) => drop(tx),
                         //     Err(err) => info!("Error: {err:?}"),
                         // }
-
-                        match tx1.try_send(api_call.request_resource("orders".to_string(), None).await.unwrap()){
-                            Ok(_) => drop(tx1),
+                        
+                        match tx.try_send(PrestashopData::Employees(employees)){
+                            Ok(_) => drop(tx),
                             Err(err) => info!("Error: {err:?}"),
                         }
-
-                        // match tx2.clone().try_send(api_call.request_resource("customers".to_string()).await.unwrap()){
-                        //     Ok(_) => drop(tx2),
-                        //     Err(err) => info!("Error: {err:?}"),
-                        // }
-
-                        // match tx3.clone().try_send(api_call.request_resource("employees".to_string()).await.unwrap()){
-                        //     Ok(_) => drop(tx3),
-                        //     Err(err) => info!("Error: {err:?}"),
-                        // }
                     });
                 }
                 ui.end_row();
