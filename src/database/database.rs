@@ -78,7 +78,7 @@ impl Database{
 }
 
 
-pub async fn handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: Database, tx: std::sync::mpsc::Sender<T>) 
+pub async fn handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: Database, tx: crossbeam::channel::Sender<T>) 
     -> anyhow::Result<(), anyhow::Error>
 {
     let task_data: Vec<T> = database.select("task").await?;

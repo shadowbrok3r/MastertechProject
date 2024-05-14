@@ -77,21 +77,21 @@ impl eframe::App for MasterTechApp {
 
         if self.context.specs_first_run{
             self.context.specs_first_run = false;
-            let (tx, rx) = channel();
-            let (db_sender, db_receiver) = channel();
-            let (db_data_sender, db_data_receiver) = channel::<schema::TaskPayload>();
+            let (tx, rx) = crossbeam::channel::unbounded();
+            let (db_sender, db_receiver) = crossbeam::channel::bounded(1);
+            let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<schema::TaskPayload>();
 
             tokio::spawn(async move {
                 let system_info = ComputerData::get_computer_data().await;
                 let database = Database::new().await;
                 let _ = handle_db_data(database.clone(), db_data_sender).await.unwrap();
 
-                match tx.send(system_info.unwrap()){
+                match tx.try_send(system_info.unwrap()){
                     Ok(_) => info!("sent computer data"),
                     Err(e) => info!("Error sending computer data: {e:?}"),
                 };
 
-                match db_sender.send(database){
+                match db_sender.try_send(database){
                     Ok(_) => info!("Sent db connection across thread"),
                     Err(err) => debug!("Error sending db connection: {err:?}"),
                 }

@@ -18,8 +18,10 @@ OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2024"
 
 [profile.release]
-# strip = "debuginfo"
-debug = true
+strip = "debuginfo"
+debug = false
+opt-level = 3
+
 
 [features]
 default=["winit", "cpu_fix"]
@@ -111,7 +113,6 @@ libatasmart = "0.3.1"
 debug = true
 lto = false
 strip = false
-# opt-level = 2
 
 # [profile.dev.package."*"]
 # opt-level = 3
