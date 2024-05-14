@@ -1,6 +1,7 @@
 use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::AtomicBool, Arc}}; 
 use chrono::{DateTime, Utc};
 use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
+use serde::Deserialize;
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
@@ -21,6 +22,7 @@ impl TabViewer for MastertechContext {
             "Minidump Analysis" => self.mini_dump(ui),
             "Profiler" => self.puffin_profiler(ui),
             "QC ☑️" => self.quality_check(ui),
+            "Prestashop API" => self.presta_api(ui),
             "Tasks" => self.mastertech_website(ui),
             _ => {
                 let sysinfo_tab = &"System Information".to_string();
@@ -37,6 +39,7 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
             "File Browser 📂" => self.file_browser_popup(ui),
+            "Prestashop API" => self.presta_api(ui),
             _ => {
                 ui.label(tab.to_string());
                 ui.label("This is a context menu");
@@ -95,6 +98,7 @@ pub struct MastertechContext {
     
     pub client_uuid: Uuid,
     pub connect_to_ws: bool,
+    pub disconnect_ws: bool,
     pub system_info: ComputerData,
     pub disks: Value,
     pub disk_num: usize,
@@ -130,6 +134,8 @@ pub struct MastertechContext {
 
     pub db_data_receiver: crossbeam::channel::Receiver<Vec<TaskPayload>>,
     pub db_data_sender: crossbeam::channel::Sender<Vec<TaskPayload>>,
+    pub prestashop_api_rx: crossbeam::channel::Receiver<T: Serialize + Deserialize>,
+    pub prestashop_api_tx: crossbeam::channel::Sender<T: Serialize + Deserialize>,
 }
 
 pub struct MasterTechApp {
@@ -143,6 +149,7 @@ impl Default for MasterTechApp {
             vec![
                 "TUR Sheet".to_owned(), 
                 "Minidump Analysis".to_owned(), 
+                "Prestashop API".to_owned()
             ]
         );
 
@@ -201,7 +208,8 @@ impl Default for MasterTechApp {
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
         let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
-
+        let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded::<Value>();
+        
         let scaffold_request = SendRequest{ tx: tx_scaffold };
 
         let minidump_app = MiniDumpApp::default();
@@ -241,6 +249,7 @@ impl Default for MasterTechApp {
             output_text: "".to_string(),
 
             connect_to_ws: false,
+            disconnect_ws: false,
             client_uuid: Uuid::new_v4(),
             rx: Some(rx),
 
@@ -275,7 +284,9 @@ impl Default for MasterTechApp {
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             ticket_data: None,
             db_data_receiver, 
-            db_data_sender
+            db_data_sender,
+            prestashop_api_tx,
+            prestashop_api_rx
         };
 
         Self { context, tree }

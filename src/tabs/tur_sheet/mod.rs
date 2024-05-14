@@ -830,13 +830,18 @@ impl MastertechContext {
                                         
                                     }
                                     
-                                    if ui.add(
+                                    let connect_to_websocket = ui.add(
                                         Button::new(
                                             RichText::new("Connect WS")
                                         )
-                                    )
-                                    .clicked(){
+                                    );
+                                    if connect_to_websocket.clicked(){
                                         self.connect_to_ws = true;
+                                        self.disconnect_ws = false;
+                                    }
+                                    if connect_to_websocket.secondary_clicked(){
+                                        self.disconnect_ws = true;
+                                        self.connect_to_ws = false;
                                     }
                                 }); // vertical center justified
                             }); // vertical center

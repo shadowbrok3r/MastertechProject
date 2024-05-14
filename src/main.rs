@@ -10,6 +10,7 @@ use self_update::cargo_crate_version;
 use database::{database::{handle_db_data, Database}, schema::{self, ComputerData}};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use crate::handle_api::scaffold;
+use tabs::mastertech_website::websocket::WebSocket;
 
 pub mod github;
 pub mod app_state;
@@ -61,14 +62,17 @@ impl eframe::App for MasterTechApp {
         let arc_style = Arc::new(custom_style);
         ctx.set_style(arc_style);
         
-        if self.context.connect_to_ws{
+        if self.context.connect_to_ws || self.context.disconnect_ws{
             let uuid = self.context.client_uuid;
+            let socket_disconnect = self.context.disconnect_ws.clone();
+            info!("Socket_disconnect: {:?}", socket_disconnect);
             tokio::spawn(async move{
-                let _x = ComputerData::initialize_websocket(uuid.clone()).await;
+                let _x = WebSocket::new_websocket_connection(uuid.clone(), socket_disconnect).await;
             });
 
             // self.context.output_text += &x;
             self.context.connect_to_ws = false;
+            self.context.disconnect_ws = false;
         }
 
         if self.context.specs_first_run{
