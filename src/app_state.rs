@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::AtomicBool, Arc}}; 
 use chrono::{DateTime, Utc};
+use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
@@ -131,11 +132,15 @@ pub struct MastertechContext {
     pub show_deferred_viewport: Arc<AtomicBool>,
     pub ticket_data: Option<Vec<TaskPayload>>,
 
-    pub db_data_receiver: crossbeam::channel::Receiver<Vec<TaskPayload>>,
-    pub db_data_sender: crossbeam::channel::Sender<Vec<TaskPayload>>,
+    pub db_data_receiver: Receiver<Vec<TaskPayload>>,
+    pub db_data_sender: Sender<Vec<TaskPayload>>,
     // pub presta_data: PrestaDataChannel<T>,
-    pub prestashop_api_rx: crossbeam::channel::Receiver<PrestashopData>,
-    pub prestashop_api_tx: crossbeam::channel::Sender<PrestashopData>, 
+    pub prestashop_api_rx: Receiver<PrestashopData>,
+    pub prestashop_api_tx: Sender<PrestashopData>, 
+    pub computer_specs_tx: Sender<ComputerData>,
+    pub computer_specs_rx: Receiver<ComputerData>,
+    pub db_tx: Sender<Database>,
+    pub db_rx: Receiver<Database>,
 }
 
 pub struct MasterTechApp {
@@ -209,7 +214,9 @@ impl Default for MasterTechApp {
         let tx_scaffold = tx.clone();
         let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
-        
+        let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
+        let (db_tx, db_rx) = crossbeam::channel::bounded(1);
+
         let scaffold_request = SendRequest{ tx: tx_scaffold };
 
         let minidump_app = MiniDumpApp::default();
@@ -286,7 +293,11 @@ impl Default for MasterTechApp {
             db_data_receiver, 
             db_data_sender,
             prestashop_api_tx,
-            prestashop_api_rx
+            prestashop_api_rx,
+            computer_specs_tx,
+            computer_specs_rx,
+            db_tx,
+            db_rx,
         };
 
         Self { context, tree }

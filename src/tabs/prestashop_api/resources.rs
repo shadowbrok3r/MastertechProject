@@ -151,21 +151,21 @@ pub struct Orders{
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Order{
     /// ✔️
-    id_address_delivery: String, 
+    id_address_delivery: i32, 
     /// ✔️
-    id_cart: String, 
+    id_cart: i32, 
     /// ✔️
-    id_customer: String, 
+    id_customer: i32, 
     /// ❌
     current_state: String, 
     /// ✔️
     module: String, 
     /// ❌		
-    invoice_number: String, 
+    invoice_number: i32, 
     /// ❌		
     invoice_date: String, 
     /// ❌		
-    valid: String, 
+    valid: i32, 
     /// ❌
     date_add: String, 
     /// ❌
@@ -175,9 +175,7 @@ pub struct Order{
     /// ❌
     note: String, 
     /// ❌
-    id_shop_group: String, 
-    /// ❌
-    id_shop: String, 
+    id_shop: i32, 
     /// ❌
     total_discounts: String,
     /// ✔️

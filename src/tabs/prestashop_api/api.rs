@@ -68,7 +68,7 @@ impl Prestashop {
         // let y: T = serde_xml_rs::from_str(response.as_str())?; // ::<PrestaResource::<T>>
         
         let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults())?;
-        info!("xml: {:#?}", xml.clone());
+        // info!("xml: {:#?}", xml.clone());
         
         let typed_value = from_value(xml.clone()); 
 
