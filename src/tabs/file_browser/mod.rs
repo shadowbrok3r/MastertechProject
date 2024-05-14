@@ -280,16 +280,8 @@ impl FileBrowser{
         command_tx: channel::Sender<Option<Command>>,
         command_rx: channel::Receiver<Option<Command>> 
     ) {     
-        self.handle_keyboard_events(ui, command_tx.clone());
-    
-        while let Ok(progress) = self.progress_rx.try_recv() {self.progress += progress as f64; }
-
         let mut total_size = 0;
-        while let Ok(meta) = self.metadata_rx.try_recv(){
-            total_size += meta;
-            self.source_dir_size = total_size;
-        }
-        
+        self.handle_keyboard_events(ui, command_tx.clone());
 
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
@@ -358,7 +350,15 @@ impl FileBrowser{
         });
 
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {    
-            if self.progress as u64 == self.source_dir_size {self.progress = 0.0;}
+            if self.progress as u64 == self.source_dir_size {
+                self.progress = 0.0;
+                self.animated_progress = false; 
+                ui.ctx().request_repaint();
+                match command_tx.try_send(Some(Command::Refresh)){
+                    Ok(_) => debug!("Refreshing.."),
+                    Err(e) => debug!("{e}"),
+                };
+            }
             // while self.progress as u64 != self.source_dir_size{
             //     let tx = command_tx.clone();
             //     std::thread::spawn(move || {
@@ -494,6 +494,14 @@ impl FileBrowser{
             });
         });
 
+        while let Ok(progress) = self.progress_rx.try_recv() {self.progress += progress as f64; }
+
+        
+        while let Ok(meta) = self.metadata_rx.try_recv(){
+            total_size += meta;
+            self.source_dir_size = total_size;
+        }
+        
         if let Ok(Some(cmd)) = command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
     }
     
@@ -758,20 +766,7 @@ impl FileBrowser{
         let paste = ui.input_mut(|i| i.key_pressed(Key::V));
         let shift = ui.input_mut(|i| i.modifiers.shift);
         
-        if copy { // && self.selected_items
-            self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
-            println!("Copied Items: {:?}", self.copied_items_src);
-            let command_tx = command_tx.clone();
-
-            for path in &self.copied_items_src{
-                match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
-                    Ok(_) => info!("Getting file size"),
-                    Err(e) => println!("hovered sender error: {e:?}"),
-                }
-            }
-        }
-        
-        if cut{
+        if copy && shift{ // && self.selected_items
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Copied Items: {:?}", self.copied_items_src);
             let command_tx = command_tx.clone();
@@ -783,9 +778,22 @@ impl FileBrowser{
                 }
             }
         }
+        
+        if cut && shift{
+            self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
+            info!("Cut Items: {:?}", self.copied_items_src);
+            let command_tx = command_tx.clone();
+
+            for path in &self.copied_items_src{
+                match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
+                    Ok(_) => info!("Getting file size"),
+                    Err(e) => println!("hovered sender error: {e:?}"),
+                }
+            }
+        }
 
 
-        if paste{
+        if paste && shift{
             self.animated_progress = true;
             if let Some(selected_path) = &self.selected_item{
                 if selected_path.is_dir(){

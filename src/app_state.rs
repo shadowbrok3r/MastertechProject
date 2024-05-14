@@ -141,6 +141,8 @@ pub struct MastertechContext {
     pub computer_specs_rx: Receiver<ComputerData>,
     pub db_tx: Sender<Database>,
     pub db_rx: Receiver<Database>,
+    pub cps_keys_tx: Sender<GetKeysResponse>,
+    pub cps_keys_rx: Receiver<GetKeysResponse>
 }
 
 pub struct MasterTechApp {
@@ -215,7 +217,8 @@ impl Default for MasterTechApp {
         let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
         let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
-        let (db_tx, db_rx) = crossbeam::channel::bounded(1);
+        let (db_tx, db_rx) = crossbeam::channel::unbounded();
+        let (cps_keys_tx,cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
 
         let scaffold_request = SendRequest{ tx: tx_scaffold };
 
@@ -298,6 +301,8 @@ impl Default for MasterTechApp {
             computer_specs_rx,
             db_tx,
             db_rx,
+            cps_keys_tx,
+            cps_keys_rx,
         };
 
         Self { context, tree }
