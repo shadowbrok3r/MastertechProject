@@ -32,25 +32,25 @@ impl MastertechContext {
                         let tx2 = tx.clone();
                         let tx3 = tx.clone();
 
-                        match tx.try_send(api_call.request_resource("addresses".to_string()).await.unwrap()){
-                            Ok(_) => drop(tx),
-                            Err(err) => info!("Error: {err:?}"),
-                        }
+                        // match tx.try_send(api_call.request_resource("addresses".to_string()).await.unwrap()){
+                        //     Ok(_) => drop(tx),
+                        //     Err(err) => info!("Error: {err:?}"),
+                        // }
 
-                        match tx1.try_send(api_call.request_resource("addresses".to_string()).await.unwrap()){
+                        match tx1.try_send(api_call.request_resource("orders".to_string(), None).await.unwrap()){
                             Ok(_) => drop(tx1),
                             Err(err) => info!("Error: {err:?}"),
                         }
 
-                        match tx2.clone().try_send(api_call.request_resource("customers".to_string()).await.unwrap()){
-                            Ok(_) => drop(tx2),
-                            Err(err) => info!("Error: {err:?}"),
-                        }
+                        // match tx2.clone().try_send(api_call.request_resource("customers".to_string()).await.unwrap()){
+                        //     Ok(_) => drop(tx2),
+                        //     Err(err) => info!("Error: {err:?}"),
+                        // }
 
-                        match tx3.clone().try_send(api_call.request_resource("employees".to_string()).await.unwrap()){
-                            Ok(_) => drop(tx3),
-                            Err(err) => info!("Error: {err:?}"),
-                        }
+                        // match tx3.clone().try_send(api_call.request_resource("employees".to_string()).await.unwrap()){
+                        //     Ok(_) => drop(tx3),
+                        //     Err(err) => info!("Error: {err:?}"),
+                        // }
                     });
                 }
                 ui.end_row();

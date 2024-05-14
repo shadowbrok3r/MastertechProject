@@ -10,6 +10,8 @@ pub struct Prestashop{
     client: Client,
     /// [field1,field2 …] or 'full'
     display: String,
+    /// &schema=synopsis for tests
+    schema: Option<String>, 
     /** 
     * [1|5]	    OR operator: list of possible values
     * [1,10]    Interval operator: define interval of possible values
@@ -27,6 +29,7 @@ impl Default for Prestashop{
     fn default() -> Self {
         Self {
             client: Client::new(),
+            schema: None,
             display: "full".to_string(),
             filter: None,
             limit: None
@@ -36,25 +39,36 @@ impl Default for Prestashop{
 
 impl Prestashop {
 
-    pub fn new(client: Client, display: String, filter: Option<String>, limit: Option<i32>) -> Self{
-        Self { client, display, filter, limit}
+    pub fn new(client: Client, display: String, filter: Option<String>, limit: Option<i32>, schema: Option<String>) -> Self{
+        Self { client, display, filter, limit, schema }
     }
 
-    pub async fn request_resource(&self, resource: String) -> anyhow::Result<Value, anyhow::Error>{
+    // <T: for<'a> Deserialize<'a> + std::fmt::Debug> // i cannot use this for xml..
+    pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, get_subresource: Option<String>) 
+        -> anyhow::Result<T, anyhow::Error>
+    {
         let response = self.client // 2063620
-            .get(format!("https://pclaptops-dev.mojo11.com/api/{}?output_format=JSON&schema=synopsis", resource))
+            .get(format!("https://pclaptops-dev.mojo11.com/api/{}", resource)) // ?output_format=JSON
             .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
             .send()
             .await?
-            .json()
+            .text()
             .await?;
-    
-        // info!("Resource: {response:?}");
-        // for resources in &presta_info.prestashop.employees.employee[0..5]{
-        //     request_subresources(client.clone(), resources).await?;
+
+
+        let y: T = serde_xml_rs::from_str(response.as_str()).unwrap();
+        
+        info!("Resource: {y:#?}");
+
+        // if let Some(subresource) = get_subresource{
+            // for resources in &presta_info.prestashop.employees.employee[0..5]{
+                // request_subresources(client.clone(), resources).await?;
+            // }
         // }
 
-        Ok(response)
+            
+
+        Ok(y)
     }
     
     pub async fn request_subresources(&self, resources: &Data) -> anyhow::Result<Value, anyhow::Error>{
@@ -66,7 +80,8 @@ impl Prestashop {
             .json()
             .await?;
     
-    
+        
+
         debug!("RESOURCE: {:?}", response.clone());
         Ok(response)
     }
@@ -74,23 +89,25 @@ impl Prestashop {
 
 
 // struct Prestashop{
-//     prestashop: Employees,
+//     ,
 // }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Employees{
-    employees: Employee
+    #[serde(flatten)]
+    employees: Vec<Data>
+    // employees: Employee
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Employee{
-    employee: Vec<Data>
-}
+// #[derive(Serialize, Deserialize, Debug)]
+// pub struct Employee{
+//     employee: 
+// }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Data{
-    #[serde(rename="@id")]
+    // #[serde(rename="@id")]
     id: Option<i32>,
-    #[serde(rename="@xlink:href")]
+    // #[serde(rename="@xlink:href")]
     link: String
 }

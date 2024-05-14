@@ -59,6 +59,8 @@ log = "0.4.20"
 rayon = "1.10.0"
 quick-xml = { version="0.31.0", features = ["serialize"]}
 
+serde-xml-rs = "0.6.0"
+
 memmap2 = "0.9.4"
 breakpad-symbols = { version = "0.21.1" }
 minidump = { version = "0.21.1" }

@@ -1,7 +1,6 @@
 use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::AtomicBool, Arc}}; 
 use chrono::{DateTime, Utc};
 use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
-use serde::Deserialize;
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
@@ -134,8 +133,8 @@ pub struct MastertechContext {
 
     pub db_data_receiver: crossbeam::channel::Receiver<Vec<TaskPayload>>,
     pub db_data_sender: crossbeam::channel::Sender<Vec<TaskPayload>>,
-    pub prestashop_api_rx: crossbeam::channel::Receiver<T: Serialize + Deserialize>,
-    pub prestashop_api_tx: crossbeam::channel::Sender<T: Serialize + Deserialize>,
+    pub prestashop_api_rx: crossbeam::channel::Receiver<Value>, // <T: Serialize + Deserialize>,
+    pub prestashop_api_tx: crossbeam::channel::Sender<Value>, // <T: Serialize + Deserialize>,
 }
 
 pub struct MasterTechApp {
