@@ -4,7 +4,7 @@ use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{handle_api::{api_request::SendRequest, scaffold}, database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload}, GetKeysResponse, PreTicketData}, handle_api::scaffold::HardwareTest, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp}};
+use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload}, GetKeysResponse, PreTicketData}, handle_api::{api_request::SendRequest, scaffold::{self, HardwareTest}}, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, prestashop_api::api::PrestashopData}};
 use egui_file::FileDialog;
 
 impl TabViewer for MastertechContext {
@@ -133,8 +133,9 @@ pub struct MastertechContext {
 
     pub db_data_receiver: crossbeam::channel::Receiver<Vec<TaskPayload>>,
     pub db_data_sender: crossbeam::channel::Sender<Vec<TaskPayload>>,
-    pub prestashop_api_rx: crossbeam::channel::Receiver<Value>, // <T: Serialize + Deserialize>,
-    pub prestashop_api_tx: crossbeam::channel::Sender<Value>, // <T: Serialize + Deserialize>,
+    // pub presta_data: PrestaDataChannel<T>,
+    pub prestashop_api_rx: crossbeam::channel::Receiver<PrestashopData>,
+    pub prestashop_api_tx: crossbeam::channel::Sender<PrestashopData>, 
 }
 
 pub struct MasterTechApp {
@@ -207,7 +208,7 @@ impl Default for MasterTechApp {
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
         let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
-        let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded::<Value>();
+        let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
         
         let scaffold_request = SendRequest{ tx: tx_scaffold };
 

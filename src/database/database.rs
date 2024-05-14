@@ -84,7 +84,7 @@ pub async fn handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: D
     let task_data: Vec<T> = database.select("task").await?;
     for task_data in task_data.iter(){
         
-        match tx.send(task_data.clone()){
+        match tx.try_send(task_data.clone()){
             Ok(_) => info!("Sent db connection across thread"),
             Err(err) => debug!("Error sending db connection: {err:?}"),
         }

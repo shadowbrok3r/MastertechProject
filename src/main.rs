@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
-use std::{fs::File, sync::{atomic::Ordering, mpsc::channel, Arc}};
+use std::{fs::File, sync::{atomic::Ordering, Arc}};
 use github::self_updater;
 use log::{debug, info};
 use app_state::MasterTechApp;
@@ -7,7 +7,7 @@ use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, CentralPanel, Color32, Context, FontId, Frame, IconData, TopBottomPanel, Vec2, ViewportBuilder, ViewportId};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
-use database::{database::{handle_db_data, Database}, schema::{self, ComputerData}};
+use database::{database::Database, schema::ComputerData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use crate::handle_api::scaffold;
 use tabs::mastertech_website::websocket::WebSocket;
@@ -79,14 +79,12 @@ impl eframe::App for MasterTechApp {
             self.context.specs_first_run = false;
             let (tx, rx) = crossbeam::channel::unbounded();
             let (db_sender, db_receiver) = crossbeam::channel::bounded(1);
-            let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<schema::TaskPayload>();
 
             tokio::spawn(async move {
                 let system_info = ComputerData::get_computer_data().await;
                 let database = Database::new().await;
-                let _ = handle_db_data(database.clone(), db_data_sender).await.unwrap();
 
-                match tx.try_send(system_info.unwrap()){
+                match tx.send(system_info.unwrap()){
                     Ok(_) => info!("sent computer data"),
                     Err(e) => info!("Error sending computer data: {e:?}"),
                 };
@@ -95,29 +93,17 @@ impl eframe::App for MasterTechApp {
                     Ok(_) => info!("Sent db connection across thread"),
                     Err(err) => debug!("Error sending db connection: {err:?}"),
                 }
-
-                
-                
             });
 
-            if let Ok(db) = db_receiver.recv(){
+            if let Ok(db) = db_receiver.try_recv(){
                 info!("Received DB connection from thread");
                 self.context.database = Some(db);
             }
 
-            if let Ok(task_payload) = db_data_receiver.recv(){
-                info!("Received task_payload from thread: {task_payload:#?}");
-            }
 
             let specs = match rx.recv(){
-                Ok(data) => {
-                    info!("Received computer data");
-                    Ok(data)
-                },
-                Err(e) => {
-                    info!("Error receiving data: {e}");
-                    Err(e)
-                },
+                Ok(data) => Ok(data),
+                Err(e) => Err(e),
             };
 
             match specs{
@@ -166,13 +152,11 @@ impl eframe::App for MasterTechApp {
                 }
             }
         }
-    
         
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
             if let Ok(info) = serde_json::from_str::<database::PreTicketData>(&message) {
-    
                 self.context.output_text.clear();
     
                 // Handle PreTicketData

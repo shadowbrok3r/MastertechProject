@@ -60,7 +60,6 @@ simplelog = "0.12.1"
 log = "0.4.20"
 rayon = "1.10.0"
 quick-xml = { version="0.31.0", features = ["serialize"]}
-
 serde-xml-rs = "0.6.0"
 
 memmap2 = "0.9.4"
@@ -96,6 +95,7 @@ ratatui = "0.26.2"
 crossterm = "0.27.0"
 tui-term = "0.1.11"
 portable-pty = "0.8.1"
+quickxml_to_serde = "0.6.0"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async_tokio"]}

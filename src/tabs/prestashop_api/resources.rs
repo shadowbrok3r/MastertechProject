@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-
+// use crate::tabs::prestashop_api::deserializer::deserialize_nested;
 
 #[derive(Serialize, Debug)]
 pub struct Resources {
@@ -119,20 +119,12 @@ pub struct Addresses{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Employees{
-    /// ✔️	isUnsignedInt	
-    pub id_lang: String, 
-    /// ❌
-    pub last_passwd_gen: String, 
-    /// ❌	isDate	
-    pub stats_date_from: String, 
-    /// ❌	isDate	
-    pub stats_date_to: String, 
-    /// ❌	isDate	
-    pub stats_compare_from: String, 
-    /// ❌	isDate	
-    pub stats_compare_to: String, 
-    /// ✔️	isPasswd	
-    pub passwd: String, 
+    pub employee: Vec<Employee>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Employee{
+    pub id: i32,
     /// ✔️	isName	
     pub lastname: String, 
     /// ✔️	isName	
@@ -140,35 +132,54 @@ pub struct Employees{
     /// ✔️	isEmail	
     pub email: String, 
     /// ❌	isBool	
-    pub active: String, 
+    pub active: i32, 
     /// ✔️	isInt	
-    pub id_profile: String, 
-    /// ❌	isColor	
-    pub bo_color: String, 
-    /// ❌	isInt	
-    pub default_tab: String, 
-    /// ❌	isGenericName	
-    pub bo_theme: String, 
-    /// ❌	isGenericName	
-    pub bo_css: String, 
+    pub id_profile: i32, 
     /// ❌	isUnsignedInt	
-    pub bo_width: String, 
-    /// ❌	isBool	
-    pub bo_menu: String, 
+    pub id_last_order: i32, 
     /// ❌	isUnsignedInt	
-    pub stats_compare_option: String, 
-    /// ❌			
-    pub preselect_date_range: String, 
+    pub id_last_customer_message: i32, 
     /// ❌	isUnsignedInt	
-    pub id_last_order: String, 
-    /// ❌	isUnsignedInt	
-    pub id_last_customer_message: String, 
-    /// ❌	isUnsignedInt	
-    pub id_last_customer: String, 
-    /// ❌	isSha1	
-    pub reset_password_token: String, 
-    /// ❌	isDateOrNull	
-    pub reset_password_validity: String, 
-    /// ❌	isBool	
-    pub has_enabled_gravatar: String, 
+    pub id_last_customer: i32, 
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Orders{
+    orders: Vec<Order>
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Order{
+    /// ✔️
+    id_address_delivery: String, 
+    /// ✔️
+    id_cart: String, 
+    /// ✔️
+    id_customer: String, 
+    /// ❌
+    current_state: String, 
+    /// ✔️
+    module: String, 
+    /// ❌		
+    invoice_number: String, 
+    /// ❌		
+    invoice_date: String, 
+    /// ❌		
+    valid: String, 
+    /// ❌
+    date_add: String, 
+    /// ❌
+    date_upd: String, 
+    /// ❌
+    shipping_number: String, 
+    /// ❌
+    note: String, 
+    /// ❌
+    id_shop_group: String, 
+    /// ❌
+    id_shop: String, 
+    /// ❌
+    total_discounts: String,
+    /// ✔️
+    total_paid: String, 
 }

@@ -1,10 +1,18 @@
 use log::{debug, info};
 use reqwest::{header::AUTHORIZATION, Client};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{from_value, Value};
 use std::fmt::Debug;
+use quickxml_to_serde::{xml_string_to_json, Config as xmlConfig};
 
-use super::resources::Resources;
+use super::resources::{Employees, Addresses, Orders};
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum PrestashopData {
+    Orders(Orders),
+    Employees(Employees),
+    Addresses(Addresses),
+}
 
 pub struct Prestashop{
     client: Client,
@@ -23,6 +31,7 @@ pub struct Prestashop{
     filter: Option<String>,
     /// number, or starting index (limit from number to the index)
     limit: Option<i32>,
+    // data_channel: PrestaDataChannel
 }
 
 impl Default for Prestashop{
@@ -30,45 +39,52 @@ impl Default for Prestashop{
         Self {
             client: Client::new(),
             schema: None,
-            display: "full".to_string(),
+            display: "?display=full".to_string(),
             filter: None,
-            limit: None
+            limit: None,
         }
     }
 }
 
 impl Prestashop {
 
-    pub fn new(client: Client, display: String, filter: Option<String>, limit: Option<i32>, schema: Option<String>) -> Self{
+    pub fn new<T: for<'a> Deserialize<'a> + std::fmt::Debug>(
+        client: Client, display: String, filter: Option<String>, limit: Option<i32>, schema: Option<String>,
+    ) -> Self{
         Self { client, display, filter, limit, schema }
     }
 
-    // <T: for<'a> Deserialize<'a> + std::fmt::Debug> // i cannot use this for xml..
     pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, get_subresource: Option<String>) 
         -> anyhow::Result<T, anyhow::Error>
     {
         let response = self.client // 2063620
-            .get(format!("https://pclaptops-dev.mojo11.com/api/{}", resource)) // ?output_format=JSON
+            .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}{}", self.display)) // ?output_format=JSON
             .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
             .send()
             .await?
             .text()
             .await?;
-
-
-        let y: T = serde_xml_rs::from_str(response.as_str()).unwrap();
         
-        info!("Resource: {y:#?}");
+        // let y: T = serde_xml_rs::from_str(response.as_str())?; // ::<PrestaResource::<T>>
+        
+        let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults())?;
+        info!("xml: {:#?}", xml.clone());
+        
+        let typed_value = from_value(xml.clone()); 
 
+        if let Ok(typed_value) = typed_value{
+            info!("OK: {typed_value:#?}");
+            return Ok(typed_value);
+        }else{
+            info!("{:#?}", xml["prestashop"][resource.as_str()].clone());
+            let x: T = from_value(xml["prestashop"][resource.as_str()].clone())?;
+            return Ok(x);
+        }
         // if let Some(subresource) = get_subresource{
-            // for resources in &presta_info.prestashop.employees.employee[0..5]{
-                // request_subresources(client.clone(), resources).await?;
-            // }
+        //     // for resources in &presta_info.prestashop.employees.employee[0..5]{
+        //         // request_subresources(client.clone(), resources).await?;
+        //     // }
         // }
-
-            
-
-        Ok(y)
     }
     
     pub async fn request_subresources(&self, resources: &Data) -> anyhow::Result<Value, anyhow::Error>{
@@ -87,27 +103,10 @@ impl Prestashop {
     }
 }
 
-
-// struct Prestashop{
-//     ,
-// }
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Employees{
-    #[serde(flatten)]
-    employees: Vec<Data>
-    // employees: Employee
-}
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct Employee{
-//     employee: 
-// }
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Data{
-    // #[serde(rename="@id")]
+    #[serde(rename="@id")]
     id: Option<i32>,
-    // #[serde(rename="@xlink:href")]
+    #[serde(rename="@xlink:href")]
     link: String
 }
