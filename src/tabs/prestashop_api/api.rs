@@ -1,13 +1,12 @@
-use log::debug;
+use log::{debug, info};
 use reqwest::{header::AUTHORIZATION, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Debug;
 
-use self::resources::Resources;
-mod resources;
+use super::resources::Resources;
 
-struct Prestashop{
+pub struct Prestashop{
     client: Client,
     /// [field1,field2 …] or 'full'
     display: String,
@@ -36,18 +35,25 @@ impl Default for Prestashop{
 }
 
 impl Prestashop {
-    pub async fn request_resource(&self, resource: Resources) -> anyhow::Result<Value, anyhow::Error>{
+
+    pub fn new(client: Client, display: String, filter: Option<String>, limit: Option<i32>) -> Self{
+        Self { client, display, filter, limit}
+    }
+
+    pub async fn request_resource(&self, resource: String) -> anyhow::Result<Value, anyhow::Error>{
         let response = self.client // 2063620
-            .get("https://pclaptops-dev.mojo11.com/api/orders?output_format=JSON&schema=synopsis")
+            .get(format!("https://pclaptops-dev.mojo11.com/api/{}?output_format=JSON&schema=synopsis", resource))
             .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
             .send()
             .await?
-            .json::<Value>()
+            .json()
             .await?;
     
+        // info!("Resource: {response:?}");
         // for resources in &presta_info.prestashop.employees.employee[0..5]{
         //     request_subresources(client.clone(), resources).await?;
         // }
+
         Ok(response)
     }
     
@@ -72,17 +78,17 @@ impl Prestashop {
 // }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Employees{
+pub struct Employees{
     employees: Employee
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Employee{
+pub struct Employee{
     employee: Vec<Data>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Data{
+pub struct Data{
     #[serde(rename="@id")]
     id: Option<i32>,
     #[serde(rename="@xlink:href")]
