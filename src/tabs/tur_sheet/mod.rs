@@ -173,29 +173,26 @@ impl MastertechContext {
                                                         self.spinner = true;
 
                                                         let cps_request = SendRequest::get_cps(service_num, self.client.clone());
-                                                        let (tx, rx) = std::sync::mpsc::channel::<GetKeysResponse>();
+                                                        let cps_tx = self.cps_keys_tx.clone();
 
                                                         spawn(async move{
-                                                            let sender = tx.clone();
+                                                            
                                                             let unwrapped_request =  cps_request.await.unwrap_or(GetKeysResponse::default());
 
-                                                            match sender.send(unwrapped_request){
+                                                            match cps_tx.send(unwrapped_request){
                                                                 Ok(_) => info!("GetKeysClick -> sent keys successfully"),
                                                                 Err(err) => debug!("GetKeysClick -> Error propogating GetKeysResponse to callee -> {err:?}")
                                                             }
                                                         });
 
-                                                        match rx.recv(){
-                                                            Ok(keys) => {
-                                                                if keys.webroot_key.contains("Error"){
-                                                                    self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
-                                                                }
-                                                                self.keys = keys;
-                                                            },
-                                                            Err(err) => {
-                                                                debug!("GetKeysClick Receive Error -> {err:?}");
-                                                                self.output_text = format!("GetKeysClick -> Error receiving keys -> {err:?}");
+                                                        if let Ok(keys) = self.cps_keys_rx.recv(){
+                                                            if keys.webroot_key.contains("Error"){
+                                                                self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
                                                             }
+                                                            self.keys = keys;
+                                                        }else{
+                                                            debug!("GetKeysClick Receive Error");
+                                                            self.output_text = format!("GetKeysClick -> Error receiving keys");
                                                         }
                                                     }
                                                     
