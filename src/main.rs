@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide output_console window on Windows in release
 use std::{fs::File, sync::{atomic::Ordering, Arc}};
-use github::self_updater;
 use log::{debug, info};
 use app_state::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
@@ -12,7 +11,6 @@ use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use crate::handle_api::scaffold;
 use tabs::mastertech_website::websocket::WebSocket;
 
-pub mod github;
 pub mod app_state;
 pub mod tabs;
 mod filesystem;

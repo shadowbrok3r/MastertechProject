@@ -1,7 +1,7 @@
 use eframe::egui::Ui;
 use crate::app_state::MastertechContext;
 use std::{sync::atomic::Ordering, thread::spawn}; 
-use crate::self_updater::run;
+use github::self_updater::run;
 
 pub mod scripts;
 pub mod output_console;
@@ -13,6 +13,8 @@ pub mod minidump;
 pub mod puffin_profiler;
 pub mod tur_sheet;
 pub mod prestashop_api;
+pub mod github;
+pub mod websockets;
 
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {

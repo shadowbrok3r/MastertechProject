@@ -1,14 +1,14 @@
 #![allow(non_snake_case)]
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports, unused_variables))]
-use reqwest::header::{AUTHORIZATION, ACCEPT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use std::error::Error;
 
-const TOKEN: &str = "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";
+const TOKEN: &str = "Bearer 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";
 
-async fn create_new_issue(title: String, body: String, client: reqwest::Client)  
-    -> anyhow::Result<(), anyhow::Error> 
+pub async fn create_new_issue(title: String, body: String, client: reqwest::Client)  
+    -> anyhow::Result<String, anyhow::Error> 
 {
     // Now you can use the method on the instance of ScaffoldRequestBuilder
     let params = serde_json::json!({
@@ -21,14 +21,15 @@ async fn create_new_issue(title: String, body: String, client: reqwest::Client)
     });
 
     let res = client
-        .post("https://api.github.com/repos/shadowbrok3r/Mastertech4.0/issues") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+        .post("https://api.github.com/repos/shadowbrok3r/Mastertech4.0/issues")
         .header(AUTHORIZATION, TOKEN)
         .header(ACCEPT, "application/vnd.github+json")
+        .header(USER_AGENT, "Mastertech")
         .json(&params)
         .send()
         .await?
-        .json()
-        .await;
+        .text()
+        .await?;
 
-    Ok(res?)
+    Ok(res)
 }

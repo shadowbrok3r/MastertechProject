@@ -12,7 +12,8 @@ use dotenv::var;
 
 pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Error>> {
 
-    let token = var("GITHUB_KEY").unwrap();
+    // let token = var("GITHUB_KEY").unwrap();
+    let token = "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".to_string();
 
     let releases = ReleaseList::configure()
         .repo_owner("shadowbrok3r")
