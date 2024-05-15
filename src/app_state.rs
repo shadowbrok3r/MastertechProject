@@ -24,6 +24,8 @@ impl TabViewer for MastertechContext {
             "QC ☑️" => self.quality_check(ui),
             "Prestashop API" => self.presta_api(ui),
             "Tasks" => self.mastertech_website(ui),
+            "Bug Tracker" => self.github(ui),
+            "Websockets" => self.websockets(ui),
             _ => {
                 let sysinfo_tab = &"System Information".to_string();
                 if ui.label(tab.as_str()).clicked(){
@@ -67,6 +69,7 @@ impl TabViewer for MastertechContext {
         // }
         // self.open_tabs.insert(surface_index.);
     }
+
 }
 
 pub struct MastertechContext { 
@@ -142,7 +145,9 @@ pub struct MastertechContext {
     pub db_tx: Sender<Database>,
     pub db_rx: Receiver<Database>,
     pub cps_keys_tx: Sender<GetKeysResponse>,
-    pub cps_keys_rx: Receiver<GetKeysResponse>
+    pub cps_keys_rx: Receiver<GetKeysResponse>,
+    pub github_issue_title: String,
+    pub github_issue_descript: String,
 }
 
 pub struct MasterTechApp {
@@ -156,7 +161,8 @@ impl Default for MasterTechApp {
             vec![
                 "TUR Sheet".to_owned(), 
                 "Minidump Analysis".to_owned(), 
-                "Prestashop API".to_owned()
+                "Prestashop API".to_owned(),
+                "Bug Tracker".to_owned(),
             ]
         );
 
@@ -179,7 +185,8 @@ impl Default for MasterTechApp {
                 0.65, 
                 vec![
                     "Console".to_owned(),
-                    "Tasks".to_owned()
+                    "Tasks".to_owned(),
+                    "Websocket Stuffs".to_owned()
             ]
         );
 
@@ -303,6 +310,8 @@ impl Default for MasterTechApp {
             db_rx,
             cps_keys_tx,
             cps_keys_rx,
+            github_issue_title: String::new(),
+            github_issue_descript: String::new(),
         };
 
         Self { context, tree }
