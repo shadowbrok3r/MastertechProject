@@ -1,6 +1,6 @@
 use eframe::egui::Ui;
 use crate::app_state::MastertechContext;
-use std::sync::atomic::Ordering; 
+use std::{sync::atomic::Ordering, thread::spawn}; 
 use crate::self_updater::run;
 
 pub mod scripts;
@@ -23,7 +23,7 @@ impl MastertechContext {
         if ui.button("update").clicked(){
             let (tx, rx) = crossbeam::channel::bounded(1);
 
-            tokio::task::spawn_blocking(move || {
+            spawn(move ||{
                 match run(){
                     Ok(response) => {
                         match tx.send((response.0, response.1)){
@@ -34,11 +34,10 @@ impl MastertechContext {
                     Err(e) => println!("err: {e}"),
                 }
             });
+            
             if let Ok(res) = rx.recv(){
                 self.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
             }
-            
-
         }
     }
 
