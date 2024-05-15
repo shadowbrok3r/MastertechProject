@@ -32,8 +32,6 @@ const _KB_FROM_BYTES: u64 = 1024;
 const MB_FROM_BYTES: u64 = 1024*1024;
 const _GB_FROM_BYTES: u64 = 1024*1024*1024;
 
-
-
 pub struct FileBrowser {
     /// Current opened path.
     path: PathBuf, 
@@ -186,6 +184,7 @@ impl FileBrowser{
                         if response.lost_focus() {
                             let path = PathBuf::from(&self.path_edit);
                             println!("Lost focus on self.path_edit");
+
                             match command_tx.send(Some(Command::OpenPath(path))){
                                 Ok(_) => println!("sent task successfully"),
                                 Err(e) => println!("{e}")
@@ -205,7 +204,7 @@ impl FileBrowser{
         });
 
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {    
-            if self.progress as u64 == self.source_dir_size {
+            if self.progress as u64 == self.source_dir_size && self.animated_progress{
                 self.progress = 0.0;
                 self.animated_progress = false; 
                 ui.ctx().request_repaint();
@@ -214,16 +213,6 @@ impl FileBrowser{
                     Err(e) => debug!("{e}"),
                 };
             }
-            // while self.progress as u64 != self.source_dir_size{
-            //     let tx = command_tx.clone();
-            //     std::thread::spawn(move || {
-            //         std::thread::sleep(Duration::from_secs(5));
-            //         match tx.try_send(Some(Command::Refresh)){
-            //             Ok(_) => debug!("Refreshing.."),
-            //             Err(e) => debug!("{e}"),
-            //         }
-            //     });
-            // }
 
             // let mut display_text = format!("Try selecting some files to copy.. ");
             // let mut color = Color32::LIGHT_BLUE;
@@ -245,13 +234,11 @@ impl FileBrowser{
                     for drive in self.drive_letters.iter(){
                         let button = Button::new(RichText::new(format!("💾 {drive}")).small()).small();
                         
-                        if ui.add(
-                            button
-                        ).clicked(){
-                            println!("Button clicked: {:?}", drive);
-                            match command_tx.send(Some(Command::OpenPath(
-                                    PathBuf::from(drive)
-                                ))){
+                        if ui.add(button).clicked(){
+                            let path = Some(Command::OpenPath(PathBuf::from(drive)));
+                            info!("Drive: {:?} -- Path: {:?}", drive, &path);
+
+                            match command_tx.send(path){
                                 Ok(_) => println!("Opening drive path"),
                                 Err(e) => println!("{e}"),
                             }
@@ -615,7 +602,7 @@ impl FileBrowser{
         }
     }
 
-    fn handle_keyboard_events(&mut self, ui: &mut Ui, command_tx: channel::Sender<Option<Command>>){
+    fn handle_keyboard_events(&mut self, ui: &Ui, command_tx: channel::Sender<Option<Command>>){
         let cut = ui.input_mut(|i| i.key_pressed(Key::X));
         let copy = ui.input_mut(|i| i.key_pressed(Key::C));
         let paste = ui.input_mut(|i| i.key_pressed(Key::V));
@@ -632,9 +619,7 @@ impl FileBrowser{
                     Err(e) => println!("hovered sender error: {e:?}"),
                 }
             }
-        }
-        
-        if cut && shift{
+        }else if cut && shift{
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Cut Items: {:?}", self.copied_items_src);
             let command_tx = command_tx.clone();
@@ -645,10 +630,7 @@ impl FileBrowser{
                     Err(e) => println!("hovered sender error: {e:?}"),
                 }
             }
-        }
-
-
-        if paste && shift{
+        }else if paste && shift{
             self.animated_progress = true;
             if let Some(selected_path) = &self.selected_item{
                 if selected_path.is_dir(){
@@ -676,7 +658,7 @@ impl FileBrowser{
     }
 }
 
-#[cfg(windows)]
+// #[cfg(windows)]
 fn is_drive_root(path: &PathBuf) -> bool {
   path
     .to_str()
@@ -686,7 +668,7 @@ fn is_drive_root(path: &PathBuf) -> bool {
 }
 
 fn get_file_name(path: &PathBuf) -> &str {
-    #[cfg(windows)]
+    // #[cfg(windows)]
     if path.is_dir() && is_drive_root(path) {
       return path.to_str().unwrap_or_default();
     }

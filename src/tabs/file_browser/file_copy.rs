@@ -304,9 +304,9 @@ impl CopyBuilder {
                         entry.path().display(),
                         dest_entry.display()
                     );
-                    let _target = read_link(entry.path())?;
-                    // #[cfg(unix)]
-                    // std::os::unix::fs::symlink(target, dest_entry)?
+                    let target = read_link(entry.path())?;
+                    #[cfg(unix)]
+                    std::os::unix::fs::symlink(target, dest_entry)?
                 } else {
                     unimplemented!(
                         "File {} has unhandled type {:?}",
