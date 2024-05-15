@@ -17,7 +17,6 @@ mod filesystem;
 mod handle_api;
 mod database;
 
-#[cfg(not(feature = "compat_mode"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     puffin::set_scopes_on(true);
@@ -46,7 +45,6 @@ async fn main() -> eframe::Result<()> {
     )
 }
 
-#[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let theme = CarlDark;
@@ -287,7 +285,7 @@ impl eframe::App for MasterTechApp {
 async fn main(){
     puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
     // cannot run this logger because the minidump module already uses a logger
-    let log_level = LevelFilter::Info; // Configure log level and log file
+    let log_level = LevelFilter::Error; // Configure log level and log file
     let log_file = File::create("output.log").unwrap();
     WriteLogger::init( // Init the logger
         log_level,
@@ -303,103 +301,43 @@ async fn main(){
 
 #[cfg(feature = "compat_mode")]
 impl MasterTechApp{
-    fn update(&mut self, ctx: &Context) { // , _frame: &mut eframe::Frame
-        let theme = CarlDark;
-        let mut custom_style: Style = theme.custom_style();
-        let mut font = FontId::default();
-        custom_style.spacing.button_padding.x = 2.0;
-        custom_style.spacing.button_padding.y = 2.0;
-        custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
-        font.size = 12.0;
-        custom_style.override_font_id = Some(font);
-        custom_style.spacing.combo_height = 60.0; 
-        custom_style.spacing.combo_width = 135.0;
-        let arc_style = Arc::new(custom_style);
-        ctx.set_style(arc_style);
-        
-        if self.context.connect_to_ws || self.context.disconnect_ws{
-            let uuid = self.context.client_uuid;
-            let socket_disconnect = self.context.disconnect_ws.clone();
-            info!("Socket_disconnect: {:?}", socket_disconnect);
-            tokio::spawn(async move{
-                let _x = WebSocket::new_websocket_connection(uuid.clone(), socket_disconnect).await;
+    fn update(&mut self, ctx: &Context){
+        catppuccin_egui::set_theme(ctx, MOCHA);
+        if self.context.spinner == true{
+            eframe::egui::Window::new("Spinner Window")
+            .title_bar(false)
+            .fixed_size(vec2(10.0,10.0))
+            .anchor(Align2::RIGHT_TOP, [2.0, 2.0])
+            .show(&ctx, |ui|{
+                ui.add(
+                    Spinner::new()
+                    .color(Color32::LIGHT_RED)
+                    .size(20.0)
+                );
             });
-
-            // self.context.output_text += &x;
-            self.context.connect_to_ws = false;
-            self.context.disconnect_ws = false;
-        }
-
-        if self.context.specs_first_run{
-            self.context.specs_first_run = false;
             
-            let sysinfo_tx = self.context.computer_specs_tx.clone();
-            let db_tx = self.context.db_tx.clone();
-
-            tokio::spawn(async move {
-                let system_info = ComputerData::get_computer_data().await;
-                let database = Database::new().await;
-
-                match sysinfo_tx.send(system_info.unwrap()){
-                    Ok(_) => info!("sent computer data"),
-                    Err(e) => info!("Error sending computer data: {e:?}"),
-                };
-
-                match db_tx.send(database){
-                    Ok(_) => info!("Sent db connection across thread"),
-                    Err(err) => debug!("Error sending db connection: {err:?}"),
-                }
-            });
-
-            if let Ok(db) = self.context.db_rx.recv(){
-                info!("Received DB connection from thread");
-                self.context.database = Some(db);
-            }
-
-
-            let specs = match self.context.computer_specs_rx.recv(){
-                Ok(data) => Ok(data),
-                Err(e) => Err(e),
-            };
-
-            match specs{
-                Ok(computer_data) => {
-                    self.context.system_info = computer_data;
-
-                    for disk in &self.context.system_info.drives{
-                        
-                        self.context.disk_num += 1;
-        
-                        if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                            // Convert `disk` to a serde_json::Value
-                            let disk_json = serde_json::to_value(&disk).unwrap();
-                    
-                            disks_arr.push(disk_json);
-                        } else {
-                            eprintln!("Expected self.context.drives to be an Array");
-                        }
-                        
-                    }
-                    self.context.output_text += format!("{:#?}", &self.context.system_info.seb_info.as_mut()).as_str();
-                },
-                Err(e) => {
-                    self.context.output_text = format!("{}", e.to_string());
-                }
-            };
-
+        }
+    
+        if self.context.specs_first_run == true{
+    
+            let specs_sender = self.context.sysinfo_request.tx.clone();
+            RetrieveSystemInfo::get_system_specs(specs_sender);
+            
             #[cfg(target_os="windows")]
             {
-                let mut cps = self.context.current_antivirus.clone();
+                let mut cps = self.context.antivirus_installed.clone();
+                let mut new_out_text = String::new();
     
-                let installed_antivirus = ComputerData::get_antivirus()
+                let installed_antivirus = RetrieveSystemInfo::get_antivirus()
                 .map_err(|e| 
-                    cps += format!("Error checking antivirus: {e}\n").as_str()
+                    new_out_text = format!("Error checking antivirus: {e}\n")
                 ).unwrap();
     
     
                 for (name, is_installed) in installed_antivirus {
                     match is_installed {
                         Some(true) => {
+                            new_out_text += &format!("{name} detected");
                             cps += "\n";
                             cps += &format!("{name}");
                         },
@@ -408,37 +346,73 @@ impl MasterTechApp{
                 }
             }
         }
-        
+    
+        self.context.specs_first_run = false;
         let receiver = self.context.rx.as_ref().unwrap();
         
         while let Ok(message) = receiver.try_recv() {
-            if let Ok(info) = serde_json::from_str::<database::PreTicketData>(&message) {
+            if let Ok(info) = serde_json::from_str::<scaffold::PreTicketData>(&message) {
+                println!("ticket information: {info:#?}");
                 self.context.output_text.clear();
+                let checkin_rep = info.checkin_rep;
+                self.context.ticket_info.checkin_rep = checkin_rep.clone();
+                if checkin_rep == "DMK"{self.context.salesman_cbox = scaffold::Salesman::Danny;}
+                else if checkin_rep == "JDH2"{self.context.salesman_cbox = scaffold::Salesman::Jake}
     
                 // Handle PreTicketData
-                self.context.ticket_info = info;
-                debug!("ticket information: {:#?}", self.context.ticket_info);
-
-                if self.context.ticket_info.checkin_rep  == "DMK"{self.context.salesman = self.context.ticket_info.checkin_rep.clone();}
-                else if self.context.ticket_info.checkin_rep  == "JDH2"{self.context.salesman = self.context.ticket_info.checkin_rep.clone();}
-                self.context.technician = self.context.ticket_info.sales_rep.clone();
-
-                let code = &self.context.ticket_info.cust_code;
-                let email = &self.context.ticket_info.customer_email;
-                let codes = &self.context.ticket_info.item_codes;
-                let store = &self.context.ticket_info.jurisdiction;
-
-                self.context.output_text += &format!("Store: {store:?}\n\nCustomer Code: {code}\nCustomer Email: {email}\n\nItem on order:\n{codes}");
+                self.context.ticket_info.customer_name = info.customer_name;
+                self.context.ticket_info.customer_phone_1 = info.customer_phone_1;
+                self.context.ticket_info.customer_phone_2 = info.customer_phone_2;
+                self.context.ticket_info.checkin_notes = info.checkin_notes;
+    
+                self.context.ticket_info.cust_code = info.cust_code;
+                self.context.ticket_info.doc_alias = info.doc_alias;
+                self.context.ticket_info.department = info.department;
+                self.context.ticket_info.jurisdiction = info.jurisdiction;
+                self.context.ticket_info.invoice_amnt = info.invoice_amnt;
+                self.context.ticket_info.customer_email = info.customer_email;
+                self.context.ticket_info.last_invoice_number = info.last_invoice_number;
+                self.context.ticket_info.last_invoice_amount = info.last_invoice_amount;
+                self.context.ticket_info.total_invoice_count = info.total_invoice_count;
+                self.context.ticket_info.item_codes = info.item_codes;
+    
+                let code = self.context.ticket_info.cust_code.clone();
+                let email = self.context.ticket_info.customer_email.clone();
+                let codes = self.context.ticket_info.item_codes.clone();
+    
+                self.context.output_text += &format!("Customer Code: {code}\nCustomer Email: {email}\n\nItem on order:\n{codes}");
                 self.context.spinner = false;
     
             }             
-            else if let Ok(info) = serde_json::from_str::<database::GetKeysResponse>(&message) {
+            else if let Ok(info) = serde_json::from_str::<scaffold::PulledKeys>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
-                    self.context.keys = info;
+                    self.context.keys.webroot_key = info.webroot_key;
+                    self.context.keys.superanti_key = info.superanti_key;
                 }
                 self.context.spinner = false;
             }
-            else if let Ok(info) = serde_json::from_str::<crate::handle_api::AsanaResponse>(&message) { 
+            else if let Ok(info) = serde_json::from_str::<system_info::ComputerData>(&message) {
+                self.context.hostname = info.hostname;
+                self.context.cpu = info.cpu;
+                self.context.ram = info.ram;
+                self.context.gpu = info.gpu;
+                for disk in info.drives.drives{
+                    
+                    self.context.disk_num += 1;
+    
+                    if let Some(disks_arr) = self.context.drives.as_array_mut() {
+                        // Convert `disk` to a serde_json::Value
+                        let disk_json = serde_json::to_value(&disk).unwrap();
+                
+                        disks_arr.push(disk_json);
+                    } else {
+                        eprintln!("Expected self.context.drives to be an Array");
+                    }
+                    
+                }
+                
+            }
+            else if let Ok(info) = serde_json::from_str::<request::AsanaResponse>(&message) { 
                 if let Some(e) = info.status{
                     self.context.output_text = format!("Status Code: {e:#?}");
                 };
@@ -459,41 +433,18 @@ impl MasterTechApp{
             }
         }
     
-
-        if self.context.show_deferred_viewport.load(Ordering::Relaxed) {
-            let file_browser_clone = Arc::clone(&self.context.file_browser);
-            let show_deferred_viewport = self.context.show_deferred_viewport.clone();
-            let viewport_id = ViewportId::from_hash_of("deferred_viewport");
-            let viewport_builder = ViewportBuilder::default().with_title("File Browser").with_inner_size([400.0, 500.0]);
-            ctx.show_viewport_deferred(viewport_id,viewport_builder,move |ctx, _class| {
-                    CentralPanel::default().show(ctx, |ui| {
-                        let (command_tx, command_rx) = crossbeam::channel::unbounded();
-                        // Lock the Mutex and show the GUI
-                        let mut file_browser = file_browser_clone.lock().unwrap();
-                        file_browser.show(ui, command_tx, command_rx);
-                    });
-                    if ctx.input(|i| i.viewport().close_requested()) {
-                        // Tell parent to close us.
-                        show_deferred_viewport.store(false, Ordering::Relaxed);
-                    }
-                },
-            );
-        }
-
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             eframe::egui::menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
                     for tab in &[
-                        &"TUR Sheet".to_string(),
-                        &"Scripts".to_string(),
-                        &"Console".to_string(),
-                        &"System Information".to_string(),
-                        &"File Browser 📂".to_string(),
+                        &self.context.tur_sheet_tab, 
+                        &self.context.scripts_tab, 
+                        &self.context.output_console_tab, 
+                        &self.context.system_info_tab, 
+                        &self.context.file_browser_tab,
                         &"Minidump Analysis".to_string(),
                         &"Profiler".to_string(),
-                        &"QC".to_string(),
-                        &"Tasks".to_string(),
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)
@@ -512,17 +463,20 @@ impl MasterTechApp{
             })
         });
     
-        CentralPanel::default() // When displaying a DockArea in another UI, it looks better
-            .frame(Frame::central_panel(&ctx.style()).inner_margin(4.)) // to set inner margins to 0.
+        CentralPanel::default()// When displaying a DockArea in another UI, it looks better
+            .frame(Frame::central_panel(&ctx.style()).inner_margin(4.))// to set inner margins to 0.
             .show(ctx, |ui| {
                 let mut style = self.context.style.get_or_insert(DockStyle::from_egui(ui.style())).clone();
-                style.overlay.selection_color = Color32::from_rgb(92,0,87);
+                style.selection_color = Color32::from_rgb(92,0,87);
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
                 style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
                 style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
                 style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
-                style.main_surface_border_rounding.nw = 15.0;
-                style.main_surface_border_rounding.ne = 15.0;
+                style.tabs.rounding.nw = 15.0;
+                style.tabs.rounding.ne = 15.0;
+                style.tabs.text_color_active_focused = Color32::from_rgba_premultiplied(0, 254, 158, 255);
+                style.tabs.text_color_active_unfocused = Color32::from_rgba_premultiplied(0, 255, 255, 255);
+                style.tabs.text_color_unfocused = Color32::from_rgba_premultiplied(230, 230, 230, 100);
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
     
                 DockArea::new(&mut self.tree)
@@ -534,7 +488,7 @@ impl MasterTechApp{
                     .show_tab_name_on_hover(self.context.show_tab_name_on_hover)
                     .show_inside(ui, &mut self.context);
             });
-    }
+    } 
 }
 
 #[cfg(all(feature="winit", feature="compat_mode"))]
@@ -550,7 +504,7 @@ fn run_software(mut ui: impl FnMut(&Context) + 'static) {
     let ev_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title(format!("Mastertech-{}",cargo_crate_version!()).as_str())
-        .with_inner_size(LogicalSize::new(945.0, 750.0))
+        .with_inner_size(LogicalSize::new(925.0, 740.0))
         .build(&ev_loop)
         .unwrap();
 
