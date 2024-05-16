@@ -17,6 +17,7 @@ mod filesystem;
 mod handle_api;
 mod database;
 
+#[cfg(not(feature = "compat_mode"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     puffin::set_scopes_on(true);
@@ -45,6 +46,7 @@ async fn main() -> eframe::Result<()> {
     )
 }
 
+#[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let theme = CarlDark;
