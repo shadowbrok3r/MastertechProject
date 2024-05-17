@@ -1,3 +1,4 @@
+use log::info;
 use self_update::{
     self, 
     cargo_crate_version,
@@ -6,12 +7,8 @@ use self_update::{
         Update,
     }
 };
-use dotenv::var;
-
-
 
 pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Error>> {
-
     // let token = var("GITHUB_KEY").unwrap();
     let token = "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".to_string();
 
@@ -22,7 +19,7 @@ pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Err
         .build()?
         .fetch()?;
 
-    println!("{releases:#?}\n");
+    info!("{releases:#?}\n");
 
     let status = Update::configure()
         .repo_owner("shadowbrok3r")
@@ -37,7 +34,8 @@ pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Err
         .build()?
         .update()?;
 
-    println!("Update status: `{}`!", status.version());
+    info!("Update status: `{}`!", status.version());
+
     let update_status = format!("{}", status.version());
     let release_versions = format!("{releases:#?}");
     Ok((release_versions, update_status))
