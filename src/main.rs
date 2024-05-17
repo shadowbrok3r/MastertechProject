@@ -47,6 +47,7 @@ async fn main() -> eframe::Result<()> {
 }
 
 #[cfg(not(feature = "compat_mode"))]
+#[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let theme = CarlDark;
