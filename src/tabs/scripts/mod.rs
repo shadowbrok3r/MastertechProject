@@ -162,7 +162,7 @@ impl Scripts{
                     let cmd_stdout = Command::new("cmd")
                         .arg("/c ")
                         .arg(wrv_path)
-                        .arg(format!("/keycode={}", cps_keys.webroot_key))
+                        .arg(format!("/key={}", cps_keys.webroot_key))
                         .arg("/silent")
                         .creation_flags(CREATE_NO_WINDOW)
                         .spawn()?
