@@ -46,7 +46,7 @@ impl MastertechContext{
         let scripts_list  = scripts.get_scripts();
         // Collect keys and sort them
         let mut keys: Vec<&'static str> = scripts_list.keys().cloned().collect();
-        keys.sort();  // Sort the script names alphabetically
+        keys.sort_unstable();  // Sort the script names alphabetically
 
         Grid::new("scripts").min_col_width(self.widget_size).num_columns(1).min_row_height(8.0).spacing([10.0, 8.0]).show(
             ui, |ui| 
@@ -113,8 +113,8 @@ impl Scripts{
 
         m.insert("Install Webroot", install_webroot);
         m.insert("Install SAS", install_sas);
-        m.insert("Check Driver Issues", check_drivers);
-        m.insert("Running Tasks", running_tasks);
+        // m.insert("Check Driver Issues", check_drivers);
+        // m.insert("Running Tasks", running_tasks);
         m
     }
 

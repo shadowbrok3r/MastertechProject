@@ -6,7 +6,7 @@ description = "Mastertech"
 build = "build.rs"
 
 [dependencies]
-chrono = "0.4.38"
+
 eframe = { version="0.27.2", features=["persistence", "puffin", "wgpu"] } # "deadlock_detection", "callstack"
 egui_dock = "0.12.0"
 egui_extras = { version = "0.27.2", features = ["datepicker"]}
@@ -14,12 +14,10 @@ reqwest = { version = "0.12.4", features = ["json", "stream", "blocking", "cooki
 sysinfo = "0.30.12"
 tokio = { version = "1.37.0", features = ["full"] }
 serde = { version = "1.0.201", features = ["derive"] }
+chrono = "0.4.38"
 serde_json = "1.0.117"
-# catppuccin-egui = "5.1.1"
 futures-util = "0.3.30"
-bytes = "1.6.0"
 walkdir = "2.5.0"
-futures = "0.3.30"
 pollster = "0.3.0"
 crossbeam = "0.8.4"
 regex = "1.10.4"
@@ -29,7 +27,7 @@ self_update = "0.40.0"
 puffin = { version = "0.19.0", features = ["packing"] }
 puffin_egui = "0.27.0"
 uuid = { version = "1.8.0", features = ["v4"] }
-
+futures = "0.3.30"
 num-format = "0.4.4"
 fs_extra = "1.3.0"
 simplelog = "0.12.1"
@@ -37,25 +35,12 @@ log = "0.4.20"
 rayon = "1.10.0"
 quick-xml = { version="0.31.0", features = ["serialize"]}
 serde-xml-rs = "0.6.0"
-
-memmap2 = "0.9.4"
-breakpad-symbols = { version = "0.21.1" }
-minidump = { version = "0.21.1" }
-minidump-common = { version = "0.21.1" }
-minidump-processor = { version = "0.21.1", features = ["http"] }
-
 num-traits = "0.2.16"
 rfd = "0.14.1"
 tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = "0.3.14"
-linked-hash-map = "0.5.6"
-clap = { version = "4.5.4", features = ["derive"] }
-minidump-unwind = "0.21.1"
 
-egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
-egui-winit = { version = "0.27.2", optional = true, default-features = false }
-softbuffer = {version = "0.4.2", optional = true}
-skia-safe = {version = "0.73.0", optional = true}
+clap = { version = "4.5.4", features = ["derive"] }
 dotenv = "0.15.0"
 lettre = "0.11.7"
 async-trait = "0.1.80"
@@ -67,11 +52,27 @@ anyhow = "1.0.83"
 surrealdb = { version = "1.5.0", features = ["default"] }
 sha2 = { version = "0.10.8", features = ["std"] }
 wmi = "0.13.3"
-ratatui = "0.26.2"
-crossterm = "0.27.0"
-tui-term = "0.1.11"
-portable-pty = "0.8.1"
+
 quickxml_to_serde = "0.6.0"
+
+memmap2 = "0.9.4"
+breakpad-symbols = { version = "0.21.1" }
+minidump = { version = "0.21.1" }
+minidump-common = { version = "0.21.1" }
+minidump-processor = { version = "0.21.1", features = ["http"] }
+minidump-unwind = "0.21.1"
+linked-hash-map = "0.5.6"
+
+# bytes = "1.6.0"
+# catppuccin-egui = "5.1.1"
+# egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
+# egui-winit = { ver1.0.86 "0.27.2", optional = true, default-features = false }
+# softbuffer = {version = "0.4.2", optional = true}
+# skia-safe = {version = "0.73.0", optional = true}
+# portable-pty = "0.8.1"
+# ratatui = "0.26.2"
+# crossterm = "0.27.0"
+# tui-term = "0.1.11"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async_tokio"]}
@@ -86,10 +87,10 @@ openssl = { version = "0.10.64", features = ["vendored"] }
 libatasmart = "0.3.1"
 
 [features]
-default=["winit"]   # , "cpu_fix", "compat_mode"
-winit = ["dep:egui-winit"]
-compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
-cpu_fix = []
+# default=["winit"]   # , "cpu_fix", "compat_mode"
+# winit = ["dep:egui-winit"]
+# compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
+# cpu_fix = []
 
 [profile.release]
 strip = "debuginfo"
