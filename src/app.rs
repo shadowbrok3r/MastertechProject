@@ -24,9 +24,7 @@ impl MtechServer {
 
 impl eframe::App for MtechServer {
     /// Called by the frame work to save state before shutdown.
-    // fn save(&mut self, storage: &mut dyn eframe::Storage) {
-    //     eframe::set_value(storage, eframe::APP_KEY, self);
-    // }
+    // fn save(&mut self, storage: &mut dyn eframe::Storage) { eframe::set_value(storage, eframe::APP_KEY, self); }
 
     /// Called each time the UI needs repainting, which may be many times per second.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -40,6 +38,15 @@ impl eframe::App for MtechServer {
         custom_style.override_font_id = Some(font);
         custom_style.spacing.combo_height = 60.0; 
         custom_style.spacing.combo_width = 135.0;
+        custom_style.interaction.multi_widget_text_select = false;
+        custom_style.interaction.selectable_labels = false;
+        custom_style.explanation_tooltips = false;
+        custom_style.url_in_tooltip = false;
+        custom_style.debug.debug_on_hover = true;
+        custom_style.debug.show_widget_hits = true;
+        custom_style.debug.hover_shows_next = true;
+        // custom_style.debug.debug_on_hover_with_all_modifiers = true;
+        
         let arc_style = Arc::new(custom_style);
         ctx.set_style(arc_style);
         
@@ -59,7 +66,7 @@ impl eframe::App for MtechServer {
                     ui.add_space(16.0);
                 }
                 ui.add(Button::new("MasterTech Server"));
-                egui::widgets::global_dark_light_mode_buttons(ui);
+                // egui::widgets::global_dark_light_mode_buttons(ui);
 
                 ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
                     ui.add(Button::new("Tasks").fill(Color32::from_rgb_additive(255, 12, 180)));
@@ -106,11 +113,13 @@ impl eframe::App for MtechServer {
                 });
             })
         });
-    
+        
         CentralPanel::default() // When displaying a DockArea in another UI, it looks better
             .frame(Frame::central_panel(&ctx.style()).inner_margin(4.)) // to set inner margins to 0.
             .show(ctx, |ui| {
-                let mut style = self.context.style.get_or_insert(DockStyle::from_egui(ui.style())).clone();
+                self.context.terminal(ui);
+                let dock_style = DockStyle::from_egui(ui.style());
+                let mut style = self.context.style.get_or_insert(dock_style).clone();
                 style.overlay.selection_color = Color32::from_rgb(92,0,87);
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
                 style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
@@ -119,8 +128,9 @@ impl eframe::App for MtechServer {
                 style.main_surface_border_rounding.nw = 15.0;
                 style.main_surface_border_rounding.ne = 15.0;
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
-    
+                
                 DockArea::new(&mut self.tree)
+                    .show_tab_name_on_hover(false)
                     .style(style)
                     .show_close_buttons(self.context.show_close_buttons)
                     .show_add_buttons(self.context.show_add_buttons)
