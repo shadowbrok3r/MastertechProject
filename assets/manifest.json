@@ -1,6 +1,6 @@
 {
   "name": "mtechserver PWA",
-  "short_name": "egui-template-pwa",
+  "short_name": "mtechserver-pwa",
   "icons": [
     {
       "src": "./icon-256.png",
