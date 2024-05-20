@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use egui::{Ui, WidgetText};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-
+use ratatui::Terminal;
+use ratframe::RataguiBackend;
 
 
 pub struct MtechServerContext{
@@ -12,7 +13,7 @@ pub struct MtechServerContext{
     pub show_add_buttons: bool,
     pub draggable_tabs: bool,
     pub show_tab_name_on_hover: bool,
-
+    pub terminal: Terminal<RataguiBackend>,
     
 }
 
@@ -21,6 +22,8 @@ pub struct MtechServer {
     pub tree: DockState<String>,
 }
 
+
+
 impl TabViewer for MtechServerContext {
     type Tab = String;
 
@@ -28,6 +31,7 @@ impl TabViewer for MtechServerContext {
 
         match tab.as_str() {
             "Lil menu" => self.simple_demo_menu(ui),
+            "Terminal" => self.terminal(ui),
             _ => { } 
         }
     }
@@ -91,9 +95,7 @@ impl Default for MtechServer{
                 NodeIndex::root(),
                 0.65, 
                 vec![
-                    "Console".to_owned(),
-                    "Tasks".to_owned(),
-                    "Websocket Stuffs".to_owned()
+                    "Terminal".to_owned(),
             ]
         );
 
@@ -114,7 +116,6 @@ impl Default for MtechServer{
         );
 
 
-
         let mut open_tabs = HashSet::new();
 
         for node in tree[SurfaceIndex::main()].iter() {
@@ -124,6 +125,13 @@ impl Default for MtechServer{
                 }
             }
         }
+        
+        let mut fonts = egui::FontDefinitions::default();
+            let x = fonts.families;
+        let terminal = Terminal::new(
+            RataguiBackend::new_with_fonts(5, 5)
+        ).unwrap();
+
         let context = MtechServerContext{
             open_tabs,
             style: None,
@@ -131,6 +139,7 @@ impl Default for MtechServer{
             show_add_buttons: true,
             draggable_tabs: true,
             show_tab_name_on_hover: false,
+            terminal
         };
         
         Self {
