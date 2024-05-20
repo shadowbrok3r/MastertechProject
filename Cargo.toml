@@ -6,11 +6,11 @@ description = "Mastertech"
 build = "build.rs"
 
 [dependencies]
-
+wasm-bindgen = "0.2.92"
 eframe = { version="0.27.2", features=["persistence", "puffin", "wgpu"] } # "deadlock_detection", "callstack"
 egui_dock = "0.12.0"
 egui_extras = { version = "0.27.2", features = ["datepicker"]}
-reqwest = { version = "0.12.4", features = ["json", "stream", "blocking", "cookies"] }
+reqwest = { version = "0.12.4", features = ["json", "stream", "cookies"] } # "blocking",
 sysinfo = "0.30.12"
 tokio = { version = "1.37.0", features = ["full"] }
 serde = { version = "1.0.201", features = ["derive"] }
@@ -39,7 +39,7 @@ num-traits = "0.2.16"
 rfd = "0.14.1"
 tracing = { version = "0.1.37", features = ["log"] }
 tracing-subscriber = "0.3.14"
-
+rust-embed="8.4.0"
 clap = { version = "4.5.4", features = ["derive"] }
 dotenv = "0.15.0"
 lettre = "0.11.7"
@@ -82,11 +82,12 @@ name = "file_copy_benchmark"
 harness = false
 
 
-[target.'cfg(target_os = "linux")'.dependencies]
+# [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10.64", features = ["vendored"] }
-libatasmart = "0.3.1"
+openssl-sys = "0.9"
+# libatasmart = "0.3.1"
 
-[features]
+# [features]
 # default=["winit"]   # , "cpu_fix", "compat_mode"
 # winit = ["dep:egui-winit"]
 # compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
