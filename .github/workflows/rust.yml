@@ -12,7 +12,7 @@ env:
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
@@ -27,7 +27,7 @@ jobs:
 
   check_wasm:
     name: Check wasm32
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
@@ -43,7 +43,7 @@ jobs:
 
   test:
     name: Test Suite
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
@@ -59,7 +59,7 @@ jobs:
 
   fmt:
     name: Rustfmt
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
@@ -75,7 +75,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
@@ -91,13 +91,13 @@ jobs:
 
   trunk:
     name: trunk
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: 1.76.0
+          toolchain: 1.78.0
           target: wasm32-unknown-unknown
           override: true
       - name: Download and install Trunk binary
@@ -152,16 +152,16 @@ jobs:
 
     - uses: actions/upload-artifact@master
       with:
-        name: eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-        path: eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+        name: mtechserver-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+        path: mtechserver-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
 
     - uses: svenstaro/upload-release-action@v2
       name: Upload binaries to release
       if: ${{ github.event_name == 'push' }}
       with:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
-        file: eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
-        asset_name: eframe_template-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+        file: mtechserver-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
+        asset_name: mtechserver-${{ matrix.TARGET }}${{ matrix.EXTENSION }}
         tag: ${{ github.ref }}
         prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
         overwrite: true
