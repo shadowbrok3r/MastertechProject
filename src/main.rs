@@ -1,11 +1,14 @@
 use app_state::MtechServer;
+use database::Database;
 // use mtechserver_two::MtechServer;
 use ratframe::NewCC;
+use wasm_bindgen_futures::spawn_local;
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{Button, CentralPanel, Color32, FontId, Frame, Layout, Style, TopBottomPanel, Vec2};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use egui_dock::{DockArea, Style as DockStyle};
+use log::{LevelFilter, debug, info};
 
 pub mod tabs;
 pub mod app_state;
@@ -16,14 +19,15 @@ pub mod database;
 #[cfg(target_arch = "wasm32")]
 fn main() {
     // Redirect `log` message to `console.log` and friends:
-    // eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+    eframe::WebLogger::init(LevelFilter::Debug).ok();
+
 
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async {
         eframe::WebRunner::new()
             .start(
-                "the_canvas_id", // hardcode it
+                "mtech_canvas", // hardcode it
                 web_options,
                 Box::new(|cc| Box::new(MtechServer::new(cc))),
             )
@@ -65,7 +69,7 @@ impl NewCC for MtechServer {
         MtechServer::default()
     }
     
-    fn canvas_id() -> String { "the_canvas_id".into() }
+    fn canvas_id() -> String { "mtech_canvas".into() }
 }
 
 impl eframe::App for MtechServer {
@@ -91,13 +95,64 @@ impl eframe::App for MtechServer {
         let arc_style = Arc::new(custom_style);
         ctx.set_style(arc_style);
         
-        let timeout: web_time::Duration = self.context.tick_rate.saturating_sub(self.context.last_tick.elapsed());
+        // let timeout: web_time::Duration = self.context.tick_rate.saturating_sub(self.context.last_tick.elapsed());
 
         if self.context.last_tick.elapsed() >= self.context.tick_rate {
             self.context.chart_app.on_tick();
             self.context.last_tick = Instant::now();
         }
 
+
+
+        if self.context.first_run{
+            self.context.first_run = false;
+            let db_tx = self.context.db_tx.clone();
+
+            egui::Window::new("load_database_spin")
+                .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
+                .title_bar(false)
+                .enabled(false)
+                .auto_sized()
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Loading Database");
+                    })
+                });
+            
+            info!("First run / Spawning local to get database");
+
+            spawn_local(async move {
+                let database = Database::new().await;
+                match db_tx.send(database){
+                    Ok(_) => debug!("Sent db connection across thread"),
+                    Err(err) => debug!("Error sending db connection: {err:?}"),
+                }
+            });
+        }
+
+        
+        if let Ok(db) = self.context.db_rx.try_recv(){
+            debug!("Received DB connection from thread");
+            self.context.database = Some(db);
+            let db = self.context.database.clone();
+            let db_data_tx = self.context.db_data_tx.clone();
+            spawn_local(async move {
+                if let Some(db) = db{
+                    let task_data = db.query("SELECT * FROM task").await.unwrap();
+                    
+                    match db_data_tx.send(task_data){
+                        Ok(_) => debug!("Sent task data"),
+                        Err(err) => debug!("Send error: {:?}", err.to_string()),
+                    }
+                }
+            });
+        }
+
+        if let Ok(data) = self.context.db_data_rx.try_recv(){
+            debug!("Received TaskPayload from thread");
+            self.context.task_data = Some(data);
+        }
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
@@ -137,7 +192,7 @@ impl eframe::App for MtechServer {
                     for tab in &[
                         &"Tasks".to_string(),
                         &"My Tasks".to_string(),
-                        &"Console".to_string(),
+                        &"Terminal".to_string(),
                         &"Web Console".to_string()
                     ] {
                         if ui
@@ -172,13 +227,11 @@ impl eframe::App for MtechServer {
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
                 
                 DockArea::new(&mut self.tree)
-                    .show_tab_name_on_hover(false)
                     .style(style)
-                    .show_close_buttons(self.context.show_close_buttons)
-                    .show_add_buttons(self.context.show_add_buttons)
+                    .show_close_buttons(true)
+                    .show_add_buttons(true)
                     .show_add_popup(true)
-                    .draggable_tabs(self.context.draggable_tabs)
-                    .show_tab_name_on_hover(self.context.show_tab_name_on_hover)
+                    .draggable_tabs(true)
                     .show_inside(ui, &mut self.context);
             });
     }

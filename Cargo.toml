@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 egui ={ version="0.27.2", features = []} # "callstack", "log"
 wasm-bindgen = "0.2.92"
-eframe = { version="0.27.2", features=["wgpu"] }
+eframe = { version="0.27.2", default-features = false, features=["wgpu"] }
 egui_extras = { version = "0.27.2", features = ["datepicker"]}
 egui-aesthetix = { version = "0.2.3", features = ["carl"] }
 surrealdb = { version = "1.5.0", features = ["default"] }
@@ -17,6 +17,9 @@ serde = { version = "1", features = ["derive"] }
 ratframe = "1.1.4"
 ratatui = { version = "0.26.3", default-features = false }
 web-time = "1.1.0"
+wasm-bindgen-futures = "0.4"
+crossbeam = "0.8.4"
+console_error_panic_hook = "0.1.7"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
