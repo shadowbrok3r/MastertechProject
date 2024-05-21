@@ -1,9 +1,16 @@
 use std::collections::HashSet;
-
 use egui::{Ui, WidgetText};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use ratatui::Terminal;
 use ratframe::RataguiBackend;
+use web_time::{Duration, Instant};
+
+use crate::tabs::terminal::chart::App;
+
+pub struct MtechServer {
+    pub context: MtechServerContext,
+    pub tree: DockState<String>,
+}
 
 
 pub struct MtechServerContext{
@@ -14,14 +21,10 @@ pub struct MtechServerContext{
     pub draggable_tabs: bool,
     pub show_tab_name_on_hover: bool,
     pub terminal: Terminal<RataguiBackend>,
-    
+    pub chart_app: App,
+    pub tick_rate: Duration,
+    pub last_tick: Instant
 }
-
-pub struct MtechServer {
-    pub context: MtechServerContext,
-    pub tree: DockState<String>,
-}
-
 
 
 impl TabViewer for MtechServerContext {
@@ -126,11 +129,21 @@ impl Default for MtechServer{
             }
         }
         
-        let mut fonts = egui::FontDefinitions::default();
-            let x = fonts.families;
-        let terminal = Terminal::new(
-            RataguiBackend::new_with_fonts(5, 5)
-        ).unwrap();
+        
+        let backend = RataguiBackend::new_with_fonts(
+            10,
+            10,
+            "Regular".into(),
+            "Bold".into(),
+            "Oblique".into(),
+            "BoldOblique".into(),
+        );
+
+        
+        let terminal = Terminal::new(backend).unwrap();
+        let tick_rate = Duration::from_millis(30);
+        let chart_app = App::new();
+        let mut last_tick = Instant::now();
 
         let context = MtechServerContext{
             open_tabs,
@@ -139,7 +152,10 @@ impl Default for MtechServer{
             show_add_buttons: true,
             draggable_tabs: true,
             show_tab_name_on_hover: false,
-            terminal
+            terminal,
+            chart_app,
+            tick_rate,
+            last_tick
         };
         
         Self {
@@ -148,3 +164,4 @@ impl Default for MtechServer{
         }
     }
 }
+

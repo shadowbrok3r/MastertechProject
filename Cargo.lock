@@ -3046,6 +3046,7 @@ dependencies = [
  "surrealdb",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-time 1.1.0",
 ]
 
 [[package]]
