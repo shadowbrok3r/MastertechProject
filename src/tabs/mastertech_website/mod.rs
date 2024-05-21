@@ -42,7 +42,7 @@ impl MastertechContext {
 
         if let Some(tasks) = &self.ticket_data{
             let task_layout = TaskLayout::default();
-            let _ = task_layout.task_card(tasks.to_vec(), ui);
+            let _ = task_layout.task_card(tasks, ui);
         }
     }
 }
