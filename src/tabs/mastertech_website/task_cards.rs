@@ -18,7 +18,7 @@ impl Default for TaskLayout{
 impl TaskLayout{
     pub fn new(selected: bool) -> Self { Self { selected } }
 
-    pub fn task_card(&self, task_data: Vec<TaskPayload>, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error> {
+    pub fn task_card(&self, task_data: &Vec<TaskPayload>, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error> {
     
         TableBuilder::new(ui)
             .column(Column::remainder().resizable(true))
