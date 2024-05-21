@@ -9,6 +9,8 @@ use egui_dock::{DockArea, Style as DockStyle};
 
 pub mod tabs;
 pub mod app_state;
+pub mod utilities;
+pub mod database;
 
 // When compiling to web using trunk:
 #[cfg(target_arch = "wasm32")]
@@ -133,15 +135,10 @@ impl eframe::App for MtechServer {
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
                     for tab in &[
-                        &"TUR Sheet".to_string(),
-                        &"Scripts".to_string(),
-                        &"Console".to_string(),
-                        &"System Information".to_string(),
-                        &"File Browser 📂".to_string(),
-                        &"Minidump Analysis".to_string(),
-                        &"Profiler".to_string(),
-                        &"QC".to_string(),
                         &"Tasks".to_string(),
+                        &"My Tasks".to_string(),
+                        &"Console".to_string(),
+                        &"Web Console".to_string()
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)

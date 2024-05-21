@@ -35,13 +35,16 @@ impl TabViewer for MtechServerContext {
         match tab.as_str() {
             "Lil menu" => self.simple_demo_menu(ui),
             "Terminal" => self.terminal(ui),
+            "Tasks" => self.tasks(ui),
+            // "My Tasks" => self.my_tasks(ui),
+            "Web Console" => self.web_console(ui),
             _ => { } 
         }
     }
 
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
         match tab.as_str() {
-            "TUR Sheet" => self.simple_demo_menu(ui),
+            "My Tasks" => self.simple_demo_menu(ui),
             _ => {
                 ui.label(tab.to_string());
                 ui.label("This is a context menu");
@@ -76,7 +79,7 @@ impl Default for MtechServer{
     fn default() -> Self {
         let mut tree = DockState::new(
             vec![
-                "Lil menu".to_owned(),
+                "Tasks".to_owned(),
             ]
         );
 
@@ -89,7 +92,7 @@ impl Default for MtechServer{
                 NodeIndex::root(),
                 0.30, 
                 vec![
-                    "File Browser 📂".to_owned(),
+                    "My Tasks".to_owned(),
         ]);
 
         let [_a, b] = tree
@@ -107,16 +110,16 @@ impl Default for MtechServer{
             .split_left(
             b,
             0.45,
-            vec!["System Information".to_owned()],
+            vec!["Web Console".to_owned()],
         );
 
-        let [_, _] = tree
-            .main_surface_mut()
-            .split_left(
-            b,
-            0.20,
-            vec!["Scripts".to_owned()],
-        );
+        // let [_, _] = tree
+        //     .main_surface_mut()
+        //     .split_left(
+        //     b,
+        //     0.20,
+        //     vec!["Scripts".to_owned()],
+        // );
 
 
         let mut open_tabs = HashSet::new();
