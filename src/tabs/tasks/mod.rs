@@ -1,13 +1,9 @@
-pub mod terminal;
-pub mod web_console;
-pub mod tasks;
-pub mod my_tasks;
 
 use egui::Ui;
-use super::app_state::MtechServerContext;
+use crate::app_state::MtechServerContext;
 
 impl MtechServerContext{
-    pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
+    pub fn tasks(&mut self, ui: &mut Ui) {
         if ui.button("Open...").clicked() {
             ui.close_menu();
         }
