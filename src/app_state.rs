@@ -1,11 +1,13 @@
 use std::collections::HashSet;
+use crossbeam::channel::{self, Receiver, Sender};
 use egui::{Ui, WidgetText};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use ratatui::Terminal;
 use ratframe::RataguiBackend;
+use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 
-use crate::tabs::terminal::chart::App;
+use crate::{database::{schema::TaskPayload, Database}, tabs::terminal::chart::App};
 
 pub struct MtechServer {
     pub context: MtechServerContext,
@@ -14,16 +16,38 @@ pub struct MtechServer {
 
 
 pub struct MtechServerContext{
+    /// collection of all open tabs in ui
     pub open_tabs: HashSet<String>,
+    /// egui dock styling
     pub style: Option<egui_dock::Style>,
-    pub show_close_buttons: bool,
-    pub show_add_buttons: bool,
-    pub draggable_tabs: bool,
-    pub show_tab_name_on_hover: bool,
+
+
+    // pub client: reqwest::Client,
+
+    /// Terminal setup for console tab
     pub terminal: Terminal<RataguiBackend>,
+    /// example chart for console tab
     pub chart_app: App,
+    /// update period for chart
     pub tick_rate: Duration,
-    pub last_tick: Instant
+    /// last tick of example chart
+    pub last_tick: Instant,
+
+    ///Gets data from the first run of the main loop
+    pub first_run: bool,
+    
+    /// Database connection
+    pub database: Option<Database>,
+    /// All contained task data from database
+    pub task_data: Option<Vec<TaskPayload>>,
+    /// Receives task data over crossbeam channel
+    pub db_data_rx: Receiver<Vec<TaskPayload>>,
+    /// Sends task data over crossbeam channel
+    pub db_data_tx: Sender<Vec<TaskPayload>>,
+    /// Receives Database connection over crossbeam channel
+    pub db_rx: Receiver<Database>,
+    /// Sends Database connection over crossbeam channel
+    pub db_tx: Sender<Database>,
 }
 
 
@@ -36,7 +60,7 @@ impl TabViewer for MtechServerContext {
             "Lil menu" => self.simple_demo_menu(ui),
             "Terminal" => self.terminal(ui),
             "Tasks" => self.tasks(ui),
-            // "My Tasks" => self.my_tasks(ui),
+            "My Tasks" => self.my_tasks(ui),
             "Web Console" => self.web_console(ui),
             _ => { } 
         }
@@ -79,7 +103,7 @@ impl Default for MtechServer{
     fn default() -> Self {
         let mut tree = DockState::new(
             vec![
-                "Tasks".to_owned(),
+                "My Tasks".to_owned(),
             ]
         );
 
@@ -90,9 +114,9 @@ impl Default for MtechServer{
             .main_surface_mut()
             .split_left(
                 NodeIndex::root(),
-                0.30, 
+                0.10, 
                 vec![
-                    "My Tasks".to_owned(),
+                    "Tasks".to_owned(),
         ]);
 
         let [_a, b] = tree
@@ -148,17 +172,27 @@ impl Default for MtechServer{
         let chart_app = App::new();
         let mut last_tick = Instant::now();
 
+
+        let (db_tx, db_rx) = channel::unbounded();
+        let (db_data_tx, db_data_rx) = channel::unbounded::<Vec<TaskPayload>>();
+
+
         let context = MtechServerContext{
             open_tabs,
             style: None,
-            show_close_buttons: true,
-            show_add_buttons: true,
-            draggable_tabs: true,
-            show_tab_name_on_hover: false,
+            
             terminal,
             chart_app,
             tick_rate,
-            last_tick
+            last_tick,
+
+            first_run: true,
+            database: None,
+            task_data: None,
+            db_tx, 
+            db_rx,
+            db_data_tx, 
+            db_data_rx
         };
         
         Self {

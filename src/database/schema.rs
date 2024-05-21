@@ -1,9 +1,11 @@
-#[allow(dead_code)]
+// use std::fmt::Display;
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
+
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
 pub const USER_SCOPE: &str = "user";
+
 pub const TICKET_TABLE: &str = "service_order";
 pub const CUSTOMER_TABLE: &str = "customer";
 pub const COMPUTER_TABLE: &str = "computer";
@@ -50,7 +52,13 @@ pub struct RecordResult {
     pub record: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RecordSuccess{
+    pub success: bool
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
@@ -62,7 +70,7 @@ pub struct TaskPayload{
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<i32>,
     pub due_date: String, // optional because if not provided, set due date to creation date
-    pub priority: Option<i32>,
+    pub priority: Option<Priority>,
     pub task_note: Option<Vec<TaskNoteId>>,
     pub completed: bool,
     pub status: Status,
@@ -101,12 +109,13 @@ pub struct TicketData{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
-    pub cust_code: i32,
+    pub part_order_links: Option<Vec<String>>,
     pub computers: Option<Vec<ComputerId>>,
     pub services: Option<Vec<TicketId>>,
+    pub cust_code: i32,
     pub name: String,
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>
@@ -116,7 +125,7 @@ pub struct CustomerData{
     pub num_inv: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ComputerData{
     pub id: Option<ComputerId>,
     pub customer: Option<CustomerId>,
@@ -171,25 +180,12 @@ pub struct ExtendedSeb {
     pub date_created: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct DriveData{
     pub drive_letter: String,
     pub drive_type: String,
     pub total_size: String,
     pub space_left: String,
-}
-
-impl ComputerData{
-    pub fn new() -> Self{
-        ComputerData{
-            drives: Vec::new(),
-            ..Default::default()
-        }
-    }
-
-    pub fn add_disk(&mut self, disk: DriveData){
-        self.drives.push(disk);
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -216,7 +212,7 @@ pub struct ModifyTask{
     /// ability to change store
     // pub dep: Option<String>, 
     /// change priority
-    pub priority: Option<i32>, 
+    pub priority: Option<Priority>, 
     /// change which status task is part of
     pub status: Option<Status>, 
     /// change completed / incomplete
@@ -276,6 +272,15 @@ pub enum Status{
     Todo,
     InRepair,
     Complete
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum Priority{
+    Express,
+    Rfs,
+    CustomerFire,
+    Qc,
+    Normal,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
