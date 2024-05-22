@@ -58,20 +58,6 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-impl NewCC for MtechServer {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        setup_custom_fonts(&cc.egui_ctx);
-        // Load previous app state (if any).
-        // Note that you must enable the `persistence` feature for this to work.
-        // if let Some(storage) = cc.storage {
-        //     return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
-        // }
-        MtechServer::default()
-    }
-    
-    fn canvas_id() -> String { "mtech_canvas".into() }
-}
-
 impl eframe::App for MtechServer {
     /// Called by the frame work to save state before shutdown.
     // fn save(&mut self, storage: &mut dyn eframe::Storage) { eframe::set_value(storage, eframe::APP_KEY, self); }
@@ -95,6 +81,11 @@ impl eframe::App for MtechServer {
         let arc_style = Arc::new(custom_style);
         ctx.set_style(arc_style);
         
+        let data_update = self.context.data_update.as_mut().unwrap();
+        if let Some(update) = data_update.take() {
+            log::debug!("Received update: {update:?}")
+        }
+
         // let timeout: web_time::Duration = self.context.tick_rate.saturating_sub(self.context.last_tick.elapsed());
 
         if self.context.last_tick.elapsed() >= self.context.tick_rate {
@@ -238,49 +229,3 @@ impl eframe::App for MtechServer {
 }
 
 
-fn setup_custom_fonts(ctx: &egui::Context) {
-    // Start with the default fonts (we will be adding to them rather than replacing them).
-    let mut fonts = egui::FontDefinitions::default();
-
-    // Install my own font (maybe supporting non-latin characters).
-    // .ttf and .otf files supported.
-    fonts.font_data.insert(
-        "Regular".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Regular.ttf")),
-    );
-    fonts.families.insert(
-        egui::FontFamily::Name("Regular".into()),
-        vec!["Regular".to_owned()],
-    );
-    fonts.font_data.insert(
-        "Bold".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Bold.ttf")),
-    );
-    fonts.families.insert(
-        egui::FontFamily::Name("Bold".into()),
-        vec!["Bold".to_owned()],
-    );
-
-    fonts.font_data.insert(
-        "Oblique".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Oblique.ttf")),
-    );
-    fonts.families.insert(
-        egui::FontFamily::Name("Oblique".into()),
-        vec!["Oblique".to_owned()],
-    );
-
-    fonts.font_data.insert(
-        "BoldOblique".to_owned(),
-        egui::FontData::from_static(include_bytes!(
-            "../assets/fonts/Iosevka-BoldOblique.ttf"
-        )),
-    );
-    fonts.families.insert(
-        egui::FontFamily::Name("BoldOblique".into()),
-        vec!["BoldOblique".to_owned()],
-    );
-
-    // Tell egui to use these fonts:
-    ctx.set_fonts(fonts);
-}
