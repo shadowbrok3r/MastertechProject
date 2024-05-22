@@ -1,3 +1,5 @@
+use std::default;
+
 // use std::fmt::Display;
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
@@ -267,19 +269,20 @@ pub struct ModifyNotification{
     pub archive: Option<bool>
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Status{
     Todo,
     InRepair,
     Complete
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub enum Priority{
     Express,
     Rfs,
     CustomerFire,
     Qc,
+    #[default]
     Normal,
 }
 

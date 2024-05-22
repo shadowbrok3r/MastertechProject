@@ -1,8 +1,8 @@
 use eframe::egui::{RichText, Ui,};
-use egui::{vec2, Button, Color32, Layout, Margin, Pos2, Rect, Rounding, Sense, Slider, Stroke, Vec2};
+use egui::{vec2, Button, Color32, ComboBox, Id, Layout, Margin, Pos2, Rect, Rounding, Sense, Slider, Stroke, Vec2};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 
-use crate::database::schema::TaskPayload;
+use crate::database::schema::{Priority, Status, TaskPayload};
 
 pub struct TaskLayout{
     selected: bool
@@ -88,6 +88,8 @@ impl BoxPainting {
         // let layout = ui.layout();
         // layout.with_main_wrap(main_wrap)
         ui.vertical(|ui| {
+            let clip = ui.clip_rect();
+            ui.set_clip_rect(clip);
             for task_data in tasks {
 
                 egui::Frame::default()
@@ -114,7 +116,37 @@ impl BoxPainting {
                                     .size(Size::relative(0.2))
                                     .size(Size::remainder())
                                     .size(Size::relative(0.2))
-                                    .horizontal( |mut s| {
+                                    .horizontal( |mut s| 
+                                {
+                                        s.cell(|ui|{
+                                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                                ui.add_sized(ui.available_size(), Button::new(&task_data.assignee_initials.clone().unwrap_or("".to_string())).fill(Color32::DARK_BLUE));
+
+                                            });
+                                        });
+                                        s.cell(|ui|{
+                                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                                ui.label(egui::RichText::new(&task_data.task_name).color(egui::Color32::WHITE));
+                                            });
+                                        });
+                                        s.cell(|ui|{
+                                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                                ui.add_sized(ui.available_size(), Button::new("✖️").fill(Color32::RED));
+                                            });
+                                        });
+                                });
+                            });
+
+                            strip.strip(|strip| {
+                                strip
+                                    .cell_layout(Layout::left_to_right(egui::Align::Min))
+                                    .cell_layout(Layout::left_to_right(egui::Align::Center))
+                                    .cell_layout(Layout::left_to_right(egui::Align::Max))
+                                    .size(Size::relative(0.2))
+                                    .size(Size::remainder())
+                                    .size(Size::relative(0.2))
+                                    .horizontal( |mut s| 
+                                {
                                         s.cell(|ui|{
                                             ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
                                                 ui.add_sized(ui.available_size(), Button::new(&task_data.assignee_initials.clone().unwrap_or("".to_string())).fill(Color32::DARK_BLUE));
@@ -130,17 +162,52 @@ impl BoxPainting {
                                                 ui.add_sized(ui.available_size(), Button::new("✖️").fill(Color32::RED));
                                             });
                                         });
-                                    });
-                            });
-
-                            strip.cell(|ui| {
-                                ui.with_layout(Layout::default().with_main_align(egui::Align::Min), |ui| {
-                                    ui.add_sized(ui.available_size(), Button::new("test").fill(Color32::GREEN));
                                 });
                             });
-                            strip.cell(|ui| {
-                                ui.with_layout(Layout::default().with_main_align(egui::Align::Min), |ui| {
-                                    // ui.add_sized(ui.available_size(), Button::new("test").fill(Color32::GOLD));
+                            strip.strip(|strip| {
+                                strip
+                                    .cell_layout(Layout::left_to_right(egui::Align::Min))
+                                    .cell_layout(Layout::left_to_right(egui::Align::Center))
+                                    .cell_layout(Layout::left_to_right(egui::Align::Max))
+                                    .size(Size::relative(0.2))
+                                    .size(Size::remainder())
+                                    .size(Size::relative(0.2))
+                                    .horizontal( |mut s| 
+                                {
+                                        s.cell(|ui|{
+                                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                                ui.add_sized(ui.available_size(), Button::new(&task_data.due_date).fill(Color32::DARK_BLUE));
+                                            });
+                                        });
+                                        s.cell(|ui|{
+                                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                                let mut priority = Priority::Normal;
+                                                ComboBox::new(Id::new(&task_data.id.clone().unwrap().0.id), "")
+                                                    .selected_text(format!("{:?}", &task_data.priority.clone().unwrap_or_default()))
+                                                    .show_ui(ui, |ui| 
+                                                {
+                                                    ui.selectable_value(&mut priority, Priority::Normal, "Normal");
+                                                    ui.selectable_value(&mut priority, Priority::Rfs, "Rfs");
+                                                    ui.selectable_value(&mut priority, Priority::Qc, "Qc");
+                                                    ui.selectable_value(&mut priority, Priority::Express, "Express");
+                                                    ui.selectable_value(&mut priority, Priority::CustomerFire, "CustomerFire");
+                                                });
+                                            });
+                                        });
+                                        s.cell(|ui|{
+                                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                                let mut status = Status::Todo;
+                                                ComboBox::new(Id::new(&task_data.id.clone().unwrap().0.id), "")
+                                                    .selected_text(format!("{:?}", &task_data.status))
+                                                    .show_ui(ui, |ui| 
+                                                {
+                                                    ui.selectable_value(&mut status, Status::Todo, "Todo");
+                                                    ui.selectable_value(&mut status, Status::InRepair, "In Repair");
+                                                    ui.selectable_value(&mut status, Status::Complete, "Complete");
+                                                
+                                                });
+                                            });
+                                        });
                                 });
                             });
                     });
