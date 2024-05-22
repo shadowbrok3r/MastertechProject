@@ -1,13 +1,14 @@
-use std::collections::HashSet;
+use std::{cell::Cell, collections::HashSet, rc::Rc};
 use crossbeam::channel::{self, Receiver, Sender};
 use egui::{Ui, WidgetText};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
+use gloo_worker::Spawnable;
 use ratatui::Terminal;
-use ratframe::RataguiBackend;
+use ratframe::{NewCC, RataguiBackend};
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-
 use crate::{database::{schema::TaskPayload, Database}, tabs::terminal::chart::App};
+use mtechserver_two::webworker::WebWorker;
 
 pub struct MtechServer {
     pub context: MtechServerContext,
@@ -20,8 +21,6 @@ pub struct MtechServerContext{
     pub open_tabs: HashSet<String>,
     /// egui dock styling
     pub style: Option<egui_dock::Style>,
-
-
     // pub client: reqwest::Client,
 
     /// Terminal setup for console tab
@@ -48,6 +47,10 @@ pub struct MtechServerContext{
     pub db_rx: Receiver<Database>,
     /// Sends Database connection over crossbeam channel
     pub db_tx: Sender<Database>,
+
+    pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
+    
+    pub data_update: Option<Rc<Cell<Option<u32>>>>,
 }
 
 
@@ -99,8 +102,14 @@ impl TabViewer for MtechServerContext {
 
 }
 
-impl Default for MtechServer{
-    fn default() -> Self {
+// impl MtechServer{
+//     fn new(cc: &eframe::CreationContext<'_>) -> Self {}
+// }
+
+
+impl NewCC for MtechServer {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+
         let mut tree = DockState::new(
             vec![
                 "My Tasks".to_owned(),
@@ -176,6 +185,17 @@ impl Default for MtechServer{
         let (db_tx, db_rx) = channel::unbounded();
         let (db_data_tx, db_data_rx) = channel::unbounded::<Vec<TaskPayload>>();
 
+        let ctx = cc.egui_ctx.clone();
+        let data_update = Rc::new(std::cell::Cell::new(None));
+        let sender = data_update.clone();
+        let bridge = <WebWorker as Spawnable>::spawner()
+            .callback(move |response| {
+                sender.set(Some(response.0));
+                ctx.request_repaint();
+            })
+            .spawn("./dummy_worker.js");
+
+        setup_custom_fonts(&cc.egui_ctx);
 
         let context = MtechServerContext{
             open_tabs,
@@ -192,7 +212,10 @@ impl Default for MtechServer{
             db_tx, 
             db_rx,
             db_data_tx, 
-            db_data_rx
+            db_data_rx,
+
+            bridge: Some(bridge),
+            data_update: Some(data_update),
         };
         
         Self {
@@ -200,5 +223,58 @@ impl Default for MtechServer{
             tree,
         }
     }
+        // Load app state. Note that you must enable the `persistence` feature for this to work.
+        // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
+        
+        // MtechServer::new(cc)
+    // }
+    
+    fn canvas_id() -> String { "mtech_canvas".into() }
 }
 
+fn setup_custom_fonts(ctx: &egui::Context) {
+    // Start with the default fonts (we will be adding to them rather than replacing them).
+    let mut fonts = egui::FontDefinitions::default();
+
+    // Install my own font (maybe supporting non-latin characters).
+    // .ttf and .otf files supported.
+    fonts.font_data.insert(
+        "Regular".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Regular.ttf")),
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("Regular".into()),
+        vec!["Regular".to_owned()],
+    );
+    fonts.font_data.insert(
+        "Bold".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Bold.ttf")),
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("Bold".into()),
+        vec!["Bold".to_owned()],
+    );
+
+    fonts.font_data.insert(
+        "Oblique".to_owned(),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Oblique.ttf")),
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("Oblique".into()),
+        vec!["Oblique".to_owned()],
+    );
+
+    fonts.font_data.insert(
+        "BoldOblique".to_owned(),
+        egui::FontData::from_static(include_bytes!(
+            "../assets/fonts/Iosevka-BoldOblique.ttf"
+        )),
+    );
+    fonts.families.insert(
+        egui::FontFamily::Name("BoldOblique".into()),
+        vec!["BoldOblique".to_owned()],
+    );
+
+    // Tell egui to use these fonts:
+    ctx.set_fonts(fonts);
+}

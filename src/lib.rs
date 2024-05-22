@@ -1,3 +1,5 @@
+pub mod webworker;
+
 // use wasm_bindgen::JsValue;
 // use wasm_bindgen::prelude::wasm_bindgen;
 
