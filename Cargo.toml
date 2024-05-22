@@ -7,7 +7,7 @@ edition = "2021"
 egui ={ version="0.27.2", features = []} # "callstack", "log"
 wasm-bindgen = "0.2.92"
 eframe = { version="0.27.2", default-features = false, features=["wgpu"] }
-egui_extras = { version = "0.27.2", features = ["datepicker"]}
+egui_extras = { version = "0.27.2" }
 egui-aesthetix = { version = "0.2.3", features = ["carl"] }
 surrealdb = { version = "1.5.0", features = ["default"] }
 egui_dock = "0.12.0"
