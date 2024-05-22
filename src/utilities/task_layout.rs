@@ -184,6 +184,8 @@ impl BoxPainting {
                                                 let mut priority = Priority::Normal;
                                                 ComboBox::new(Id::new(&task_data.id.clone().unwrap().0.id), "")
                                                     .selected_text(format!("{:?}", &task_data.priority.clone().unwrap_or_default()))
+                                                    .width(20.0)
+                                                    .height(10.0)
                                                     .show_ui(ui, |ui| 
                                                 {
                                                     ui.selectable_value(&mut priority, Priority::Normal, "Normal");
@@ -199,6 +201,8 @@ impl BoxPainting {
                                                 let mut status = Status::Todo;
                                                 ComboBox::new(Id::new(&task_data.id.clone().unwrap().0.id), "")
                                                     .selected_text(format!("{:?}", &task_data.status))
+                                                    .width(20.0)
+                                                    .height(10.0)
                                                     .show_ui(ui, |ui| 
                                                 {
                                                     ui.selectable_value(&mut status, Status::Todo, "Todo");
