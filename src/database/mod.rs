@@ -6,6 +6,7 @@ use surrealdb::{
 };
 
 pub mod schema;
+pub mod methods;
 
 #[derive(Clone)]
 pub struct Database{

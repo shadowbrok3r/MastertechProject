@@ -1638,6 +1638,7 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b78779f35ded1a853786c9ce0b43fe1053e10a21ea3b23ebea411805ce41593"
 dependencies = [
+ "chrono",
  "egui",
  "enum-map",
  "log",
@@ -3129,6 +3130,7 @@ name = "mtechserver_two"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "console_error_panic_hook",
  "crossbeam",
  "eframe",
