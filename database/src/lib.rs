@@ -31,7 +31,7 @@ pub struct DataResult{
 
 impl Database{
     pub async fn new() -> Self {
-        let db_url = dotenv::var("DB_URL").expect("No Env var for DB_URL");
+        let db_url = "localhost:8000".to_string(); // dotenv::var("DB_URL").expect("No Env var for DB_URL");
         println!("db: {db_url}");
         
         // let root_user = dotenv::var("SURREAL_USER").expect("No Env var for SURREAL_USER");
