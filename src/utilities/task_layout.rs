@@ -1,6 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc};
-use eframe::egui::Ui;
-use egui::{Button, Color32, ComboBox, Id, Layout, Margin, Stroke, TextEdit, Vec2, Widget};
+use eframe::{egui::Ui, wgpu::Color};
+use egui::{Align, Button, Color32, ComboBox, Id, Layout, Margin, RichText, Stroke, Style, TextEdit, Vec2, Widget};
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 
 use crate::database::{
@@ -12,114 +12,102 @@ use crate::database::{
 
 impl Displayable for TaskPayload{
     fn display_task_cards(&mut self, ui: &mut Ui)  -> anyhow::Result<(), anyhow::Error> {
-        // ui.horizontal_wrapped(|ui| {
-            // let clip = ui.clip_rect();
-            // ui.set_clip_rect(clip);
 
+        ui.style_mut().visuals.selection.stroke.color = Color32::from_additive_luminance(255);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
+        ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::from_additive_luminance(255);
+        ui.style_mut().visuals.widgets.hovered.expansion = 2.0;
+        ui.add_space(10.0);
+        ui
+            .group(|ui|
+        {
+            ui.set_height(160.0);
+            ui.set_width(370.0);
 
-                // egui::Frame::default()
-                //     .stroke(ui.visuals().widgets.inactive.bg_stroke)
-                //     .rounding(ui.visuals().widgets.active.rounding)
-                //     .fill(ui.visuals().extreme_bg_color)
-                //     .inner_margin(Margin::same(4.0))
-                //     .outer_margin(Margin::same(5.0))
-                //     .show(ui, |ui| 
-                // {
-                ui.allocate_ui_with_layout(Vec2::new(200.0, 400.0), 
-                    Layout::left_to_right(egui::Align::Min)
-                    .with_main_wrap(true), |ui| 
-                {
-                    // ui.painter().add(shape)
-                    ui.set_height(200.0);
-                    ui.set_width(400.0);
-                    StripBuilder::new(ui)
-                        .cell_layout(Layout::top_down_justified(egui::Align::Center))
-                        .size(Size::relative(0.2))
-                        .size(Size::relative(0.6))
-                        .size(Size::relative(0.2))
-                        .vertical(|mut strip| {
-                            strip.strip(|strip| {
-                                strip
-                                    .cell_layout(Layout::left_to_right(egui::Align::Min))
-                                    .cell_layout(Layout::left_to_right(egui::Align::Center))
-                                    .cell_layout(Layout::left_to_right(egui::Align::Max))
-                                    .size(Size::relative(0.2))
-                                    .size(Size::remainder())
-                                    .size(Size::relative(0.2))
-                                    .horizontal( |mut s| 
-                                {
-                                    s.cell(|ui|{
-                                        ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                            self.interact_assignee_initials(ui);
-                                        });
-                                    });
-                                    s.cell(|ui|{
-                                        ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                            self.interact_task_name(ui);
-                                        });
-                                    });
-                                    s.cell(|ui|{
-                                        ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                            self.interact_completed(ui);
-                                        });
-                                    });
+            StripBuilder::new(ui)
+                .cell_layout(Layout::top_down_justified(egui::Align::Center))
+                .size(Size::relative(0.1))
+                .size(Size::relative(0.8))
+                .size(Size::relative(0.1))
+                .vertical(|mut strip| {
+                    strip.strip(|strip| {
+                        strip
+                            .cell_layout(Layout::left_to_right(egui::Align::Min))
+                            .cell_layout(Layout::left_to_right(egui::Align::Center))
+                            .cell_layout(Layout::left_to_right(egui::Align::Max))
+                            .size(Size::relative(0.2))
+                            .size(Size::remainder())
+                            .size(Size::relative(0.2))
+                            .horizontal( |mut s| 
+                        {
+                            s.cell(|ui|{
+                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                    self.interact_assignee_initials(ui);
                                 });
                             });
-
-                            strip.strip(|strip| {
-                                strip
-                                    .cell_layout(Layout::left_to_right(egui::Align::Min))
-                                    .cell_layout(Layout::left_to_right(egui::Align::Max))
-                                    .size(Size::remainder())
-                                    .size(Size::remainder())
-                                    .vertical( |mut s| 
-                                {
-                                    s.cell(|ui|{
-                                        ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                            ui.vertical_centered_justified(|ui| {
-                                                self.interact_task_description(ui);
-                                            });
-                                        });
-                                    });
-                                    s.cell(|ui|{
-                                        ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown).with_main_wrap(true), |ui|{
-                                            ui.vertical_centered_justified(|ui| {
-                                                self.interact_task_description(ui);
-                                            });
-                                        });
-                                    });
+                            s.cell(|ui|{
+                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                    self.interact_task_name(ui);
                                 });
                             });
-                            strip.strip(|strip| {
-                                strip
-                                    .cell_layout(Layout::left_to_right(egui::Align::Min))
-                                    .cell_layout(Layout::left_to_right(egui::Align::Center))
-                                    .cell_layout(Layout::left_to_right(egui::Align::Max))
-                                    .size(Size::relative(0.2))
-                                    .size(Size::remainder())
-                                    .size(Size::relative(0.2))
-                                    .horizontal( |mut s| 
-                                {
-                                    s.cell(|ui|{
-                                        ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                            self.interact_due_date(ui);
-                                        });
-                                    });
-                                    s.cell(|ui|{
-                                        ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                            self.interact_priority(ui);
-                                        });
-                                    });
-                                    s.cell(|ui|{
-                                        ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                            self.interact_status(ui);
-                                        });
-                                    });
+                            s.cell(|ui|{
+                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                    self.interact_completed(ui);
                                 });
                             });
+                        });
                     });
-                });
-        // });   
+
+                    strip.strip(|strip| {
+                        strip
+                            .cell_layout(Layout::left_to_right(egui::Align::Min))
+                            .cell_layout(Layout::right_to_left(egui::Align::Max))
+                            .size(Size::remainder())
+                            .size(Size::remainder())
+                            .horizontal( |mut s| 
+                        {
+                            s.cell(|ui|{
+                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                    self.interact_task_description(ui);
+                                });
+                            });
+                            s.cell(|ui|{
+                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                    self.interact_task_description(ui);
+                                });
+                            });
+                        });
+                    });
+                    strip.strip(|strip| {
+                        strip
+                            .cell_layout(Layout::left_to_right(egui::Align::Min))
+                            .cell_layout(Layout::left_to_right(egui::Align::Center))
+                            .cell_layout(Layout::left_to_right(egui::Align::Max))
+                            .size(Size::relative(0.3))
+                            .size(Size::remainder())
+                            .size(Size::relative(0.3))
+                            .horizontal( |mut s| 
+                        {
+                            s.cell(|ui|{
+                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                    self.interact_due_date(ui);
+                                });
+                            });
+                            s.cell(|ui|{
+                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                    self.interact_priority(ui);
+                                });
+                            });
+                            s.cell(|ui|{
+                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                    self.interact_status(ui);
+                                });
+                            });
+                        });
+                    });
+            });
+        });
+        
         /* 
             let header_id = ui.make_persistent_id(&task_data.task_name);
             CollapsingState::load_with_default_open(ui.ctx(), header_id, false)
@@ -136,53 +124,34 @@ impl Displayable for TaskPayload{
 
 impl TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui) {
-        TextEdit::singleline(&mut self.task_name).horizontal_align(egui::Align::Center).ui(ui);
+        TextEdit::singleline(&mut self.task_name).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
     }
 
     fn interact_task_description(&mut self, ui: &mut Ui) {
+        ui.add_space(10.0);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
+        // ui.style_mut().visuals.widgets.inactive.fg = Color32::BLACK;
         if let Some(description) = &self.task_description{
             ui.label(
-                egui::RichText::new(description).color(egui::Color32::WHITE)
+                egui::RichText::new(description).color(Color32::WHITE)
             );
         }else{
-            egui::Frame::default()
-                .rounding(ui.visuals().widgets.noninteractive.rounding)
-                .stroke(ui.visuals().widgets.active.bg_stroke)
-                .fill(Color32::from_black_alpha(100))
-                .show(ui, |ui| 
-            {
-                let mut task_description = "No task description";
-                let text_edit = TextEdit::multiline(&mut task_description)
-                    .desired_rows(4)
-                    .desired_width(ui.available_width())
-                    .horizontal_align(egui::Align::Center);
-                let x = ui.add(text_edit);
-
-                if x.hovered(){
-                    x.highlight();
-                }
-            });
+            let mut task_description = "No task description";
+            TextEdit::multiline(&mut task_description)
+                .desired_rows(7)
+                .desired_width(ui.available_width())
+                .horizontal_align(egui::Align::Center)
+                .ui(ui);
         }
     }
 
     fn interact_recommendations(&mut self, ui: &mut Ui){
         let mut recommendations = "These are test checkin notes";
-        egui::Frame::default()
-            .rounding(ui.visuals().widgets.noninteractive.rounding)
-            .stroke(ui.visuals().widgets.active.bg_stroke)
-            .fill(Color32::from_black_alpha(100))
-            .show(ui, |ui| 
-        {
-            let text_edit = TextEdit::multiline(&mut recommendations)
-                .desired_rows(4)
-                .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
-                .show(ui).response;
-                                                                    
-            if text_edit.hovered(){
-                text_edit.highlight();
-            }
-        });
+        TextEdit::multiline(&mut recommendations)
+            .desired_rows(4)
+            .desired_width(ui.available_width())
+            .horizontal_align(egui::Align::Center)
+            .show(ui);
     }
 
     fn interact_due_date(&mut self, ui: &mut Ui) {
@@ -212,7 +181,12 @@ impl TaskPayload {
     fn interact_status(&mut self, ui: &mut Ui) {
         let mut status = Status::Todo;
         ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-            .selected_text(format!("{:?}", &self.status))
+            .selected_text(
+                RichText::new(
+                    format!("{:?}", &self.status)
+                )
+                
+            )
             .width(ui.available_width())
             .height(ui.available_height())
             .show_ui(ui, |ui| 
@@ -253,7 +227,7 @@ impl TaskPayload {
             ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
                 .selected_text(assignee_initials.clone())
                 .width(ui.available_width())
-                .height(ui.available_height())
+                .height(ui.available_height()/ 2.0)
                 .show_ui(ui, |ui| 
             {
                 ui.selectable_value(assignee_initials, new_assignee.clone(), assignee_initials.clone());
