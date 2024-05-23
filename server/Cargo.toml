@@ -1,0 +1,55 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The core stuff
+database = { workspace = true }
+serde = { workspace = true }
+surrealdb = { workspace=true, features = ["protocol-ws"] } # kv-speedb "protocol-http", "native-tls"
+dotenv={workspace=true}
+anyhow = {workspace=true}
+log = {workspace=true}
+
+axum = {version = "0.7.5", features=["tracing", "macros", "multipart", "ws"]}
+tower = { version = "0.4.13", features = ["util"] }
+tower-http = { version = "0.5.2", features = ["full"] }
+tower-cookies = "0.10.0"
+tokio = { version="1.37.0", features=["full"] }
+futures-util = "0.3.30"
+http = "1.1.0"
+serde_json = "1.0.116"
+
+
+tokio-cron-scheduler = "*"
+
+# For logging
+
+tracing-subscriber = {version="0.3.18", features=["env-filter", "json"]}
+tracing = "0.1.40"
+
+
+# The extra stuff
+async-openai = "0.21.0"
+jsonwebtoken="9.3.0"
+uuid = { version = "1.8.0", features = ["v4", "fast-rng"] }
+chrono = "0.4.38"
+futures = "0.3.30"
+tokio-util = "0.7.10"
+futures-channel = "0.3.30"
+socketioxide = { version = "0.13.1", features = ["state", "extensions"] }
+
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# openssl = { version = "0.10.64", features = [ "vendored" ] }
+
+# [build]
+# rustflags = ["-Awarnings"]
+
+
+# [profile.dev]
+# opt-level = 0
+
+# [profile.release]
+# opt-level = 3

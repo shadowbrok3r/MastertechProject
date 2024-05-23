@@ -1,0 +1,44 @@
+[package]
+name = "mtechserver_two"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+database = { workspace=true }
+anyhow = { workspace=true }
+log  = { workspace=true }
+serde = { workspace=true }
+surrealdb = { workspace=true }
+chrono = { workspace=true }
+egui ={ version="0.27.2", features = []} # "callstack", "log"
+eframe = { version="0.27.2", default-features = false, features=["wgpu"] }
+wasm-bindgen = "0.2.92"
+egui_extras = { version = "0.27.2", features = ["datepicker"]}
+egui-aesthetix = { version = "0.2.3", features = ["carl"] }
+egui_dock = "0.12.0"
+ratframe = "1.1.4"
+ratatui = { version = "0.26.3", default-features = false }
+web-time = "1.1.0"
+wasm-bindgen-futures = "0.4"
+crossbeam = "0.8.4"
+console_error_panic_hook = "0.1.7"
+gloo-worker = "0.5.0"
+
+
+# native:
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger = "0.11.3"
+# web:
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+
+# [profile.release]
+# opt-level = 2 # fast and small wasm
+
+# Optimize all dependencies even in debug builds:
+# [profile.dev.package."*"]
+# opt-level = 2
+# 
+[[bin]]
+name = "dummy_worker"
+path = "src/dummy_worker.rs"
