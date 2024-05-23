@@ -1,0 +1,9 @@
+[package]
+name = "database"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+surrealdb = "1.5.1"
+serde = "1"
+dotenv = "0.15.0"
