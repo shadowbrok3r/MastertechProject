@@ -124,7 +124,7 @@ pub async fn handle_create_ticket(
         assignee: queried_user,
         service_number: Some(ticket_payload.service_number),
         due_date: ticket_payload.due_date,
-        priority: Some(Priority::Normal),
+        priority: Priority::Normal,
         task_note: None,
         completed: false,
         assignee_initials: Some(ticket_payload.salesman),

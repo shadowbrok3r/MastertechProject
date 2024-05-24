@@ -1,7 +1,8 @@
 
 use futures::StreamExt;
-use crate::utilities::task_functions::{Interaction, Displayable, Updatable};
-use database::{schema::{Store, TaskPayload, TASK_TABLE, Status, Priority}, Database};
+use super::update_tasks::{Displayable, Updatable};
+use super::interact_tasks::Interaction;
+use database::{schema::*, Database};
 use serde::{Deserialize, Serialize};
 use surrealdb::{method::Stream, Notification};
 use wasm_bindgen_futures::spawn_local;
@@ -11,6 +12,7 @@ use crossbeam::channel::Sender;
 use surrealdb::engine::remote::ws::Client;
 use serde::de::DeserializeOwned;
 use egui::{Ui, Response};
+use crate::utilities::task_context::TaskContext;
 use my_proc_macros::DelegateTraits;
 
 #[derive(Serialize, Deserialize, Debug, DelegateTraits)]
@@ -22,13 +24,11 @@ pub struct CompletedTasks(TaskPayload);
 
 
 pub fn get_my_tasks(db: Database, tx: Sender<Vec<MyTasks>>, initials: String)
-    // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
 {
     spawn_local(async move {
         let query = format!(
             "SELECT * FROM task 
-            WHERE assignee_initials == '{initials}' " //\
-            // FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note
+            WHERE assignee_initials == '{initials}' "
         );
         let query_results: Result<Vec<MyTasks>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
         match query_results{
@@ -45,13 +45,11 @@ pub fn get_my_tasks(db: Database, tx: Sender<Vec<MyTasks>>, initials: String)
 }
 
 pub fn get_store_tasks(db: Database, tx: Sender<Vec<StoreTasks>>, store: Store)
-    // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
 {
     spawn_local(async move {
         let query = format!(
             "SELECT * FROM task \
-            WHERE dep == '{store:?}'" //\
-            // FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note"
+            WHERE dep == '{store:?}'"
         );
         let query_results: Result<Vec<StoreTasks>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
         info!("get_store_tasks: {query_results:?}");
@@ -68,13 +66,11 @@ pub fn get_store_tasks(db: Database, tx: Sender<Vec<StoreTasks>>, store: Store)
 }
 
 pub fn get_completed_tasks(db: Database, tx: Sender<Vec<CompletedTasks>>, store: Store)
-    // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
 {
     spawn_local(async move {
         let query = format!(
             "SELECT * FROM task \
-            WHERE dep == '{store:?}' && task.completed == true" //\
-            // FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note"
+            WHERE dep == '{store:?}' && task.completed == true"
         );
         let query_results: Result<Vec<CompletedTasks>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
         info!("get_completed_tasks: {query_results:?}");

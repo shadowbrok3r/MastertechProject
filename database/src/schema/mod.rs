@@ -69,7 +69,7 @@ pub struct TaskPayload{
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<i32>,
     pub due_date: String, // optional because if not provided, set due date to creation date
-    pub priority: Option<Priority>,
+    pub priority: Priority,
     pub task_note: Option<Vec<TaskNoteId>>,
     pub completed: bool,
     pub status: Status,
@@ -312,3 +312,9 @@ pub enum Store{
 //     status: String,
 // }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReturnedStoreUsers {
+    pub id: UserId,
+    pub name: String,
+    pub everest_initials: String,
+}

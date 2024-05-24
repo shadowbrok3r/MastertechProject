@@ -1,3 +1,6 @@
-pub mod task_layout;
-pub mod task_functions;
-pub mod listen_tasks;
+pub mod display_tasks;
+pub mod update_tasks;
+pub mod get_tasks;
+pub mod interact_tasks;
+pub mod get_other;
+pub mod task_context;

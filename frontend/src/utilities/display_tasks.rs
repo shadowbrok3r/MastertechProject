@@ -1,11 +1,13 @@
 
 use eframe::egui::Ui;
-use egui::{Color32, ComboBox, Id, Layout, Stroke, Style, TextEdit, Vec2, Widget};
-use egui_extras::{Size, StripBuilder};
+use egui::{Color32, Layout, RichText, Stroke};
+use egui_extras::{Column, Size, StripBuilder, TableBuilder};
+use database::schema::{Status, TaskPayload};
+use log::info;
 
-use database::schema::TaskPayload;
+use super::update_tasks::Displayable;
+use super::interact_tasks::Interaction;
 
-use super::task_functions::{Displayable, Interaction, Updatable};
 
 impl Displayable for TaskPayload{
     fn display_task_cards(&mut self, ui: &mut Ui)  -> anyhow::Result<(), anyhow::Error> {
@@ -15,6 +17,7 @@ impl Displayable for TaskPayload{
         ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::from_additive_luminance(255);
         ui.style_mut().visuals.widgets.hovered.expansion = 2.0;
         ui.add_space(10.0);
+
         ui
             .group(|ui|
         {
@@ -39,7 +42,10 @@ impl Displayable for TaskPayload{
                         {
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_assignee_initials(ui);
+                                    if self.interact_assignee_initials(ui).unwrap().changed(){
+                                        info!("interact_assignee_initials changed: {:?}// {:?}", self.id, self.task_name);
+                                    }
+                                    
                                 });
                             });
                             s.cell(|ui|{
@@ -97,7 +103,9 @@ impl Displayable for TaskPayload{
                             });
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_status(ui);
+                                    if self.interact_status(ui).unwrap().changed(){
+                                        info!("interact_status changed: {:?}// {:?}", self.id, self.task_name);
+                                    }
                                 });
                             });
                         });
@@ -117,5 +125,7 @@ impl Displayable for TaskPayload{
         */
         Ok(())
     }
+    
+    // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error> {Ok(())}
 }
 

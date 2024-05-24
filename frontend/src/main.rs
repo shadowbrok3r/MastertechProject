@@ -3,10 +3,11 @@ use app_state::MtechServer;
 use crossbeam::channel::Sender;
 use database::{schema::Store, Database};
 use ratframe::NewCC;
-use utilities::listen_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks};
+use utilities::{get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}};
 use wasm_bindgen_futures::spawn_local;
 use web_time::Instant;
 use std::sync::Arc;
+use eframe::egui::menu;
 use egui::{Button, CentralPanel, Color32, FontId, Frame, Layout, Style, TopBottomPanel, Vec2};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use egui_dock::{DockArea, Style as DockStyle};
@@ -91,10 +92,11 @@ impl eframe::App for MtechServer {
             let my_tasks_tx = self.context.my_tasks_tx.clone();
             let store_tasks_tx = self.context.store_tasks_tx.clone();
             let completed_tasks_tx = self.context.completed_tasks_tx.clone();
-
+            let store_users_tx = self.context.store_users_tx.clone();
             get_my_tasks(db.clone(), my_tasks_tx, "LL".to_string());
             get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
             get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
+            get_store_users(db, store_users_tx, Store::RIV);
         }
 
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
@@ -109,9 +111,13 @@ impl eframe::App for MtechServer {
             self.context.completed_tasks = Some(tasks);
         }
 
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| 
+        if let Ok(users) = self.context.store_users_rx.try_recv(){
+            self.context.store_users = Some(users);
+        }
+
+        TopBottomPanel::top("top_panel").show(ctx, |ui| 
         {
-            egui::menu::bar(ui, |ui| {
+            menu::bar(ui, |ui| {
                 ui.add(Button::new("MasterTech Server"));
                 ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
                     ui.add(Button::new("Store Tasks").fill(Color32::from_rgb_additive(255, 12, 180)));
@@ -124,7 +130,7 @@ impl eframe::App for MtechServer {
 
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| 
         {
-            eframe::egui::menu::bar(ui, |ui| {
+            menu::bar(ui, |ui| {
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
                     for tab in &[

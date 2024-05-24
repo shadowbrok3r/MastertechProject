@@ -1,4 +1,4 @@
-use crate::{app_state::MtechServerContext, utilities::{listen_tasks::get_my_tasks, task_functions::Displayable}};
+use crate::{app_state::MtechServerContext, utilities::{get_tasks::get_my_tasks, update_tasks::Displayable}};
 use egui::{Align, Direction, Layout, Ui};
 use log::info;
 
