@@ -10,10 +10,23 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
     let name = input.ident;
 
     let expanded = quote! {
+        impl #name {
+            pub fn inner(&self) -> &TaskPayload {
+                &self.0
+            }
+
+            pub fn inner_mut(&mut self) -> &mut TaskPayload {
+                &mut self.0
+            }
+        }
+
         impl Displayable for #name {
             fn display_task_cards(&mut self, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error> {
                 self.0.display_task_cards(ui)
             }
+            // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error> {
+            //     self.0.display_table(ui, tasks)
+            // }
         }
 
         impl Updatable for #name {
@@ -85,6 +98,24 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
 
             fn interact_assignee_initials(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_assignee_initials(ui)
+            }
+        }
+
+        impl TaskContext for #name{
+            fn get_store_users(&mut self, db: Database, tx: Sender<Vec<ReturnedStoreUsers>>){
+                self.0.get_store_users(db, tx)
+            }
+            fn get_computer_data(&mut self, db: Database, tx: Sender<Vec<ComputerData>>){
+                self.0.get_computer_data(db, tx)
+            }
+            fn get_customer_data(&mut self, db: Database, tx: Sender<Vec<CustomerData>>){
+                self.0.get_customer_data(db, tx)
+            }
+            fn get_service_data(&mut self, db: Database, tx: Sender<Vec<TicketData>>){
+                self.0.get_service_data(db, tx)
+            }
+            fn get_task_notes(&mut self, db: Database, tx: Sender<Vec<TaskNotePayload>>){
+                self.0.get_task_notes(db, tx)
             }
         }
     };

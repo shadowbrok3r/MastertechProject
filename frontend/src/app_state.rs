@@ -6,9 +6,9 @@ use gloo_worker::Spawnable;
 use ratatui::Terminal;
 use ratframe::{NewCC, RataguiBackend};
 use web_time::{Duration, Instant};
-use database::{schema::TaskPayload, Database};
+use database::{schema::{ReturnedStoreUsers, TaskPayload}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{tabs::terminal::chart::App, utilities::listen_tasks::{CompletedTasks, MyTasks, StoreTasks}};
+use crate::{tabs::terminal::chart::App, utilities::get_tasks::{CompletedTasks, MyTasks, StoreTasks}};
 
 pub struct MtechServer {
     pub context: MtechServerContext,
@@ -47,14 +47,17 @@ pub struct MtechServerContext{
     pub my_tasks: Option<Vec<MyTasks>>,
     pub store_tasks: Option<Vec<StoreTasks>>,
     pub completed_tasks: Option<Vec<CompletedTasks>>,
+    pub store_users: Option<Vec<ReturnedStoreUsers>>,
     /// Receives task data over crossbeam channel
     pub my_tasks_rx: Receiver<Vec<MyTasks>>,
     pub store_tasks_rx: Receiver<Vec<StoreTasks>>,
     pub completed_tasks_rx: Receiver<Vec<CompletedTasks>>,
+    pub store_users_rx: Receiver<Vec<ReturnedStoreUsers>>,
     /// Sends task data over crossbeam channel
     pub my_tasks_tx: Sender<Vec<MyTasks>>,
     pub store_tasks_tx: Sender<Vec<StoreTasks>>,
     pub completed_tasks_tx: Sender<Vec<CompletedTasks>>,
+    pub store_users_tx: Sender<Vec<ReturnedStoreUsers>>,
     /// Receives Database connection over crossbeam channel
     pub db_rx: Receiver<Database>,
     /// Sends Database connection over crossbeam channel
@@ -135,7 +138,7 @@ impl TabViewer for MtechServerContext {
 
 impl NewCC for MtechServer {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-
+        // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         let mut tree = DockState::new(
             vec![
                 "My Tasks".to_owned(),
@@ -214,7 +217,7 @@ impl NewCC for MtechServer {
         let (my_tasks_tx, my_tasks_rx) = channel::unbounded::<Vec<MyTasks>>();
         let (store_tasks_tx, store_tasks_rx) = channel::unbounded::<Vec<StoreTasks>>();
         let (completed_tasks_tx, completed_tasks_rx) = channel::unbounded::<Vec<CompletedTasks>>();
-
+        let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<ReturnedStoreUsers>>();
 
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
@@ -248,6 +251,7 @@ impl NewCC for MtechServer {
             my_tasks: None,
             store_tasks: None,
             completed_tasks: None,
+            store_users: None,
 
             my_tasks_opened: false,
             store_tasks_opened: false,
@@ -260,6 +264,9 @@ impl NewCC for MtechServer {
             completed_tasks_tx, 
             completed_tasks_rx,
 
+            store_users_tx,
+            store_users_rx,
+
             bridge: Some(bridge),
             data_update: Some(data_update),
         };
@@ -269,12 +276,7 @@ impl NewCC for MtechServer {
             tree,
         }
     }
-        // Load app state. Note that you must enable the `persistence` feature for this to work.
-        // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
-        
-        // MtechServer::new(cc)
-    // }
-    
+
     fn canvas_id() -> String { "mtech_canvas".into() }
 }
 
