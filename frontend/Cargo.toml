@@ -10,6 +10,8 @@ log  = { workspace=true }
 serde = { workspace=true }
 surrealdb = { workspace=true }
 chrono = { workspace=true }
+my_proc_macros = { path = "../my_proc_macros" }
+
 egui ={ version="0.27.2", features = []} # "callstack", "log"
 eframe = { version="0.27.2", default-features = false, features=["wgpu"] }
 wasm-bindgen = "0.2.92"
@@ -23,6 +25,7 @@ wasm-bindgen-futures = "0.4"
 crossbeam = "0.8.4"
 console_error_panic_hook = "0.1.7"
 gloo-worker = "0.5.0"
+futures = "0.3.30"
 
 
 # native:

@@ -3607,8 +3607,10 @@ dependencies = [
  "egui_dock",
  "egui_extras",
  "env_logger 0.11.3",
+ "futures",
  "gloo-worker",
  "log",
+ "my_proc_macros",
  "ratatui",
  "ratframe",
  "serde",
@@ -3633,6 +3635,15 @@ dependencies = [
  "mime",
  "spin 0.9.8",
  "version_check",
+]
+
+[[package]]
+name = "my_proc_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.65",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members=["server", "frontend", "database"] 
+members=["server", "frontend", "database", "my_proc_macros"] 
 
 
 [workspace.dependencies]

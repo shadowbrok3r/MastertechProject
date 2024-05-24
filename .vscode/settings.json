@@ -1,7 +1,0 @@
-{
-	"rust-analyzer.showUnlinkedFileNotification": true,
-	"rust-analyzer.checkOnSave": true,
-	"rust-analyzer.linkedProjects": [
-		"Cargo.toml", "server/Cargo.toml", "frontend/Cargo.toml", "database/Cargo.toml"
-	]
-}
