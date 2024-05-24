@@ -8,7 +8,7 @@ use ratframe::{NewCC, RataguiBackend};
 use web_time::{Duration, Instant};
 use database::{schema::TaskPayload, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::tabs::terminal::chart::App;
+use crate::{tabs::terminal::chart::App, utilities::listen_tasks::{CompletedTasks, MyTasks, StoreTasks}};
 
 pub struct MtechServer {
     pub context: MtechServerContext,
@@ -21,6 +21,8 @@ pub struct MtechServerContext{
     pub open_tabs: HashSet<String>,
     /// egui dock styling
     pub style: Option<egui_dock::Style>,
+
+    pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
     // pub client: reqwest::Client,
 
     /// Terminal setup for console tab
@@ -37,12 +39,22 @@ pub struct MtechServerContext{
     
     /// Database connection
     pub database: Option<Database>,
+
+    pub my_tasks_opened: bool,
+    pub store_tasks_opened: bool,
+    pub completed_tasks_opened: bool,
     /// All contained task data from database
-    pub task_data: Option<Vec<TaskPayload>>,
+    pub my_tasks: Option<Vec<MyTasks>>,
+    pub store_tasks: Option<Vec<StoreTasks>>,
+    pub completed_tasks: Option<Vec<CompletedTasks>>,
     /// Receives task data over crossbeam channel
-    pub db_data_rx: Receiver<Vec<TaskPayload>>,
+    pub my_tasks_rx: Receiver<Vec<MyTasks>>,
+    pub store_tasks_rx: Receiver<Vec<StoreTasks>>,
+    pub completed_tasks_rx: Receiver<Vec<CompletedTasks>>,
     /// Sends task data over crossbeam channel
-    pub db_data_tx: Sender<Vec<TaskPayload>>,
+    pub my_tasks_tx: Sender<Vec<MyTasks>>,
+    pub store_tasks_tx: Sender<Vec<StoreTasks>>,
+    pub completed_tasks_tx: Sender<Vec<CompletedTasks>>,
     /// Receives Database connection over crossbeam channel
     pub db_rx: Receiver<Database>,
     /// Sends Database connection over crossbeam channel
@@ -62,9 +74,10 @@ impl TabViewer for MtechServerContext {
         match tab.as_str() {
             "Lil menu" => self.simple_demo_menu(ui),
             "Terminal" => self.terminal(ui),
-            "Tasks" => self.tasks(ui),
+            "Store Tasks" => self.store_tasks(ui),
             "My Tasks" => self.my_tasks(ui),
             "Web Console" => self.web_console(ui),
+            "Completed Tasks" => self.completed_tasks(ui),
             _ => { } 
         }
     }
@@ -88,16 +101,29 @@ impl TabViewer for MtechServerContext {
         true
     }
     
-    fn on_add(&mut self, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        
-        // for node in tree[SurfaceIndex::main()].iter() {
-        //     if let Node::Leaf { tabs, .. } = node {
-        //         for tab in tabs {
-        //             open_tabs.insert(tab.clone());
-        //         }
-        //     }
-        // }
-        // self.open_tabs.insert(surface_index.);
+    fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
+        self.added_nodes.push((surface_index, node_index));
+    }
+
+    fn add_popup(&mut self, ui: &mut Ui, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        ui.set_width(100.0);
+        let tabs = &[
+            &"Terminal".to_string(),
+            &"Web Console".to_string(),
+            &"Store Tasks".to_string(),
+            &"My Tasks".to_string(),
+            &"Completed Tasks".to_string()
+        ];
+
+        for tab in tabs{
+            if ui.selectable_label(self.open_tabs.contains(*tab), *tab)
+                .clicked()
+            {
+                if !self.open_tabs.contains(*tab){
+                    self.on_add(SurfaceIndex::main(), NodeIndex::root());
+                }
+            }
+        }
     }
 
 }
@@ -113,20 +139,22 @@ impl NewCC for MtechServer {
         let mut tree = DockState::new(
             vec![
                 "My Tasks".to_owned(),
+                "Store Tasks".to_owned(),
+                "Completed Tasks".to_owned(),
             ]
         );
 
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
         
-        let [_a, _b] = tree
-            .main_surface_mut()
-            .split_left(
-                NodeIndex::root(),
-                0.10, 
-                vec![
-                    "Tasks".to_owned(),
-        ]);
+        // let [_a, _b] = tree
+        //     .main_surface_mut()
+        //     .split_left(
+        //         NodeIndex::root(),
+        //         0.10, 
+        //         vec![
+        //             "Store Tasks".to_owned(),
+        // ]);
 
         let [_a, b] = tree
             .main_surface_mut()
@@ -183,7 +211,10 @@ impl NewCC for MtechServer {
 
 
         let (db_tx, db_rx) = channel::unbounded();
-        let (db_data_tx, db_data_rx) = channel::unbounded::<Vec<TaskPayload>>();
+        let (my_tasks_tx, my_tasks_rx) = channel::unbounded::<Vec<MyTasks>>();
+        let (store_tasks_tx, store_tasks_rx) = channel::unbounded::<Vec<StoreTasks>>();
+        let (completed_tasks_tx, completed_tasks_rx) = channel::unbounded::<Vec<CompletedTasks>>();
+
 
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
@@ -197,9 +228,12 @@ impl NewCC for MtechServer {
 
         setup_custom_fonts(&cc.egui_ctx);
 
+        let mut added_nodes = Vec::new();
+
         let context = MtechServerContext{
             open_tabs,
             style: None,
+            added_nodes,
             
             terminal,
             chart_app,
@@ -208,11 +242,23 @@ impl NewCC for MtechServer {
 
             first_run: true,
             database: None,
-            task_data: None,
             db_tx, 
             db_rx,
-            db_data_tx, 
-            db_data_rx,
+
+            my_tasks: None,
+            store_tasks: None,
+            completed_tasks: None,
+
+            my_tasks_opened: false,
+            store_tasks_opened: false,
+            completed_tasks_opened: false,
+
+            my_tasks_tx, 
+            my_tasks_rx,
+            store_tasks_tx, 
+            store_tasks_rx,
+            completed_tasks_tx, 
+            completed_tasks_rx,
 
             bridge: Some(bridge),
             data_update: Some(data_update),

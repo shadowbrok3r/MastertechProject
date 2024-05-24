@@ -1,10 +1,10 @@
+use core::future::Future;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::{Align, Button, Color32, ComboBox, Id, RichText, Stroke, TextEdit, Ui, Widget};
 
 use database::schema::{ModifyTask, Priority, Status, TaskPayload};
 use egui_extras::DatePickerButton;
-
-
 
 pub trait Displayable{
     fn display_task_cards(&mut self, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error>;
@@ -21,6 +21,17 @@ pub trait Updatable {
     fn update_task_description(&mut self, description: Option<String>);
 }
 
+pub trait Interaction{
+    fn interact_task_name(&mut self, ui: &mut Ui);
+    fn interact_task_description(&mut self, ui: &mut Ui);
+    fn interact_recommendations(&mut self, ui: &mut Ui);
+    fn interact_due_date(&mut self, ui: &mut Ui);
+    fn interact_completed(&mut self, ui: &mut Ui);
+    fn interact_status(&mut self, ui: &mut Ui);
+    fn interact_dep(&mut self, ui: &mut Ui);
+    fn interact_priority(&mut self, ui: &mut Ui);
+    fn interact_assignee_initials(&mut self, ui: &mut Ui);
+}
 
 impl Updatable for TaskPayload {
     fn update_completed(&mut self, completed: bool) {
@@ -55,32 +66,6 @@ impl Updatable for TaskPayload {
         self.task_description = description;
     }
 }
-
-// Usage:
-fn update_task_payload(task_payload: &mut TaskPayload) {
-    task_payload.update_completed(true);
-    task_payload.update_due_date("2024-06-01".to_string());
-    task_payload.update_assignee_initials("JD".to_string());
-    task_payload.update_task_name("New Task Name".to_string());
-    task_payload.update_status(Status::InRepair);
-    task_payload.update_dep("IT".to_string());
-    task_payload.update_priority(Some(Priority::Normal));
-    task_payload.update_task_description(Some("Updated task description.".to_string()));
-}
-
-
-pub trait Interaction{
-    fn interact_task_name(&mut self, ui: &mut Ui);
-    fn interact_task_description(&mut self, ui: &mut Ui);
-    fn interact_recommendations(&mut self, ui: &mut Ui);
-    fn interact_due_date(&mut self, ui: &mut Ui);
-    fn interact_completed(&mut self, ui: &mut Ui);
-    fn interact_status(&mut self, ui: &mut Ui);
-    fn _interact_dep(&mut self, ui: &mut Ui);
-    fn interact_priority(&mut self, ui: &mut Ui);
-    fn interact_assignee_initials(&mut self, ui: &mut Ui);
-}
-
 
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui) {
@@ -128,11 +113,11 @@ impl Interaction for TaskPayload {
 
     fn interact_completed(&mut self, ui: &mut Ui) {
         if self.completed{
-            let stroke = Stroke::new(2.0, Color32::GREEN);
+            let stroke = Stroke::new(2.0, Color32::DARK_GREEN);
             let button = Button::new("✔️").fill(ui.style().visuals.extreme_bg_color).stroke(stroke);
             ui.add_sized(ui.available_size(), button);
         }else{
-            let stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
+            let stroke = Stroke::new(2.0, Color32::from_rgba_premultiplied(200, 20, 200, 50));
             let button = Button::new("✖️").fill(ui.style().visuals.extreme_bg_color).stroke(stroke);
             ui.add_sized(ui.available_size(), button);
         }
@@ -157,7 +142,7 @@ impl Interaction for TaskPayload {
         });
     }
 
-    fn _interact_dep(&mut self, ui: &mut Ui) {
+    fn interact_dep(&mut self, ui: &mut Ui) {
         if let Some(ref mut dep) = self.dep {
             ui.label("Department:");
             ui.text_edit_singleline(dep);

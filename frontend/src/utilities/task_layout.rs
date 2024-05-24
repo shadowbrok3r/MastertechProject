@@ -1,11 +1,9 @@
-use chrono::{DateTime, NaiveDate, Utc};
-use eframe::{egui::Ui, wgpu::Color};
-use egui::{Align, Button, Color32, ComboBox, Id, Layout, Margin, RichText, Stroke, Style, TextEdit, Vec2, Widget};
-use egui_extras::{DatePickerButton, Size, StripBuilder};
 
-use database::schema::{
-    Priority, Status, TaskPayload
-};
+use eframe::egui::Ui;
+use egui::{Color32, ComboBox, Id, Layout, Stroke, Style, TextEdit, Vec2, Widget};
+use egui_extras::{Size, StripBuilder};
+
+use database::schema::TaskPayload;
 
 use super::task_functions::{Displayable, Interaction, Updatable};
 
@@ -20,7 +18,7 @@ impl Displayable for TaskPayload{
         ui
             .group(|ui|
         {
-            ui.set_height(160.0);
+            ui.set_max_height(160.0);
             ui.set_width(370.0);
 
             StripBuilder::new(ui)

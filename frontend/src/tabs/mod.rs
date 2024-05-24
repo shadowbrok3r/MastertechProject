@@ -1,7 +1,8 @@
 pub mod terminal;
 pub mod web_console;
-pub mod tasks;
+pub mod store_tasks;
 pub mod my_tasks;
+pub mod completed_tasks;
 
 use egui::Ui;
 use super::app_state::MtechServerContext;

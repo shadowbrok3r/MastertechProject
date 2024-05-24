@@ -296,8 +296,19 @@ struct CommandRequest {
     _command: String,
 }
 
-#[derive(Serialize)]
-struct CommandResponse {
-    status: String,
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
+pub enum Store{
+    RIV,
+    LTN,
+    MUR,
+    AF,
+    WJ, 
+    ORE,
+    SAN
 }
+
+// #[derive(Serialize)]
+// struct CommandResponse {
+//     status: String,
+// }
 
