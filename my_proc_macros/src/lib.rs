@@ -17,73 +17,73 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
         }
 
         impl Updatable for #name {
-            fn update_completed(&mut self, completed: bool) {
-                self.0.update_completed(completed)
+            fn update_completed(&mut self, completed: bool, db: Database) {
+                self.0.update_completed(completed, db)
             }
 
-            fn update_due_date(&mut self, due_date: String) {
-                self.0.update_due_date(due_date)
+            fn update_due_date(&mut self, due_date: String, db: Database) {
+                self.0.update_due_date(due_date, db)
             }
 
-            fn update_assignee_initials(&mut self, initials: String) {
-                self.0.update_assignee_initials(initials)
+            fn update_assignee_initials(&mut self, initials: String, db: Database) {
+                self.0.update_assignee_initials(initials, db)
             }
 
-            fn update_task_name(&mut self, name: String) {
-                self.0.update_task_name(name)
+            fn update_task_name(&mut self, name: String, db: Database) {
+                self.0.update_task_name(name, db)
             }
 
-            fn update_status(&mut self, status: Status) {
-                self.0.update_status(status)
+            fn update_status(&mut self, status: Status, db: Database) {
+                self.0.update_status(status, db)
             }
 
-            fn update_dep(&mut self, dep: String) {
-                self.0.update_dep(dep)
+            fn update_dep(&mut self, dep: Store, db: Database) {
+                self.0.update_dep(dep, db)
             }
 
-            fn update_priority(&mut self, priority: Option<Priority>) {
-                self.0.update_priority(priority)
+            fn update_priority(&mut self, priority: Option<Priority>, db: Database) {
+                self.0.update_priority(priority, db)
             }
 
-            fn update_task_description(&mut self, description: Option<String>) {
-                self.0.update_task_description(description)
+            fn update_task_description(&mut self, description: Option<String>, db: Database) {
+                self.0.update_task_description(description, db)
             }
         }
 
         impl Interaction for #name {
-            fn interact_task_name(&mut self, ui: &mut Ui) {
+            fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_task_name(ui)
             }
 
-            fn interact_task_description(&mut self, ui: &mut Ui) {
+            fn interact_task_description(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_task_description(ui)
             }
 
-            fn interact_recommendations(&mut self, ui: &mut Ui) {
+            fn interact_recommendations(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_recommendations(ui)
             }
 
-            fn interact_due_date(&mut self, ui: &mut Ui) {
+            fn interact_due_date(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_due_date(ui)
             }
 
-            fn interact_completed(&mut self, ui: &mut Ui) {
+            fn interact_completed(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_completed(ui)
             }
 
-            fn interact_status(&mut self, ui: &mut Ui) {
+            fn interact_status(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_status(ui)
             }
 
-            fn interact_dep(&mut self, ui: &mut Ui) {
+            fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_dep(ui)
             }
 
-            fn interact_priority(&mut self, ui: &mut Ui) {
+            fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_priority(ui)
             }
 
-            fn interact_assignee_initials(&mut self, ui: &mut Ui) {
+            fn interact_assignee_initials(&mut self, ui: &mut Ui) -> Option<Response> {
                 self.0.interact_assignee_initials(ui)
             }
         }
