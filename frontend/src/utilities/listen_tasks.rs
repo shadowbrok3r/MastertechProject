@@ -10,7 +10,7 @@ use log::{info, error};
 use crossbeam::channel::Sender;
 use surrealdb::engine::remote::ws::Client;
 use serde::de::DeserializeOwned;
-use egui::Ui;
+use egui::{Ui, Response};
 use my_proc_macros::DelegateTraits;
 
 #[derive(Serialize, Deserialize, Debug, DelegateTraits)]
