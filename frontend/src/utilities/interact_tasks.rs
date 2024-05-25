@@ -9,18 +9,9 @@ use log::info;
 use surrealdb::{opt::RecordId, sql::Value};
 use wasm_bindgen_futures::spawn_local;
 
+use super::Interaction;
 
-pub trait Interaction{
-    fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_task_description(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_recommendations(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_due_date(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_completed(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_status(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_assignee_initials(&mut self, ui: &mut Ui) -> Option<Response>;
-}
+
 
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response> {

@@ -1,6 +1,5 @@
-use crate::{app_state::MtechServerContext, utilities::{get_tasks::get_my_tasks, update_tasks::Displayable}};
+use crate::{app_state::MtechServerContext, utilities::Displayable};
 use egui::{Align, Direction, Layout, Ui};
-use log::info;
 
 impl MtechServerContext{
     pub fn completed_tasks(&mut self, ui: &mut Ui){ 

@@ -1,12 +1,13 @@
 
 use eframe::egui::Ui;
-use egui::{Color32, Layout, RichText, Stroke};
+use egui::Direction;
+use egui::{Color32, Frame, Layout, Margin, RichText, Rounding, Stroke};
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use database::schema::{Status, TaskPayload};
 use log::info;
 
-use super::update_tasks::Displayable;
-use super::interact_tasks::Interaction;
+use super::Displayable;
+use super::Interaction;
 
 
 impl Displayable for TaskPayload{
@@ -16,11 +17,15 @@ impl Displayable for TaskPayload{
         ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
         ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::from_additive_luminance(255);
         ui.style_mut().visuals.widgets.hovered.expansion = 2.0;
-        ui.add_space(10.0);
 
-        ui
-            .group(|ui|
-        {
+        let frame = Frame::default()
+            .fill(Color32::from_rgb(7, 7, 13))
+            .inner_margin(Margin::same(4.0))
+            .outer_margin(Margin::same(10.0))
+            .rounding(Rounding::same(5.0))
+            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(200)));
+
+        frame.show(ui, |ui| {
             ui.set_max_height(160.0);
             ui.set_width(370.0);
 
@@ -125,7 +130,8 @@ impl Displayable for TaskPayload{
         */
         Ok(())
     }
-    
+
     // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error> {Ok(())}
 }
+
 

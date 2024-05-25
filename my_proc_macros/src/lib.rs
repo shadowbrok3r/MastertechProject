@@ -24,8 +24,8 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
             fn display_task_cards(&mut self, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error> {
                 self.0.display_task_cards(ui)
             }
-            // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error> {
-            //     self.0.display_table(ui, tasks)
+            // fn setup_display(&mut self, ui: &mut Ui) {
+            //     self.0.setup_display(ui)
             // }
         }
 

@@ -1,7 +1,5 @@
 
 use futures::StreamExt;
-use super::update_tasks::{Displayable, Updatable};
-use super::interact_tasks::Interaction;
 use database::{schema::*, Database};
 use serde::{Deserialize, Serialize};
 use surrealdb::{method::Stream, Notification};
@@ -14,6 +12,9 @@ use serde::de::DeserializeOwned;
 use egui::{Ui, Response};
 use crate::utilities::task_context::TaskContext;
 use my_proc_macros::DelegateTraits;
+
+use super::{Displayable, Updatable};
+use super::Interaction;
 
 #[derive(Serialize, Deserialize, Debug, DelegateTraits)]
 pub struct MyTasks(TaskPayload);
