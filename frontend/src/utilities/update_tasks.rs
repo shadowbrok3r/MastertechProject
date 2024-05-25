@@ -1,30 +1,11 @@
-use core::future::Future;
 
-use chrono::{DateTime, NaiveDate, Utc};
-use egui::{epaint::text, Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
 
-use database::{schema::{ModifyTask, Priority, Status, Store, TaskPayload}, Database};
-use egui_extras::DatePickerButton;
+use database::{schema::{Priority, Status, Store, TaskPayload}, Database};
 use log::info;
 use surrealdb::{opt::RecordId, sql::Value};
 use wasm_bindgen_futures::spawn_local;
 
-pub trait Displayable{
-    fn display_task_cards(&mut self, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error>;
-    // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
-}
-
-pub trait Updatable {
-    fn update_completed(&mut self, completed: bool, db: Database);
-    fn update_due_date(&mut self, due_date: String, db: Database);
-    fn update_assignee_initials(&mut self, initials: String, db: Database);
-    fn update_task_name(&mut self, name: String, db: Database);
-    fn update_status(&mut self, status: Status, db: Database);
-    fn update_dep(&mut self, store: Store, db: Database);
-    fn update_priority(&mut self, priority: Option<Priority>, db: Database);
-    fn update_task_description(&mut self, description: Option<String>, db: Database);
-}
-
+use super::Updatable;
 
 impl Updatable for TaskPayload {
     fn update_completed(&mut self, completed: bool, db: Database) {
