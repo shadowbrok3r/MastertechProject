@@ -16,11 +16,11 @@ use my_proc_macros::{DelegateTraits, FilterTasks};
 use super::{Displayable, Updatable, FilterTasks, Interaction};
 
 #[derive(Serialize, Deserialize, Debug, DelegateTraits, FilterTasks)]
-pub struct MyTasks(TaskPayload);
+pub struct MyTasks(pub TaskPayload);
 #[derive(Serialize, Deserialize, Debug, DelegateTraits, FilterTasks)]
-pub struct StoreTasks(TaskPayload);
+pub struct StoreTasks(pub TaskPayload);
 #[derive(Serialize, Deserialize, Debug, DelegateTraits, FilterTasks)]
-pub struct CompletedTasks(TaskPayload);
+pub struct CompletedTasks(pub TaskPayload);
 
 
 pub fn get_my_tasks(db: Database, tx: Sender<Vec<MyTasks>>, initials: String)

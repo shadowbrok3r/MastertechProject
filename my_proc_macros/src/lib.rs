@@ -133,56 +133,32 @@ pub fn filter_tasks_derive(input: TokenStream) -> TokenStream {
         impl FilterTasks for Vec<#name> {
             type Wrapper = #name;
 
-            fn filter_by_assignee(&mut self, assignee: &String) -> Vec<Self::Wrapper> {
-                self.iter_mut()
-                    .filter_map(move |task| {
-                        if task.0.assignee_initials.as_ref() == Some(assignee) {
-                            Some(task.clone())
-                        } else {
-                            None
-                        }
-                    })
+            fn filter_by_assignee(self, assignee: &String) -> Vec<Self::Wrapper> {
+                self.into_iter()
+                    .filter(|task| task.0.assignee_initials.as_ref() == Some(assignee))
                     .collect()
             }
 
-            fn filter_by_completed(&mut self, completed: bool) -> Vec<Self::Wrapper> {
-                self.iter_mut()
-                    .filter_map(move |task| {
-                        if task.0.completed == completed {
-                            Some(task.clone())
-                        } else {
-                            None
-                        }
-                    })
+            fn filter_by_completed(self, completed: bool) -> Vec<Self::Wrapper> {
+                self.into_iter()
+                    .filter(|task| task.0.completed == completed)
                     .collect()
             }
 
-            fn filter_by_status(&mut self, status: &Status) -> Vec<Self::Wrapper> {
-                self.iter_mut()
-                    .filter_map(move |task| {
-                        if task.0.status == *status {
-                            Some(task.clone())
-                        } else {
-                            None
-                        }
-                    })
+            fn filter_by_status(self, status: &Status) -> Vec<Self::Wrapper> {
+                self.into_iter()
+                    .filter(|task| task.0.status == *status)
                     .collect()
             }
 
-            fn filter_by_priority(&mut self, priority: &Priority) -> Vec<Self::Wrapper> {
-                self.iter_mut()
-                    .filter_map(move |task| {
-                        if task.0.priority == *priority {
-                            Some(task.clone())
-                        } else {
-                            None
-                        }
-                    })
+            fn filter_by_priority(self, priority: &Priority) -> Vec<Self::Wrapper> {
+                self.into_iter()
+                    .filter(|task| task.0.priority == *priority)
                     .collect()
             }
 
-            fn get_tasks(self) -> Vec<&mut #name> {
-                self.into_iter().map(|mut task| &mut task.0).collect()
+            fn get_tasks(self) -> Vec<TaskPayload> {
+                self.into_iter().map(|task| task.0).collect()
             }
         }
     };

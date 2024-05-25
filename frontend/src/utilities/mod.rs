@@ -43,9 +43,9 @@ pub trait Interaction{
 
 pub trait FilterTasks{
     type Wrapper;
-    fn filter_by_assignee(&mut self, assignee: &String) -> Vec<Self::Wrapper>;
-    fn filter_by_completed(&mut self, completed: bool) -> Vec<Self::Wrapper>;
-    fn filter_by_status(&mut self, status: &Status) -> Vec<Self::Wrapper>;
-    fn filter_by_priority(&mut self, priority: &Priority) -> Vec<Self::Wrapper> ;
+    fn filter_by_assignee(self, assignee: &String) -> Vec<Self::Wrapper>;
+    fn filter_by_completed(self, completed: bool) -> Vec<Self::Wrapper>;
+    fn filter_by_status(self, status: &Status) -> Vec<Self::Wrapper>;
+    fn filter_by_priority(self, priority: &Priority) -> Vec<Self::Wrapper> ;
     fn get_tasks(self) -> Vec<TaskPayload>;
 }
