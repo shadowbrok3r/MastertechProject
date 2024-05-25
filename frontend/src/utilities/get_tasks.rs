@@ -11,16 +11,15 @@ use surrealdb::engine::remote::ws::Client;
 use serde::de::DeserializeOwned;
 use egui::{Ui, Response};
 use crate::utilities::task_context::TaskContext;
-use my_proc_macros::DelegateTraits;
+use my_proc_macros::{DelegateTraits, FilterTasks};
 
-use super::{Displayable, Updatable};
-use super::Interaction;
+use super::{Displayable, Updatable, FilterTasks, Interaction};
 
-#[derive(Serialize, Deserialize, Debug, DelegateTraits)]
+#[derive(Serialize, Deserialize, Debug, DelegateTraits, FilterTasks)]
 pub struct MyTasks(TaskPayload);
-#[derive(Serialize, Deserialize, Debug, DelegateTraits)]
+#[derive(Serialize, Deserialize, Debug, DelegateTraits, FilterTasks)]
 pub struct StoreTasks(TaskPayload);
-#[derive(Serialize, Deserialize, Debug, DelegateTraits)]
+#[derive(Serialize, Deserialize, Debug, DelegateTraits, FilterTasks)]
 pub struct CompletedTasks(TaskPayload);
 
 

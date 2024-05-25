@@ -9,7 +9,7 @@ pub mod get_tasks;
 pub mod interact_tasks;
 pub mod get_other;
 pub mod task_context;
-
+pub mod filter;
 
 pub trait Displayable{
     fn display_task_cards(&mut self, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error>;
@@ -38,4 +38,14 @@ pub trait Interaction{
     fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response>;
     fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response>;
     fn interact_assignee_initials(&mut self, ui: &mut Ui) -> Option<Response>;
+}
+
+
+pub trait FilterTasks{
+    type Wrapper;
+    fn filter_by_assignee(&mut self, assignee: &String) -> Vec<Self::Wrapper>;
+    fn filter_by_completed(&mut self, completed: bool) -> Vec<Self::Wrapper>;
+    fn filter_by_status(&mut self, status: &Status) -> Vec<Self::Wrapper>;
+    fn filter_by_priority(&mut self, priority: &Priority) -> Vec<Self::Wrapper> ;
+    fn get_tasks(self) -> Vec<TaskPayload>;
 }
