@@ -122,3 +122,70 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
+
+
+#[proc_macro_derive(FilterTasks)]
+pub fn filter_tasks_derive(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = input.ident;
+
+    let expanded = quote! {
+        impl FilterTasks for Vec<#name> {
+            type Wrapper = #name;
+
+            fn filter_by_assignee(&mut self, assignee: &String) -> Vec<Self::Wrapper> {
+                self.iter_mut()
+                    .filter_map(move |task| {
+                        if task.0.assignee_initials.as_ref() == Some(assignee) {
+                            Some(task.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+
+            fn filter_by_completed(&mut self, completed: bool) -> Vec<Self::Wrapper> {
+                self.iter_mut()
+                    .filter_map(move |task| {
+                        if task.0.completed == completed {
+                            Some(task.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+
+            fn filter_by_status(&mut self, status: &Status) -> Vec<Self::Wrapper> {
+                self.iter_mut()
+                    .filter_map(move |task| {
+                        if task.0.status == *status {
+                            Some(task.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+
+            fn filter_by_priority(&mut self, priority: &Priority) -> Vec<Self::Wrapper> {
+                self.iter_mut()
+                    .filter_map(move |task| {
+                        if task.0.priority == *priority {
+                            Some(task.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+
+            fn get_tasks(self) -> Vec<&mut #name> {
+                self.into_iter().map(|mut task| &mut task.0).collect()
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}

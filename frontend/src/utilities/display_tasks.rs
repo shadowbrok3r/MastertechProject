@@ -1,9 +1,9 @@
 
 use eframe::egui::Ui;
-use egui::Direction;
+use egui::ScrollArea;
 use egui::{Color32, Frame, Layout, Margin, RichText, Rounding, Stroke};
-use egui_extras::{Column, Size, StripBuilder, TableBuilder};
-use database::schema::{Status, TaskPayload};
+use egui_extras::{Size, StripBuilder};
+use database::schema::TaskPayload;
 use log::info;
 
 use super::Displayable;
@@ -134,4 +134,86 @@ impl Displayable for TaskPayload{
     // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error> {Ok(())}
 }
 
+// // pub fn setup_display(&mut self, ui: &mut egui::Ui, column_names: Vec<String>) {
+pub fn setup_display(ui: &mut egui::Ui, column_names: Vec<String>, mut tasks: Vec<&mut TaskPayload>) {
+    ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
+    let frame = Frame::default()
+        .fill(Color32::from_rgb(25, 25, 30))
+        .inner_margin(Margin::same(4.0))
+        .outer_margin(Margin::symmetric(4.0, 1.0))
+        .rounding(Rounding::same(5.0))
+        .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
+    let column_frame = Frame::default()
+        .fill(Color32::from_rgb(20, 20, 20))
+        .inner_margin(Margin::same(8.0))
+        .rounding(Rounding::same(10.0))
+        .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
+
+    ScrollArea::horizontal()
+        .min_scrolled_width(ui.available_width())
+        .hscroll(true)
+        .show_viewport(ui, |ui, _|
+    {
+        StripBuilder::new(ui)
+            .cell_layout(Layout::top_down_justified(egui::Align::Center))
+            .size(Size::relative(0.01))
+            .size(Size::relative(0.07))
+            .size(Size::relative(0.92))
+            .vertical(|mut strip| 
+        {
+            strip
+                .strip(|strip| 
+            {
+                strip
+                    .sizes(Size::remainder(), column_names.len())
+                    .horizontal( |mut s| 
+                {
+                    for name in &column_names{
+                        s.cell(|ui|{
+                            frame.show(ui, |ui|{
+                                ui.vertical_centered_justified(|ui|{
+                                    ui.colored_label(Color32::WHITE, RichText::new(name.clone()).heading());
+                                });
+                            });
+                        });
+                    }
+                });
+            });
+            strip.empty();
+            strip
+                .strip(|strip| 
+            {
+                strip
+                    .sizes(Size::remainder(), column_names.len())
+                    .horizontal( |mut s| 
+                {
+                    for name in &column_names{
+                        let filtered_tasks: Vec<_> = tasks.iter_mut().filter(
+                            |task| 
+                                *task.assignee_initials.as_ref().unwrap() == *name
+                                && task.completed == false
+                        ).collect();
+                        s.cell(|ui|{
+                            column_frame.show(ui, |ui|{
+                                ui.vertical_centered_justified(|ui|
+                                {
+                                    ScrollArea::vertical()
+                                        .auto_shrink(false)
+                                        .show_viewport(ui, |ui, _|
+                                    {
+                                        for task in filtered_tasks {
+                                            task.display_task_cards(ui).unwrap();
+                                        }
+                                    });
+                                });
+                            });
+                        });
+                        
+                    }
+                });
+            });
+        });
+    });
+
+}
