@@ -266,8 +266,9 @@ pub struct ModifyNotification{
     pub archive: Option<bool>
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub enum Status{
+    #[default]
     Todo,
     InRepair,
     Complete
@@ -317,4 +318,27 @@ pub struct ReturnedStoreUsers {
     pub id: UserId,
     pub name: String,
     pub everest_initials: String,
+}
+
+
+
+impl Default for TaskPayload{
+    fn default() -> Self {
+        Self { 
+            id: Default::default(), 
+            task_name: Default::default(), 
+            service_ticket: Default::default(), 
+            assignee_email: Default::default(), 
+            assignee_initials: Default::default(), 
+            task_description: Default::default(), 
+            assignee: Default::default(), 
+            service_number: Default::default(), 
+            due_date: Default::default(), 
+            priority: Default::default(), 
+            task_note: Default::default(), 
+            completed: Default::default(), 
+            status: Default::default(), 
+            dep: Default::default() 
+        }
+    }
 }
