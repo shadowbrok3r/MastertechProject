@@ -48,3 +48,9 @@ pub trait FilterTasks{
     fn filter_by_status(self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
 }
+
+pub trait LiveUpdate{
+    fn handle_live_create(&mut self) -> anyhow::Result<(), anyhow::Error>;
+    fn handle_live_update(&mut self) -> anyhow::Result<(), anyhow::Error>;
+    fn handle_live_delete(&mut self) -> anyhow::Result<(), anyhow::Error>;
+}
