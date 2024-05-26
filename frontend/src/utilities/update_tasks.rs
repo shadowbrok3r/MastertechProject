@@ -1,6 +1,6 @@
 
 
-use database::{schema::{Priority, Record, Status, Store, TaskPayload}, Database};
+use database::{schema::{Priority, Record, Status, Store, TaskPayload, UserId}, Database};
 use log::info;
 use surrealdb::{opt::RecordId, sql::Value};
 use wasm_bindgen_futures::spawn_local;
@@ -34,7 +34,7 @@ impl Updatable for TaskPayload {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
-                "UPDATE task SET due_date={} WHERE id={id}", due_date
+                "UPDATE task SET due_date='{}' WHERE id={id}", due_date
             );
             let update_task: Vec<Record> = db
                 .database
@@ -51,10 +51,25 @@ impl Updatable for TaskPayload {
 
     fn update_assignee_initials(&mut self, initials: String, db: Database) {
         // self.assignee_initials = Some(initials);
+        info!("User initials: {:?}", initials.clone());
+
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
+            let user_query = format!(
+                "SELECT id FROM user WHERE everest_initials='{initials}'"
+            );
+            let selected_user: Option<Record> = db
+                .database
+                .query(user_query)
+                .await
+                .unwrap()
+                .take(0)
+                .unwrap();
+
+            info!("User: {selected_user:?}");
+
             let query = format!(
-                "UPDATE task SET assignee={} WHERE id={id}", initials
+                "UPDATE task SET assignee={} WHERE id={id}", selected_user.unwrap().id
             );
             let update_task: Vec<Record> = db
                 .database
@@ -74,7 +89,7 @@ impl Updatable for TaskPayload {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
-                "UPDATE task SET task_name={name} WHERE id={id}", 
+                "UPDATE task SET task_name='{name}' WHERE id={id}", 
             );
             let update_task: Vec<Record> = db
                 .database
@@ -97,19 +112,19 @@ impl Updatable for TaskPayload {
             match status{
                 Status::Todo => {
                     query = format!(
-                        "UPDATE task SET status={:?} WHERE id={id}",
+                        "UPDATE task SET status='{:?}' WHERE id={id}",
                         Status::Todo
                     );
                 },
                 Status::InRepair => {
                     query = format!(
-                        "UPDATE task SET status={:?} WHERE id={id}",
+                        "UPDATE task SET status='{:?}' WHERE id={id}",
                         Status::InRepair
                     );
                 },
                 Status::Complete => {
                     query = format!(
-                        "UPDATE task SET status={:?} WHERE id={id}",
+                        "UPDATE task SET status='{:?}' WHERE id={id}",
                         Status::Complete
                     );
                 },
@@ -133,7 +148,7 @@ impl Updatable for TaskPayload {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
-                "UPDATE task SET dep={:?} WHERE id={id}", dep
+                "UPDATE task SET dep='{:?}' WHERE id={id}", dep
             );
             let update_task: Vec<Record> = db
                 .database
@@ -153,7 +168,7 @@ impl Updatable for TaskPayload {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
-                "UPDATE task SET priority={:?} WHERE id={id}", priority.unwrap()
+                "UPDATE task SET priority='{:?}' WHERE id={id}", priority.unwrap()
             );
             let update_task: Vec<Record> = db
                 .database
@@ -173,7 +188,7 @@ impl Updatable for TaskPayload {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
-                "UPDATE task SET description={} WHERE id={id}", description.unwrap()
+                "UPDATE task SET description='{}' WHERE id={id}", description.unwrap()
             );
             let update_task: Vec<Record> = db
                 .database

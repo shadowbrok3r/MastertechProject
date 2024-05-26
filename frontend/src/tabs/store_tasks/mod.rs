@@ -13,8 +13,9 @@ impl MtechServerContext{
                 col_names.push(user.everest_initials.clone());
                 
             }
-
-            setup_display(ui, col_names, &mut *tasks, self.database.as_ref().unwrap().clone());
+            let database = self.database.as_ref().unwrap().clone();
+            let store_users = self.store_users.as_ref().unwrap();
+            setup_display(ui, col_names, &mut *tasks, database, &store_users);
         }
     }
 }

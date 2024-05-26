@@ -3,7 +3,7 @@ use core::future::Future;
 use chrono::{DateTime, NaiveDate, Utc};
 use egui::{epaint::text, Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
 
-use database::{schema::{ModifyTask, Priority, Status, Store, TaskPayload}, Database};
+use database::{schema::{ModifyTask, Priority, User, Status, Store, TaskPayload}, Database};
 use egui_extras::DatePickerButton;
 use log::info;
 use surrealdb::{opt::RecordId, sql::Value};
@@ -101,25 +101,21 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        // let mut status = Status::Todo;
+        let mut current_status = self.status.clone();
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-            .selected_text(
-                RichText::new(
-                    format!("{:?}", &self.status)
-                )
-                
-            )
+            .selected_text(RichText::new(format!("{:?}", &current_status.as_str())))
             .width(ui.available_width())
             .height(ui.available_height())
             .show_ui(ui, |ui| 
         {
-            ui.selectable_value(&mut self.status, Status::Todo, "Todo");
-            ui.selectable_value(&mut self.status, Status::InRepair, "In Repair");
-            ui.selectable_value(&mut self.status, Status::Complete, "Complete");
+            for mut status in Status::VALUES{
+                let status_change = ui.selectable_value(&mut current_status.clone(), self.status.clone(), status.as_str());
+                if status_change.clicked(){
+                    // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, assignee_initials);
+                    self.update_status(status.clone(), database.clone());
+                }
+            }
         });
-        if combo_box.response.lost_focus(){
-            info!("self.status changed?: {:?}// {:?} // {:?}", self.id, self.task_name, self.status);
-        }
         Some(combo_box.response)
     }
 
@@ -136,45 +132,42 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
+        let mut current_priority = self.priority.clone();
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-        .selected_text(format!("{:?}", &self.priority))
+        .selected_text(format!("{:?}", &current_priority.as_str()))
         .width(ui.available_width())
         .height(ui.available_height())
         .show_ui(ui, |ui| 
         {
-            ui.selectable_value(&mut self.priority, Priority::Normal, "Normal");
-            ui.selectable_value(&mut self.priority, Priority::Rfs, "Rfs");
-            ui.selectable_value(&mut self.priority, Priority::Qc, "Qc");
-            ui.selectable_value(&mut self.priority, Priority::Express, "Express");
-            ui.selectable_value(&mut self.priority, Priority::CustomerFire, "CustomerFire");
+            for mut priority in Priority::VALUES{
+                let priority_change = ui.selectable_value(&mut current_priority.clone(), self.priority.clone(), priority.as_str());
+                if priority_change.clicked(){
+                    // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, assignee_initials);
+                    self.update_priority(Some(priority.clone()), database.clone());
+                }
+            }
         });
-        if combo_box.response.lost_focus(){
-            info!("self.status changed?: {:?}// {:?} // {:?}", self.id, self.task_name, &self.status);
-        }
         Some(combo_box.response)
     }
 
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        if let Some(assignee_initials) = &mut self.assignee_initials{
-            let new_assignee = String::new();
-            let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-                .selected_text(assignee_initials.clone())
-                .width(ui.available_width())
-                .height(ui.available_height()/ 2.0)
-                .show_ui(ui, |ui| 
-            {
-                ui.selectable_value(assignee_initials, new_assignee.clone(), assignee_initials.clone());
-                ui.selectable_value(assignee_initials, new_assignee.clone(), assignee_initials.clone());
-                ui.selectable_value(assignee_initials, new_assignee.clone(), assignee_initials.clone());
-            
-            });
-            if combo_box.response.lost_focus(){
-                info!("self.status changed?: {:?}// {:?} // {:?}", self.id, self.task_name, assignee_initials);
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response> {
+        // if let Some(mut assignee_initials) = self.assignee_initials{
+        let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+            .selected_text(&self.assignee)
+            .width(ui.available_width())
+            .height(ui.available_height()/ 2.0)
+            .show_ui(ui, |ui| 
+        {
+            for user in *&store_users{
+                let assignee_selection = ui.selectable_value(&mut self.assignee_initials, user.everest_initials.to_owned(), &user.everest_initials);
+                if assignee_selection.clicked(){
+                    info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, user.everest_initials.clone());
+                    self.update_assignee_initials(user.everest_initials.clone(), database.clone());
+                }
             }
+        });
+
             Some(combo_box.response)
-        }else{
-            None
-        }
         
     }
 

@@ -3,72 +3,123 @@ use crossbeam::channel::{self, Receiver, Sender};
 use egui::{Ui, WidgetText};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use gloo_worker::Spawnable;
+use log::{error, info};
 use ratatui::Terminal;
 use ratframe::{NewCC, RataguiBackend};
+use serde::Serialize;
 use surrealdb::Action;
 use web_time::{Duration, Instant};
-use database::{schema::{ReturnedStoreUsers, TaskPayload}, Database};
+use database::{schema::{User, TaskPayload}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{tabs::terminal::chart::App
+use crate::{pages::login_page::Login, tabs::terminal::chart::App
 //    utilities::get_tasks::{CompletedTasks, MyTasks, StoreTasks}
 };
 
-pub struct MtechServer {
+// pub trait LoginState{
+//     fn login(&mut self, state: AppState);
+//     fn logout(&mut self, state: AppState);
+// }
+
+#[derive(Serialize)]
+pub struct MtechServer{ // <LoginState>
+    #[serde(skip)]
+    login: Login,
     pub context: MtechServerContext,
+    pub state: AppState,
+    #[serde(skip)]
     pub tree: DockState<String>,
 }
 
+#[derive(Default, Serialize, Debug)]
+pub enum AppState{
+    Authenticated,
+    #[default]
+    NoAuth,
+}
 
+
+#[derive(Serialize)]
 pub struct MtechServerContext{
     /// collection of all open tabs in ui
     pub open_tabs: HashSet<String>,
+
     /// egui dock styling
+    #[serde(skip)]
     pub style: Option<egui_dock::Style>,
 
+    #[serde(skip)]
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
-    // pub client: reqwest::Client,
 
     /// Terminal setup for console tab
+    #[serde(skip)]
     pub terminal: Terminal<RataguiBackend>,
+
     /// example chart for console tab
+    #[serde(skip)]
     pub chart_app: App,
+
     /// update period for chart
     pub tick_rate: Duration,
+
     /// last tick of example chart
+    #[serde(skip)]
     pub last_tick: Instant,
+
 
     ///Gets data from the first run of the main loop
     pub first_run: bool,
     
     /// Database connection
+    #[serde(skip)]
     pub database: Option<Database>,
+
+
+    pub current_user: Option<User>,
 
     pub my_tasks_opened: bool,
     pub store_tasks_opened: bool,
     pub completed_tasks_opened: bool,
+
     /// All contained task data from database
     pub tasks: Option<TaskPayload>,
     pub my_tasks: Option<Vec<TaskPayload>>,
     pub store_tasks: Option<Vec<TaskPayload>>,
     pub completed_tasks: Option<Vec<TaskPayload>>,
-    pub store_users: Option<Vec<ReturnedStoreUsers>>,
+    pub store_users: Option<Vec<User>>,
+
+    #[serde(skip)]
     /// Receives task data over crossbeam channel
     pub tasks_rx: Receiver<(Action, TaskPayload)>,
+    #[serde(skip)]
     pub my_tasks_rx: Receiver<Vec<TaskPayload>>,
+    #[serde(skip)]
     pub store_tasks_rx: Receiver<Vec<TaskPayload>>,
+    #[serde(skip)]
     pub completed_tasks_rx: Receiver<Vec<TaskPayload>>,
-    pub store_users_rx: Receiver<Vec<ReturnedStoreUsers>>,
+    #[serde(skip)]
+    pub store_users_rx: Receiver<Vec<User>>,
+
     /// Sends task data over crossbeam channel
+    #[serde(skip)]
     pub tasks_tx: Sender<(Action, TaskPayload)>,
+    #[serde(skip)]
     pub my_tasks_tx: Sender<Vec<TaskPayload>>,
+    #[serde(skip)]
     pub store_tasks_tx: Sender<Vec<TaskPayload>>,
+    #[serde(skip)]
     pub completed_tasks_tx: Sender<Vec<TaskPayload>>,
-    pub store_users_tx: Sender<Vec<ReturnedStoreUsers>>,
+    #[serde(skip)]
+    pub store_users_tx: Sender<Vec<User>>,
+
     /// Receives Database connection over crossbeam channel
+    #[serde(skip)]
     pub db_rx: Receiver<Database>,
+
+    #[serde(skip)]
     /// Sends Database connection over crossbeam channel
     pub db_tx: Sender<Database>,
 
+    #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
     
     pub data_update: Option<Rc<Cell<Option<u32>>>>,
@@ -138,7 +189,7 @@ impl TabViewer for MtechServerContext {
 }
 
 
-impl NewCC for MtechServer {
+impl NewCC for MtechServer{
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         let mut tree = DockState::new(
@@ -212,14 +263,14 @@ impl NewCC for MtechServer {
         let terminal = Terminal::new(backend).unwrap();
         let tick_rate = Duration::from_millis(30);
         let chart_app = App::new();
-        let mut last_tick = Instant::now();
+        let last_tick = Instant::now();
 
 
         let (db_tx, db_rx) = channel::unbounded();
         let (my_tasks_tx, my_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
         let (store_tasks_tx, store_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
         let (completed_tasks_tx, completed_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
-        let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<ReturnedStoreUsers>>();
+        let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
 
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
 
@@ -235,8 +286,46 @@ impl NewCC for MtechServer {
 
         setup_custom_fonts(&cc.egui_ctx);
 
-        let mut added_nodes = Vec::new();
+        let added_nodes = Vec::new();
 
+        let mut state = AppState::default();
+        let mut current_user = None;
+        #[cfg(target_arch = "wasm32")]
+        {
+            let cookie = wasm_cookies::get("jwt");
+            let user_cookie = wasm_cookies::get("user");
+
+            if let Some(cookie) = cookie{
+                match cookie{
+                    Ok(c) => {
+                        
+                        state = AppState::Authenticated;
+                        info!("self.state: {:?}", state);
+                        if let Some(user) = user_cookie{
+                            match user{
+                                Ok(usr) => {
+                                    info!("Got user cookie! {c:?}");
+                                    let user = serde_json::from_str(&usr.as_str()).unwrap();
+                                    current_user = Some(user);
+                                    state = AppState::Authenticated;
+                                },
+                                Err(e) => {
+                                    error!("Error with user cookie: {e:?}");
+                                    state = AppState::NoAuth;
+                                }
+                            }
+                        }      
+                    },
+                    Err(e) => {
+                        error!("Error with cookie: {e:?}");
+                        state = AppState::NoAuth;
+                    }
+                }
+            }
+        }
+
+        info!("self.state: {:?}", state);
+        
         let context = MtechServerContext{
             open_tabs,
             style: None,
@@ -251,6 +340,8 @@ impl NewCC for MtechServer {
             database: None,
             db_tx, 
             db_rx,
+
+            current_user,
 
             tasks: None,
             my_tasks: None,
@@ -279,12 +370,24 @@ impl NewCC for MtechServer {
         };
         
         Self {
+            login: Login::default(),
             context,
             tree,
+            state
         }
     }
 
     fn canvas_id() -> String { "mtech_canvas".into() }
+}
+
+impl MtechServer{
+    // Private method to access login state only within NoAuth context
+    pub fn login_mut(&mut self) -> Option<&mut Login> {
+        match self.state{
+            AppState::NoAuth => Some(&mut self.login),
+            AppState::Authenticated => None
+        }
+    }
 }
 
 fn setup_custom_fonts(ctx: &egui::Context) {

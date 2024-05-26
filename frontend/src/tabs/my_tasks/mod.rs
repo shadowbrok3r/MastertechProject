@@ -2,13 +2,17 @@ use crate::{app_state::MtechServerContext, utilities::Displayable};
 use database::schema::Status;
 use egui_extras::{Column, Size, StripBuilder, TableBuilder};
 use egui::{Color32, Direction, Frame, Layout, Margin, RichText, Rounding, ScrollArea, Sense, Stroke, Ui, Vec2};
+use log::info;
 
 impl MtechServerContext{
     pub fn my_tasks(&mut self, ui: &mut Ui){ 
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
+        info!("MyTasks is open");
+
         if let Some(tasks) = &mut self.my_tasks{
             self.my_tasks_opened = true;
+
             // let col = Column::auto().at_least(400.0);
 
             let mut todo_tasks = Vec::new();
@@ -120,7 +124,9 @@ impl MtechServerContext{
                                     {
                                         for row_index in rows{
                                             if let Some(task) = todo_tasks.get_mut(row_index) {
-                                                task.display_task_cards(ui, self.database.as_ref().unwrap().clone()).unwrap();
+                                                let database = self.database.as_ref().unwrap().clone();
+                                                let store_users = self.store_users.as_ref().unwrap();
+                                                task.display_task_cards(ui, database, store_users).unwrap();
                                             }
                                         }
                                     });
@@ -136,7 +142,12 @@ impl MtechServerContext{
                                     {
                                         for row_index in rows{
                                             if let Some(task) = inrepair_tasks.get_mut(row_index) {
-                                                task.display_task_cards(ui, self.database.as_ref().unwrap().clone()).unwrap();
+                                                if let Some(users) = &self.store_users{
+                                                    let database = self.database.as_ref().unwrap().clone();
+                                                    let store_users = users;
+                                                    task.display_task_cards(ui, database, &store_users).unwrap();
+                                                }
+
                                             }
                                         }
                                     });
@@ -152,7 +163,12 @@ impl MtechServerContext{
                                     {
                                         for row_index in rows{
                                             if let Some(task) = complete_tasks.get_mut(row_index) {
-                                                task.display_task_cards(ui, self.database.as_ref().unwrap().clone()).unwrap();
+                                                if let Some(users) = &self.store_users{
+                                                    let database = self.database.as_ref().unwrap().clone();
+                                                    let store_users = users;
+                                                    task.display_task_cards(ui, database, &store_users).unwrap();
+                                                }
+
                                             }
                                         }
                                     });

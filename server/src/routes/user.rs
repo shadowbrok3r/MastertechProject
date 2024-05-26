@@ -21,7 +21,7 @@ use crate::utils::error::{ApiResult, ApiError};
 
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ReturnedStoreUsers {
+pub struct User {
     pub name: String,
     pub everest_initials: String,
 }
@@ -393,11 +393,11 @@ pub async fn get_users_in_store(
     db: Extension<Database>, 
     _ctx: Ctx,
     Json(input): Json<OriginStore>,
-) -> Json<Result<Vec<ReturnedStoreUsers>, ApiError>> { 
+) -> Json<Result<Vec<User>, ApiError>> { 
     println!("input: {input:?}");
     let query = format!("SELECT name, everest_initials FROM user WHERE store == '{}'", input.origin_store);
     println!("query: {query:?}");
-    let returned_store_users: Vec<ReturnedStoreUsers> = db
+    let returned_store_users: Vec<User> = db
         .database
         .query(query.as_str())
         .await

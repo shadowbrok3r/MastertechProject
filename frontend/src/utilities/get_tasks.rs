@@ -1,22 +1,16 @@
 
-use futures::StreamExt;
 use database::{schema::*, Database};
-use serde::{Deserialize, Serialize};
-use surrealdb::{method::Stream, Action, Notification};
 use wasm_bindgen_futures::spawn_local;
-use std::{marker, fmt::Debug};
 use log::{info, error};
 use crossbeam::channel::Sender;
-use surrealdb::engine::remote::ws::Client;
-use serde::de::DeserializeOwned;
 
 
-pub fn get_my_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, initials: String)
+pub fn get_my_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, user_id: UserId)
 {
     spawn_local(async move {
         let query = format!(
             "SELECT * FROM task 
-            WHERE assignee_initials == '{initials}' "
+            WHERE assignee_initials == '{}' ", user_id.0.id
         );
         let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
         match query_results{
@@ -74,35 +68,4 @@ pub fn get_completed_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: St
     });
 }
 
-pub fn listen_tasks<T>(db: Database, tx: Sender<(Action, T)>) 
-    where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
-{
-    // info!("Listening for tasks");
-    spawn_local(async move {
-        let task_stream: Stream<Client, Vec<T>> = db.database.select(TASK_TABLE).live().await.unwrap();
-        handle_streams(task_stream, tx.clone()).await;
-    });
-}
 
-
-
-async fn handle_streams<T>(
-    mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,
-    tx: Sender<(Action, T)>
-) where T: Serialize + Deserialize<'static> + Debug{
-    while let Some(notification) = notification_stream.next().await {
-        match notification{
-            Ok(notification) => {
-                let data = notification.data;
-                // info!("{action}\n{data:?}");
-                match tx.send((notification.action, data)){
-                    Ok(_) => info!("Sending task data over channel"),
-                    Err(e) => error!("Error sending task data: {e:?}")
-                }
-            },
-            Err(err) => {
-                error!("Error: {err:?}");
-            }
-        };
-    }; 
-}
