@@ -1,4 +1,5 @@
 
+use database::Database;
 use eframe::egui::Ui;
 use egui::ScrollArea;
 use egui::{Color32, Frame, Layout, Margin, RichText, Rounding, Stroke};
@@ -6,12 +7,12 @@ use egui_extras::{Size, StripBuilder};
 use database::schema::TaskPayload;
 use log::info;
 
-use super::Displayable;
+use super::{Displayable, FilterTasks};
 use super::Interaction;
 
 
 impl Displayable for TaskPayload{
-    fn display_task_cards(&mut self, ui: &mut Ui)  -> anyhow::Result<(), anyhow::Error> {
+    fn display_task_cards(&mut self, ui: &mut Ui, database: Database)  -> anyhow::Result<(), anyhow::Error> {
 
         ui.style_mut().visuals.selection.stroke.color = Color32::from_additive_luminance(255);
         ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
@@ -47,7 +48,7 @@ impl Displayable for TaskPayload{
                         {
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    if self.interact_assignee_initials(ui).unwrap().changed(){
+                                    if self.interact_assignee_initials(ui, database.clone()).unwrap().changed(){
                                         info!("interact_assignee_initials changed: {:?}// {:?}", self.id, self.task_name);
                                     }
                                     
@@ -55,12 +56,12 @@ impl Displayable for TaskPayload{
                             });
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_task_name(ui);
+                                    self.interact_task_name(ui, database.clone());
                                 });
                             });
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_completed(ui);
+                                    self.interact_completed(ui, database.clone());
                                 });
                             });
                         });
@@ -76,12 +77,12 @@ impl Displayable for TaskPayload{
                         {
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_task_description(ui);
+                                    self.interact_task_description(ui, database.clone());
                                 });
                             });
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_task_description(ui);
+                                    self.interact_task_description(ui, database.clone());
                                 });
                             });
                         });
@@ -98,17 +99,17 @@ impl Displayable for TaskPayload{
                         {
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_due_date(ui);
+                                    self.interact_due_date(ui, database.clone());
                                 });
                             });
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_priority(ui);
+                                    self.interact_priority(ui, database.clone());
                                 });
                             });
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    if self.interact_status(ui).unwrap().changed(){
+                                    if self.interact_status(ui, database).unwrap().changed(){
                                         info!("interact_status changed: {:?}// {:?}", self.id, self.task_name);
                                     }
                                 });
@@ -135,7 +136,7 @@ impl Displayable for TaskPayload{
 }
 
 // // pub fn setup_display(&mut self, ui: &mut egui::Ui, column_names: Vec<String>) {
-pub fn setup_display(ui: &mut egui::Ui, column_names: Vec<String>, mut tasks: Vec<&mut TaskPayload>) {
+pub fn setup_display(ui: &mut egui::Ui, column_names: Vec<String>, tasks: &mut Vec<TaskPayload>, database: Database) {
     ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
     let frame = Frame::default()
         .fill(Color32::from_rgb(25, 25, 30))
@@ -189,11 +190,11 @@ pub fn setup_display(ui: &mut egui::Ui, column_names: Vec<String>, mut tasks: Ve
                     .horizontal( |mut s| 
                 {
                     for name in &column_names{
-                        let filtered_tasks: Vec<_> = tasks.iter_mut().filter(
-                            |task| 
-                                *task.assignee_initials.as_ref().unwrap() == *name
-                                && task.completed == false
-                        ).collect();
+                        let mut filtered = tasks
+                            .filter_by_completed(false)
+                            .filter_by_assignee(&name.clone());
+                        
+
                         s.cell(|ui|{
                             column_frame.show(ui, |ui|{
                                 ui.vertical_centered_justified(|ui|
@@ -202,14 +203,13 @@ pub fn setup_display(ui: &mut egui::Ui, column_names: Vec<String>, mut tasks: Ve
                                         .auto_shrink(false)
                                         .show_viewport(ui, |ui, _|
                                     {
-                                        for task in filtered_tasks {
-                                            task.display_task_cards(ui).unwrap();
+                                        for task in filtered.iter_mut() {
+                                            task.display_task_cards(ui, database.clone()).unwrap();
                                         }
                                     });
                                 });
                             });
                         });
-                        
                     }
                 });
             });

@@ -21,7 +21,7 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
         }
 
         impl Displayable for #name {
-            fn display_task_cards(&mut self, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error> {
+            fn display_task_cards(&mut self, ui: &mut Ui, database: Database) -> anyhow::Result<(), anyhow::Error> {
                 self.0.display_task_cards(ui)
             }
             // fn setup_display(&mut self, ui: &mut Ui) {
@@ -64,39 +64,39 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
         }
 
         impl Interaction for #name {
-            fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_task_name(ui)
             }
 
-            fn interact_task_description(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_task_description(ui)
             }
 
-            fn interact_recommendations(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_recommendations(ui)
             }
 
-            fn interact_due_date(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_due_date(ui)
             }
 
-            fn interact_completed(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_completed(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_completed(ui)
             }
 
-            fn interact_status(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_status(ui)
             }
 
-            fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_dep(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_dep(ui)
             }
 
-            fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_priority(ui)
             }
 
-            fn interact_assignee_initials(&mut self, ui: &mut Ui) -> Option<Response> {
+            fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
                 self.0.interact_assignee_initials(ui)
             }
         }
@@ -133,25 +133,25 @@ pub fn filter_tasks_derive(input: TokenStream) -> TokenStream {
         impl FilterTasks for Vec<#name> {
             type Wrapper = #name;
 
-            fn filter_by_assignee(self, assignee: &String) -> Vec<Self::Wrapper> {
+            fn filter_by_assignee(self, assignee: &String) -> Vec<TaskPayload> {
                 self.into_iter()
                     .filter(|task| task.0.assignee_initials.as_ref() == Some(assignee))
                     .collect()
             }
 
-            fn filter_by_completed(self, completed: bool) -> Vec<Self::Wrapper> {
+            fn filter_by_completed(self, completed: bool) -> Vec<TaskPayload> {
                 self.into_iter()
                     .filter(|task| task.0.completed == completed)
                     .collect()
             }
 
-            fn filter_by_status(self, status: &Status) -> Vec<Self::Wrapper> {
+            fn filter_by_status(self, status: &Status) -> Vec<TaskPayload> {
                 self.into_iter()
                     .filter(|task| task.0.status == *status)
                     .collect()
             }
 
-            fn filter_by_priority(self, priority: &Priority) -> Vec<Self::Wrapper> {
+            fn filter_by_priority(self, priority: &Priority) -> Vec<TaskPayload> {
                 self.into_iter()
                     .filter(|task| task.0.priority == *priority)
                     .collect()

@@ -16,7 +16,7 @@ impl MtechServerContext{
             let mut complete_tasks = Vec::new();
     
             for task in tasks {
-                match task.inner().status {
+                match task.status {
                     Status::Todo => todo_tasks.push(task),
                     Status::InRepair => inrepair_tasks.push(task),
                     Status::Complete => complete_tasks.push(task),
@@ -120,7 +120,7 @@ impl MtechServerContext{
                                     {
                                         for row_index in rows{
                                             if let Some(task) = todo_tasks.get_mut(row_index) {
-                                                task.display_task_cards(ui).unwrap();
+                                                task.display_task_cards(ui, self.database.as_ref().unwrap().clone()).unwrap();
                                             }
                                         }
                                     });
@@ -136,7 +136,7 @@ impl MtechServerContext{
                                     {
                                         for row_index in rows{
                                             if let Some(task) = inrepair_tasks.get_mut(row_index) {
-                                                task.display_task_cards(ui).unwrap();
+                                                task.display_task_cards(ui, self.database.as_ref().unwrap().clone()).unwrap();
                                             }
                                         }
                                     });
@@ -152,7 +152,7 @@ impl MtechServerContext{
                                     {
                                         for row_index in rows{
                                             if let Some(task) = complete_tasks.get_mut(row_index) {
-                                                task.display_task_cards(ui).unwrap();
+                                                task.display_task_cards(ui, self.database.as_ref().unwrap().clone()).unwrap();
                                             }
                                         }
                                     });

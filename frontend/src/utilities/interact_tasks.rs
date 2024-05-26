@@ -9,12 +9,14 @@ use log::info;
 use surrealdb::{opt::RecordId, sql::Value};
 use wasm_bindgen_futures::spawn_local;
 
+use crate::utilities::Updatable;
+
 use super::Interaction;
 
 
 
 impl Interaction for TaskPayload {
-    fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let text_edit = TextEdit::singleline(&mut self.task_name).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
         if text_edit.changed(){
             info!("task_name changed: {:?}// {:?}", self.id, self.task_name);
@@ -22,7 +24,7 @@ impl Interaction for TaskPayload {
         Some(text_edit)
     }
 
-    fn interact_task_description(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         ui.add_space(10.0);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         // ui.style_mut().visuals.widgets.inactive.fg = Color32::BLACK;
@@ -47,7 +49,7 @@ impl Interaction for TaskPayload {
         
     }
 
-    fn interact_recommendations(&mut self, ui: &mut Ui) -> Option<Response>{
+    fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let mut recommendations = "These are test checkin notes";
         let text_edit = TextEdit::multiline(&mut recommendations)
             .desired_rows(4)
@@ -61,7 +63,7 @@ impl Interaction for TaskPayload {
         Some(text_edit.response)
     }
 
-    fn interact_due_date(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let datetime: DateTime<Utc> = self.due_date.parse().expect("Failed to parse date");
         let mut formatted: NaiveDate = datetime.date_naive(); // format("%m/%d/%y");
         let id = self.id.clone().unwrap().0.id.to_string();
@@ -77,7 +79,7 @@ impl Interaction for TaskPayload {
         None
     }
 
-    fn interact_completed(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_completed(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         if self.completed{
             let stroke = Stroke::new(2.0, Color32::DARK_GREEN);
             let button = Button::new("✔️").fill(ui.style().visuals.extreme_bg_color).stroke(stroke);
@@ -92,12 +94,13 @@ impl Interaction for TaskPayload {
             let res = ui.add_sized(ui.available_size(), button);
             if res.clicked(){
                 info!("marked completed: {:?}// {:?}", self.id, self.task_name);
+                self.update_completed(!self.completed, database);
             }
             Some(res)
         }
     }
 
-    fn interact_status(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         // let mut status = Status::Todo;
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(
@@ -120,7 +123,7 @@ impl Interaction for TaskPayload {
         Some(combo_box.response)
     }
 
-    fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_dep(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         if let Some(ref mut dep) = self.dep {
             ui.label("Store:");
             let dep = ui.text_edit_singleline(dep);
@@ -132,7 +135,7 @@ impl Interaction for TaskPayload {
         
     }
 
-    fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
         .selected_text(format!("{:?}", &self.priority))
         .width(ui.available_width())
@@ -151,7 +154,7 @@ impl Interaction for TaskPayload {
         Some(combo_box.response)
     }
 
-    fn interact_assignee_initials(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         if let Some(assignee_initials) = &mut self.assignee_initials{
             let new_assignee = String::new();
             let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")

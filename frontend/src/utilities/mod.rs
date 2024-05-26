@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use egui::{Response, Ui};
-use database::{schema::{Priority, Status, Store, TaskPayload}, Database};
+use database::{schema::{Priority, ReturnedStoreUsers, Status, Store, TaskPayload}, Database};
 
 pub mod display_tasks;
 pub mod update_tasks;
@@ -12,7 +12,7 @@ pub mod task_context;
 pub mod filter;
 
 pub trait Displayable{
-    fn display_task_cards(&mut self, ui: &mut Ui) -> anyhow::Result<(), anyhow::Error>;
+    fn display_task_cards(&mut self, ui: &mut Ui, database: Database) -> anyhow::Result<(), anyhow::Error>;
     // fn setup_display(&mut self, column_names: Vec<String>, total_rows: usize, ui: &mut Ui);
     // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
 }
@@ -29,23 +29,22 @@ pub trait Updatable {
 }
 
 pub trait Interaction{
-    fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_task_description(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_recommendations(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_due_date(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_completed(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_status(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_assignee_initials(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_completed(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_dep(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
 }
 
 
 pub trait FilterTasks{
-    type Wrapper;
-    fn filter_by_assignee(self, assignee: &String) -> Vec<Self::Wrapper>;
-    fn filter_by_completed(self, completed: bool) -> Vec<Self::Wrapper>;
-    fn filter_by_status(self, status: &Status) -> Vec<Self::Wrapper>;
-    fn filter_by_priority(self, priority: &Priority) -> Vec<Self::Wrapper> ;
+    fn filter_by_assignee(&self, assignees: &String) -> Vec<TaskPayload>;
+    fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload>;
+    fn filter_by_status(self, status: &Status) -> Vec<TaskPayload>;
+    fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload> ;
     fn get_tasks(self) -> Vec<TaskPayload>;
 }
