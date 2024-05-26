@@ -150,26 +150,26 @@ impl Interaction for TaskPayload {
         Some(combo_box.response)
     }
 
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response> {
-        // if let Some(mut assignee_initials) = self.assignee_initials{
-        let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-            .selected_text(&self.assignee)
-            .width(ui.available_width())
-            .height(ui.available_height()/ 2.0)
-            .show_ui(ui, |ui| 
-        {
-            for user in *&store_users{
-                let assignee_selection = ui.selectable_value(&mut self.assignee_initials, user.everest_initials.to_owned(), &user.everest_initials);
-                if assignee_selection.clicked(){
-                    info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, user.everest_initials.clone());
-                    self.update_assignee_initials(user.everest_initials.clone(), database.clone());
-                }
-            }
-        });
+    // fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response> {
+    //     // if let Some(mut assignee_initials) = self.assignee_initials{
+    //     let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+    //         .selected_text(&self.assignee)
+    //         .width(ui.available_width())
+    //         .height(ui.available_height()/ 2.0)
+    //         .show_ui(ui, |ui| 
+    //     {
+    //         for user in *&store_users{
+    //             let assignee_selection = ui.selectable_value(&mut self.assignee_initials, user.everest_initials.to_owned(), &user.everest_initials);
+    //             if assignee_selection.clicked(){
+    //                 info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, user.everest_initials.clone());
+    //                 self.update_assignee_initials(user.everest_initials.clone(), database.clone());
+    //             }
+    //         }
+    //     });
 
-            Some(combo_box.response)
+    //         Some(combo_box.response)
         
-    }
+    // }
 
     // Add more interact methods for other fields if necessary...
 }

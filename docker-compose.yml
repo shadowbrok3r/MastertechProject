@@ -4,7 +4,7 @@ services:
     image: traefik:latest
     container_name: "traefik"
     networks:
-      - webnet
+      - web
     # ports:
       # The HTTP port
       # - "80:80"
@@ -22,7 +22,7 @@ services:
     # - "--api.dashboard=true"
     # Providers
     - "--providers.docker"
-    - "--providers.docker.network=webnet"
+    - "--providers.docker.network=web"
     # EntryPoints
     - "--entrypoints.https.http.tls.domains[0].main=master-tech.app" # $DOMAINNAME_CLOUD_SERVER
     - "--entrypoints.https.http.tls.domains[0].sans=*.master-tech.app" # $DOMAINNAME_CLOUD_SERVER
@@ -63,55 +63,20 @@ services:
       - "traefik.http.middlewares.corsHeader.headers.accessControlAllowCredentials=true"
       - "traefik.http.middlewares.corsHeader.headers.addVaryHeader=true"
 
-############################################## -- AXUM SERVER -- ##############################################
-  axum:
-    container_name: "axum"
-    build:
-      context: ./server
-      dockerfile: Dockerfile
-    env_file:
-      - server/.env
-    networks:
-        - webnet
-    ports:
-      - 4000:4000
-    expose: 
-    - 4000
-    command: sh -c "mold -run cargo watch -x run" # watch -x run" #  watch -x 
-    develop:
-      watch:
-        - action: sync
-          path: ./server/src
-          target: /server/src
-          ignore:
-            - target/
-    volumes:
-      - ./server:/server
-    #   - database_backups:/database_backups
-    #   - downloads:/downloads
-    labels: 
-      - "traefik.http.routers.server.rule=Host(`axum.master-tech.app`) || PathPrefix(`/api`)"
-      - "traefik.http.routers.server.entrypoints=websecure"
-      - "traefik.http.routers.server.tls=true"
-      - "traefik.http.routers.server.tls.certresolver=digitalocean"
-      - "traefik.http.routers.server.middlewares=corsHeader"
-      - "traefik.http.routers.server.service=server"
-      - "traefik.http.services.server.loadbalancer.server.port=4000"
-
 ############################################## -- FRONTEND -- ##############################################
   frontend:
     container_name: "frontend"
-    restart: always
     build:
-      context: ./
-      # dockerfile: Dockerfile
+      context: .
+      dockerfile: dockerfile
+    restart: always
     networks:
-        - webnet
+        - web
     ports:
       - 8080:8080
     expose:
       - 8080
-    command: trunk serve # start  # run dev
+    command: trunk serve
     # environment:
     #   - NODE_ENV=Production
     volumes:
@@ -135,7 +100,7 @@ services:
     restart: always
     entrypoint: /surreal
     networks:
-        - webnet
+        - web
     ports:
       - 8000:8000
     expose:
@@ -165,6 +130,6 @@ services:
       - "traefik.http.services.surreal.loadbalancer.server.port=8000"
 
 networks:
-  webnet: 
+  web: 
     driver: bridge
-    name: webnet
+    name: web
