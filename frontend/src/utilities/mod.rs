@@ -38,12 +38,12 @@ pub trait Interaction{
     fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_dep(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response>;
+    // fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response>;
 }
 
 
 pub trait FilterTasks{
-    fn filter_by_assignee(&self, assignees: &String) -> Vec<TaskPayload>;
+    // fn filter_by_assignee(&self, assignees: &String) -> Vec<TaskPayload>;
     fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
