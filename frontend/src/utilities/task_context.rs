@@ -1,5 +1,5 @@
 use crossbeam::channel::Sender;
-use database::{schema::{ComputerData, CustomerData, ReturnedStoreUsers, TaskNotePayload, TaskPayload, TicketData, TicketId}, Database};
+use database::{schema::{ComputerData, CustomerData, User, TaskNotePayload, TaskPayload, TicketData, TicketId}, Database};
 use log::{error, info};
 use surrealdb::opt::RecordId;
 use wasm_bindgen_futures::spawn_local;
@@ -7,7 +7,7 @@ use wasm_bindgen_futures::spawn_local;
 
 
 pub trait TaskContext {
-    fn get_store_users(&mut self, db: Database, tx: Sender<Vec<ReturnedStoreUsers>>);
+    fn get_store_users(&mut self, db: Database, tx: Sender<Vec<User>>);
     fn get_computer_data(&mut self, db: Database, tx: Sender<Vec<ComputerData>>);
     fn get_customer_data(&mut self, db: Database, tx: Sender<Vec<CustomerData>>);
     fn get_service_data(&mut self, db: Database, tx: Sender<Vec<TicketData>>);
@@ -16,13 +16,13 @@ pub trait TaskContext {
 
 
 impl TaskContext for TaskPayload{
-    fn get_store_users(&mut self, db: Database, tx: Sender<Vec<ReturnedStoreUsers>>){
+    fn get_store_users(&mut self, db: Database, tx: Sender<Vec<User>>){
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
                 "SELECT * FROM user WHERE id={id}"
             );
-            let get_data: Result<Vec<ReturnedStoreUsers>, surrealdb::Error> = db
+            let get_data: Result<Vec<User>, surrealdb::Error> = db
                 .database
                 .query(query)
                 .await

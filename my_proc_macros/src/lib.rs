@@ -102,7 +102,7 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
         }
 
         impl TaskContext for #name{
-            fn get_store_users(&mut self, db: Database, tx: Sender<Vec<ReturnedStoreUsers>>){
+            fn get_store_users(&mut self, db: Database, tx: Sender<Vec<User>>){
                 self.0.get_store_users(db, tx)
             }
             fn get_computer_data(&mut self, db: Database, tx: Sender<Vec<ComputerData>>){

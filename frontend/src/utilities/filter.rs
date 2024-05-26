@@ -1,16 +1,17 @@
-use database::schema::{Priority, ReturnedStoreUsers, Status, TaskPayload};
+use database::schema::{Priority, User, Status, TaskPayload};
 use log::info;
 
 use super::FilterTasks;
 
 
 impl FilterTasks for Vec<TaskPayload>{
-    fn filter_by_assignee(&self, assignees: &String) -> Vec<TaskPayload> {
+    fn filter_by_assignee(&self, assignees: &User) -> Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| 
                 // let mut res = false;
                 // for user in assignees{
-                    task.assignee_initials.as_deref() == Some(&assignees)
+                    todo!()
+                    // task.assignee == *assignees
                 // }
                 // res
             )

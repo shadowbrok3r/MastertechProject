@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use egui::{Response, Ui};
-use database::{schema::{Priority, Status, Store, TaskPayload}, Database};
+use database::{schema::{Priority, User, Status, Store, TaskPayload}, Database};
 
 pub mod display_tasks;
 pub mod update_tasks;
@@ -13,7 +13,7 @@ pub mod filter;
 pub mod handle_live_data;
 
 pub trait Displayable{
-    fn display_task_cards(&mut self, ui: &mut Ui, database: Database) -> anyhow::Result<(), anyhow::Error>;
+    fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> anyhow::Result<(), anyhow::Error>;
     // fn setup_display(&mut self, column_names: Vec<String>, total_rows: usize, ui: &mut Ui);
     // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
 }
@@ -38,7 +38,7 @@ pub trait Interaction{
     fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_dep(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response>;
 }
 
 
@@ -50,7 +50,7 @@ pub trait FilterTasks{
 }
 
 pub trait LiveUpdate{
-    fn handle_live_create(&mut self) -> anyhow::Result<(), anyhow::Error>;
-    fn handle_live_update(&mut self) -> anyhow::Result<(), anyhow::Error>;
-    fn handle_live_delete(&mut self) -> anyhow::Result<(), anyhow::Error>;
+    fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
+    fn handle_live_update(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
+    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
 }

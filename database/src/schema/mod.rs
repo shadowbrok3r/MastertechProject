@@ -15,7 +15,7 @@ pub const USER_TABLE: &str = "user";
 pub const NOTIFICATION_TABLE: &str = "notification";
 
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Record {
     #[allow(dead_code)]
     pub id: Thing,
@@ -33,7 +33,7 @@ pub struct TicketId(pub RecordId);
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UserId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TaskId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -64,7 +64,6 @@ pub struct TaskPayload{
     pub service_ticket: Option<TicketId>,
     // pub assignee_name: Option<String>,
     pub assignee_email: Option<String>,
-    pub assignee_initials: Option<String>,
     pub task_description: Option<String>, 
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<i32>,
@@ -218,8 +217,6 @@ pub struct ModifyTask{
     pub completed: Option<bool>, 
     /// update due_date 
     pub due_date: Option<String>, 
-    /// update assignee 
-    pub assignee_initials: Option<String>, 
     /// update task name 
     pub task_name: Option<String>, 
     /// modify description of task
@@ -309,11 +306,14 @@ pub enum Store{
 }
 
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReturnedStoreUsers {
-    pub id: UserId,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct User {
+    pub id: Option<UserId>,
     pub name: String,
     pub everest_initials: String,
+    pub email: String,
+    pub store: Store,
+    pub notifications: Option<Vec<NotificationId>>
 }
 
 
@@ -325,7 +325,6 @@ impl Default for TaskPayload{
             task_name: Default::default(), 
             service_ticket: Default::default(), 
             assignee_email: Default::default(), 
-            assignee_initials: Default::default(), 
             task_description: Default::default(), 
             assignee: Default::default(), 
             service_number: Default::default(), 
@@ -337,4 +336,28 @@ impl Default for TaskPayload{
             dep: Default::default() 
         }
     }
+}
+
+impl Priority{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            Priority::Normal => "Normal",
+            Priority::Rfs => "Rfs",
+            Priority::Qc => "Qc",
+            Priority::Express => "Express",
+            Priority::CustomerFire => "CustomerFire",
+        }
+    }
+    pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::CustomerFire];
+}
+
+impl Status{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            Status::Todo => "Todo",
+            Status::InRepair => "In Repair",
+            Status::Complete => "Complete",
+        }
+    }
+    pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
 }

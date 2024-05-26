@@ -4,7 +4,7 @@ use eframe::egui::Ui;
 use egui::ScrollArea;
 use egui::{Color32, Frame, Layout, Margin, RichText, Rounding, Stroke};
 use egui_extras::{Size, StripBuilder};
-use database::schema::TaskPayload;
+use database::schema::{User, TaskPayload};
 use log::info;
 
 use super::{Displayable, FilterTasks};
@@ -12,7 +12,7 @@ use super::Interaction;
 
 
 impl Displayable for TaskPayload{
-    fn display_task_cards(&mut self, ui: &mut Ui, database: Database)  -> anyhow::Result<(), anyhow::Error> {
+    fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>)  -> anyhow::Result<(), anyhow::Error> {
 
         ui.style_mut().visuals.selection.stroke.color = Color32::from_additive_luminance(255);
         ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
@@ -48,7 +48,7 @@ impl Displayable for TaskPayload{
                         {
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    if self.interact_assignee_initials(ui, database.clone()).unwrap().changed(){
+                                    if self.interact_assignee_initials(ui, database.clone(), store_users).unwrap().changed(){
                                         info!("interact_assignee_initials changed: {:?}// {:?}", self.id, self.task_name);
                                     }
                                     
@@ -136,7 +136,13 @@ impl Displayable for TaskPayload{
 }
 
 // // pub fn setup_display(&mut self, ui: &mut egui::Ui, column_names: Vec<String>) {
-pub fn setup_display(ui: &mut egui::Ui, column_names: Vec<String>, tasks: &mut Vec<TaskPayload>, database: Database) {
+pub fn setup_display(
+    ui: &mut egui::Ui, 
+    column_names: Vec<String>, 
+    tasks: &mut Vec<TaskPayload>, 
+    database: Database,
+    store_users: &Vec<User>
+) {
     ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
     let frame = Frame::default()
         .fill(Color32::from_rgb(25, 25, 30))
@@ -204,7 +210,7 @@ pub fn setup_display(ui: &mut egui::Ui, column_names: Vec<String>, tasks: &mut V
                                         .show_viewport(ui, |ui, _|
                                     {
                                         for task in filtered.iter_mut() {
-                                            task.display_task_cards(ui, database.clone()).unwrap();
+                                            task.display_task_cards(ui, database.clone(), store_users).unwrap();
                                         }
                                     });
                                 });
