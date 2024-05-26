@@ -9,7 +9,7 @@ impl MtechServerContext{
             self.completed_tasks_opened = true;
             ui.with_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Min).with_main_wrap(true), |ui| {
                 for task_data in tasks {
-                    let _ = task_data.display_task_cards(ui).unwrap();
+                    let _ = task_data.display_task_cards(ui, self.database.as_ref().unwrap().clone()).unwrap();
                 }
             });
         }

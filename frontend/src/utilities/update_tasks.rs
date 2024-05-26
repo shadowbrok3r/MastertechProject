@@ -1,6 +1,6 @@
 
 
-use database::{schema::{Priority, Status, Store, TaskPayload}, Database};
+use database::{schema::{Priority, Record, Status, Store, TaskPayload}, Database};
 use log::info;
 use surrealdb::{opt::RecordId, sql::Value};
 use wasm_bindgen_futures::spawn_local;
@@ -16,7 +16,7 @@ impl Updatable for TaskPayload {
                 "UPDATE task SET completed={completed}, status='{:?}' WHERE id={id}",
                 Status::Complete
             );
-            let update_task: Vec<Value> = db
+            let update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
@@ -36,7 +36,7 @@ impl Updatable for TaskPayload {
             let query = format!(
                 "UPDATE task SET due_date={} WHERE id={id}", due_date
             );
-            let update_task: Vec<Value> = db
+            let update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
@@ -56,7 +56,7 @@ impl Updatable for TaskPayload {
             let query = format!(
                 "UPDATE task SET assignee={} WHERE id={id}", initials
             );
-            let update_task: Vec<Value> = db
+            let update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
@@ -76,7 +76,7 @@ impl Updatable for TaskPayload {
             let query = format!(
                 "UPDATE task SET task_name={name} WHERE id={id}", 
             );
-            let update_task: Vec<Value> = db
+            let update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
@@ -115,7 +115,7 @@ impl Updatable for TaskPayload {
                 },
             }
 
-            let update_task: Vec<Value> = db
+            let update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
@@ -135,7 +135,7 @@ impl Updatable for TaskPayload {
             let query = format!(
                 "UPDATE task SET dep={:?} WHERE id={id}", dep
             );
-            let update_task: Vec<Value> = db
+            let update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
@@ -155,7 +155,7 @@ impl Updatable for TaskPayload {
             let query = format!(
                 "UPDATE task SET priority={:?} WHERE id={id}", priority.unwrap()
             );
-            let update_task: Vec<Value> = db
+            let update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
@@ -175,7 +175,7 @@ impl Updatable for TaskPayload {
             let query = format!(
                 "UPDATE task SET description={} WHERE id={id}", description.unwrap()
             );
-            let update_task: Vec<Value> = db
+            let update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await

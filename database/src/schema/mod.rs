@@ -57,7 +57,7 @@ pub struct RecordSuccess{
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
