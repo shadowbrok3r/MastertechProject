@@ -65,7 +65,7 @@ services:
 
 ############################################## -- FRONTEND -- ##############################################
   frontend:
-    container_name: "frontend"
+    container_name: "wasm"
     build:
       context: .
       dockerfile: dockerfile
