@@ -5,6 +5,7 @@ use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use gloo_worker::Spawnable;
 use ratatui::Terminal;
 use ratframe::{NewCC, RataguiBackend};
+use surrealdb::Action;
 use web_time::{Duration, Instant};
 use database::{schema::{ReturnedStoreUsers, TaskPayload}, Database};
 use mtechserver_two::webworker::WebWorker;
@@ -46,16 +47,19 @@ pub struct MtechServerContext{
     pub store_tasks_opened: bool,
     pub completed_tasks_opened: bool,
     /// All contained task data from database
+    pub tasks: Option<TaskPayload>,
     pub my_tasks: Option<Vec<TaskPayload>>,
     pub store_tasks: Option<Vec<TaskPayload>>,
     pub completed_tasks: Option<Vec<TaskPayload>>,
     pub store_users: Option<Vec<ReturnedStoreUsers>>,
     /// Receives task data over crossbeam channel
+    pub tasks_rx: Receiver<(Action, TaskPayload)>,
     pub my_tasks_rx: Receiver<Vec<TaskPayload>>,
     pub store_tasks_rx: Receiver<Vec<TaskPayload>>,
     pub completed_tasks_rx: Receiver<Vec<TaskPayload>>,
     pub store_users_rx: Receiver<Vec<ReturnedStoreUsers>>,
     /// Sends task data over crossbeam channel
+    pub tasks_tx: Sender<(Action, TaskPayload)>,
     pub my_tasks_tx: Sender<Vec<TaskPayload>>,
     pub store_tasks_tx: Sender<Vec<TaskPayload>>,
     pub completed_tasks_tx: Sender<Vec<TaskPayload>>,
@@ -132,10 +136,6 @@ impl TabViewer for MtechServerContext {
     }
 
 }
-
-// impl MtechServer{
-//     fn new(cc: &eframe::CreationContext<'_>) -> Self {}
-// }
 
 
 impl NewCC for MtechServer {
@@ -221,6 +221,8 @@ impl NewCC for MtechServer {
         let (completed_tasks_tx, completed_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<ReturnedStoreUsers>>();
 
+        let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
+
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
@@ -250,6 +252,7 @@ impl NewCC for MtechServer {
             db_tx, 
             db_rx,
 
+            tasks: None,
             my_tasks: None,
             store_tasks: None,
             completed_tasks: None,
@@ -259,6 +262,8 @@ impl NewCC for MtechServer {
             store_tasks_opened: false,
             completed_tasks_opened: false,
 
+            tasks_tx,
+            tasks_rx,
             my_tasks_tx, 
             my_tasks_rx,
             store_tasks_tx, 

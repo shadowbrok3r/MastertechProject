@@ -308,10 +308,6 @@ pub enum Store{
     SAN
 }
 
-// #[derive(Serialize)]
-// struct CommandResponse {
-//     status: String,
-// }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReturnedStoreUsers {

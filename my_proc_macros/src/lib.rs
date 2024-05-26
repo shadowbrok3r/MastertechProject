@@ -156,10 +156,6 @@ pub fn filter_tasks_derive(input: TokenStream) -> TokenStream {
                     .filter(|task| task.0.priority == *priority)
                     .collect()
             }
-
-            fn get_tasks(self) -> Vec<TaskPayload> {
-                self.into_iter().map(|task| task.0).collect()
-            }
         }
     };
 
