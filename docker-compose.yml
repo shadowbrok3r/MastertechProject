@@ -2,7 +2,7 @@ services:
 ############################################## -- TRAEFIK REVERSE PROXY -- ##############################################
   traefik:
     image: traefik:latest
-    container_name: "traefik"
+    container_name: "traefikprox"
     networks:
       - web
     # ports:
@@ -94,7 +94,7 @@ services:
 
 ############################################## -- SURREALDB -- ##############################################
   surrealdb:
-    container_name: "surreal"
+    container_name: "surrealdb"
     image: surrealdb/surrealdb:latest
     user: root
     restart: always
