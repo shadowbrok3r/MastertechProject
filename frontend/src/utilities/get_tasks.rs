@@ -2,18 +2,13 @@
 use futures::StreamExt;
 use database::{schema::*, Database};
 use serde::{Deserialize, Serialize};
-use surrealdb::{method::Stream, Notification};
+use surrealdb::{method::Stream, Action, Notification};
 use wasm_bindgen_futures::spawn_local;
 use std::{marker, fmt::Debug};
 use log::{info, error};
 use crossbeam::channel::Sender;
 use surrealdb::engine::remote::ws::Client;
 use serde::de::DeserializeOwned;
-use egui::{Ui, Response};
-use crate::utilities::task_context::TaskContext;
-use my_proc_macros::DelegateTraits;
-
-use super::{Displayable, Updatable, FilterTasks, Interaction};
 
 
 pub fn get_my_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, initials: String)
@@ -27,7 +22,7 @@ pub fn get_my_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, initials: String
         match query_results{
             Ok(data) => {
                 match tx.send(data){
-                    Ok(_) => info!("Sent Data from querying tasks"),
+                    Ok(_) => drop(tx),
                     Err(e) => error!("Error sending Task Data: {e:?}")
                 }
             },
@@ -49,7 +44,7 @@ pub fn get_store_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: Store)
         match query_results{
             Ok(data) => {
                 match tx.send(data){
-                    Ok(_) => info!("Sent Data from querying tasks"),
+                    Ok(_) => drop(tx),
                     Err(e) => error!("Error sending Task Data: {e:?}")
                 }
             },
@@ -70,7 +65,7 @@ pub fn get_completed_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: St
         match query_results{
             Ok(data) => {
                 match tx.send(data){
-                    Ok(_) => info!("Sent Data from querying tasks"),
+                    Ok(_) => drop(tx),
                     Err(e) => error!("Error sending Task Data: {e:?}")
                 }
             },
@@ -79,9 +74,10 @@ pub fn get_completed_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: St
     });
 }
 
-pub fn listen_tasks<T>(db: Database, tx: Sender<T>) 
+pub fn listen_tasks<T>(db: Database, tx: Sender<(Action, T)>) 
     where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
 {
+    // info!("Listening for tasks");
     spawn_local(async move {
         let task_stream: Stream<Client, Vec<T>> = db.database.select(TASK_TABLE).live().await.unwrap();
         handle_streams(task_stream, tx.clone()).await;
@@ -92,16 +88,14 @@ pub fn listen_tasks<T>(db: Database, tx: Sender<T>)
 
 async fn handle_streams<T>(
     mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,
-    tx: Sender<T>
+    tx: Sender<(Action, T)>
 ) where T: Serialize + Deserialize<'static> + Debug{
     while let Some(notification) = notification_stream.next().await {
         match notification{
             Ok(notification) => {
-                // let action = notification.action;
                 let data = notification.data;
-                let action = format!("{:?}", notification.action);
-                info!("{action}\n{data:?}");
-                match tx.send(data){
+                // info!("{action}\n{data:?}");
+                match tx.send((notification.action, data)){
                     Ok(_) => info!("Sending task data over channel"),
                     Err(e) => error!("Error sending task data: {e:?}")
                 }

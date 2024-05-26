@@ -3,7 +3,7 @@ use app_state::MtechServer;
 use crossbeam::channel::Sender;
 use database::{schema::Store, Database};
 use ratframe::NewCC;
-use utilities::{get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}};
+use utilities::{get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks, listen_tasks}, handle_live_data::handle_live_data};
 use wasm_bindgen_futures::spawn_local;
 use web_time::Instant;
 use std::sync::Arc;
@@ -81,14 +81,14 @@ impl eframe::App for MtechServer {
         if self.context.first_run{
             self.context.first_run = false;
             let db_tx = self.context.db_tx.clone();
-            first_run_data(db_tx, ctx);
+            first_run_data(db_tx);
         }
 
         // Retrieve our database connection, and 
         // 2. Requesting some task data
         if let Ok(db) = self.context.db_rx.try_recv(){
             self.context.database = Some(db.clone());
-
+            
             let my_tasks_tx = self.context.my_tasks_tx.clone();
             let store_tasks_tx = self.context.store_tasks_tx.clone();
             let completed_tasks_tx = self.context.completed_tasks_tx.clone();
@@ -96,7 +96,13 @@ impl eframe::App for MtechServer {
             get_my_tasks(db.clone(), my_tasks_tx, "LL".to_string());
             get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
             get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
-            get_store_users(db, store_users_tx, Store::RIV);
+            get_store_users(db.clone(), store_users_tx, Store::RIV);
+            
+        }
+
+        if let Some(db) = &self.context.database{
+            let tasks_tx = self.context.tasks_tx.clone();
+            listen_tasks(db.clone(), tasks_tx);
         }
 
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
@@ -113,6 +119,15 @@ impl eframe::App for MtechServer {
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
             self.context.store_users = Some(users);
+        }
+
+        while let Ok(data) = self.context.tasks_rx.try_recv(){
+            handle_live_data(data).unwrap();
+            // self.context.tasks = Some(data.1);
+            // info!("Tasks: {:?}", self.context.tasks);
+            // if !self.context.my_tasks.unwrap().{
+            //     self.context.my_tasks.unwrap().push(self.context.tasks);
+            // }
         }
 
         TopBottomPanel::top("top_panel").show(ctx, |ui| 
@@ -208,26 +223,26 @@ fn set_style() -> Arc<Style>{
     arc_style
 }
 
-fn first_run_data(db_tx: Sender<Database>, ctx: &egui::Context) {
-    egui::Window::new("load_database_spin")
-        .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
-        .title_bar(false)
-        .enabled(false)
-        .auto_sized()
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading Database");
-            })
-        });
+fn first_run_data(db_tx: Sender<Database>) {
+    // egui::Window::new("load_database_spin")
+    //     .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::ZERO)
+    //     .title_bar(false)
+    //     .enabled(false)
+    //     .auto_sized()
+    //     .show(ctx, |ui| {
+    //         ui.horizontal(|ui| {
+    //             ui.spinner();
+    //             ui.label("Loading Database");
+    //         })
+    //     });
     
     info!("First run / Spawning local to get database");
 
     spawn_local(async move {
         let database = Database::new().await;
         match db_tx.send(database){
-            Ok(_) => debug!("Sent db connection across thread"),
-            Err(err) => debug!("Error sending db connection: {err:?}"),
+            Ok(_) => info!("Sent db connection across thread"),
+            Err(err) => info!("Error sending db connection: {err:?}"),
         }
     });
 }

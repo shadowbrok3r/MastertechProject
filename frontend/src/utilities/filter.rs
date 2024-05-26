@@ -37,8 +37,4 @@ impl FilterTasks for Vec<TaskPayload>{
             .cloned()
             .collect()
     }
-
-    fn get_tasks(self) -> Vec<TaskPayload> {
-        self.into_iter().collect()
-    }
 }

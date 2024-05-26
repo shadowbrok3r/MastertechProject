@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use egui::{Response, Ui};
-use database::{schema::{Priority, ReturnedStoreUsers, Status, Store, TaskPayload}, Database};
+use database::{schema::{Priority, Status, Store, TaskPayload}, Database};
 
 pub mod display_tasks;
 pub mod update_tasks;
@@ -10,6 +10,7 @@ pub mod interact_tasks;
 pub mod get_other;
 pub mod task_context;
 pub mod filter;
+pub mod handle_live_data;
 
 pub trait Displayable{
     fn display_task_cards(&mut self, ui: &mut Ui, database: Database) -> anyhow::Result<(), anyhow::Error>;
@@ -45,6 +46,5 @@ pub trait FilterTasks{
     fn filter_by_assignee(&self, assignees: &String) -> Vec<TaskPayload>;
     fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(self, status: &Status) -> Vec<TaskPayload>;
-    fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload> ;
-    fn get_tasks(self) -> Vec<TaskPayload>;
+    fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
 }
