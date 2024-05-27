@@ -209,6 +209,7 @@ pub fn setup_display(
                                         .auto_shrink(false)
                                         .show_viewport(ui, |ui, _|
                                     {
+                                        
                                         for task in filtered.iter_mut() {
                                             task.display_task_cards(ui, database.clone(), store_users).unwrap();
                                         }

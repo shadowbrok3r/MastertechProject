@@ -289,55 +289,9 @@ impl NewCC for MtechServer{
 
         let added_nodes = Vec::new();
 
-        let mut state = AppState::default();
-        let mut current_user = None;
+        let (state, current_user) = check_authentication(db_tx.clone());
 
-        let cookie = wasm_cookies::get("jwt");
-        let user_cookie = wasm_cookies::get("user");
-
-        if let Some(cookie) = cookie{
-            match cookie{
-                Ok(c) => {
-                    
-                    state = AppState::Authenticated;
-                    // info!("self.state: {:?}", state);
-                    if let Some(user) = user_cookie{
-                        match user{
-                            Ok(usr) => {
-                                // info!("Got user cookie! {c:?}");
-                                let user = serde_json::from_str(&usr.as_str()).unwrap();
-                                let db_tx = db_tx.clone();
-                                current_user = Some(user);                
-                                spawn_local(async move {
-                                    let database = Database::new(
-                                        "".to_string(), 
-                                        "".to_string(), 
-                                        Some(c)
-                                    ).await.unwrap();
-
-                                    match db_tx.send(database){
-                                        Ok(_) => {
-                                            info!("Sent db connection across thread");
-                                            drop(db_tx);
-                                        },
-                                        Err(err) => info!("Error sending db connection: {err:?}"),
-                                    }
-                                });
-                                state = AppState::Authenticated;
-                            },
-                            Err(e) => {
-                                error!("Error with user cookie: {e:?}");
-                                state = AppState::NoAuth;
-                            }
-                        }
-                    }      
-                },
-                Err(e) => {
-                    error!("Error with cookie: {e:?}");
-                    state = AppState::NoAuth;
-                }
-            }
-        }
+        
         
         
         let context = MtechServerContext{
@@ -394,6 +348,8 @@ impl NewCC for MtechServer{
     fn canvas_id() -> String { "mtech_canvas".into() }
 }
 
+
+
 impl MtechServer{
     // Private method to access login state only within NoAuth context
     pub fn login_mut(&mut self) -> Option<&mut Login> {
@@ -402,7 +358,66 @@ impl MtechServer{
             AppState::Authenticated => None
         }
     }
+
 }
+
+pub fn check_authentication(
+    db_tx: Sender<Database>
+) -> (AppState, Option<User>){
+    let cookie = wasm_cookies::get("jwt");
+    let user_cookie = wasm_cookies::get("user");
+
+    let mut state = AppState::default();
+    let mut current_user = None;
+    if let Some(cookie) = cookie{
+        match cookie{
+            Ok(c) => {
+                
+                state = AppState::Authenticated;
+                // info!("self.state: {:?}", state);
+                if let Some(user) = user_cookie{
+                    match user{
+                        Ok(usr) => {
+                            // info!("Got user cookie! {c:?}");
+                            let user = serde_json::from_str(&usr.as_str()).unwrap();
+                            let db_tx = db_tx.clone();
+                            current_user = Some(user);           
+
+                            spawn_local(async move {
+                                let database = Database::new(
+                                    "".to_string(), 
+                                    "".to_string(), 
+                                    Some(c)
+                                ).await;
+                                if let Ok(db) = database{
+                                    match db_tx.send(db){
+                                        Ok(_) => {
+                                            info!("Sent db connection across thread");
+                                            drop(db_tx);
+                                        },
+                                        Err(err) => info!("Error sending db connection: {err:?}"),
+                                    }
+                                }
+
+                            });
+                            state = AppState::Authenticated;
+                        },
+                        Err(e) => {
+                            error!("Error with user cookie: {e:?}");
+                            state = AppState::NoAuth;
+                        }
+                    }
+                }      
+            },
+            Err(e) => {
+                error!("Error with cookie: {e:?}");
+                state = AppState::NoAuth;
+            }
+        }
+    }
+    (state, current_user)
+}
+
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).

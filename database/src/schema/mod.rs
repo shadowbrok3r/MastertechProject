@@ -63,7 +63,7 @@ pub struct TaskPayload{
     pub task_name: String,
     pub service_ticket: Option<TicketId>,
     // #[serde(skip)]
-    pub assignee_initials: String,
+    pub everest_initials: String,
     pub task_description: Option<String>, 
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<i32>,
@@ -334,7 +334,7 @@ impl Default for TaskPayload{
             completed: Default::default(), 
             status: Default::default(), 
             dep: Default::default(),
-            assignee_initials: Default::default(), 
+            everest_initials: Default::default(), 
         }
     }
 }

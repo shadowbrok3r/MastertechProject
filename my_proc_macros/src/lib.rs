@@ -135,7 +135,7 @@ pub fn filter_tasks_derive(input: TokenStream) -> TokenStream {
 
             fn filter_by_assignee(self, assignee: &String) -> Vec<TaskPayload> {
                 self.into_iter()
-                    .filter(|task| task.0.assignee_initials.as_ref() == Some(assignee))
+                    .filter(|task| task.0.everest_initials.as_ref() == Some(assignee))
                     .collect()
             }
 

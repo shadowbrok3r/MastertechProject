@@ -1,14 +1,15 @@
 // #[war(unused_imports)]
-use app_state::{AppState, MtechServer};
+use app_state::{check_authentication, AppState, MtechServer};
 use crossbeam::channel::Sender;
 use database::{schema::Store, Database};
+use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{error, info};
 use ratframe::NewCC;
 use utilities::{get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}};
 use wasm_bindgen_futures::spawn_local;
 use web_time::Instant;
 use std::sync::Arc;
-use egui::{FontId, Style, Vec2};
+use egui::{Align2, FontId, Style, Vec2};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 pub mod tabs;
@@ -49,16 +50,24 @@ impl eframe::App for MtechServer {
         // 1. Getting database connection
         if self.context.first_run{ // || or if refresh button is hit
             info!("First run after refresh?");
-            if let Some(usr) = self.context.current_user.as_ref(){
-                self.context.first_run = false;
-                
-                if let Err(e) = first_run_data(self.context.db_tx.clone(), None){
-                    if let Some(cookie) = wasm_cookies::get("jwt"){
-                        if let Err(e) = first_run_data(self.context.db_tx.clone(), Some(cookie.unwrap())){
-                            self.state = AppState::NoAuth;
-                        }
-                    }
-                }
+            self.context.first_run = false;
+            let (state, user) = check_authentication(self.context.db_tx.clone());
+            self.state = state;
+            match user{
+                Some(usr) => {
+                  self.context.current_user = Some(usr);  
+                },
+                None => {
+                    let mut toast = Toasts::new()
+                        .anchor(Align2::CENTER_CENTER, (0.0, 0.0));
+                    toast.add(Toast{
+                        kind: ToastKind::Error,
+                        text: "There was a problem with authentication, you may need to login again".into(),
+                        options: ToastOptions::default()
+                            .show_progress(true)
+                            .duration_in_seconds(3.0)
+                    });
+                },
             }
         }
 
@@ -138,6 +147,7 @@ impl eframe::App for MtechServer {
     }
 }
 
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
@@ -198,23 +208,3 @@ fn set_style() -> Arc<Style>{
     arc_style
 }
 
-fn first_run_data(db_tx: Sender<Database>, cookie: Option<String>) -> anyhow::Result<(), anyhow::Error>{
-    info!("First run / Spawning local to get database");
-    match cookie{
-        Some(c) => {
-            spawn_local(async move {
-                let database = Database::new("".to_string(), "".to_string(), Some(c)).await.unwrap();
-                match db_tx.send(database){
-                    Ok(_) => {
-                        info!("Sent db connection across thread");
-                        drop(db_tx);
-                    },
-                    Err(err) => info!("Error sending db connection: {err:?}"),
-                }
-            });
-            Ok(())
-        },
-        None => Err(anyhow::Error::msg("No cookie provided".to_string()))
-    }
-
-}
