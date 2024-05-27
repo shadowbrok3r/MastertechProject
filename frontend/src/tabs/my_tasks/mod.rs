@@ -1,41 +1,37 @@
-use crate::{app_state::MtechServerContext, utilities::Displayable};
-use database::schema::Status;
-use egui_extras::{Column, Size, StripBuilder, TableBuilder};
-use egui::{Color32, Direction, Frame, Layout, Margin, RichText, Rounding, ScrollArea, Sense, Stroke, Ui, Vec2};
+use crate::{app_state::MtechServerContext, utilities::{display_tasks::{setup_display, Filters}, Sortable}};
+use egui::Ui;
 use log::info;
 
 impl MtechServerContext{
     pub fn my_tasks(&mut self, ui: &mut Ui){ 
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
-        info!("MyTasks is open");
-
         if let Some(tasks) = &mut self.my_tasks{
             self.my_tasks_opened = true;
+            let col_names = vec!["Todo".to_string(), "In Repair".to_string(), "Complete".to_string()];
+            let database = self.database.as_ref().unwrap().clone();
+            tasks.sort_task_payloads();
 
-            // let col = Column::auto().at_least(400.0);
+            let filters = vec![
+                Filters::FilterStatus
+            ];
 
-            let mut todo_tasks = Vec::new();
-            let mut inrepair_tasks = Vec::new();
-            let mut complete_tasks = Vec::new();
-    
-            for task in tasks {
-                match task.status {
-                    Status::Todo => todo_tasks.push(task),
-                    Status::InRepair => inrepair_tasks.push(task),
-                    Status::Complete => complete_tasks.push(task),
-                }
-            }
-
-            let max_rows = std::cmp::max(
-                todo_tasks.len(), 
-                std::cmp::max(
-                    inrepair_tasks.len(), 
-                    complete_tasks.len()
-                )
+            setup_display(ui, 
+                col_names, 
+                &mut *tasks, 
+                database, 
+                &filters, 
+                &self.store_users,
+                true,
+                &None,
+                &None,
+                &self.current_user
             );
+        }
+    }
+}
 
-            ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
+/*
             let frame = Frame::default()
                 .fill(Color32::from_rgb(25, 25, 30))
                 .inner_margin(Margin::same(4.0))
@@ -48,8 +44,7 @@ impl MtechServerContext{
                 .inner_margin(Margin::same(8.0))
                 .rounding(Rounding::same(10.0))
                 .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
-            //     .show(ui, |ui| 
-            // {
+
             StripBuilder::new(ui)
                 .cell_layout(Layout::top_down_justified(egui::Align::Center))
                 .size(Size::relative(0.01))
@@ -84,7 +79,7 @@ impl MtechServerContext{
                                 ui.vertical_centered_justified(|ui|{
 
                                     ui.allocate_space(ui.available_size_before_wrap());
-                                    ui.colored_label(Color32::WHITE, RichText::new("Todo").heading());
+                                    ui.colored_label(Color32::WHITE, RichText::new("In Repair").heading());
                                 });
                             });
                         });
@@ -93,7 +88,7 @@ impl MtechServerContext{
                                 ui.vertical_centered_justified(|ui|{
 
                                     ui.allocate_space(ui.available_size_before_wrap());
-                                    ui.colored_label(Color32::WHITE, RichText::new("Todo").heading());
+                                    ui.colored_label(Color32::WHITE, RichText::new("Complete").heading());
                                 });
                             });
                         });
@@ -178,57 +173,4 @@ impl MtechServerContext{
                     });
                 });
             });
-        }
-    }
-}
-
-
-            //     TableBuilder::new(ui)
-            //         .striped(true)
-            //         .cell_layout(Layout::centered_and_justified(Direction::TopDown))
-            //         .columns(col, 3)
-            //         .header(10.0, |mut header| 
-            //     {
-            //         header.col(|ui| {
-            //             ui.vertical_centered_justified(|ui|{
-            //                 frame.show(ui, |ui|{
-            //                     ui.colored_label(Color32::WHITE, RichText::new("Todo").heading());
-            //                 });
-            //             });
-            //         });
-            //         header.col(|ui| {
-            //             ui.vertical_centered_justified(|ui|{
-            //                 frame.show(ui, |ui|{
-            //                     ui.colored_label(Color32::WHITE, RichText::new("In Repair").heading());
-            //                 });
-            //             });
-            //         });
-            //         header.col(|ui| {
-            //             ui.vertical_centered_justified(|ui|{
-            //                 frame.show(ui, |ui|{
-            //                     ui.colored_label(Color32::WHITE, RichText::new("Complete").heading());
-            //                 });
-            //             });
-            //         });
-            //     })
-            //     .body(|body| 
-            //     {
-            //         body.rows(200.0, at_least_rows, |mut row| {
-            //             for row_index in 0..max_rows {
-            //                 row.col(|ui| {
-            //                     if let Some(task) = todo_tasks.get_mut(row_index) {
-            //                         task.display_task_cards(ui).unwrap();
-            //                     }
-            //                 });
-            //                 row.col(|ui| {
-            //                     if let Some(task) = inrepair_tasks.get_mut(row_index) {
-            //                         task.display_task_cards(ui).unwrap();
-            //                     }
-            //                 });
-            //                 row.col(|ui| {
-            //                     if let Some(task) = complete_tasks.get_mut(row_index) {
-            //                         task.display_task_cards(ui).unwrap();
-            //                     }
-            //                 });
-            //             }
-            // });
+*/

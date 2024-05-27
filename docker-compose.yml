@@ -77,10 +77,9 @@ services:
     expose:
       - 8080
     command: trunk serve
-    # environment:
-    #   - NODE_ENV=Production
     volumes:
       - ./dist:/dist
+      
     labels:
       # Routers
       - "traefik.http.routers.frontend.rule=Host(`master-tech.app`)"
@@ -95,7 +94,7 @@ services:
 ############################################## -- SURREALDB -- ##############################################
   surrealdb:
     container_name: "surrealdb"
-    image: surrealdb/surrealdb:latest
+    image: surrealdb/surrealdb:v1.4.2
     user: root
     restart: always
     entrypoint: /surreal
@@ -111,8 +110,8 @@ services:
       - LISTEN_ADDRESSES=0.0.0.0:8000
       - SURREAL_AUTH=true
     command: start -A --auth --log info 
-    volumes:
-      - ./server/src/database:/surreal-data
+    # volumes:
+      # - ./server/src/database:/surreal-data
     #   - database_backups:/database_backups
     labels:
       # Routers

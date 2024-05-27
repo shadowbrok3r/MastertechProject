@@ -1,4 +1,4 @@
-use crate::{app_state::MtechServerContext, utilities::{display_tasks::setup_display, Sortable}};
+use crate::{app_state::MtechServerContext, utilities::{display_tasks::{setup_display, Filters}, Sortable}};
 use egui::Ui;
 use log::info;
 
@@ -16,7 +16,23 @@ impl MtechServerContext{
             let database = self.database.as_ref().unwrap().clone();
             let store_users = self.store_users.as_ref().unwrap();
             tasks.sort_task_payloads();
-            setup_display(ui, col_names, &mut *tasks, database, &store_users);
+
+            let filters = vec![
+                Filters::FilterAssignee, 
+                Filters::FilterCompleted
+            ];
+
+            setup_display(ui, 
+                col_names, 
+                &mut *tasks, 
+                database, 
+                &filters, 
+                &Some(store_users.to_owned()),
+                false,
+                &None,
+                &Some(false),
+                &None
+            );
         }
     }
 }

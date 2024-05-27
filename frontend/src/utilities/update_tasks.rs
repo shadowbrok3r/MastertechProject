@@ -30,7 +30,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_due_date(&mut self, due_date: String, db: Database) {
-        // self.due_date = due_date;
+        info!("Changing due date to {due_date:?}");
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
@@ -45,7 +45,7 @@ impl Updatable for TaskPayload {
                 .unwrap();
 
 
-                info!("Updated task: {update_task:#?}");
+            // info!("Updated task: {update_task:#?}");
         })
     }
 

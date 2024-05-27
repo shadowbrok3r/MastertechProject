@@ -3,8 +3,8 @@ use database::Database;
 use eframe::egui::Ui;
 use egui::ScrollArea;
 use egui::{Color32, Frame, Layout, Margin, RichText, Rounding, Stroke};
-use egui_extras::{Size, StripBuilder};
-use database::schema::{User, TaskPayload};
+use egui_extras::{Size, Strip, StripBuilder};
+use database::schema::{Priority, Status, TaskPayload, User};
 use log::info;
 
 use super::{Displayable, FilterTasks};
@@ -12,7 +12,12 @@ use super::Interaction;
 
 
 impl Displayable for TaskPayload{
-    fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>)  -> anyhow::Result<(), anyhow::Error> {
+    fn display_task_cards(
+        &mut self, 
+        ui: &mut Ui, 
+        database: Database, 
+        store_users: &Vec<User>
+    )  -> anyhow::Result<(), anyhow::Error> {
 
         ui.style_mut().visuals.selection.stroke.color = Color32::from_additive_luminance(255);
         ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
@@ -51,7 +56,6 @@ impl Displayable for TaskPayload{
                                     if self.interact_assignee_initials(ui, database.clone(), store_users).unwrap().changed(){
                                         info!("interact_assignee_initials changed: {:?}// {:?}", self.id, self.task_name);
                                     }
-                                    
                                 });
                             });
                             s.cell(|ui|{
@@ -141,7 +145,13 @@ pub fn setup_display(
     column_names: Vec<String>, 
     tasks: &mut Vec<TaskPayload>, 
     database: Database,
-    store_users: &Vec<User>
+
+    filters: &Vec<Filters>, 
+    assignees: &Option<Vec<User>>,
+    status: bool,
+    priority: &Option<Priority>,
+    complete: &Option<bool>,
+    current_user: &Option<User>
 ) {
     ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
     let frame = Frame::default()
@@ -157,8 +167,9 @@ pub fn setup_display(
         .rounding(Rounding::same(10.0))
         .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
+    let column_width = Size::exact(450.0);
+
     ScrollArea::horizontal()
-        .min_scrolled_width(ui.available_width())
         .hscroll(true)
         .show_viewport(ui, |ui, _|
     {
@@ -173,7 +184,7 @@ pub fn setup_display(
                 .strip(|strip| 
             {
                 strip
-                    .sizes(Size::remainder(), column_names.len())
+                    .sizes(column_width, column_names.len())
                     .horizontal( |mut s| 
                 {
                     for name in &column_names{
@@ -192,35 +203,151 @@ pub fn setup_display(
                 .strip(|strip| 
             {
                 strip
-                    .sizes(Size::remainder(), column_names.len())
+                    .sizes(column_width, column_names.len())
                     .horizontal( |mut s| 
                 {
-                    for user in store_users{
-                        let mut filtered = tasks
-                            .filter_by_completed(false)
-                            .filter_by_assignee(&user);
-                        
+                    
+                    if let Some(_) = current_user {
+                        if status{
+                            for status in Status::VALUES{
+                                let mut filtered = filter_items(
+                                    &filters,tasks,&None,&Some(status),&priority,&complete
+                                );
 
-                        s.cell(|ui|{
-                            column_frame.show(ui, |ui|{
-                                ui.vertical_centered_justified(|ui|
-                                {
-                                    ScrollArea::vertical()
+                                
+                                s.cell(|ui| {
+                                    column_frame.show(ui, |ui| {
+                                        ui.vertical_centered_justified(|ui| {
+                                            ScrollArea::vertical()
+                                            .auto_shrink(false)
+                                            .show_viewport(ui, |ui, _| {
+                                                for task in filtered.iter_mut() {
+                                                    task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap()).unwrap();
+                                                }
+                                            });
+                                        });
+                                    });
+                                });
+                            }
+                        }else{
+                            let mut filtered = filter_items(
+                                &filters,tasks,&None,&None,&priority,&complete
+                            );
+                            
+                            s.cell(|ui| {
+                                column_frame.show(ui, |ui| {
+                                    ui.vertical_centered_justified(|ui| {
+                                        ScrollArea::vertical()
                                         .auto_shrink(false)
-                                        .show_viewport(ui, |ui, _|
-                                    {
-                                        
-                                        for task in filtered.iter_mut() {
-                                            task.display_task_cards(ui, database.clone(), store_users).unwrap();
-                                        }
+                                        .show_viewport(ui, |ui, _| {
+                                            for task in filtered.iter_mut() {
+                                                task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap()).unwrap();
+                                            }
+                                        });
                                     });
                                 });
                             });
-                        });
+                        }
+                    } else if let Some(users) = assignees {
+                        // Multiple users, iterate over each user
+                        for user in users.iter() {
+                            let mut user_filters = filters.clone();
+                            user_filters.push(Filters::FilterAssignee);
+                
+                            let mut filtered = filter_items(
+                                &user_filters,
+                                tasks,
+                                &Some(user.clone()),
+                                &None,
+                                &priority,
+                                &complete,
+                            );
+                
+                            s.cell(|ui| {
+                                column_frame.show(ui, |ui| {
+                                    ui.vertical_centered_justified(|ui| {
+                                        ScrollArea::vertical()
+                                            .auto_shrink(false)
+                                            .show_viewport(ui, |ui, _| 
+                                        {
+                                            for task in filtered.iter_mut() {
+                                                task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap()).unwrap();
+                                            }
+                                        });
+                                    });
+                                });
+                            });
+                        }
                     }
                 });
             });
         });
     });
+}
 
+
+pub fn filter_items(
+    filters: &Vec<Filters>, 
+    tasks: &mut Vec<TaskPayload>,
+    assignee: &Option<User>,
+    status: &Option<Status>,
+    priority: &Option<Priority>,
+    complete: &Option<bool>,
+) -> Vec<TaskPayload>{
+    
+    filters.into_iter().fold(tasks.to_owned(), |acc_tasks, filter| {
+        match filter {
+            Filters::FilterAssignee => {
+                if let Some(ref user) = assignee {
+                    acc_tasks.filter_by_assignee(user)
+                } else {
+                    acc_tasks
+                }
+            },
+            Filters::FilterCompleted => {
+                if let Some(complete) = complete {
+                    acc_tasks.filter_by_completed(*complete)
+                } else {
+                    acc_tasks
+                }
+            },
+            Filters::FilterStatus => {
+                if let Some(status) = status {
+                    // let mut filtered = Vec::new();
+                    // for status in Status::VALUES{
+                    //     filtered.extend(
+                    info!("filtered: {:?}", acc_tasks.filter_by_status(&status));
+                    acc_tasks.filter_by_status(&status)
+                    //     );
+                    // }
+                    // filtered
+                    
+                } else {
+                    acc_tasks
+                }
+            },
+            Filters::FilterPriority => {
+                if let Some(ref priority) = priority {
+                    // let mut filtered = Vec::new();
+                    // for priority in Priority::VALUES{
+                    //     filtered.extend(
+                            acc_tasks.filter_by_priority(&priority)
+                        // );
+                    // }
+                    // filtered
+                } else {
+                    acc_tasks
+                }
+            },
+        }
+    })
+}
+
+#[derive(Clone)]
+pub enum Filters{
+    FilterAssignee,
+    FilterCompleted,
+    FilterStatus,
+    FilterPriority,
+    // FilterDate
 }

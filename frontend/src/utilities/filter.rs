@@ -25,9 +25,10 @@ impl FilterTasks for Vec<TaskPayload>{
             .collect()
     }
 
-    fn filter_by_status(self, status: &Status) -> Vec<TaskPayload> {
+    fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| task.status == *status)
+            .cloned()
             .collect()
     }
 

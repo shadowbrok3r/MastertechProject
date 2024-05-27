@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc, Datelike};
 use egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
 
 use database::{schema::{Priority, User, Status, TaskPayload}, Database};
@@ -60,18 +60,27 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        let due_date = self.due_date;
+        let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
+        
         let id = self.id.clone().unwrap().0.id.to_string();
-        let date_picker = DatePickerButton::new(&mut due_date.parse::<DateTime<Utc>>().unwrap().date_naive())
+        let date_picker = DatePickerButton::new(&mut due_date)
             .format("%m/%d/%y")
             .id_source(id.as_str())
             .show_icon(false)
             .ui(ui);
 
         if date_picker.changed(){
-            let date = due_date.to_string();
-            self.update_due_date(date.clone(), database);
-            info!("date_widget changed: {:?}// {:?} ", self.task_name,  due_date);
+            // Combine the NaiveDate with a default time to create a DateTime<Utc>
+            let date_time = NaiveDate::from_ymd_opt(due_date.year(), due_date.month(), due_date.day())
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_local_timezone(Utc)
+                .unwrap();
+            let rfc3339_date = date_time.to_rfc3339();
+            let date = due_date.clone().to_string();
+            self.update_due_date(rfc3339_date.clone(), database);
+            info!("date_widget changed: {:?}// {:?} ", self.task_name,  date);
         }
         None
     }
