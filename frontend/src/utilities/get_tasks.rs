@@ -8,9 +8,10 @@ use crossbeam::channel::Sender;
 pub fn get_my_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, user_id: UserId)
 {
     spawn_local(async move {
+        info!("getting tasks");
         let query = format!(
             "SELECT * FROM task 
-            WHERE assignee_initials == '{}' ", user_id.0.id
+            WHERE assignee == '{}' ", user_id.0.id
         );
         let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
         match query_results{

@@ -49,42 +49,49 @@ impl eframe::App for MtechServer {
 
         // do some setting up in the initial frame of our update loop for 
         // 1. Getting database connection
-        // if self.context.first_run{
-        //     self.context.first_run = false;
-        //     let db_tx = self.context.db_tx.clone();
-        //     first_run_data(db_tx);
-        // }
+        if self.context.first_run{ // || or if refresh button is hit
+            info!("First run after refresh?");
+            if let Some(usr) = self.context.current_user.as_ref(){
+                self.context.first_run = false;
+                
+                if let Err(e) = first_run_data(self.context.db_tx.clone(), None){
+                    if let Some(cookie) = wasm_cookies::get("jwt"){
+                        if let Err(e) = first_run_data(self.context.db_tx.clone(), Some(cookie.unwrap())){
+                            self.state = AppState::NoAuth;
+                        }
+                    }
+                }
+            }
+        }
 
         // Retrieve our database connection, and 
         // 2. Requesting some task data
         if let Ok(db) = self.context.db_rx.try_recv(){
-            #[cfg(target_arch = "wasm32")]
-            {
-                let cookie = wasm_cookies::get("jwt");
-                let user_cookie = wasm_cookies::get("user");
+            let cookie = wasm_cookies::get("jwt");
+            let user_cookie = wasm_cookies::get("user");
 
-                if let Some(cookie) = cookie{
-                    match cookie{
-                        Ok(c) => {
-                            
-                            self.state = AppState::Authenticated;
-                            info!("self.state: {:?}", self.state);
-                            if let Some(user) = user_cookie{
-                                match user{
-                                    Ok(usr) => {
-                                        info!("Got user cookie! {c:?}");
-                                        let user = serde_json::from_str(&usr.as_str()).unwrap();
-                                        self.context.current_user = Some(user);
-                                    },
-                                    Err(e) => error!("Error with user cookie: {e:?}")
-                                }
+            if let Some(cookie) = cookie{
+                match cookie{
+                    Ok(c) => {
+                        
+                        self.state = AppState::Authenticated;
+                        info!("self.state: {:?}", self.state);
+                        if let Some(user) = user_cookie{
+                            match user{
+                                Ok(usr) => {
+                                    info!("Got user cookie! {c:?}");
+                                    let user = serde_json::from_str(&usr.as_str()).unwrap();
+                                    self.context.current_user = Some(user);
+                                },
+                                Err(e) => error!("Error with user cookie: {e:?}")
                             }
-                        },
-                        Err(e) => error!("Error with cookie: {e:?}")
-                    }
+                        }
+                    },
+                    Err(e) => error!("Error with cookie: {e:?}")
                 }
             }
             
+            info!("Are we even here?");
             self.context.database = Some(db.clone());
 
             // get all of our channel Senders from crossbeam to get user/store/completed tasks, 
@@ -95,18 +102,12 @@ impl eframe::App for MtechServer {
             let completed_tasks_tx = self.context.completed_tasks_tx.clone();
             let store_users_tx = self.context.store_users_tx.clone();
 
-            // first double check that the user is authenticated, we need their UID here anyways
-            if let Some(current_user) = self.context.current_user.as_ref(){
-                get_my_tasks(db.clone(), my_tasks_tx, current_user.id.as_ref().unwrap().clone());
-                get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
-                get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
-                get_store_users(db.clone(), store_users_tx, Store::RIV);
-                listen_tasks(db.clone(), tasks_tx);
-            }else{
-                // if no user, set app state to not auth'd, 
-                // which will then require logging in
-                self.state = AppState::NoAuth;
-            }
+            get_my_tasks(db.clone(), my_tasks_tx, self.context.current_user.as_ref().unwrap().id.clone());
+            get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
+            get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
+            get_store_users(db.clone(), store_users_tx, Store::RIV);
+            listen_tasks(db.clone(), tasks_tx);
+            
         }
 
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
@@ -198,17 +199,23 @@ fn set_style() -> Arc<Style>{
     arc_style
 }
 
-// fn first_run_data(db_tx: Sender<Database>) {
-//     info!("First run / Spawning local to get database");
+fn first_run_data(db_tx: Sender<Database>, cookie: Option<String>) -> anyhow::Result<(), anyhow::Error>{
+    info!("First run / Spawning local to get database");
+    match cookie{
+        Some(c) => {
+            spawn_local(async move {
+                let database = Database::new("".to_string(), "".to_string(), Some(c)).await.unwrap();
+                match db_tx.send(database){
+                    Ok(_) => {
+                        info!("Sent db connection across thread");
+                        drop(db_tx);
+                    },
+                    Err(err) => info!("Error sending db connection: {err:?}"),
+                }
+            });
+            Ok(())
+        },
+        None => Err(anyhow::Error::msg("No cookie provided".to_string()))
+    }
 
-//     spawn_local(async move {
-//         let database = Database::new().await;
-//         match db_tx.send(database){
-//             Ok(_) => {
-//                 info!("Sent db connection across thread");
-//                 drop(db_tx);
-//             },
-//             Err(err) => info!("Error sending db connection: {err:?}"),
-//         }
-//     });
-// }
+}

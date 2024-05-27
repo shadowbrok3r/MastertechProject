@@ -62,8 +62,8 @@ pub struct TaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
     pub service_ticket: Option<TicketId>,
-    // pub assignee_name: Option<String>,
-    pub assignee_email: Option<String>,
+    #[serde(skip)]
+    pub assignee_initials: String,
     pub task_description: Option<String>, 
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<i32>,
@@ -308,9 +308,10 @@ pub enum Store{
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct User {
-    pub id: Option<UserId>,
+    pub id: UserId,
     pub name: String,
     pub everest_initials: String,
+    #[serde(skip)]
     pub email: String,
     pub store: Store,
     pub notifications: Option<Vec<NotificationId>>
@@ -324,7 +325,6 @@ impl Default for TaskPayload{
             id: Default::default(), 
             task_name: Default::default(), 
             service_ticket: Default::default(), 
-            assignee_email: Default::default(), 
             task_description: Default::default(), 
             assignee: Default::default(), 
             service_number: Default::default(), 
@@ -333,7 +333,8 @@ impl Default for TaskPayload{
             task_note: Default::default(), 
             completed: Default::default(), 
             status: Default::default(), 
-            dep: Default::default() 
+            dep: Default::default(),
+            assignee_initials: Default::default(), 
         }
     }
 }

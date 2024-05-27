@@ -14,8 +14,6 @@ pub mod handle_live_data;
 
 pub trait Displayable{
     fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> anyhow::Result<(), anyhow::Error>;
-    // fn setup_display(&mut self, column_names: Vec<String>, total_rows: usize, ui: &mut Ui);
-    // fn display_table(&mut self, ui: &mut Ui, tasks: Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
 }
 
 pub trait Updatable {
@@ -38,12 +36,12 @@ pub trait Interaction{
     fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_dep(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    // fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response>;
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response>;
 }
 
 
 pub trait FilterTasks{
-    // fn filter_by_assignee(&self, assignees: &String) -> Vec<TaskPayload>;
+    fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
     fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;

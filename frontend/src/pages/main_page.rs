@@ -12,9 +12,10 @@ impl MtechServer{
         {
             menu::bar(ui, |ui| {
                 if let Some(usr) = &self.context.current_user{
-                    let welcome_msg = format!("Welcome, {}", usr.name);
                     ui.add(Button::new("MasterTech Server"));
-                    ui.colored_label(Color32::from_black_alpha(255), RichText::new(welcome_msg));
+                    ui.add_space(50.0);
+                    let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
+                    ui.colored_label(Color32::from_additive_luminance(255), welcome_msg);
                     ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
                         ui.add(Button::new("Store Tasks").fill(Color32::from_rgb_additive(255, 12, 180)));
                         ui.add(Button::new("Web Console"));

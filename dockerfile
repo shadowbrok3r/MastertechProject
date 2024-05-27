@@ -1,7 +1,9 @@
-FROM rust:slim-buster
+FROM rust:slim-bookworm
 WORKDIR /server
-RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev
 RUN rustup target add wasm32-unknown-unknown
-RUN cargo install --locked trunk
+RUN rustc --version
+RUN rustup update
+RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev
+RUN cargo install trunk
 COPY . .
 COPY ./mold /usr/local/
