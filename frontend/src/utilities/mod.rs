@@ -1,6 +1,3 @@
-use std::fmt::Display;
-
-use chrono::{DateTime, Utc};
 use egui::{Response, Ui};
 use database::{schema::{Priority, User, Status, Store, TaskPayload}, Database};
 
@@ -45,7 +42,7 @@ pub trait Interaction{
 pub trait FilterTasks{
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
     fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload>;
-    fn filter_by_status(self, status: &Status) -> Vec<TaskPayload>;
+    fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
 }
 

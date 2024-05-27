@@ -1,5 +1,6 @@
 use chrono::{DateTime, Timelike};
 use database::schema::{Priority, TaskPayload};
+use log::info;
 
 use super::Sortable;
 
@@ -36,7 +37,20 @@ impl Sortable for Vec<TaskPayload>{
 
 
 fn get_date_without_time(task: &TaskPayload) -> chrono::prelude::DateTime<chrono::prelude::Utc> {
+    // info!("date: {:?}", &task.due_date);
     let date = DateTime::parse_from_rfc3339(&task.due_date).unwrap();
-    date.with_hour(0).unwrap().with_minute(0).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap().into()
+    date.with_hour(2).unwrap().with_minute(2).unwrap().with_second(2).unwrap().with_nanosecond(3).unwrap().into()
 }
 
+/*
+fn get_date_without_time(task: &TaskPayload) -> anyhow::Result<DateTime<Utc>, anyhow::Error> {
+    info!("date: {:?}", &task.due_date);
+    let date = DateTime::parse_from_rfc3339(&task.due_date)?;
+    let final_date = date
+        .with_hour(2).unwrap()
+        .with_minute(2).unwrap()
+        .with_second(2).unwrap()
+        .with_nanosecond(3).unwrap().into();
+    Ok(final_date)
+}
+*/
