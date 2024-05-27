@@ -1,12 +1,12 @@
 use crossbeam::channel::Sender;
 use database::Database;
-use egui::{Align, Button, CentralPanel, Color32, Direction, Frame, Grid, Id, Layout, RichText, TextEdit, Vec2, Widget};
+use egui::{Align, Button, CentralPanel, Direction, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
 use wasm_bindgen_futures::spawn_local;
-use wasm_cookies::{cookies, CookieOptions};
+use wasm_cookies::CookieOptions;
 
-use crate::app_state::{AppState::{self, Authenticated, NoAuth}, MtechServer};
+use crate::app_state::MtechServer;
 
 pub struct Login {
     pub username: String,
@@ -26,20 +26,15 @@ impl Login{
         let user = self.username.clone();
         let pass = self.password.clone();
         spawn_local(async move {
-            let database = Database::new(user, pass).await;
+            let database = Database::new(user, pass, None).await;
 
             match database{
                 Ok(db) => {
+                    let cookie_opts = CookieOptions::default();
+                    wasm_cookies::set("jwt", db.jwt.as_ref().unwrap().as_insecure_token(), &cookie_opts);
+                    let usr = serde_json::to_string(&db.user).unwrap();
+                    wasm_cookies::set("user", usr.as_str(), &cookie_opts);
                     
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        let cookie_opts = CookieOptions::default();
-                        wasm_cookies::set("jwt", db.jwt.as_insecure_token(), &cookie_opts);
-                        let usr = serde_json::to_string(&db.user).unwrap();
-                        wasm_cookies::set("user", usr.as_str(), &cookie_opts);
-                    }
-                    
-
                     match db_tx.send(db){
                         Ok(_) => {
                             info!("Sent db connection across thread");
@@ -50,7 +45,6 @@ impl Login{
                 },
                 Err(e) => error!("Error with db: {e:?}"),
             }
-
         });
     }
 }

@@ -5,19 +5,18 @@ use super::FilterTasks;
 
 
 impl FilterTasks for Vec<TaskPayload>{
-    // fn filter_by_assignee(&self, assignees: &User) -> Vec<TaskPayload> {
-    //     self.into_iter()
-    //         .filter(|task| 
-    //             // let mut res = false;
-    //             // for user in assignees{
-    //                 todo!()
-    //                 // task.assignee == *assignees
-    //             // }
-    //             // res
-    //         )
-    //         .cloned()
-    //         .collect()
-    // }
+    fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload> {
+        self.into_iter()
+            .filter(|task| 
+                // let mut res = false;
+                // for user in assignees{
+                    task.assignee.as_ref().unwrap().0 == assignee.id.0
+                // }
+                // res
+            )
+            .cloned()
+            .collect()
+    }
 
     fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload> {
         self.into_iter()

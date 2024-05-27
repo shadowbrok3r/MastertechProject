@@ -48,9 +48,9 @@ impl Displayable for TaskPayload{
                         {
                             s.cell(|ui|{
                                 ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    // if self.interact_assignee_initials(ui, database.clone(), store_users).unwrap().changed(){
-                                    //     info!("interact_assignee_initials changed: {:?}// {:?}", self.id, self.task_name);
-                                    // }
+                                    if self.interact_assignee_initials(ui, database.clone(), store_users).unwrap().changed(){
+                                        info!("interact_assignee_initials changed: {:?}// {:?}", self.id, self.task_name);
+                                    }
                                     
                                 });
                             });
@@ -195,10 +195,10 @@ pub fn setup_display(
                     .sizes(Size::remainder(), column_names.len())
                     .horizontal( |mut s| 
                 {
-                    for name in &column_names{
-                        // let mut filtered = tasks
-                        //     .filter_by_completed(false)
-                        //     .filter_by_assignee(&name.clone());
+                    for user in store_users{
+                        let mut filtered = tasks
+                            .filter_by_completed(false)
+                            .filter_by_assignee(&user);
                         
 
                         s.cell(|ui|{
@@ -209,7 +209,7 @@ pub fn setup_display(
                                         .auto_shrink(false)
                                         .show_viewport(ui, |ui, _|
                                     {
-                                        for task in tasks.iter_mut() {
+                                        for task in filtered.iter_mut() {
                                             task.display_task_cards(ui, database.clone(), store_users).unwrap();
                                         }
                                     });

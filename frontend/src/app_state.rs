@@ -8,6 +8,7 @@ use ratatui::Terminal;
 use ratframe::{NewCC, RataguiBackend};
 use serde::Serialize;
 use surrealdb::Action;
+use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{User, TaskPayload}, Database};
 use mtechserver_two::webworker::WebWorker;
@@ -290,41 +291,54 @@ impl NewCC for MtechServer{
 
         let mut state = AppState::default();
         let mut current_user = None;
-        #[cfg(target_arch = "wasm32")]
-        {
-            let cookie = wasm_cookies::get("jwt");
-            let user_cookie = wasm_cookies::get("user");
 
-            if let Some(cookie) = cookie{
-                match cookie{
-                    Ok(c) => {
-                        
-                        state = AppState::Authenticated;
-                        info!("self.state: {:?}", state);
-                        if let Some(user) = user_cookie{
-                            match user{
-                                Ok(usr) => {
-                                    info!("Got user cookie! {c:?}");
-                                    let user = serde_json::from_str(&usr.as_str()).unwrap();
-                                    current_user = Some(user);
-                                    state = AppState::Authenticated;
-                                },
-                                Err(e) => {
-                                    error!("Error with user cookie: {e:?}");
-                                    state = AppState::NoAuth;
-                                }
+        let cookie = wasm_cookies::get("jwt");
+        let user_cookie = wasm_cookies::get("user");
+
+        if let Some(cookie) = cookie{
+            match cookie{
+                Ok(c) => {
+                    
+                    state = AppState::Authenticated;
+                    // info!("self.state: {:?}", state);
+                    if let Some(user) = user_cookie{
+                        match user{
+                            Ok(usr) => {
+                                // info!("Got user cookie! {c:?}");
+                                let user = serde_json::from_str(&usr.as_str()).unwrap();
+                                let db_tx = db_tx.clone();
+                                current_user = Some(user);                
+                                spawn_local(async move {
+                                    let database = Database::new(
+                                        "".to_string(), 
+                                        "".to_string(), 
+                                        Some(c)
+                                    ).await.unwrap();
+
+                                    match db_tx.send(database){
+                                        Ok(_) => {
+                                            info!("Sent db connection across thread");
+                                            drop(db_tx);
+                                        },
+                                        Err(err) => info!("Error sending db connection: {err:?}"),
+                                    }
+                                });
+                                state = AppState::Authenticated;
+                            },
+                            Err(e) => {
+                                error!("Error with user cookie: {e:?}");
+                                state = AppState::NoAuth;
                             }
-                        }      
-                    },
-                    Err(e) => {
-                        error!("Error with cookie: {e:?}");
-                        state = AppState::NoAuth;
-                    }
+                        }
+                    }      
+                },
+                Err(e) => {
+                    error!("Error with cookie: {e:?}");
+                    state = AppState::NoAuth;
                 }
             }
         }
-
-        info!("self.state: {:?}", state);
+        
         
         let context = MtechServerContext{
             open_tabs,
