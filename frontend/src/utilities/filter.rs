@@ -10,7 +10,7 @@ impl FilterTasks for Vec<TaskPayload>{
             .filter(|task| 
                 // let mut res = false;
                 // for user in assignees{
-                    task.assignee_initials == assignee.everest_initials
+                    task.everest_initials == assignee.everest_initials
                 // }
                 // res
             )

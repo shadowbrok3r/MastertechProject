@@ -50,7 +50,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_assignee_initials(&mut self, initials: String, db: Database) {
-        // self.assignee_initials = Some(initials);
+        // self.everest_initials = Some(initials);
         info!("User initials: {:?}", initials.clone());
 
         let id: RecordId = self.id.clone().unwrap().0;
@@ -69,7 +69,7 @@ impl Updatable for TaskPayload {
             info!("User: {selected_user:?}");
 
             let query = format!(
-                "UPDATE task SET assignee={}, assignee_initials='{initials}' WHERE id={id}", selected_user.unwrap().id
+                "UPDATE task SET assignee={}, everest_initials='{initials}' WHERE id={id}", selected_user.unwrap().id
             );
             let update_task: Vec<Record> = db
                 .database
