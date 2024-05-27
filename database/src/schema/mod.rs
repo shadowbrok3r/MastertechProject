@@ -62,7 +62,7 @@ pub struct TaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
     pub service_ticket: Option<TicketId>,
-    #[serde(skip)]
+    // #[serde(skip)]
     pub assignee_initials: String,
     pub task_description: Option<String>, 
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
@@ -311,7 +311,7 @@ pub struct User {
     pub id: UserId,
     pub name: String,
     pub everest_initials: String,
-    #[serde(skip)]
+    // #[serde(skip)]
     pub email: String,
     pub store: Store,
     pub notifications: Option<Vec<NotificationId>>

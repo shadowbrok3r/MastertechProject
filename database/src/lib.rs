@@ -1,5 +1,6 @@
 pub mod schema;
 
+use log::info;
 use schema::User;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -54,13 +55,16 @@ impl Database{
             Some(jwt) => {
                 let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url) // localhost:8000
                     .await?;
-                let auth = database.authenticate(jwt.clone()).await;
 
+                info!("auth: {:?}", jwt.clone());
+                let auth = database.authenticate(jwt.clone()).await;
+                info!("auth: {:?}", auth);
                 match auth{
                     Ok(_) => {
                         if !username.is_empty() || !password.is_empty(){
+                            info!("username or pass is empty");
                             let query = format!(
-                                "SELECT id, name, everest_initials, email, store FROM user WHERE email = '{}'", 
+                                "SELECT id, name, everest_initials, email, store FROM user WHERE email == '{}'", 
                                 username
                             );
             
@@ -70,9 +74,10 @@ impl Database{
                                 .take(0).unwrap();
                     
                             let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
+                            info!("returning jwt, user, db: {:?}", jwt.clone());
                             Ok(Self { database, jwt: Some(jwt.into()), user: Some(usr) })
                         }else{
-                            Ok(Self { database, jwt: None, user: None })
+                            Ok(Self { database, jwt: Some(jwt.into()), user: None })
                         }
                     },
                     Err(e) => Err(e.into()),
@@ -80,6 +85,7 @@ impl Database{
 
             },
             None => {
+                
                 let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url) // localhost:8000
                     .await?;
         
@@ -92,19 +98,23 @@ impl Database{
                         params: Auth{email: username.clone(), password: password}
                     }
                 ).await?;
-        
+                info!("jwt: {:?}", jwt.as_insecure_token());
                 let query = format!(
-                    "SELECT id, name, everest_initials, email, store, notifications FROM user WHERE email = '{}'", 
+                    "SELECT  id, name, everest_initials, email, store FROM user WHERE email == '{}'", 
                     username
                 );
-
+                info!("query {:?}", query);
                 let user: Vec<Value> = database
                     .query(query)
                     .await?
-                    .take(0).unwrap();
-        
-                let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
+                    .take(0)?;
+                    
+                info!("Response: {:?}", user);
+                 
+                
 
+                let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
+                info!("result of user query: {:?}", usr);
                 Ok(Self { database, jwt: Some(jwt), user: Some(usr) })
             },
         }

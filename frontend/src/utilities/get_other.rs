@@ -8,7 +8,7 @@ pub fn get_store_users(db: Database, tx: Sender<Vec<User>>, store: Store)
 {
     spawn_local(async move {
         let query = format!(
-            "SELECT name, store, everest_initials, id FROM user WHERE store == '{store:?}'"
+            "SELECT name, store, everest_initials, id, email FROM user WHERE store == '{store:?}'"
         );
         let query_results: Result<Vec<User>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
         match query_results{

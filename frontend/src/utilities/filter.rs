@@ -1,5 +1,5 @@
 use database::schema::{Priority, User, Status, TaskPayload};
-use log::info;
+// use log::info;
 
 use super::FilterTasks;
 
@@ -10,7 +10,7 @@ impl FilterTasks for Vec<TaskPayload>{
             .filter(|task| 
                 // let mut res = false;
                 // for user in assignees{
-                    task.assignee.as_ref().unwrap().0 == assignee.id.0
+                    task.assignee_initials == assignee.everest_initials
                 // }
                 // res
             )

@@ -3,11 +3,9 @@ use app_state::{AppState, MtechServer};
 use crossbeam::channel::Sender;
 use database::{schema::Store, Database};
 use log::{error, info};
-use pages::login_page::Login;
 use ratframe::NewCC;
 use utilities::{get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}};
 use wasm_bindgen_futures::spawn_local;
-use wasm_cookies::cookies;
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{FontId, Style, Vec2};
@@ -102,12 +100,13 @@ impl eframe::App for MtechServer {
             let completed_tasks_tx = self.context.completed_tasks_tx.clone();
             let store_users_tx = self.context.store_users_tx.clone();
 
-            get_my_tasks(db.clone(), my_tasks_tx, self.context.current_user.as_ref().unwrap().id.clone());
-            get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
-            get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
-            get_store_users(db.clone(), store_users_tx, Store::RIV);
-            listen_tasks(db.clone(), tasks_tx);
-            
+            if let Some(usr) = self.context.current_user.as_ref(){
+                get_my_tasks(db.clone(), my_tasks_tx, usr.id.clone());
+                get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
+                get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
+                get_store_users(db.clone(), store_users_tx, Store::RIV);
+                listen_tasks(db.clone(), tasks_tx);
+            }
         }
 
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
