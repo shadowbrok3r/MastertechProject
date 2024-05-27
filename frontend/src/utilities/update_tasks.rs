@@ -69,7 +69,7 @@ impl Updatable for TaskPayload {
             info!("User: {selected_user:?}");
 
             let query = format!(
-                "UPDATE task SET assignee={} WHERE id={id}", selected_user.unwrap().id
+                "UPDATE task SET assignee={}, assignee_initials='{initials}' WHERE id={id}", selected_user.unwrap().id
             );
             let update_task: Vec<Record> = db
                 .database

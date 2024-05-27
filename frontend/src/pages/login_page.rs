@@ -31,9 +31,14 @@ impl Login{
             match database{
                 Ok(db) => {
                     let cookie_opts = CookieOptions::default();
-                    wasm_cookies::set("jwt", db.jwt.as_ref().unwrap().as_insecure_token(), &cookie_opts);
-                    let usr = serde_json::to_string(&db.user).unwrap();
-                    wasm_cookies::set("user", usr.as_str(), &cookie_opts);
+                    if let Some(ref cookie) = db.jwt{
+                        if let Some(ref usr) = db.user{
+                            wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
+                            let usr = serde_json::to_string(&usr).unwrap();
+                            wasm_cookies::set("user", &usr, &cookie_opts);
+                        }else{ info!("no usr"); }
+                    }else{ info!("no cookie"); }
+
                     
                     match db_tx.send(db){
                         Ok(_) => {
