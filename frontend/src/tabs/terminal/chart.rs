@@ -1,4 +1,3 @@
-use log::info;
 use ratatui::{prelude::*,widgets::{Axis, Block, Borders, Chart, Dataset}};
 
 #[derive(Clone)]

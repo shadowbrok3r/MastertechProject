@@ -1,12 +1,10 @@
 // #[war(unused_imports)]
 use app_state::{check_authentication, AppState, MtechServer};
-use crossbeam::channel::Sender;
-use database::{schema::Store, Database};
+use database::schema::Store;
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{error, info};
 use ratframe::NewCC;
 use utilities::{get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}};
-use wasm_bindgen_futures::spawn_local;
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{Align2, FontId, Style, Vec2};
@@ -119,6 +117,7 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
+            
             self.context.my_tasks = Some(tasks);
         }
 

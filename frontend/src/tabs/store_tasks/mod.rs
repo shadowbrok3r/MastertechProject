@@ -1,6 +1,5 @@
-use crate::{app_state::MtechServerContext, utilities::{display_tasks::{setup_display, Filters}, Sortable}};
+use crate::{app_state::MtechServerContext, utilities::{displays::display_tasks::{setup_display, Filters}, Sortable}};
 use egui::Ui;
-use log::info;
 
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {

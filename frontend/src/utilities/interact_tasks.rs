@@ -20,12 +20,12 @@ impl Interaction for TaskPayload {
         Some(text_edit)
     }
 
-    fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
+    fn interact_task_description(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
         ui.add_space(10.0);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         // ui.style_mut().visuals.widgets.inactive.fg = Color32::BLACK;
         if let Some(description) = &self.task_description{
-            let res = ui.label(
+            let _res = ui.label(
                 egui::RichText::new(description).color(Color32::WHITE)
             );
             None
@@ -45,7 +45,7 @@ impl Interaction for TaskPayload {
         
     }
 
-    fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
+    fn interact_recommendations(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
         let mut recommendations = "These are test checkin notes";
         let text_edit = TextEdit::multiline(&mut recommendations)
             .desired_rows(4)
@@ -125,7 +125,7 @@ impl Interaction for TaskPayload {
         Some(combo_box.response)
     }
 
-    fn interact_dep(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
+    fn interact_dep(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
         if let Some(ref mut dep) = self.dep {
             ui.label("Store:");
             let dep = ui.text_edit_singleline(dep);

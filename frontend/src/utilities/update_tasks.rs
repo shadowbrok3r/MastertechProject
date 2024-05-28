@@ -1,8 +1,8 @@
 
 
-use database::{schema::{Priority, Record, Status, Store, TaskPayload, UserId}, Database};
+use database::{schema::{Priority, Record, Status, Store, TaskPayload}, Database};
 use log::info;
-use surrealdb::{opt::RecordId, sql::Value};
+use surrealdb::opt::RecordId;
 use wasm_bindgen_futures::spawn_local;
 
 use super::Updatable;
@@ -36,7 +36,7 @@ impl Updatable for TaskPayload {
             let query = format!(
                 "UPDATE task SET due_date='{}' WHERE id={id}", due_date
             );
-            let update_task: Vec<Record> = db
+            let _update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
@@ -108,22 +108,22 @@ impl Updatable for TaskPayload {
         // self.status = status;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
-            let mut query = String::new();
+            let mut _query = String::new();
             match status{
                 Status::Todo => {
-                    query = format!(
+                    _query = format!(
                         "UPDATE task SET status='{:?}' WHERE id={id}",
                         Status::Todo
                     );
                 },
                 Status::InRepair => {
-                    query = format!(
+                    _query = format!(
                         "UPDATE task SET status='{:?}' WHERE id={id}",
                         Status::InRepair
                     );
                 },
                 Status::Complete => {
-                    query = format!(
+                    _query = format!(
                         "UPDATE task SET status='{:?}' WHERE id={id}",
                         Status::Complete
                     );
@@ -132,7 +132,7 @@ impl Updatable for TaskPayload {
 
             let update_task: Vec<Record> = db
                 .database
-                .query(query)
+                .query(_query)
                 .await
                 .unwrap()
                 .take(0)
@@ -190,7 +190,7 @@ impl Updatable for TaskPayload {
             let query = format!(
                 "UPDATE task SET description='{}' WHERE id={id}", description.unwrap()
             );
-            let update_task: Vec<Record> = db
+            let _update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await

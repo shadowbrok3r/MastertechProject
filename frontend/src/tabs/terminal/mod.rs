@@ -1,11 +1,10 @@
 
 use egui::Ui;
-use ratatui::{buffer::Buffer, layout::{Alignment, Constraint, Direction, Layout, Rect}, prelude::Stylize, symbols::border, widgets::{block::{Position, Title}, Block, Borders, Paragraph}};
-use web_time::{Duration, Instant};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
 use crate::app_state::MtechServerContext;
 
-use self::chart::{render_chart1, App};
+use self::chart::render_chart1;
 pub mod chart;
 
 impl MtechServerContext {
