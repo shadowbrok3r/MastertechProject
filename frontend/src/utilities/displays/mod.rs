@@ -1,6 +1,7 @@
 use database::Database;
 use eframe::egui::Ui;
-use egui::{Button, ScrollArea, Widget};
+use egui::collapsing_header::CollapsingState;
+use egui::{Button, CollapsingHeader, Id, Rangef, ScrollArea, Vec2, Widget};
 use egui::{Color32, Frame, Layout, Margin, RichText, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
 use database::schema::{Priority, Status, TaskPayload, User};
@@ -20,123 +21,171 @@ impl Displayable for TaskPayload{
         store_users: &Vec<User>
     )  -> anyhow::Result<(), anyhow::Error> {
 
-        ui.style_mut().visuals.selection.stroke.color = Color32::from_additive_luminance(255);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
-        ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::from_additive_luminance(255);
+        ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;
+        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+        // ui.style_mut().visuals.
+        
+        ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::GOLD;
+        ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+
+        ui.style_mut().visuals.widgets.open.bg_fill = Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.open.weak_bg_fill = Color32::from_black_alpha(50);
+
+        ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30,30,30);
+
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
+        ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 12);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+        // ui.style_mut().visuals.widgets.hovered.fg_stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
         ui.style_mut().visuals.widgets.hovered.expansion = 2.0;
 
-        let frame = Frame::default()
-            .fill(Color32::from_rgb(7, 7, 13))
-            .inner_margin(Margin::same(4.0))
-            .outer_margin(Margin::same(10.0))
-            .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(200)));
+        Frame::default()
+            .fill(Color32::from_rgb(10, 10, 18))
+            .inner_margin(Margin::same(8.0))
+            .outer_margin(Margin::same(5.0))
+            .rounding(Rounding::same(15.0))
+            .stroke(Stroke::new(1.0, Color32::DARK_GRAY))
+            .show(ui, |ui| 
+        {
+            ui.set_max_height(210.0);
+            ui.set_min_height(100.0);
+            ui.set_width(400.0);
 
-        frame.show(ui, |ui| {
-            ui.set_max_height(160.0);
-            ui.set_width(370.0);
+            ScrollArea::vertical() // ui.add_space(8.0);
+                .id_source(Id::new(format!("FRAME SCROLL {:?}", self.id.as_ref().unwrap().0.id)))
+                .auto_shrink(true)
+                .show(ui, |ui| 
+            {
 
-            StripBuilder::new(ui)
-                .cell_layout(Layout::top_down_justified(egui::Align::Center))
-                .size(Size::relative(0.1))
-                .size(Size::relative(0.8))
-                .size(Size::relative(0.1))
-                .vertical(|mut strip| {
-                    strip.strip(|strip| {
-                        strip
-                            .cell_layout(Layout::left_to_right(egui::Align::Min))
-                            .cell_layout(Layout::left_to_right(egui::Align::Center))
-                            .cell_layout(Layout::left_to_right(egui::Align::Max))
-                            .size(Size::relative(0.2))
-                            .size(Size::remainder())
-                            .size(Size::relative(0.2))
-                            .horizontal( |mut s| 
-                        {
-                            s.cell(|ui|{
-                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    if self.interact_assignee_initials(ui, database.clone(), store_users).unwrap().changed(){
-                                        info!("interact_assignee_initials changed: {:?}// {:?}", self.id, self.task_name);
-                                    }
-                                    if ui.button("O").clicked(){
-                                        self.task_modal(ui, database.clone());
-                                    }
+                StripBuilder::new(ui)
+                    .cell_layout(Layout::top_down_justified(egui::Align::Center))
+                    .size(Size::relative(0.1))
+                    .size(Size::initial(40.0)) // Absolute { initial: 40.0, range: Rangef::new(50.0, 300.0) }
+                    .size(Size::relative(0.01))
+                    .size(Size::relative(0.09))
+                    .vertical(|mut strip| {
+                        strip.strip(|strip| {
+                            strip
+                                .cell_layout(Layout::left_to_right(egui::Align::Min))
+                                .cell_layout(Layout::left_to_right(egui::Align::Center))
+                                .cell_layout(Layout::left_to_right(egui::Align::Max))
+                                .size(Size::relative(0.1))
+                                .size(Size::remainder())
+                                .size(Size::relative(0.1))
+                                .size(Size::relative(0.1))
+                                .horizontal( |mut s| 
+                            {
+                                s.cell(|ui|{
+                                    ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                        if self.interact_assignee_initials(ui, database.clone(), store_users).unwrap().changed(){
+                                            info!("interact_assignee_initials changed: {:?}// {:?}", self.id, self.task_name);
+                                        }
+                                    });
                                 });
-                            });
-                            s.cell(|ui|{
-                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_task_name(ui, database.clone());
+
+                                s.cell(|ui|{
+                                    ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                        self.interact_task_name(ui, database.clone());
+                                    });
                                 });
-                            });
-                            s.cell(|ui|{
-                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_completed(ui, database.clone());
+                                s.cell(|ui|{
+                                    ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                        if Button::new("⮫").small().ui(ui).clicked(){
+                                            self.task_modal(ui, database.clone());
+                                        }
+                                    });
+                                });
+                                s.cell(|ui|{
+                                    ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                        self.interact_completed(ui, database.clone());
+                                    });
                                 });
                             });
                         });
-                    });
 
-                    strip.strip(|strip| {
-                        strip
-                            .cell_layout(Layout::left_to_right(egui::Align::Min))
-                            .cell_layout(Layout::right_to_left(egui::Align::Max))
-                            .size(Size::remainder())
-                            .size(Size::remainder())
-                            .horizontal( |mut s| 
-                        {
-                            s.cell(|ui|{
-                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_task_description(ui, database.clone());
+                        strip.strip(|strip| {
+                            strip
+                                .cell_layout(Layout::left_to_right(egui::Align::Min))
+                                .size(Size::remainder())
+                                .size(Size::remainder())
+                                .horizontal( |mut s| 
+                            {
+                                s.cell(|ui|{
+                                    ui.allocate_ui_with_layout(ui.available_size(), Layout::top_down(egui::Align::Min), |ui|{
+                                        ScrollArea::vertical() // ui.add_space(8.0);
+                                            .id_source(Id::new(format!("recommendations scroll {:?}", self.id.as_ref().unwrap().0.id)))
+                                            .auto_shrink(true)
+                                            .show(ui, |ui| 
+                                        {
+                                            let checkin_header = ui.make_persistent_id(format!("checkin_notes {:?}", self.id.as_ref().unwrap().0.id));
+                                            let checkin_head = CollapsingHeader::new("Checkin Notes").id_source(checkin_header);
+                                            checkin_head
+                                                .show_unindented(ui, |ui| 
+                                            {
+                                                self.interact_task_description(ui, database.clone());
+                                            });
+
+                                        });
+                                    }); 
                                 });
-                            });
-                            s.cell(|ui|{
-                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_task_description(ui, database.clone());
+                                s.cell(|ui| {
+                                    ui.allocate_ui_with_layout(ui.available_size(), Layout::top_down(egui::Align::Min), |ui|{
+
+                                        ScrollArea::vertical() // ui.add_space(8.0);
+                                            .id_source(Id::new(format!("recommendations scroll {:?}", self.id.as_ref().unwrap().0.id)))
+                                            .auto_shrink(true)
+                                            .max_height(ui.available_height())
+                                            .show(ui, |ui| 
+                                        {
+                                            // ui.allocate_space(Vec2::new(ui.available_width(), ui.available_height()));
+                                            let rec_header = ui.make_persistent_id(format!("recommendations {:?}", self.id.as_ref().unwrap().0.id));
+                                            let rec_head = CollapsingHeader::new("Recommendations").id_source(rec_header);
+                                            rec_head
+                                                .show_unindented(ui, |ui|
+                                            {
+                                                
+                                                self.interact_task_description(ui, database.clone());
+                                            });
+                                        });
+                                    });
                                 });
                             });
                         });
-                    });
-                    strip.strip(|strip| {
-                        strip
-                            .cell_layout(Layout::left_to_right(egui::Align::Min))
-                            .cell_layout(Layout::left_to_right(egui::Align::Center))
-                            .cell_layout(Layout::left_to_right(egui::Align::Max))
-                            .size(Size::relative(0.3))
-                            .size(Size::remainder())
-                            .size(Size::relative(0.3))
-                            .horizontal( |mut s| 
-                        {
-                            s.cell(|ui|{
-                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_due_date(ui, database.clone());
+                        strip.empty();
+                        strip.strip(|strip| {
+                            strip
+                                .cell_layout(Layout::left_to_right(egui::Align::Min))
+                                .cell_layout(Layout::left_to_right(egui::Align::Center))
+                                .cell_layout(Layout::left_to_right(egui::Align::Max))
+                                .size(Size::relative(0.3))
+                                .size(Size::remainder())
+                                .size(Size::remainder())
+                                .horizontal( |mut s| 
+                            {
+                                s.cell(|ui|{
+                                    ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                                        self.interact_due_date(ui, database.clone());
+                                    });
                                 });
-                            });
-                            s.cell(|ui|{
-                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    self.interact_priority(ui, database.clone());
+                                s.cell(|ui|{
+                                    ui.with_layout(Layout::centered_and_justified(egui::Direction::RightToLeft), |ui|{
+                                        self.interact_priority(ui, database.clone());
+                                    });
                                 });
-                            });
-                            s.cell(|ui|{
-                                ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                    if self.interact_status(ui, database).unwrap().changed(){
-                                        info!("interact_status changed: {:?}// {:?}", self.id, self.task_name);
-                                    }
+                                s.cell(|ui|{
+                                    ui.with_layout(Layout::centered_and_justified(egui::Direction::RightToLeft), |ui|{
+                                        if self.interact_status(ui, database).unwrap().changed(){
+                                            info!("interact_status changed: {:?}// {:?}", self.id, self.task_name);
+                                        }
+                                    });
                                 });
                             });
                         });
-                    });
+                });
             });
         });
-        
-        /* 
-            let header_id = ui.make_persistent_id(&task_data.task_name);
-            CollapsingState::load_with_default_open(ui.ctx(), header_id, false)
-            .show_header(ui, |ui| {
-                ui.toggle_value(&mut stuff, &task_data.task_name);
-            })
-            .body_unindented(|ui| {
-                ui.label("The body is always custom");
-            });
-        */
         Ok(())
     }
 
@@ -179,14 +228,14 @@ pub fn setup_display(
 ) {
     ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
     let header_frame = Frame::default()
-        .fill(Color32::from_rgb(25, 25, 30))
+        .fill(Color32::from_rgb(20, 20, 25))
         .inner_margin(Margin::same(4.0))
         .outer_margin(Margin::symmetric(4.0, 1.0))
         .rounding(Rounding::same(5.0))
         .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
     let column_frame = Frame::default()
-        .fill(Color32::from_rgb(20, 20, 20))
+        .fill(Color32::from_rgb(15, 15, 19))
         .inner_margin(Margin::same(8.0))
         .rounding(Rounding::same(10.0))
         .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
@@ -246,17 +295,31 @@ pub fn task_headers(
 ){
     for name in &column_names{
         s.cell(|ui|{
-            header_frame.show(ui, |ui|{
-                ui.vertical_centered_justified(|ui|{
-                    ui.colored_label(Color32::WHITE, RichText::new(name.clone()).heading());
-                });
-                ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
-                    let add_task = Button::new("+").fill(Color32::TRANSPARENT).stroke(Stroke::new(2.0, Color32::DARK_BLUE))
-                        .ui(ui);
+            header_frame.show(ui, |ui|
+            {
+                ui.horizontal_top(|ui| 
+                {
+                    ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| 
+                    {
+                        ui.vertical_centered(|ui|{
+                            ui.colored_label(Color32::WHITE, RichText::new(name.clone()).heading());
+                        });
+                    });
 
-                    if add_task.clicked(){
-                        info!("Adding task!");
-                    }
+                    ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| 
+                    {
+                        let add_task = Button::new(
+                            RichText::new("✚")
+                                .raised()
+                                .color(Color32::LIGHT_RED)
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .ui(ui);
+                    
+                        if add_task.clicked(){
+                            info!("Adding task!");
+                        }
+                    });
                 });
             });
         });

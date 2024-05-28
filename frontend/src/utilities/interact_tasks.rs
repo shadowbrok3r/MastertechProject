@@ -21,7 +21,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_task_description(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
-        ui.add_space(10.0);
+        
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         // ui.style_mut().visuals.widgets.inactive.fg = Color32::BLACK;
         if let Some(description) = &self.task_description{
@@ -32,7 +32,7 @@ impl Interaction for TaskPayload {
         }else{
             let mut task_description = "No task description";
             let text_edit = TextEdit::multiline(&mut task_description)
-                .desired_rows(7)
+                .desired_rows(5)
                 .desired_width(ui.available_width())
                 .horizontal_align(egui::Align::Center)
                 .ui(ui);
@@ -42,13 +42,12 @@ impl Interaction for TaskPayload {
             }
             Some(text_edit)
         }
-        
     }
 
     fn interact_recommendations(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
         let mut recommendations = "These are test checkin notes";
         let text_edit = TextEdit::multiline(&mut recommendations)
-            .desired_rows(4)
+            .desired_rows(6)
             .desired_width(ui.available_width())
             .horizontal_align(egui::Align::Center)
             .show(ui);
@@ -87,17 +86,31 @@ impl Interaction for TaskPayload {
 
     fn interact_completed(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         if self.completed{
-            let stroke = Stroke::new(2.0, Color32::DARK_GREEN);
-            let button = Button::new("✔️").fill(ui.style().visuals.extreme_bg_color).stroke(stroke);
+            let hover_txt = "✔";
+            let color_complete = Color32::LIGHT_GREEN;
+            // let color_incomplete = Color32::LIGHT_RED;
+
+            let stroke = Stroke::new(2.0, color_complete);
+            let button = Button::new(hover_txt).stroke(stroke).small();
             let res = ui.add_sized(ui.available_size(), button);
+            // if res.hovered(){
+            //     res.stroke(Stroke::new(2.0, color_incomplete));
+            // }
             if res.clicked(){
                 info!("marked incomplete: {:?}// {:?}", self.id, self.task_name);
             }
             Some(res)
         }else{
-            let stroke = Stroke::new(2.0, Color32::from_rgba_premultiplied(200, 20, 200, 50));
-            let button = Button::new("✖️").fill(ui.style().visuals.extreme_bg_color).stroke(stroke);
+            let hover_txt = "✖";
+            // let color_complete = Color32::LIGHT_GREEN;
+            let color_incomplete = Color32::LIGHT_RED;
+
+            let stroke = Stroke::new(2.0, color_incomplete);
+            let button = Button::new(hover_txt).stroke(stroke).small();
             let res = ui.add_sized(ui.available_size(), button);
+            // if res.hovered(){
+            //     button.stroke(Stroke::new(2.0, color_complete));
+            // }
             if res.clicked(){
                 info!("marked completed: {:?}// {:?}", self.id, self.task_name);
                 self.update_completed(!self.completed, database);
@@ -109,13 +122,13 @@ impl Interaction for TaskPayload {
     fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let mut current_status = self.status.clone();
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-            .selected_text(RichText::new(format!("{:?}", &current_status.as_str())))
+            .selected_text(RichText::new(format!("{}", &current_status.as_str())))
             .width(ui.available_width())
             .height(ui.available_height())
             .show_ui(ui, |ui| 
         {
             for mut status in Status::VALUES{
-                let status_change = ui.selectable_value(&mut current_status.clone(), self.status.clone(), status.as_str());
+                let status_change = ui.selectable_value(&mut current_status.clone(), self.status.to_owned(), status.as_str());
                 if status_change.clicked(){
                     // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, everest_initials);
                     self.update_status(status.clone(), database.clone());
@@ -140,13 +153,13 @@ impl Interaction for TaskPayload {
     fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let mut current_priority = self.priority.clone();
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-        .selected_text(format!("{:?}", &current_priority.as_str()))
-        .width(ui.available_width())
-        .height(ui.available_height())
-        .show_ui(ui, |ui| 
+            .selected_text(RichText::new(format!("{}", &current_priority.as_str())))
+            .width(ui.available_width() / 1.3)
+            .height(ui.available_height() - 2.0)
+            .show_ui(ui, |ui| 
         {
             for mut priority in Priority::VALUES{
-                let priority_change = ui.selectable_value(&mut current_priority.clone(), self.priority.clone(), priority.as_str());
+                let priority_change = ui.selectable_value(&mut current_priority.clone(), self.priority.to_owned(), priority.as_str());
                 if priority_change.clicked(){
                     // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, everest_initials);
                     self.update_priority(Some(priority.clone()), database.clone());
@@ -158,9 +171,9 @@ impl Interaction for TaskPayload {
 
     fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response> {
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-            .selected_text(&self.everest_initials)
-            .width(ui.available_width())
-            .height(ui.available_height()/ 2.0)
+            .selected_text(RichText::new(&self.everest_initials).small())
+            .width(ui.available_width() / 1.3)
+            .height(ui.available_height() - 2.0)
             .show_ui(ui, |ui| 
         {
             for user in *&store_users{
