@@ -1,5 +1,5 @@
 use crossbeam::channel::Sender;
-use database::{schema::{ComputerData, CustomerData, User, TaskNotePayload, TaskPayload, TicketData, TicketId}, Database};
+use database::{schema::{ComputerData, CustomerData, User, TaskNotePayload, TaskPayload, TicketData}, Database};
 use log::{error, info};
 use surrealdb::opt::RecordId;
 use wasm_bindgen_futures::spawn_local;

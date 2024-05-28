@@ -5,7 +5,7 @@ use schema::User;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws}, error::Db, opt::auth::{Jwt, Scope}, Error, Surreal // http::{Client as HttpClient, Https},
+    engine::remote::ws::{Client as WsClient, Ws}, opt::auth::{Jwt, Scope}, Error, Surreal // http::{Client as HttpClient, Https},
 };
         
 

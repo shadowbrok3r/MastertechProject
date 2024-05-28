@@ -1,7 +1,7 @@
 use egui::{Response, Ui};
 use database::{schema::{Priority, User, Status, Store, TaskPayload}, Database};
 
-pub mod display_tasks;
+pub mod displays;
 pub mod update_tasks;
 pub mod get_tasks;
 pub mod interact_tasks;

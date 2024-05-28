@@ -1,7 +1,5 @@
 use chrono::{DateTime, Timelike};
 use database::schema::{Priority, TaskPayload};
-use log::info;
-
 use super::Sortable;
 
 impl Sortable for Vec<TaskPayload>{
