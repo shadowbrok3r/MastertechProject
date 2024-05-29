@@ -12,7 +12,7 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{User, TaskPayload}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{create_task::CreateTaskModal, task_modal::TaskModal}, modal::Modal}
 //    utilities::get_tasks::{CompletedTasks, MyTasks, StoreTasks}
 };
 
@@ -43,25 +43,27 @@ pub enum AppState{
 pub struct MtechServerContext{
     /// collection of all open tabs in ui
     pub open_tabs: HashSet<String>,
-
     /// egui dock styling
     #[serde(skip)]
     pub style: Option<egui_dock::Style>,
-
     #[serde(skip)]
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
+
+    /// Widgets / Modals / Ui for portions throughout the app
+    pub task_modal: Option<TaskModal>,
+    pub create_task_modal: Option<CreateTaskModal>,
+    pub modal: Option<Modal>,
 
     /// Terminal setup for console tab
     #[serde(skip)]
     pub terminal: Terminal<RataguiBackend>,
 
+
     /// example chart for console tab
     #[serde(skip)]
     pub chart_app: App,
-
     /// update period for chart
     pub tick_rate: Duration,
-
     /// last tick of example chart
     #[serde(skip)]
     pub last_tick: Instant,
@@ -88,8 +90,9 @@ pub struct MtechServerContext{
     pub completed_tasks: Option<Vec<TaskPayload>>,
     pub store_users: Option<Vec<User>>,
 
-    #[serde(skip)]
+
     /// Receives task data over crossbeam channel
+    #[serde(skip)]
     pub tasks_rx: Receiver<(Action, TaskPayload)>,
     #[serde(skip)]
     pub my_tasks_rx: Receiver<Vec<TaskPayload>>,
@@ -99,6 +102,7 @@ pub struct MtechServerContext{
     pub completed_tasks_rx: Receiver<Vec<TaskPayload>>,
     #[serde(skip)]
     pub store_users_rx: Receiver<Vec<User>>,
+
 
     /// Sends task data over crossbeam channel
     #[serde(skip)]
@@ -112,17 +116,17 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub store_users_tx: Sender<Vec<User>>,
 
+
     /// Receives Database connection over crossbeam channel
     #[serde(skip)]
     pub db_rx: Receiver<Database>,
-
-    #[serde(skip)]
     /// Sends Database connection over crossbeam channel
+    #[serde(skip)]
     pub db_tx: Sender<Database>,
+
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
-    
     pub data_update: Option<Rc<Cell<Option<u32>>>>,
 }
 
@@ -335,6 +339,10 @@ impl NewCC for MtechServer{
 
             bridge: Some(bridge),
             data_update: Some(data_update),
+
+            task_modal: None,// TaskModal::default(),
+            create_task_modal: None,// CreateTaskModal::new(),
+            modal: None,// Modal::new("Test")
         };
         
         Self {

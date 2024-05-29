@@ -4,15 +4,10 @@ use log::{error, info};
 use surrealdb::opt::RecordId;
 use wasm_bindgen_futures::spawn_local;
 
+use super::TaskContext;
 
 
-pub trait TaskContext {
-    fn get_store_users(&mut self, db: Database, tx: Sender<Vec<User>>);
-    fn get_computer_data(&mut self, db: Database, tx: Sender<Vec<ComputerData>>);
-    fn get_customer_data(&mut self, db: Database, tx: Sender<Vec<CustomerData>>);
-    fn get_service_data(&mut self, db: Database, tx: Sender<Vec<TicketData>>);
-    fn get_task_notes(&mut self, db: Database, tx: Sender<Vec<TaskNotePayload>>);
-}
+
 
 
 impl TaskContext for TaskPayload{
