@@ -12,7 +12,7 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{User, TaskPayload}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{create_task::CreateTaskModal, task_modal::TaskModal}, modal::Modal}
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{create_task::CreateTaskModal, task_layout::TaskLayout, task_modal::TaskModal}, modal::Modal}
 //    utilities::get_tasks::{CompletedTasks, MyTasks, StoreTasks}
 };
 
@@ -50,9 +50,7 @@ pub struct MtechServerContext{
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
 
     /// Widgets / Modals / Ui for portions throughout the app
-    pub task_modal: Option<TaskModal>,
-    pub create_task_modal: Option<CreateTaskModal>,
-    pub modal: Option<Modal>,
+    pub task_layout: TaskLayout,
 
     /// Terminal setup for console tab
     #[serde(skip)]
@@ -84,7 +82,7 @@ pub struct MtechServerContext{
     pub completed_tasks_opened: bool,
 
     /// All contained task data from database
-    pub tasks: Option<TaskPayload>,
+    pub live_tasks: Option<TaskPayload>,
     pub my_tasks: Option<Vec<TaskPayload>>,
     pub store_tasks: Option<Vec<TaskPayload>>,
     pub completed_tasks: Option<Vec<TaskPayload>>,
@@ -302,6 +300,8 @@ impl NewCC for MtechServer{
             open_tabs,
             style: None,
             added_nodes,
+
+            task_layout: TaskLayout::default(),
             
             terminal,
             chart_app,
@@ -315,7 +315,7 @@ impl NewCC for MtechServer{
 
             current_user,
 
-            tasks: None,
+            live_tasks: None,
             my_tasks: None,
             store_tasks: None,
             completed_tasks: None,
@@ -339,10 +339,6 @@ impl NewCC for MtechServer{
 
             bridge: Some(bridge),
             data_update: Some(data_update),
-
-            task_modal: None,// TaskModal::default(),
-            create_task_modal: None,// CreateTaskModal::new(),
-            modal: None,// Modal::new("Test")
         };
         
         Self {

@@ -17,25 +17,24 @@ pub mod handle_live_data;
 pub mod sortable;
 pub mod modal;
 
-pub trait Displayable{
+// This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
+pub trait Displayable{ 
     fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> anyhow::Result<(), anyhow::Error>;
-    fn task_headers(&mut self,  s: Strip, column_names: Vec<String>, header_frame: Frame);
-    fn setup_display(&mut self, ui: &mut Ui, column_names: Vec<String>, database: Database,filters: &Vec<Filters>, assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>);
-    fn task_columns(&mut self, ui: &mut Ui, s: Strip, filters: &Vec<Filters>,assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>,database: Database,column_frame: Frame);
+    // fn task_headers(&mut self,  s: Strip, column_names: Vec<String>, header_frame: Frame);
     fn task_modal<ID>(&mut self, ui: &mut Ui, _database: Database)
     where
         Self: Aggregatable<ID>,
         ID: std::fmt::Debug,
     {
-        Window::new(format!("test"))
+        Window::new(format!("TestWindow123"))
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ui.ctx(), |ui| 
         {
-            Grid::new(Id::new("test"))// self.id.as_ref().unwrap().0.id.clone()
+            Grid::new(Id::new("TestGrid"))// self.id.as_ref().unwrap().0.id.clone()
                 .num_columns(4)
                 .show(ui, |ui| 
             {
-                    ui.label(RichText::new("Rep"));
+                    // ui.label(RichText::new("Rep"));
                     // ui.label(RichText::new(format!("{:?}", self.checkin_rep)));
                     // ui.label(RichText::new("Split Rep"));
                     // ui.label(RichText::new(format!("{:?}", self.sales_rep)));
@@ -71,14 +70,14 @@ pub trait Displayable{
     }
 }
 
-pub trait Data<T: Serialize + for<'a> Deserialize<'a> + Debug>{
-    fn create_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    fn get_data(&mut self, database: Database, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    fn modify_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    fn delete_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+// This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
+pub trait ColumnLayout{
+    fn setup_display(&mut self, ui: &mut Ui, column_names: Vec<String>, database: Database,filters: &Vec<Filters>, assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>);
+    fn task_columns(&mut self,s: Strip, filters: &Vec<Filters>,assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>,database: Database,column_frame: Frame);
+    fn filter_items(&mut self,filters: &Vec<Filters>, assignee: &Option<User>,status: &Option<Status>,priority: &Option<Priority>,complete: &Option<bool>) -> Vec<TaskPayload>;
 }
 
-pub trait Updatable {
+pub trait Updatable { // This is correctly implemented
     fn update_completed(&mut self, completed: bool, db: Database);
     fn update_due_date(&mut self, due_date: String, db: Database);
     fn update_assignee_initials(&mut self, initials: String, db: Database);
@@ -89,7 +88,7 @@ pub trait Updatable {
     fn update_task_description(&mut self, description: Option<String>, db: Database);
 }
 
-pub trait Interaction{
+pub trait Interaction{ // This is correctly implemented
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
@@ -101,7 +100,7 @@ pub trait Interaction{
     fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response>;
 }
 
-pub trait FilterTasks{
+pub trait FilterTasks{ 
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
     fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
@@ -119,12 +118,17 @@ pub trait LiveUpdate{
     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
 }
 
-pub trait TaskContext {
+pub trait TaskContext { // <T: Serialize + for<'a> Deserialize<'a> + Debug>
     fn get_store_users(&mut self, db: Database, tx: Sender<Vec<User>>);
     fn get_computer_data(&mut self, db: Database, tx: Sender<Vec<ComputerData>>);
     fn get_customer_data(&mut self, db: Database, tx: Sender<Vec<CustomerData>>);
     fn get_service_data(&mut self, db: Database, tx: Sender<Vec<TicketData>>);
     fn get_task_notes(&mut self, db: Database, tx: Sender<Vec<TaskNotePayload>>);
+
+    // fn create_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    // fn get_data(&mut self, database: Database, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    // fn modify_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    // fn delete_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
 }
 
 

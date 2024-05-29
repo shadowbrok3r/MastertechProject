@@ -93,23 +93,13 @@ async fn handle_streams<T>(
         match notification{
             Ok(notification) => {
                 let data = notification.data;
-                // info!("{action}\n{data:?}");
-                match tx.send((notification.action, data)){
-                    Ok(_) => {
-                        info!("Sent notification");
-                        // drop(tx);
-                        // break;
-                    },
-                    Err(e) => {
-                        error!("Error sending task data: {e:?}");
-                        // break;
-                    }
+                let action = notification.action;
+                match tx.send((action, data)){
+                    Ok(_) => info!("Sent notification"),
+                    Err(e) => error!("Error sending task data: {e:?}")
                 }
             },
-            Err(err) => {
-                error!("Error: {err:?}");
-                // break;
-            }
+            Err(err) => error!("Error: {err:?}")
         };
     }; 
 }

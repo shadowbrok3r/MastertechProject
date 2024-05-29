@@ -1,4 +1,4 @@
-use database::{schema::{TicketPayload, User}, Database};
+use database::{schema::User, Database};
 use egui::Ui;
 use serde::Serialize;
 

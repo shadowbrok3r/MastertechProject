@@ -9,6 +9,7 @@ use web_time::Instant;
 use std::sync::Arc;
 use egui::{Align2, FontId, Style, Vec2};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
+use utilities::Displayable;
 
 pub mod tabs;
 pub mod app_state;
@@ -117,7 +118,6 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
-            
             self.context.my_tasks = Some(tasks);
         }
 
@@ -136,6 +136,24 @@ impl eframe::App for MtechServer {
         while let Ok(data) = self.context.tasks_rx.try_recv(){
             if let Some(tasks) = &mut self.context.store_tasks{
                 handle_live_data(data, tasks).unwrap();
+            }
+        }
+
+        if self.context.task_layout.create_task_modal{
+            let db = self.context.database.clone();
+            let task_layout = self.context.task_layout;
+            if let Some(ref mut task_opts) = self.context.task_layout.task_opts{
+                if let Some(ref mut tasks) = self.context.my_tasks{
+                    task_opts.modal.ui(ctx, |ui, stay_open: &mut bool|{
+                        *stay_open = true;
+                        // task_layout.
+                        for task in tasks.iter_mut(){
+                            if let Some(ref db) = db{
+                                task.task_modal(ui, db.clone());
+                            }
+                        }
+                    });
+                }
             }
         }
     }

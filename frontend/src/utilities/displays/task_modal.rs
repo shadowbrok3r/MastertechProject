@@ -4,8 +4,8 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct TaskModal {
-    ticket_payload: Option<TicketPayload>,
-    is_modal_open: bool,
+    pub ticket_payload: Option<TicketPayload>,
+    pub is_modal_open: bool,
 }
 
 impl Default for TaskModal{
@@ -33,7 +33,7 @@ impl TaskModal {
         }
     }
 
-    pub fn display_task_cards(&mut self, ui: &mut Ui, database: Database, _store_users: &Vec<User>) -> anyhow::Result<(), anyhow::Error> {
+    pub fn display(&mut self, ui: &mut Ui, database: Database, _store_users: &Vec<User>) -> anyhow::Result<(), anyhow::Error> {
         if ui.button("O").clicked() {
             self.is_modal_open = true;
         }
