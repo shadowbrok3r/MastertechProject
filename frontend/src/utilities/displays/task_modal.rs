@@ -1,15 +1,26 @@
-use database::{schema::{TaskPayload, User}, Database};
+use database::{schema::{TicketPayload, User}, Database};
 use egui::Ui;
+use serde::Serialize;
 
-pub struct MyUIComponent {
-    _task_payload: TaskPayload,
+#[derive(Serialize)]
+pub struct TaskModal {
+    ticket_payload: Option<TicketPayload>,
     is_modal_open: bool,
 }
 
-impl MyUIComponent {
-    pub fn new(task_payload: TaskPayload) -> Self {
+impl Default for TaskModal{
+    fn default() -> Self {
+        Self { 
+            ticket_payload: None, 
+            is_modal_open: false
+        }
+    }
+}
+
+impl TaskModal {
+    pub fn new(ticket_payload: TicketPayload) -> Self {
         Self {
-            _task_payload: task_payload,
+            ticket_payload: Some(ticket_payload),
             is_modal_open: false,
         }
     }

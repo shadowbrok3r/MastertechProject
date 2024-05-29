@@ -9,8 +9,6 @@ use crate::utilities::Updatable;
 
 use super::Interaction;
 
-
-
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let text_edit = TextEdit::singleline(&mut self.task_name).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
@@ -120,15 +118,14 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        let mut current_status = self.status.clone();
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-            .selected_text(RichText::new(format!("{}", &current_status.as_str())))
+            .selected_text(RichText::new(format!("{}", &self.status.as_str())))
             .width(ui.available_width())
             .height(ui.available_height())
             .show_ui(ui, |ui| 
         {
             for mut status in Status::VALUES{
-                let status_change = ui.selectable_value(&mut current_status.clone(), self.status.to_owned(), status.as_str());
+                let status_change = ui.selectable_value(&mut self.status, status.to_owned(), status.as_str());
                 if status_change.clicked(){
                     // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, everest_initials);
                     self.update_status(status.clone(), database.clone());
@@ -138,28 +135,15 @@ impl Interaction for TaskPayload {
         Some(combo_box.response)
     }
 
-    fn interact_dep(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
-        if let Some(ref mut dep) = self.dep {
-            ui.label("Store:");
-            let dep = ui.text_edit_singleline(dep);
-            Some(dep)
-        } else {
-            ui.label("No department specified.");
-            None
-        }
-        
-    }
-
     fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        let mut current_priority = self.priority.clone();
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-            .selected_text(RichText::new(format!("{}", &current_priority.as_str())))
+            .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
             .width(ui.available_width() / 1.3)
             .height(ui.available_height() - 2.0)
             .show_ui(ui, |ui| 
         {
             for mut priority in Priority::VALUES{
-                let priority_change = ui.selectable_value(&mut current_priority.clone(), self.priority.to_owned(), priority.as_str());
+                let priority_change = ui.selectable_value(&mut self.priority, priority.to_owned(), priority.as_str());
                 if priority_change.clicked(){
                     // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, everest_initials);
                     self.update_priority(Some(priority.clone()), database.clone());
@@ -185,5 +169,17 @@ impl Interaction for TaskPayload {
             }
         });
         Some(combo_box.response)
+    }
+    
+    fn interact_dep(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
+        if let Some(ref mut dep) = self.dep {
+            ui.label("Store:");
+            let dep = ui.text_edit_singleline(dep);
+            Some(dep)
+        } else {
+            ui.label("No department specified.");
+            None
+        }
+        
     }
 }

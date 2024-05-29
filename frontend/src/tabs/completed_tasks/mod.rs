@@ -1,4 +1,4 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::{setup_display, Filters}, Sortable}};
+use crate::{app_state::MtechServerContext, utilities::{displays::Filters, Sortable}};
 use egui::Ui;
 
 impl MtechServerContext{

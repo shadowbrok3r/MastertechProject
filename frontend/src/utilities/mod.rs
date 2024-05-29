@@ -1,5 +1,10 @@
-use egui::{Align2, Grid, Id, Response, RichText, Ui, Window};
-use database::{schema::{Priority, Status, Store, TaskId, TaskNoteId, TaskPayload, TicketData, TicketId, User, UserId}, Database};
+use crossbeam::channel::Sender;
+use displays::Filters;
+use egui::{Align2, Frame, Grid, Id, Response, RichText, Ui, Window};
+use database::{schema::{ComputerData, CustomerData, Priority, Record, Status, Store, TaskId, TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId}, Database};
+use egui_extras::Strip;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 pub mod displays;
 pub mod update_tasks;
@@ -10,9 +15,13 @@ pub mod task_context;
 pub mod filter;
 pub mod handle_live_data;
 pub mod sortable;
+pub mod modal;
 
 pub trait Displayable{
     fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> anyhow::Result<(), anyhow::Error>;
+    fn task_headers(&mut self,  s: Strip, column_names: Vec<String>, header_frame: Frame);
+    fn setup_display(&mut self, ui: &mut Ui, column_names: Vec<String>, database: Database,filters: &Vec<Filters>, assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>);
+    fn task_columns(&mut self, ui: &mut Ui, s: Strip, filters: &Vec<Filters>,assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>,database: Database,column_frame: Frame);
     fn task_modal<ID>(&mut self, ui: &mut Ui, _database: Database)
     where
         Self: Aggregatable<ID>,
@@ -62,6 +71,12 @@ pub trait Displayable{
     }
 }
 
+pub trait Data<T: Serialize + for<'a> Deserialize<'a> + Debug>{
+    fn create_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    fn get_data(&mut self, database: Database, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    fn modify_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    fn delete_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+}
 
 pub trait Updatable {
     fn update_completed(&mut self, completed: bool, db: Database);
@@ -86,12 +101,12 @@ pub trait Interaction{
     fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response>;
 }
 
-
 pub trait FilterTasks{
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
     fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
+    
 }
 
 pub trait Sortable{
@@ -103,6 +118,15 @@ pub trait LiveUpdate{
     fn handle_live_update(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
 }
+
+pub trait TaskContext {
+    fn get_store_users(&mut self, db: Database, tx: Sender<Vec<User>>);
+    fn get_computer_data(&mut self, db: Database, tx: Sender<Vec<ComputerData>>);
+    fn get_customer_data(&mut self, db: Database, tx: Sender<Vec<CustomerData>>);
+    fn get_service_data(&mut self, db: Database, tx: Sender<Vec<TicketData>>);
+    fn get_task_notes(&mut self, db: Database, tx: Sender<Vec<TaskNotePayload>>);
+}
+
 
 pub trait Aggregatable<ID>{
     fn get_id(&self) -> Option<ID>;
@@ -174,7 +198,6 @@ impl Aggregatable<TaskId> for TaskPayload {
     }
 }
 
-
 impl Aggregatable<TicketId> for TicketData {
     fn get_id(&self) -> Option<TicketId> {
         self.id.clone()
@@ -228,3 +251,4 @@ impl Aggregatable<TicketId> for TicketData {
         Some(&self.dep)
     }
 }
+
