@@ -1,5 +1,6 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::{setup_display, Filters}, Sortable}};
+use crate::{app_state::MtechServerContext, utilities::{displays::{task_layout::{TaskLayout, TaskLayoutOpts}, Filters}, Displayable}};
 use egui::Ui;
+use log::info;
 
 impl MtechServerContext{
     pub fn my_tasks(&mut self, ui: &mut Ui){ 
@@ -10,21 +11,27 @@ impl MtechServerContext{
 
             let col_names = vec!["Todo".to_string(), "In Repair".to_string(), "Complete".to_string()];
             let database = self.database.as_ref().unwrap().clone();
-            tasks.sort_task_payloads();
+            
 
             let filters = vec![
                 Filters::FilterStatus
             ];
 
-            setup_display(ui, 
-                col_names, 
-                &mut *tasks, 
-                database, 
-                &filters, 
-                &self.store_users,
-                true,
-                &None,
-                &None,
+            let task_layout_opts = TaskLayoutOpts::new(
+                tasks.to_owned(), 
+                filters,
+                col_names,
+                database.clone()
+            );
+
+            self.task_layout.task_opts = Some(task_layout_opts);
+        
+            self.task_layout.display(
+                ui, 
+                &self.store_users, 
+                true, 
+                &None, 
+                &None, 
                 &self.current_user
             );
         }

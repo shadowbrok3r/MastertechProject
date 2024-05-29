@@ -1,4 +1,4 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::{setup_display, Filters}, Sortable}};
+use crate::{app_state::MtechServerContext, utilities::{displays::{task_layout::TaskLayout, Filters}, ColumnLayout, Sortable}};
 use egui::Ui;
 
 impl MtechServerContext{
@@ -13,25 +13,41 @@ impl MtechServerContext{
                 
             }
             let database = self.database.as_ref().unwrap().clone();
-            let store_users = self.store_users.as_ref().unwrap();
-            tasks.sort_task_payloads();
+            // let store_users = self.store_users.as_ref().unwrap();
+            // tasks.sort_task_payloads();
 
             let filters = vec![
                 Filters::FilterAssignee, 
                 Filters::FilterCompleted
             ];
 
-            setup_display(ui, 
-                col_names, 
-                &mut *tasks, 
-                database, 
-                &filters, 
-                &Some(store_users.to_owned()),
-                false,
-                &None,
-                &Some(false),
-                &None
-            );
+            
+            // tasks.setup_display(ui, 
+            //     col_names, 
+            //     database, 
+            //     &filters, 
+            //     &Some(store_users.to_owned()),
+            //     false,
+            //     &None,
+            //     &Some(false),
+            //     &None
+            // );
+
+            // let mut task_layout = TaskLayout::new(
+            //     tasks.to_owned(), 
+            //     filters,
+            //     col_names,
+            //     database
+            // );
+            
+            // task_layout.display(
+            //     ui, 
+            //     &self.store_users, 
+            //     false, 
+            //     &None, 
+            //     &Some(false), 
+            //     &None
+            // );
         }
     }
 }
