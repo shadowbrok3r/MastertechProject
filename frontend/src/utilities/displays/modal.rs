@@ -1,7 +1,8 @@
 use egui::NumExt;
+use log::info;
 use serde::Serialize;
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub struct ModalHandler {
     modal: Option<Modal>,
     should_open: bool,
@@ -24,10 +25,8 @@ impl ModalHandler {
             self.modal = Some(make_modal());
             self.should_open = false;
         }
-
         if let Some(modal) = &mut self.modal {
             let ModalResponse { inner, open } = modal.ui(ctx, content_ui);
-
             if !open {
                 self.modal = None;
             }
@@ -49,9 +48,6 @@ pub struct ModalResponse<R> {
 }
 
 /// Show a modal window with Rerun style.
-///
-/// [`Modal`] fakes as a modal window, since egui [doesn't have them yet](https://github.com/emilk/egui/issues/686).
-/// This done by dimming the background and capturing clicks outside the window.
 ///
 /// The positioning of the modal is as follows:
 ///

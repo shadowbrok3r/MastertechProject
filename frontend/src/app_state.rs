@@ -12,7 +12,7 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{User, TaskPayload}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{create_task::CreateTaskModal, task_layout::TaskLayout, task_modal::TaskModal}, modal::Modal}
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::displays::{modal::{Modal, ModalHandler}, task_layout::TaskLayout}
 //    utilities::get_tasks::{CompletedTasks, MyTasks, StoreTasks}
 };
 
@@ -51,6 +51,8 @@ pub struct MtechServerContext{
 
     /// Widgets / Modals / Ui for portions throughout the app
     pub task_layout: TaskLayout,
+    // pub create_task_modal: Modal,
+    pub modal_handler: ModalHandler,
 
     /// Terminal setup for console tab
     #[serde(skip)]
@@ -293,6 +295,7 @@ impl NewCC for MtechServer{
 
         let (state, current_user) = check_authentication(db_tx.clone());
 
+        let modal_handler = ModalHandler::default();
         
         
         
@@ -302,7 +305,7 @@ impl NewCC for MtechServer{
             added_nodes,
 
             task_layout: TaskLayout::default(),
-            
+            modal_handler,
             terminal,
             chart_app,
             tick_rate,

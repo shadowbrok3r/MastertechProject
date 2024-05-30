@@ -4,7 +4,7 @@ use database::schema::Store;
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use log::{error, info};
 use ratframe::NewCC;
-use utilities::{get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}};
+use utilities::{displays::modal::Modal, get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}};
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{Align2, FontId, Style, Vec2};
@@ -97,7 +97,6 @@ impl eframe::App for MtechServer {
                 }
             }
             
-            info!("Are we even here?");
             self.context.database = Some(db.clone());
 
             // get all of our channel Senders from crossbeam to get user/store/completed tasks, 
@@ -139,22 +138,30 @@ impl eframe::App for MtechServer {
             }
         }
 
+        // if self.context.task_layout.create_task_modal{
+        //     let db = self.context.database.clone();
+        //     let task_layout = &mut self.context.task_layout;
+        //     if let Some(ref mut task_opts) = task_layout.task_opts{
+        //         if let Some(ref mut tasks) = self.context.my_tasks{
+        //             task_opts.modal_handler.open();
+                    
+        //         }
+        //     }
+        // }
         if self.context.task_layout.create_task_modal{
-            let db = self.context.database.clone();
-            let task_layout = self.context.task_layout;
-            if let Some(ref mut task_opts) = self.context.task_layout.task_opts{
-                if let Some(ref mut tasks) = self.context.my_tasks{
-                    task_opts.modal.ui(ctx, |ui, stay_open: &mut bool|{
-                        *stay_open = true;
-                        // task_layout.
-                        for task in tasks.iter_mut(){
-                            if let Some(ref db) = db{
-                                task.task_modal(ui, db.clone());
-                            }
-                        }
-                    });
-                }
-            }
+            self.context.modal_handler.ui(
+                ctx, 
+                || Modal::new("title").default_height(200.0).min_width(200.0),
+                |ui, stay_open|
+            {
+                // *stay_open = true;
+                ui.label("Created Task");
+                // for task in tasks.iter_mut(){
+                //     if let Some(ref db) = db{
+                //         task.task_modal(ui, db.clone(), &task.task_name.to_owned());
+                //     }
+                // }
+            });
         }
     }
 
