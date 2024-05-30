@@ -2,7 +2,7 @@ use crossbeam::channel::Sender;
 use database::Database;
 use egui::{Align, Button, CentralPanel, Direction, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
-use log::{error, info};
+use log::info;
 use wasm_bindgen_futures::spawn_local;
 use wasm_cookies::CookieOptions;
 
@@ -22,7 +22,7 @@ impl Default for Login{
 }
 
 impl Login{
-    pub fn login(&self, db_tx: Sender<Database>){
+    pub fn login(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>){
         let user = self.username.clone();
         let pass = self.password.clone();
         spawn_local(async move {
@@ -36,11 +36,12 @@ impl Login{
                             wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                             let usr = serde_json::to_string(&usr).unwrap();
                             wasm_cookies::set("user", &usr, &cookie_opts);
+                            info!("set cookies");
                         }else{ info!("no usr"); }
                     }else{ info!("no cookie"); }
 
                     
-                    match db_tx.send(db){
+                    match db_tx.send(Ok(db)){
                         Ok(_) => {
                             info!("Sent db connection across thread");
                             drop(db_tx);
@@ -48,14 +49,14 @@ impl Login{
                         Err(err) => info!("Error sending db connection: {err:?}"),
                     }
                 },
-                Err(e) => error!("Error with db: {e:?}"),
+                Err(e) => info!("Error with db: {e:?}"),
             }
         });
     }
 }
 
 impl MtechServer{
-    pub fn login_page(&mut self, ctx: &egui::Context, db_tx: Sender<Database>) {
+    pub fn login_page(&mut self, ctx: &egui::Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>) {
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
             .show(ctx, |ui| 

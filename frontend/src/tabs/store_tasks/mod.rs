@@ -1,10 +1,10 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::{task_layout::{TaskLayout, TaskLayoutOpts}, Filters}, ColumnLayout, Sortable}};
+use crate::{app_state::MtechServerContext, utilities::displays::Filters};
 use egui::Ui;
 
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {
 
-        if let Some(tasks) = self.store_tasks.as_mut(){
+        if let Some(tasks) = &self.store_tasks{
             self.store_tasks_opened = true;
             let mut col_names = Vec::new();
 
@@ -21,35 +21,18 @@ impl MtechServerContext{
                 Filters::FilterCompleted
             ];
 
-            
-            // tasks.layout_task_colsui, 
-            //     col_names, 
-            //     database, 
-            //     &filters, 
-            //     &Some(store_users.to_owned()),
-            //     false,
-            //     &None,
-            //     &Some(false),
-            //     &None
-            // );
-            let task_layout_opts = TaskLayoutOpts::new(
-                tasks.to_owned(), 
-                filters,
-                col_names,
-                database.clone()
-            );
+            self.initialize_task_layout("store_tasks", tasks.to_owned(), col_names, database, filters);
 
-            self.task_layout.task_opts = Some(task_layout_opts);
-
-            
-            self.task_layout.display(
-                ui, 
-                &self.store_users, 
-                false, 
-                &None, 
-                &Some(false), 
-                &None
-            );
+            if let Some(task_layout) = self.task_layouts.get_mut("store_tasks"){
+                task_layout.display(
+                    ui, 
+                    &self.store_users, 
+                    false, 
+                    &None, 
+                    &Some(false), 
+                    &None
+                );
+            }
         }
     }
 }

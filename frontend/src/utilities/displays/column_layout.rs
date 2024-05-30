@@ -1,11 +1,10 @@
 use database::Database;
-use egui::{Button, Response, RichText, ScrollArea, Widget};
+use egui::{Button, RichText, ScrollArea, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
 use database::schema::{Priority, Status, TaskPayload, User};
-use log::info;
 
-use crate::utilities::{ColumnLayout, Displayable, FilterTasks};
+use crate::utilities::{ColumnLayout, Displayable, FilterTasks, TaskUiActions};
 
 use super::task_layout::TaskLayout;
 use super::Filters;
@@ -97,7 +96,14 @@ impl ColumnLayout for TaskLayout {
                                 .show_viewport(ui, |ui, _| {
                                     for task in filtered.iter_mut() {
                                         if let Some(store_users) = &assignees{
-                                            task.display_task_cards(ui, database.clone(), &store_users.as_ref()).unwrap();
+                                            let action = task.display_task_cards(ui, database.clone(), &store_users.as_ref());
+                                            if let Some(action) = action{
+                                                match action{
+                                                    TaskUiActions::OpenTaskModal(_id) => {
+                                                        self.show_task_modal = true;
+                                                    },
+                                                }
+                                            }
                                         }
                                         
                                     }
@@ -118,7 +124,8 @@ impl ColumnLayout for TaskLayout {
                             .auto_shrink(false)
                             .show_viewport(ui, |ui, _| {
                                 for task in filtered.iter_mut() {
-                                    task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap()).unwrap();
+                                    let _action = task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap());
+                                    // info!("Action: {action:?}");
                                 }
                             });
                         });
@@ -147,7 +154,8 @@ impl ColumnLayout for TaskLayout {
                                 .show_viewport(ui, |ui, _| 
                             {
                                 for task in filtered.iter_mut() {
-                                    task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap()).unwrap();
+                                    let _action = task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap());
+                                    // info!("Action: {action:?}");
                                 }
                             });
                         });
@@ -186,8 +194,7 @@ impl ColumnLayout for TaskLayout {
                                 .ui(ui);
 
                             if response.clicked(){
-                                self.create_task_modal = true;
-                                // self.task_opts.as_mut().unwrap().modal_handler.open();
+                                self.show_create_task_modal = true;
                             }
 
                         });
@@ -206,7 +213,7 @@ impl ColumnLayout for TaskLayout {
         complete: &Option<bool>,
     ) -> Vec<TaskPayload>{
         
-        filters.into_iter().fold(self.task_opts.as_ref().unwrap().tasks.to_owned(), |acc_tasks, filter| {
+        filters.into_iter().fold(self.tasks.to_owned(), |acc_tasks, filter| {
             match filter {
                 Filters::FilterAssignee => {
                     if let Some(ref user) = assignee {

@@ -4,17 +4,16 @@ use egui::{Button, CollapsingHeader, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
-use log::info;
 use serde::Serialize;
 
 use crate::utilities::{Displayable, Interaction};
 
-use super::{ColumnLayout, Sortable};
+use super::{ColumnLayout, Sortable, TaskUiActions};
 
 pub mod create_task;
 pub mod column_layout;
 pub mod task_layout;
-pub mod modal;
+pub mod modal_handler;
 
 #[derive(Clone, Serialize)]
 pub enum Filters{
@@ -26,14 +25,17 @@ pub enum Filters{
 }
 
 
+
 impl Displayable for TaskPayload{
     fn display_task_cards(
         &mut self, 
         ui: &mut Ui, 
         database: Database, 
         store_users: &Vec<User>
-    )  -> anyhow::Result<(), anyhow::Error> {
+    )  -> Option<TaskUiActions>{
         setup_task_styling(ui);
+
+        let mut res: Option<TaskUiActions> = None;
 
         Frame::default()
             .fill(Color32::from_rgb(20, 20, 28))
@@ -83,7 +85,9 @@ impl Displayable for TaskPayload{
                             ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
                                 if Button::new("⮫").small().ui(ui).clicked(){
                                     // self.create_task_modal = true;
+                                    res = Some(TaskUiActions::OpenTaskModal(self.id.as_ref().unwrap().0.id.to_string()))
                                     // self.task_modal(ui, database.clone());
+                                    
                                 }
                             });
                         });
@@ -159,7 +163,7 @@ impl Displayable for TaskPayload{
                 });
             });
         });
-        Ok(())
+        res
     }
 }
 

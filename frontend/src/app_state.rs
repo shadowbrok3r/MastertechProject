@@ -1,9 +1,11 @@
-use std::{cell::Cell, collections::HashSet, rc::Rc};
+use std::{cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
+use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
-use egui::{Ui, WidgetText};
+use egui::{Align2, Ui, WidgetText};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
+use egui_toast::Toasts;
 use gloo_worker::Spawnable;
-use log::{error, info};
+use log::info;
 use ratatui::Terminal;
 use ratframe::{NewCC, RataguiBackend};
 use serde::Serialize;
@@ -12,17 +14,11 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{User, TaskPayload}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::displays::{modal::{Modal, ModalHandler}, task_layout::TaskLayout}
-//    utilities::get_tasks::{CompletedTasks, MyTasks, StoreTasks}
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::displays::{modal_handler::ModalHandler, task_layout::TaskLayout, Filters}
 };
 
-// pub trait LoginState{
-//     fn login(&mut self, state: AppState);
-//     fn logout(&mut self, state: AppState);
-// }
-
 #[derive(Serialize)]
-pub struct MtechServer{ // <LoginState>
+pub struct MtechServer{
     #[serde(skip)]
     login: Login,
     pub context: MtechServerContext,
@@ -31,7 +27,7 @@ pub struct MtechServer{ // <LoginState>
     pub tree: DockState<String>,
 }
 
-#[derive(Default, Serialize, Debug)]
+#[derive(Default, Serialize, Debug, PartialEq)]
 pub enum AppState{
     Authenticated,
     #[default]
@@ -49,8 +45,11 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
 
+    #[serde(skip)]
+    pub toasts: Toasts,
+
     /// Widgets / Modals / Ui for portions throughout the app
-    pub task_layout: TaskLayout,
+    pub task_layouts: HashMap<String, TaskLayout>,
     // pub create_task_modal: Modal,
     pub modal_handler: ModalHandler,
 
@@ -119,17 +118,16 @@ pub struct MtechServerContext{
 
     /// Receives Database connection over crossbeam channel
     #[serde(skip)]
-    pub db_rx: Receiver<Database>,
+    pub db_rx: Receiver<anyhow::Result<Database, Error>>,
     /// Sends Database connection over crossbeam channel
     #[serde(skip)]
-    pub db_tx: Sender<Database>,
+    pub db_tx:  Sender<anyhow::Result<Database, Error>>,
 
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
     pub data_update: Option<Rc<Cell<Option<u32>>>>,
 }
-
 
 impl TabViewer for MtechServerContext {
     type Tab = String;
@@ -293,18 +291,33 @@ impl NewCC for MtechServer{
 
         let added_nodes = Vec::new();
 
-        let (state, current_user) = check_authentication(db_tx.clone());
+        let mut state = AppState::default();
+        let mut current_user = None;
+
+        match check_authentication(db_tx.clone()){
+            Ok(d) => {
+                info!("Got auth ok");
+                state = d.0;
+                current_user = d.1;
+            },
+            Err(e) => {
+                info!("Error with auth: {e:?}");
+                state = AppState::NoAuth;
+                current_user = None;
+            },
+        }
 
         let modal_handler = ModalHandler::default();
-        
-        
         
         let context = MtechServerContext{
             open_tabs,
             style: None,
             added_nodes,
 
-            task_layout: TaskLayout::default(),
+            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
+
+
+            task_layouts: HashMap::new(),
             modal_handler,
             terminal,
             chart_app,
@@ -355,7 +368,27 @@ impl NewCC for MtechServer{
     fn canvas_id() -> String { "mtech_canvas".into() }
 }
 
+impl MtechServerContext{
+    pub fn initialize_task_layout(
+        &mut self, 
+        page: &str, 
+        tasks: Vec<TaskPayload>, 
+        col_names: Vec<String>, 
+        database: Database,
+        filters: Vec<Filters>
+    ) {
+        if !self.task_layouts.contains_key(page) {
+            let task_layout_opts = TaskLayout::new(
+                tasks.to_owned(),
+                filters,
+                col_names,
+                database,
+            );
 
+            self.task_layouts.insert(page.to_string(), task_layout_opts);
+        }
+    }
+}
 
 impl MtechServer{
     // Private method to access login state only within NoAuth context
@@ -369,60 +402,41 @@ impl MtechServer{
 }
 
 pub fn check_authentication(
-    db_tx: Sender<Database>
-) -> (AppState, Option<User>){
+    db_tx: Sender<anyhow::Result<Database, Error>>
+) -> Result<(AppState, Option<User>), Error>{
     let cookie = wasm_cookies::get("jwt");
     let user_cookie = wasm_cookies::get("user");
 
     let mut state = AppState::default();
     let mut current_user = None;
+
     if let Some(cookie) = cookie{
-        match cookie{
-            Ok(c) => {
+
+        if let Some(usr) = user_cookie{
+            current_user = Some(serde_json::from_str(usr?.as_str())?);
+            let db_tx = db_tx.clone();
+                    
+
+            spawn_local(async move {
+                let database = Database::new(
+                    "".to_string(), 
+                    "".to_string(), 
+                    Some(cookie.unwrap())
+                ).await;
                 
-                state = AppState::Authenticated;
-                // info!("self.state: {:?}", state);
-                if let Some(user) = user_cookie{
-                    match user{
-                        Ok(usr) => {
-                            // info!("Got user cookie! {c:?}");
-                            let user = serde_json::from_str(&usr.as_str()).unwrap();
-                            let db_tx = db_tx.clone();
-                            current_user = Some(user);           
-
-                            spawn_local(async move {
-                                let database = Database::new(
-                                    "".to_string(), 
-                                    "".to_string(), 
-                                    Some(c)
-                                ).await;
-                                if let Ok(db) = database{
-                                    match db_tx.send(db){
-                                        Ok(_) => {
-                                            info!("Sent db connection across thread");
-                                            drop(db_tx);
-                                        },
-                                        Err(err) => info!("Error sending db connection: {err:?}"),
-                                    }
-                                }
-
-                            });
-                            state = AppState::Authenticated;
-                        },
-                        Err(e) => {
-                            error!("Error with user cookie: {e:?}");
-                            state = AppState::NoAuth;
-                        }
-                    }
-                }      
-            },
-            Err(e) => {
-                error!("Error with cookie: {e:?}");
-                state = AppState::NoAuth;
-            }
+                match db_tx.send(database){
+                    Ok(_) => {
+                        info!("Sent DB");
+                        drop(db_tx);
+                    },
+                    Err(err) => info!("Error sending db connection: {err:?}"),
+                }
+            });
+            state = AppState::Authenticated;
         }
     }
-    (state, current_user)
+    info!("State // user   {:?} // {:?}", state, current_user);
+    Ok((state, current_user))
 }
 
 
