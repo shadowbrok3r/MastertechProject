@@ -1,4 +1,4 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::{task_layout::TaskLayout, Filters}, ColumnLayout, Sortable}};
+use crate::{app_state::MtechServerContext, utilities::{displays::{task_layout::{TaskLayout, TaskLayoutOpts}, Filters}, ColumnLayout, Sortable}};
 use egui::Ui;
 
 impl MtechServerContext{
@@ -22,7 +22,7 @@ impl MtechServerContext{
             ];
 
             
-            // tasks.setup_display(ui, 
+            // tasks.layout_task_colsui, 
             //     col_names, 
             //     database, 
             //     &filters, 
@@ -32,22 +32,24 @@ impl MtechServerContext{
             //     &Some(false),
             //     &None
             // );
+            let task_layout_opts = TaskLayoutOpts::new(
+                tasks.to_owned(), 
+                filters,
+                col_names,
+                database.clone()
+            );
 
-            // let mut task_layout = TaskLayout::new(
-            //     tasks.to_owned(), 
-            //     filters,
-            //     col_names,
-            //     database
-            // );
+            self.task_layout.task_opts = Some(task_layout_opts);
+
             
-            // task_layout.display(
-            //     ui, 
-            //     &self.store_users, 
-            //     false, 
-            //     &None, 
-            //     &Some(false), 
-            //     &None
-            // );
+            self.task_layout.display(
+                ui, 
+                &self.store_users, 
+                false, 
+                &None, 
+                &Some(false), 
+                &None
+            );
         }
     }
 }

@@ -1,10 +1,11 @@
 use crossbeam::channel::Sender;
 use displays::Filters;
 use egui::{Align2, Frame, Grid, Id, Response, RichText, Ui, Window};
-use database::{schema::{ComputerData, CustomerData, Priority, Record, Status, Store, TaskId, TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId}, Database};
+use database::{schema::{ComputerData, CustomerData, Priority, Status, Store, TaskId, TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId}, Database};
 use egui_extras::Strip;
-use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use log::info;
+// use serde::{Deserialize, Serialize};
+// use std::fmt::Debug;
 
 pub mod displays;
 pub mod update_tasks;
@@ -15,25 +16,25 @@ pub mod task_context;
 pub mod filter;
 pub mod handle_live_data;
 pub mod sortable;
-pub mod modal;
 
 // This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
 pub trait Displayable{ 
     fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> anyhow::Result<(), anyhow::Error>;
     // fn task_headers(&mut self,  s: Strip, column_names: Vec<String>, header_frame: Frame);
-    fn task_modal<ID>(&mut self, ui: &mut Ui, _database: Database)
+    fn task_modal<ID>(&mut self, ui: &mut Ui, _database: Database, task_name: &String)
     where
         Self: Aggregatable<ID>,
         ID: std::fmt::Debug,
     {
-        Window::new(format!("TestWindow123"))
+        Window::new(format!("Task {:?}", &task_name))
             .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ui.ctx(), |ui| 
         {
-            Grid::new(Id::new("TestGrid"))// self.id.as_ref().unwrap().0.id.clone()
+            Grid::new(Id::new(format!("Grid {:?}", task_name)))// self.id.as_ref().unwrap().0.id.clone()
                 .num_columns(4)
                 .show(ui, |ui| 
             {
+                info!("Createing task??");
                     // ui.label(RichText::new("Rep"));
                     // ui.label(RichText::new(format!("{:?}", self.checkin_rep)));
                     // ui.label(RichText::new("Split Rep"));
@@ -72,9 +73,10 @@ pub trait Displayable{
 
 // This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
 pub trait ColumnLayout{
-    fn setup_display(&mut self, ui: &mut Ui, column_names: Vec<String>, database: Database,filters: &Vec<Filters>, assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>);
+    fn layout_task_cols(&mut self, ui: &mut Ui, column_names: Vec<String>, database: Database,filters: &Vec<Filters>, assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>);
     fn task_columns(&mut self,s: Strip, filters: &Vec<Filters>,assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>,database: Database,column_frame: Frame);
     fn filter_items(&mut self,filters: &Vec<Filters>, assignee: &Option<User>,status: &Option<Status>,priority: &Option<Priority>,complete: &Option<bool>) -> Vec<TaskPayload>;
+    fn task_headers(&mut self, s: Strip, column_names: Vec<String>, header_frame: Frame);
 }
 
 pub trait Updatable { // This is correctly implemented

@@ -12,10 +12,9 @@ use crate::utilities::{Displayable, Interaction};
 use super::{ColumnLayout, Sortable};
 
 pub mod create_task;
-pub mod task_modal;
 pub mod column_layout;
 pub mod task_layout;
-
+pub mod modal;
 
 #[derive(Clone, Serialize)]
 pub enum Filters{
@@ -34,7 +33,6 @@ impl Displayable for TaskPayload{
         database: Database, 
         store_users: &Vec<User>
     )  -> anyhow::Result<(), anyhow::Error> {
-
         setup_task_styling(ui);
 
         Frame::default()
@@ -53,11 +51,9 @@ impl Displayable for TaskPayload{
                 .cell_layout(Layout::top_down_justified(egui::Align::Center))
                 .size(Size::exact(15.0))// Task Header
                 .size(Size::exact(4.0))
-                .size(Size::exact(15.0))// Task Footer // Size::relative(0.09))
-                
+                .size(Size::exact(15.0))// Task Footer
                 .size(Size::exact(4.0))
-                .size(Size::initial(20.0).at_most(200.0))// Task Body // Absolute { initial: 40.0, range: Rangef::new(50.0, 300.0) }
-                // .size(Size::exact(30.0)) // Spacing // Size::relative(0.01))
+                .size(Size::initial(20.0).at_most(200.0))// Task Body
                 .vertical(|mut strip| 
             {
                 strip.strip(|strip| 
@@ -86,7 +82,8 @@ impl Displayable for TaskPayload{
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
                                 if Button::new("⮫").small().ui(ui).clicked(){
-                                    self.task_modal(ui, database.clone());
+                                    // self.create_task_modal = true;
+                                    // self.task_modal(ui, database.clone());
                                 }
                             });
                         });
@@ -98,12 +95,6 @@ impl Displayable for TaskPayload{
                     });
                 });
                 strip.empty();
-                // strip.cell(|ui| { 
-                //     ui.add_sized(
-                //         ui.available_size(), 
-                //         Button::new("").fill(Color32::GRAY)
-                //     );
-                // });
                 
                 strip.strip(|strip| 
                 {
@@ -128,9 +119,7 @@ impl Displayable for TaskPayload{
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(egui::Direction::RightToLeft), |ui|{
-                                if self.interact_status(ui, database.clone()).unwrap().changed(){
-                                    info!("interact_status changed: {:?}// {:?}", self.id, self.task_name);
-                                }
+                                self.interact_status(ui, database.clone());
                             });
                         });
                     });
@@ -156,7 +145,8 @@ impl Displayable for TaskPayload{
                                 self.interact_task_description(ui, database.clone());
                             });
                         });
-                        s.cell(|ui| {
+                        s.cell(|ui| 
+                        {
                             let rec_header = ui.make_persistent_id(format!("recommendations {:?}", self.id.as_ref().unwrap().0.id));
                             let rec_head = CollapsingHeader::new("Recommendations").id_source(rec_header);
                             rec_head
@@ -171,27 +161,6 @@ impl Displayable for TaskPayload{
         });
         Ok(())
     }
-
-    // fn task_modal(&mut self, ui: &mut Ui, database: Database){
-    //     Window::new(format!("{:?}", self.service_number.clone()))
-    //         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-    //         .show(ui.ctx(), |ui| {
-    //             Grid::new(Id::new(self.id.as_ref().unwrap().0.id.clone()))
-    //                 .num_columns(4)
-    //                 .show(ui, |ui| {
-    //                     ui.label(RichText::new("Rep"));
-    //                     ui.label(RichText::new(format!("{:?}", self.checkin_rep)));
-    //                     ui.label(RichText::new("Split Rep"));
-    //                     ui.label(RichText::new(format!("{:?}", self.sales_rep)));
-    //                     ui.label(RichText::new("Phone #"));
-    //                     ui.label(RichText::new(format!("{:?}", self)));
-    //                     ui.label(RichText::new("Phone #2"));
-    //                     ui.label(RichText::new(format!("{:?}", self.rep)));
-    //                     ui.label(RichText::new("Email"));
-    //                     ui.label(RichText::new(format!("{:?}", self.rep)));
-    //                 });
-    //         });
-    // }
 }
 
 

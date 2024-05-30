@@ -24,8 +24,8 @@ pub fn delegate_traits(input: TokenStream) -> TokenStream {
             fn display_task_cards(&mut self, ui: &mut Ui, database: Database) -> anyhow::Result<(), anyhow::Error> {
                 self.0.display_task_cards(ui)
             }
-            // fn setup_display(&mut self, ui: &mut Ui) {
-            //     self.0.setup_display(ui)
+            // fn layout_task_cols&mut self, ui: &mut Ui) {
+            //     self.0.layout_task_colsui)
             // }
         }
 

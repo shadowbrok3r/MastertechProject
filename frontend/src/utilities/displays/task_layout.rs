@@ -4,92 +4,53 @@ use egui::{Color32, Stroke};
 use database::schema::{Priority, TaskPayload, User};
 use serde::Serialize;
 
+use crate::app_state::MtechServerContext;
+
 use super::create_task::CreateTaskModal;
-use super::task_modal::TaskModal;
 use super::{ColumnLayout, Filters, Sortable};
 
-use crate::utilities::modal::Modal;
+use super::modal::{Modal, ModalHandler};
 
 
 #[derive(Serialize)]
 pub struct TaskLayout{
     pub task_opts: Option<TaskLayoutOpts>,
-    pub create_task_modal: bool
-    // ui: &mut Ui,
+    // pub create_task_modal: bool,
+    // pub sort_options: SortTasks,
+    // pub store_users: &Option<Vec<User>>,
+}
+pub struct SortTasks{
+    pub sort_by_status: bool,
+    pub sort_by_priority: Option<Priority>,
+    pub sort_by_complete: Option<bool>,
+    pub sort_by_current_user: Option<User> 
 }
 
-#[derive(Serialize)]
-pub struct TaskLayoutOpts{
-    pub tasks: Vec<TaskPayload>,
-    pub style_options: TaskStyles,
-    pub filters: Vec<Filters>,
-    pub column_names: Vec<String>,
-    #[serde(skip)]
-    pub database: Database,
-    
-    pub task_modal: TaskModal,
-    pub create_task_modal: CreateTaskModal,
-    pub modal: Modal,
-}
-
-impl TaskLayoutOpts{
-    pub fn new(
+impl TaskLayout for MtechServerContext{
+    fn new(
         tasks: Vec<TaskPayload>, 
         filters: Vec<Filters>,
         column_names: Vec<String>,
         database: Database,
-        // ui: &mut Ui,
-    ) -> Self {    
-        Self { 
-            tasks,
-            style_options: TaskStyles::default(),
-            filters,
-            column_names,
-            database,
-            task_modal: TaskModal::default(),
-            create_task_modal: CreateTaskModal::new(),
-            modal: Modal::new("Test"),
-        }
-    }
-}
-
-impl Default for TaskLayout{
-    fn default() -> Self {
-        Self {
-            create_task_modal: false,
-            task_opts: None
-        }
-    }
-}
-
-impl TaskLayout{
-    pub fn new(
-        tasks: Vec<TaskPayload>, 
-        filters: Vec<Filters>,
-        column_names: Vec<String>,
-        database: Database,
-        create_task_modal: bool,
-        // ui: &mut Ui,
-    ) -> Self {
+        // create_task_modal: bool,
+    ) -> TaskL {
         let task_opts = TaskLayoutOpts{
             tasks,
             style_options: TaskStyles::default(),
             filters,
             column_names,
             database,
-            task_modal: TaskModal::default(),
-            create_task_modal: CreateTaskModal::new(),
-            modal: Modal::new("Test"),
+            // create_task_modal: CreateTaskModal::new(),
+            // modal_handler: ModalHandler::default(),
         };
         
         Self { 
             task_opts: Some(task_opts),
-            create_task_modal,
-            // ui,
+            // create_task_modal: false,
         }
     }
 
-    pub fn display(
+    fn display(
         &mut self,
         ui: &mut Ui,
         store_users: &Option<Vec<User>>,
@@ -105,7 +66,7 @@ impl TaskLayout{
             
             task_opts.tasks.sort_task_payloads();
             
-            self.setup_display(
+            self.layout_task_cols(
                 ui, 
                 col_names, 
                 db, 
@@ -119,7 +80,7 @@ impl TaskLayout{
         }
     }
 
-    pub fn set_styles(&mut self, ui: &mut Ui){
+    fn set_styles(&mut self, ui: &mut Ui){
         if let Some(task_opts) = &self.task_opts{
 
             ui.style_mut().visuals.selection.stroke.color = task_opts.style_options.selection_stroke_color;
@@ -144,6 +105,49 @@ impl TaskLayout{
     }
 }
 
+
+#[derive(Serialize)]
+pub struct TaskLayoutOpts{
+    pub tasks: Vec<TaskPayload>,
+    pub style_options: TaskStyles,
+    pub filters: Vec<Filters>,
+    pub column_names: Vec<String>,
+    #[serde(skip)]
+    pub database: Database,
+    // pub create_task_modal: CreateTaskModal,
+    // pub modal_handler: ModalHandler,
+}
+
+impl TaskLayoutOpts{
+    pub fn new(
+        tasks: Vec<TaskPayload>, 
+        filters: Vec<Filters>,
+        column_names: Vec<String>,
+        database: Database,
+        // ui: &mut Ui,
+    ) -> Self {    
+        Self { 
+            tasks,
+            style_options: TaskStyles::default(),
+            filters,
+            column_names,
+            database,
+            // task_modal: TaskModal::default(),
+            // create_task_modal: CreateTaskModal::new(),
+            // modal_handler: ModalHandler::default()
+        }
+    }
+}
+
+impl Default for TaskLayout{
+    fn default() -> Self {
+        Self {
+            // create_task_modal: false,
+            task_opts: None,
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct TaskStyles{
     selection_stroke_color:  Color32, //  = Color32::BLACK,
@@ -159,6 +163,7 @@ pub struct TaskStyles{
     widgets_hovered_bg_fill:  Color32, //  = Color32::from_rgb(12, 12, 12),
     widgets_hovered_bg_stroke:  Stroke, //  = Stroke::new(1.0, Color32::from_rgb(200, 20, 200)),
 }
+
 
 impl Default for TaskStyles{
     fn default() -> Self {
@@ -178,262 +183,3 @@ impl Default for TaskStyles{
         }
     }
 }
-
-
-
-
-// impl ColumnLayout for TaskLayout {
-//     fn setup_display(
-//         &mut self,
-//         ui: &mut egui::Ui, 
-//         column_names: Vec<String>, 
-//         database: Database,
-//         filters: &Vec<Filters>, 
-//         assignees: &Option<Vec<User>>,
-//         status: bool,
-//         priority: &Option<Priority>,
-//         complete: &Option<bool>,
-//         current_user: &Option<User>
-//     ) {
-//         ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
-//         let header_frame = Frame::default()
-//             .fill(Color32::from_rgb(20, 20, 25))
-//             .inner_margin(Margin::same(4.0))
-//             .outer_margin(Margin::symmetric(4.0, 1.0))
-//             .rounding(Rounding::same(5.0))
-//             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
-    
-//         let column_frame = Frame::default()
-//             .fill(Color32::from_rgb(15, 15, 19))
-//             .inner_margin(Margin::same(8.0))
-//             .rounding(Rounding::same(10.0))
-//             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
-    
-//         let column_width = Size::exact(450.0);
-    
-//         ScrollArea::horizontal()
-//             .hscroll(true)
-//             .show_viewport(ui, |ui, _|
-//         {
-//             StripBuilder::new(ui)
-//                 .cell_layout(Layout::top_down_justified(egui::Align::Center))
-//                 .size(Size::relative(0.01))
-//                 .size(Size::relative(0.07))
-//                 .size(Size::relative(0.92))
-//                 .vertical(|mut strip| 
-//             {
-//                 strip
-//                     .strip(|strip| 
-//                 {
-//                     strip
-//                         .sizes(column_width, column_names.len())
-//                         .horizontal( |s| 
-//                     {
-//                         let create_task = task_headers(s, column_names.clone(), header_frame);
-
-//                         if let Some(response) = create_task{
-//                             if response.clicked(){
-//                                 info!("Creating task!");
-//                                 self.open_modal = true;
-//                             }
-//                         }
-//                     });
-//                 });
-//                 strip.empty();
-//                 strip
-//                     .strip(|strip| 
-//                 {
-//                     strip
-//                         .sizes(column_width, column_names.len())
-//                         .horizontal( |s| 
-//                     {
-//                         self.task_columns(     
-//                             s,           
-//                             filters,
-//                             &assignees,
-//                             status,
-//                             &priority,
-//                             &complete,
-//                             current_user,
-//                             database,
-//                             column_frame
-//                         );
-//                     });
-//                 });
-//             });
-//         });
-//     }
-//     fn task_columns(
-//         &mut self,
-//         mut s: Strip, 
-//         filters: &Vec<Filters>, 
-//         assignees: &Option<Vec<User>>,
-//         status: bool,
-//         priority: &Option<Priority>,
-//         complete: &Option<bool>,
-//         current_user: &Option<User>,
-//         database: Database,
-//         column_frame: Frame,
-//     ){
-//         if let Some(_) = current_user {
-//             if status{
-//                 for status in Status::VALUES{
-//                     let mut filtered = self.filter_items(
-//                         &filters,&None,&Some(status),&priority,&complete
-//                     );
-    
-                    
-//                     s.cell(|ui| {
-//                         column_frame.show(ui, |ui| {
-//                             ui.vertical_centered_justified(|ui| {
-//                                 ScrollArea::vertical()
-//                                 .auto_shrink(false)
-//                                 .show_viewport(ui, |ui, _| {
-//                                     for task in filtered.iter_mut() {
-//                                         if let Some(store_users) = &assignees{
-//                                             task.display_task_cards(ui, database.clone(), &store_users.as_ref()).unwrap();
-//                                         }
-                                        
-//                                     }
-//                                 });
-//                             });
-//                         });
-//                     });
-//                 }
-//             }else{
-//                 let mut filtered = self.filter_items(
-//                     &filters,&None,&None,&priority,&complete
-//                 );
-                
-//                 s.cell(|ui| {
-//                     column_frame.show(ui, |ui| {
-//                         ui.vertical_centered_justified(|ui| {
-//                             ScrollArea::vertical()
-//                             .auto_shrink(false)
-//                             .show_viewport(ui, |ui, _| {
-//                                 for task in filtered.iter_mut() {
-//                                     task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap()).unwrap();
-//                                 }
-//                             });
-//                         });
-//                     });
-//                 });
-//             }
-//         } else if let Some(users) = assignees {
-//             // Multiple users, iterate over each user
-//             for user in users.iter() {
-//                 let mut user_filters = filters.clone();
-//                 user_filters.push(Filters::FilterAssignee);
-    
-//                 let mut filtered = self.filter_items(
-//                     &user_filters,
-//                     &Some(user.clone()),
-//                     &None,
-//                     &priority,
-//                     &complete,
-//                 );
-    
-//                 s.cell(|ui| {
-//                     column_frame.show(ui, |ui| {
-//                         ui.vertical_centered_justified(|ui| {
-//                             ScrollArea::vertical()
-//                                 .auto_shrink(false)
-//                                 .show_viewport(ui, |ui, _| 
-//                             {
-//                                 for task in filtered.iter_mut() {
-//                                     task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap()).unwrap();
-//                                 }
-//                             });
-//                         });
-//                     });
-//                 });
-//             }
-//         }
-//     }
-    
-//     fn filter_items(
-//         &mut self,
-//         filters: &Vec<Filters>, 
-//         assignee: &Option<User>,
-//         status: &Option<Status>,
-//         priority: &Option<Priority>,
-//         complete: &Option<bool>,
-//     ) -> Vec<TaskPayload>{
-        
-//         filters.into_iter().fold(self.tasks.to_owned(), |acc_tasks, filter| {
-//             match filter {
-//                 Filters::FilterAssignee => {
-//                     if let Some(ref user) = assignee {
-//                         acc_tasks.filter_by_assignee(user)
-//                     } else {
-//                         acc_tasks
-//                     }
-//                 },
-//                 Filters::FilterCompleted => {
-//                     if let Some(complete) = complete {
-//                         acc_tasks.filter_by_completed(*complete)
-//                     } else {
-//                         acc_tasks
-//                     }
-//                 },
-//                 Filters::FilterStatus => {
-//                     if let Some(status) = status {
-//                         acc_tasks.filter_by_status(&status)
-//                     } else {
-//                         acc_tasks
-//                     }
-//                 },
-//                 Filters::FilterPriority => {
-//                     if let Some(ref priority) = priority {
-//                         acc_tasks.filter_by_priority(&priority)
-//                     } else {
-//                         acc_tasks
-//                     }
-//                 },
-//             }
-//         })
-//     }
-// }
-
-
-// pub fn task_headers(
-//     mut s: Strip,
-//     column_names: Vec<String>,
-//     header_frame: Frame,
-// ) -> Option<Response>{
-//     let mut response: Option<Response> = None;
-//     for name in &column_names{
-//         s.cell(|ui|{
-//             header_frame.show(ui, |ui|
-//             {
-//                 ui.horizontal_top(|ui| 
-//                 {
-//                     ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| 
-//                     {
-//                         ui.vertical_centered(|ui|{
-//                             ui.colored_label(Color32::WHITE, RichText::new(name.clone()).heading());
-//                         });
-//                     });
-
-//                     ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| 
-//                     {
-//                         response = Some(
-//                             Button::new(
-//                             RichText::new("✚")
-//                                 .raised()
-//                                 .color(Color32::LIGHT_RED)
-//                             )
-//                             .fill(Color32::TRANSPARENT)
-//                             .ui(ui)
-//                         );
-//                         // info!("clicked + button");
-//                     });
-//                 });
-//             });
-//         });
-//     }
-//     match response{
-//         Some(res) => Some(res),
-//         None => None,
-//     }
-// }
