@@ -1,9 +1,12 @@
 use crossbeam::channel::Sender;
 use displays::Filters;
-use egui::{Align2, Frame, Grid, Id, Response, RichText, Ui, Window};
-use database::{schema::{ComputerData, CustomerData, Priority, Status, Store, TaskId, TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId}, Database};
+use egui::{Frame, Grid, Id, Response, RichText, Ui};
+use database::{schema::{ComputerData, CustomerData, Priority, Status, Store, TaskId, TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketId, TicketPayload, User, UserId}, Database};
 use egui_extras::Strip;
 use log::info;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
+
 // use serde::{Deserialize, Serialize};
 // use std::fmt::Debug;
 
@@ -12,11 +15,10 @@ pub mod update_tasks;
 pub mod get_tasks;
 pub mod interact_tasks;
 pub mod get_other;
-pub mod task_context;
+pub mod task_crud;
 pub mod filter;
 pub mod handle_live_data;
 pub mod sortable;
-pub mod modals;
 
 #[derive(Debug)]
 pub enum TaskUiActions{
@@ -26,51 +28,49 @@ pub enum TaskUiActions{
 pub trait Displayable{ 
     fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<TaskUiActions>;
     // fn task_headers(&mut self,  s: Strip, column_names: Vec<String>, header_frame: Frame);
-    fn task_modal<ID>(&mut self, ui: &mut Ui, _database: Database, task_name: &String)
+    fn task_modal<ID>(&mut self, ui: &mut Ui, database: Database) //, data: &[T] <T: Aggregatable<ID>, ID: Debug>
     where
-        Self: Aggregatable<ID>,
-        ID: std::fmt::Debug,
+        Self: Aggregatable<ID> + Task,
+        ID: Debug,
     {
-        Window::new(format!("Task {:?}", &task_name))
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ui.ctx(), |ui| 
+
+
+        
+        Grid::new(Id::new(format!("Grid ")))// self.id.as_ref().unwrap().0.id.clone()
+            .num_columns(4)
+            .show(ui, |ui| 
         {
-            Grid::new(Id::new(format!("Grid {:?}", task_name)))// self.id.as_ref().unwrap().0.id.clone()
-                .num_columns(4)
-                .show(ui, |ui| 
-            {
-                info!("Createing task??");
-                    // ui.label(RichText::new("Rep"));
-                    // ui.label(RichText::new(format!("{:?}", self.checkin_rep)));
-                    // ui.label(RichText::new("Split Rep"));
-                    // ui.label(RichText::new(format!("{:?}", self.sales_rep)));
-                    // ui.label(RichText::new("Phone #"));
-                    // ui.label(RichText::new(format!("{:?}", self)));
-                    // ui.label(RichText::new("Phone #2"));
-                    // ui.label(RichText::new(format!("{:?}", self.rep)));
-                    // ui.label(RichText::new("Email"));
-                    // ui.label(RichText::new(format!("{:?}", self.rep)));
-                    ui.label(RichText::new(format!("ID: {:?}", self.get_id())));
-                    ui.label(RichText::new(format!("Name: {}", self.get_task_name())));
-                    ui.label(RichText::new(format!("Due Date: {}", self.get_due_date())));
-                    ui.label(RichText::new(format!("Priority: {:?}", self.get_priority())));
-                    ui.end_row();
-                    ui.label(RichText::new(format!("get_task_name: {:?}", self.get_task_name())));
-                    ui.label(RichText::new(format!("get_service_ticket: {:?}", self.get_service_ticket())));
-                    ui.label(RichText::new(format!("get_everest_initials: {:?}", self.get_everest_initials())));
-                    ui.label(RichText::new(format!("get_task_description: {:?}", self.get_task_description())));
-                    ui.end_row();
-                    ui.label(RichText::new(format!("get_assignee: {:?}", self.get_assignee())));
-                    ui.label(RichText::new(format!("get_service_number: {:?}", self.get_service_number())));
-                    ui.label(RichText::new(format!("get_due_date: {:?}", self.get_due_date())));
-                    ui.label(RichText::new(format!("get_priority: {:?}", self.get_priority())));
-                    ui.end_row();
-                    ui.label(RichText::new(format!("get_task_note: {:?}", self.get_task_note())));
-                    ui.label(RichText::new(format!("is_completed: {:?}", self.is_completed())));
-                    ui.label(RichText::new(format!("get_status: {:?}", self.get_status())));
-                    ui.label(RichText::new(format!("get_dep: {:?}", self.get_dep())));
-                    
-            });
+            // for data in data{
+                // ui.label(RichText::new("Rep"));
+                // ui.label(RichText::new(format!("{:?}", self.checkin_rep)));
+                // ui.label(RichText::new("Split Rep"));
+                // ui.label(RichText::new(format!("{:?}", self.sales_rep)));
+                // ui.label(RichText::new("Phone #"));
+                // ui.label(RichText::new(format!("{:?}", self)));
+                // ui.label(RichText::new("Phone #2"));
+                // ui.label(RichText::new(format!("{:?}", self.rep)));
+                // ui.label(RichText::new("Email"));
+                // ui.label(RichText::new(format!("{:?}", self.rep)));
+                ui.label(RichText::new(format!("ID: {:?}", self.get_id())));
+                ui.label(RichText::new(format!("Name: {}", self.get_task_name())));
+                ui.label(RichText::new(format!("Due Date: {}", self.get_due_date())));
+                ui.label(RichText::new(format!("Priority: {:?}", self.get_priority())));
+                ui.end_row();
+                ui.label(RichText::new(format!("get_task_name: {:?}", self.get_task_name())));
+                ui.label(RichText::new(format!("get_service_ticket: {:?}", self.get_service_ticket())));
+                ui.label(RichText::new(format!("get_everest_initials: {:?}", self.get_everest_initials())));
+                ui.label(RichText::new(format!("get_task_description: {:?}", self.get_task_description())));
+                ui.end_row();
+                ui.label(RichText::new(format!("get_assignee: {:?}", self.get_assignee())));
+                ui.label(RichText::new(format!("get_service_number: {:?}", self.get_service_number())));
+                ui.label(RichText::new(format!("get_due_date: {:?}", self.get_due_date())));
+                ui.label(RichText::new(format!("get_priority: {:?}", self.get_priority())));
+                ui.end_row();
+                ui.label(RichText::new(format!("get_task_note: {:?}", self.get_task_note())));
+                ui.label(RichText::new(format!("is_completed: {:?}", self.is_completed())));
+                ui.label(RichText::new(format!("get_status: {:?}", self.get_status())));
+                ui.label(RichText::new(format!("get_dep: {:?}", self.get_dep())));
+            // }
         });
 
     }
@@ -125,12 +125,11 @@ pub trait LiveUpdate{
     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>;
 }
 
-pub trait TaskContext { // <T: Serialize + for<'a> Deserialize<'a> + Debug>
-    fn get_store_users(&mut self, db: Database, tx: Sender<Vec<User>>);
-    fn get_computer_data(&mut self, db: Database, tx: Sender<Vec<ComputerData>>);
-    fn get_customer_data(&mut self, db: Database, tx: Sender<Vec<CustomerData>>);
-    fn get_service_data(&mut self, db: Database, tx: Sender<Vec<TicketData>>);
-    fn get_task_notes(&mut self, db: Database, tx: Sender<Vec<TaskNotePayload>>);
+pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
+    fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
+    fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
+    fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
+    fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
 
     // fn create_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
     // fn get_data(&mut self, database: Database, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;

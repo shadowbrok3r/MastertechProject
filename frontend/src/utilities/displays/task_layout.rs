@@ -7,7 +7,7 @@ use serde::Serialize;
 // use crate::app_state::MtechServerContext;
 
 // use super::create_task::CreateTaskModal;
-use super::{ColumnLayout, Filters, Sortable};
+use super::{modals::ModalType, ColumnLayout, Filters, Sortable};
 
 // use super::modal::{Modal, ModalHandler};
 
@@ -21,8 +21,10 @@ pub struct TaskLayout{
     pub column_names: Vec<String>,
     #[serde(skip)]
     pub database: Database,
-    pub show_create_task_modal: bool,
-    pub show_task_modal: bool,
+    pub modal: ModalType,
+    // pub show_create_task_modal: bool,
+    // pub show_task_modal: bool,
+    pub show_modal: bool,
     // pub sort_options: SortTasks,
     // pub store_users: &Option<Vec<User>>,
 }
@@ -47,8 +49,10 @@ impl TaskLayout { // for MtechServerContext
             filters,
             column_names,
             database,
-            show_create_task_modal: false,
-            show_task_modal: false
+            // show_create_task_modal: false,
+            // show_task_modal: false,
+            show_modal: false,
+            modal: ModalType::Null
         }
     }
 

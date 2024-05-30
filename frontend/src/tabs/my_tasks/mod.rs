@@ -27,12 +27,6 @@ impl MtechServerContext{
                     &None, 
                     &self.current_user
                 );
-
-                let open = &mut task_layout.show_create_task_modal;
-                if *open{
-                    self.modal_handler.open();
-                    *open = false;
-                }
             }
 
         }
