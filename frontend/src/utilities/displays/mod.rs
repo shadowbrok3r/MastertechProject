@@ -10,6 +10,7 @@ use crate::utilities::{Displayable, Interaction};
 
 use super::{ColumnLayout, Sortable, TaskUiActions};
 
+pub mod modals;
 pub mod create_task;
 pub mod column_layout;
 pub mod task_layout;

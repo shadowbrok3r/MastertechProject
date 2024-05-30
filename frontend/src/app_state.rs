@@ -1,7 +1,7 @@
 use std::{cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
 use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
-use egui::{Align2, Ui, WidgetText};
+use egui::{Align2, Context, Ui, WidgetText};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use egui_toast::Toasts;
 use gloo_worker::Spawnable;
@@ -12,9 +12,9 @@ use serde::Serialize;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use database::{schema::{User, TaskPayload}, Database};
+use database::{schema::{TaskPayload, TicketData, TicketPayload, User}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::displays::{modal_handler::ModalHandler, task_layout::TaskLayout, Filters}
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{modal_handler::{Modal, ModalHandler}, modals::ModalType, task_layout::TaskLayout, Filters}, Task}
 };
 
 #[derive(Serialize)]
@@ -52,6 +52,7 @@ pub struct MtechServerContext{
     pub task_layouts: HashMap<String, TaskLayout>,
     // pub create_task_modal: Modal,
     pub modal_handler: ModalHandler,
+    pub modal_type: Option<ModalType>,
 
     /// Terminal setup for console tab
     #[serde(skip)]
@@ -101,7 +102,8 @@ pub struct MtechServerContext{
     pub completed_tasks_rx: Receiver<Vec<TaskPayload>>,
     #[serde(skip)]
     pub store_users_rx: Receiver<Vec<User>>,
-
+    #[serde(skip)]
+    pub ticket_data_rx: Receiver<Option<TicketPayload>>,
 
     /// Sends task data over crossbeam channel
     #[serde(skip)]
@@ -114,7 +116,8 @@ pub struct MtechServerContext{
     pub completed_tasks_tx: Sender<Vec<TaskPayload>>,
     #[serde(skip)]
     pub store_users_tx: Sender<Vec<User>>,
-
+    #[serde(skip)]
+    pub ticket_data_tx: Sender<Option<TicketPayload>>,
 
     /// Receives Database connection over crossbeam channel
     #[serde(skip)]
@@ -276,6 +279,8 @@ impl NewCC for MtechServer{
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
 
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
+        let (ticket_data_tx, ticket_data_rx) = channel::unbounded::<Option<TicketPayload>>();
+
 
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
@@ -319,6 +324,7 @@ impl NewCC for MtechServer{
 
             task_layouts: HashMap::new(),
             modal_handler,
+            modal_type: None,
             terminal,
             chart_app,
             tick_rate,
@@ -349,6 +355,8 @@ impl NewCC for MtechServer{
             store_tasks_rx,
             completed_tasks_tx, 
             completed_tasks_rx,
+            ticket_data_tx,
+            ticket_data_rx,
 
             store_users_tx,
             store_users_rx,
@@ -387,6 +395,68 @@ impl MtechServerContext{
 
             self.task_layouts.insert(page.to_string(), task_layout_opts);
         }
+    }
+
+    pub fn handle_modals(&mut self, ctx: &Context){
+        let modal_type = self.modal_type.clone();
+        let db = self.database.clone();
+        let task_opt = if let Some(ModalType::TaskModal(ref id)) = modal_type{
+            let task = self.find_task_by_id(id).cloned(); // Find the task before the closure
+            let tx = self.ticket_data_tx.clone();
+            let tx1 = self.ticket_data_tx.clone();
+            let tx2 = self.ticket_data_tx.clone();
+            
+            if let Some(task) = task.clone(){
+                if let Some(ref db) = db{
+                    let db = db.clone();
+                    let db1 = db.clone();
+                    let db2 = db.clone();
+                    let mut task = task.clone();
+                    let mut task1 = task.clone();
+                    let mut task2 = task.clone();
+                    spawn_local(async move {
+                        task.get_computer_data(db, tx);
+                    });
+                    spawn_local(async move {
+                        task1.get_customer_data(db1, tx1);
+                    });
+                    spawn_local(async move {
+                        task2.get_service_data(db2, tx2);
+                    });
+                }
+            }
+            task
+        } else { None };
+
+        self.modal_handler.ui(
+            ctx, 
+            || Modal::new("Create Task").default_height(800.0).min_width(800.0),
+            move |ui, _stay_open|
+        {
+            if let Some(mut modal_type) = modal_type {
+                match modal_type {
+                    ModalType::CreateTaskModal => modal_type.create_task_modal(ui),
+                    ModalType::TaskModal(_) => {
+                        if let Some(mut task) = task_opt {
+                            if let Some(db) = db{
+                                modal_type.task_modal(ui, &mut task, db);
+                            }
+                        }
+                    },
+                    _ => {},
+                }
+            }
+        });
+        
+    }
+
+    pub fn find_task_by_id(&mut self, id: &String) -> Option<&mut TaskPayload> {
+        for task_layout in self.task_layouts.values_mut() {
+            if let Some(task) = task_layout.tasks.iter_mut().find(|task| task.id.as_ref().map(|t_id| t_id.0.id.to_string()) == Some(id.to_string())) {
+                return Some(task);
+            }
+        }
+        None
     }
 }
 

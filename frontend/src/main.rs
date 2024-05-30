@@ -1,12 +1,12 @@
 // #[war(unused_imports)]
 use app_state::{check_authentication, AppState, MtechServer};
-use database::schema::Store;
+use database::schema::{Store, TaskPayload};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
-use utilities::{displays::modal_handler::Modal, get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}};
+use utilities::{displays::{modal_handler::Modal, modals::ModalType, task_layout::TaskLayout}, get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}};
 use web_time::Instant;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use egui::{FontId, Style, Vec2};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
@@ -94,7 +94,6 @@ impl eframe::App for MtechServer {
             }
         }
         
-
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
             self.context.my_tasks = Some(tasks);
         }
@@ -111,31 +110,40 @@ impl eframe::App for MtechServer {
             self.context.store_users = Some(users);
         }
 
+        if let Ok(ticket_data) = self.context.ticket_data_rx.try_recv(){
+
+        }
+
         while let Ok(ref data) = self.context.tasks_rx.try_recv(){
-            // if let Some(tasks) = &mut self.context.store_tasks{
             for task_layout in self.context.task_layouts.values_mut(){
                 handle_live_data(data.to_owned(), &mut task_layout.tasks).unwrap();
             }
         }
 
-        // if self.context.task_layout.create_task_modal{
-        //     let db = self.context.database.clone();
-        //     let task_layout = &mut self.context.task_layout;
-        //     if let Some(ref mut task_opts) = task_layout.task_opts{
-        //         if let Some(ref mut tasks) = self.context.my_tasks{
-        //             task_opts.modal_handler.open();
-        //         }
-        //     }
-        // }
+        for task_layout in self.context.task_layouts.values_mut(){
+            let open = &mut task_layout.show_modal;
+            
+            match &task_layout.modal{
+                ModalType::CreateTaskModal => {
+                    if *open{
+                        self.context.modal_handler.open();
+                        *open = false;
+                    }
+                    self.context.modal_type = Some(ModalType::CreateTaskModal);
+                },
+                ModalType::TaskModal(id) => {
+                    if *open{
+                        self.context.modal_handler.open();
+                        *open = false;
+                    }
+                    self.context.modal_type = Some(ModalType::TaskModal(id.to_owned()));
 
-        self.context.modal_handler.ui(
-            ctx, 
-            || Modal::new("Create Task").default_height(800.0).min_width(800.0),
-            |ui, _stay_open|
-        {
-            ui.label("Created Task");
-        });
+                },
+                ModalType::Null => {}
+            }
+        }
 
+        self.context.handle_modals(ctx);
 
         self.context.toasts.show(ctx);
 
@@ -153,6 +161,7 @@ impl eframe::App for MtechServer {
         eframe::set_value(storage, eframe::APP_KEY, self); 
     }
 }
+
 
 
 // When compiling natively:

@@ -6,6 +6,7 @@ use database::schema::{Priority, Status, TaskPayload, User};
 
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, TaskUiActions};
 
+use super::modals::ModalType;
 use super::task_layout::TaskLayout;
 use super::Filters;
 
@@ -78,7 +79,7 @@ impl ColumnLayout for TaskLayout {
         complete: &Option<bool>,
         current_user: &Option<User>,
         database: Database,
-        column_frame: Frame,
+        column_frame: Frame
     ){
         if let Some(_) = current_user {
             if status{
@@ -99,8 +100,9 @@ impl ColumnLayout for TaskLayout {
                                             let action = task.display_task_cards(ui, database.clone(), &store_users.as_ref());
                                             if let Some(action) = action{
                                                 match action{
-                                                    TaskUiActions::OpenTaskModal(_id) => {
-                                                        self.show_task_modal = true;
+                                                    TaskUiActions::OpenTaskModal(id) => {
+                                                        self.show_modal = true;
+                                                        self.modal = ModalType::TaskModal(id);
                                                     },
                                                 }
                                             }
@@ -155,6 +157,7 @@ impl ColumnLayout for TaskLayout {
                             {
                                 for task in filtered.iter_mut() {
                                     let _action = task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap());
+                                    
                                     // info!("Action: {action:?}");
                                 }
                             });
@@ -194,7 +197,8 @@ impl ColumnLayout for TaskLayout {
                                 .ui(ui);
 
                             if response.clicked(){
-                                self.show_create_task_modal = true;
+                                self.show_modal = true;
+                                self.modal = ModalType::CreateTaskModal;
                             }
 
                         });
