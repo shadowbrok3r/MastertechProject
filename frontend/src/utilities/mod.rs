@@ -16,10 +16,15 @@ pub mod task_context;
 pub mod filter;
 pub mod handle_live_data;
 pub mod sortable;
+pub mod modals;
 
+#[derive(Debug)]
+pub enum TaskUiActions{
+    OpenTaskModal(String)
+}
 // This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
 pub trait Displayable{ 
-    fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> anyhow::Result<(), anyhow::Error>;
+    fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<TaskUiActions>;
     // fn task_headers(&mut self,  s: Strip, column_names: Vec<String>, header_frame: Frame);
     fn task_modal<ID>(&mut self, ui: &mut Ui, _database: Database, task_name: &String)
     where

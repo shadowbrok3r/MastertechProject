@@ -4,18 +4,25 @@ use egui::{Color32, Stroke};
 use database::schema::{Priority, TaskPayload, User};
 use serde::Serialize;
 
-use crate::app_state::MtechServerContext;
+// use crate::app_state::MtechServerContext;
 
-use super::create_task::CreateTaskModal;
+// use super::create_task::CreateTaskModal;
 use super::{ColumnLayout, Filters, Sortable};
 
-use super::modal::{Modal, ModalHandler};
+// use super::modal::{Modal, ModalHandler};
 
 
 #[derive(Serialize)]
 pub struct TaskLayout{
-    pub task_opts: Option<TaskLayoutOpts>,
-    // pub create_task_modal: bool,
+    // pub task_opts: Option<TaskLayoutOpts>,
+    pub tasks: Vec<TaskPayload>,
+    pub style_options: TaskStyles,
+    pub filters: Vec<Filters>,
+    pub column_names: Vec<String>,
+    #[serde(skip)]
+    pub database: Database,
+    pub show_create_task_modal: bool,
+    pub show_task_modal: bool,
     // pub sort_options: SortTasks,
     // pub store_users: &Option<Vec<User>>,
 }
@@ -26,31 +33,26 @@ pub struct SortTasks{
     pub sort_by_current_user: Option<User> 
 }
 
-impl TaskLayout for MtechServerContext{
-    fn new(
+impl TaskLayout { // for MtechServerContext
+    pub fn new(
         tasks: Vec<TaskPayload>, 
         filters: Vec<Filters>,
         column_names: Vec<String>,
         database: Database,
-        // create_task_modal: bool,
-    ) -> TaskL {
-        let task_opts = TaskLayoutOpts{
+        // show_create_task_modal: bool,
+    ) -> Self {
+        Self { 
             tasks,
             style_options: TaskStyles::default(),
             filters,
             column_names,
             database,
-            // create_task_modal: CreateTaskModal::new(),
-            // modal_handler: ModalHandler::default(),
-        };
-        
-        Self { 
-            task_opts: Some(task_opts),
-            // create_task_modal: false,
+            show_create_task_modal: false,
+            show_task_modal: false
         }
     }
 
-    fn display(
+    pub fn display(
         &mut self,
         ui: &mut Ui,
         store_users: &Option<Vec<User>>,
@@ -59,49 +61,44 @@ impl TaskLayout for MtechServerContext{
         complete: &Option<bool>,
         current_user: &Option<User> 
     ){
-        if let Some(task_opts) = &mut self.task_opts{
-            let col_names = task_opts.column_names.clone();
-            let db = task_opts.database.clone();
-            let filters = &task_opts.filters.clone();
-            
-            task_opts.tasks.sort_task_payloads();
-            
-            self.layout_task_cols(
-                ui, 
-                col_names, 
-                db, 
-                filters, 
-                &store_users,
-                status,
-                &priority,
-                &complete,
-                &current_user
-            );
-        }
+        let col_names = self.column_names.clone();
+        let db = self.database.clone();
+        let filters = &self.filters.clone();
+        
+        self.tasks.sort_task_payloads();
+        
+        self.layout_task_cols(
+            ui, 
+            col_names, 
+            db, 
+            filters, 
+            &store_users,
+            status,
+            &priority,
+            &complete,
+            &current_user
+        );
     }
 
-    fn set_styles(&mut self, ui: &mut Ui){
-        if let Some(task_opts) = &self.task_opts{
-
-            ui.style_mut().visuals.selection.stroke.color = task_opts.style_options.selection_stroke_color;
-            ui.style_mut().visuals.selection.bg_fill = task_opts.style_options.selection_bg_fill;
-            
-            ui.style_mut().visuals.widgets.inactive.bg_fill = task_opts.style_options.widgets_inactive_bg_fill;
-            ui.style_mut().visuals.widgets.inactive.fg_stroke = task_opts.style_options.widgets_inactive_fg_stroke;
-            ui.style_mut().visuals.widgets.inactive.weak_bg_fill = task_opts.style_options.widgets_inactive_weak_bg_fill;
-            ui.style_mut().visuals.widgets.inactive.bg_stroke = task_opts.style_options.widgets_inactive_bg_stroke;
-            
-            ui.style_mut().visuals.widgets.open.bg_fill = task_opts.style_options.widgets_open_bg_fill;
-            ui.style_mut().visuals.widgets.open.weak_bg_fill = task_opts.style_options.widgets_open_weak_bg_fill;
-            
-            ui.style_mut().visuals.widgets.active.weak_bg_fill = task_opts.style_options.widgets_active_weak_bg_fill;
-            
-            ui.style_mut().visuals.widgets.hovered.weak_bg_fill = task_opts.style_options.widgets_hovered_weak_bg_fill;
-            ui.style_mut().visuals.widgets.hovered.bg_fill = task_opts.style_options.widgets_hovered_bg_fill;
-            ui.style_mut().visuals.widgets.hovered.bg_stroke = task_opts.style_options.widgets_hovered_bg_stroke;
-            
-            ui.style_mut().visuals.widgets.hovered.expansion = 2.0;
-        }
+    fn _set_styles(&mut self, ui: &mut Ui){
+        ui.style_mut().visuals.selection.stroke.color = self.style_options.selection_stroke_color;
+        ui.style_mut().visuals.selection.bg_fill = self.style_options.selection_bg_fill;
+        
+        ui.style_mut().visuals.widgets.inactive.bg_fill = self.style_options.widgets_inactive_bg_fill;
+        ui.style_mut().visuals.widgets.inactive.fg_stroke = self.style_options.widgets_inactive_fg_stroke;
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = self.style_options.widgets_inactive_weak_bg_fill;
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = self.style_options.widgets_inactive_bg_stroke;
+        
+        ui.style_mut().visuals.widgets.open.bg_fill = self.style_options.widgets_open_bg_fill;
+        ui.style_mut().visuals.widgets.open.weak_bg_fill = self.style_options.widgets_open_weak_bg_fill;
+        
+        ui.style_mut().visuals.widgets.active.weak_bg_fill = self.style_options.widgets_active_weak_bg_fill;
+        
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = self.style_options.widgets_hovered_weak_bg_fill;
+        ui.style_mut().visuals.widgets.hovered.bg_fill = self.style_options.widgets_hovered_bg_fill;
+        ui.style_mut().visuals.widgets.hovered.bg_stroke = self.style_options.widgets_hovered_bg_stroke;
+        
+        ui.style_mut().visuals.widgets.hovered.expansion = 2.0;
     }
 }
 
@@ -139,14 +136,7 @@ impl TaskLayoutOpts{
     }
 }
 
-impl Default for TaskLayout{
-    fn default() -> Self {
-        Self {
-            // create_task_modal: false,
-            task_opts: None,
-        }
-    }
-}
+
 
 #[derive(Serialize)]
 pub struct TaskStyles{
