@@ -1,9 +1,8 @@
 use crossbeam::channel::Sender;
 use displays::Filters;
 use egui::{Frame, Grid, Id, Response, RichText, Ui};
-use database::{schema::{ComputerData, CustomerData, Priority, Status, Store, TaskId, TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketId, TicketPayload, User, UserId}, Database};
+use database::{schema::{Priority, Status, Store, TaskId, TaskNoteId, TaskPayload, TicketData, TicketId, TicketPayload, User, UserId}, Database};
 use egui_extras::Strip;
-use log::info;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -53,7 +52,7 @@ pub trait Displayable{
                 // ui.label(RichText::new(format!("{:?}", self.rep)));
                 ui.label(RichText::new(format!("ID: {:?}", self.get_id())));
                 ui.label(RichText::new(format!("Name: {}", self.get_task_name())));
-                ui.label(RichText::new(format!("Due Date: {}", self.get_due_date())));
+                // ui.label(RichText::new(format!("Due Date: {}", self.get_due_date())));
                 ui.label(RichText::new(format!("Priority: {:?}", self.get_priority())));
                 ui.end_row();
                 ui.label(RichText::new(format!("get_task_name: {:?}", self.get_task_name())));
@@ -130,7 +129,7 @@ pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
     fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
     fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
     fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
-
+    fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
     // fn create_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
     // fn get_data(&mut self, database: Database, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;
     // fn modify_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
@@ -146,7 +145,7 @@ pub trait Aggregatable<ID>{
     fn get_task_description(&self) -> Option<&str>;
     fn get_assignee(&self) -> Option<UserId>;
     fn get_service_number(&self) -> Option<i32>;
-    fn get_due_date(&self) -> &str;
+    fn get_due_date(&self) -> Option<&str>;
     fn get_priority(&self) -> &Priority;
     fn get_task_note(&self) -> Option<&Vec<TaskNoteId>>;
     fn is_completed(&self) -> bool;
@@ -183,8 +182,8 @@ impl Aggregatable<TaskId> for TaskPayload {
         self.service_number
     }
     
-    fn get_due_date(&self) -> &str {
-        &self.due_date
+    fn get_due_date(&self) -> Option<&str> {
+        Some(&self.due_date)
     }
     
     fn get_priority(&self) -> &Priority {
@@ -236,11 +235,11 @@ impl Aggregatable<TicketId> for TicketData {
     fn get_service_number(&self) -> Option<i32> {
         Some(self.service_number)
     }
-    
-    fn get_due_date(&self) -> &str {
-        &self.due_date
+
+    fn get_due_date(&self) -> Option<&str> {
+        None
     }
-    
+
     fn get_priority(&self) -> &Priority {
         unimplemented!() // No direct mapping in TicketData
     }

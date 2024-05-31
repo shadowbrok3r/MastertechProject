@@ -77,16 +77,23 @@ pub struct TaskPayload{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TicketPayload{
-    pub ticket_data: TicketData,
+    pub service_ticket: TicketData,
     pub customer_data: CustomerData,
     pub computer_data: ComputerData
 }
+
+// #[derive(Serialize, Deserialize, Debug)]
+// pub struct TicketDataExt{
+//     pub service_ticket: TicketData,
+//     pub customer_data: CustomerData,
+//     pub computer_data: ComputerData
+// }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TicketData{
     pub created_at: Option<String>,
     pub id: Option<TicketId>,
-    pub due_date: String,
+    pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
     pub customer: Option<CustomerId>,
     pub computer: Option<ComputerId>,
     pub service_task: Option<TaskId>,

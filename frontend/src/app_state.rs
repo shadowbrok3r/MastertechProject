@@ -9,6 +9,7 @@ use log::info;
 use ratatui::Terminal;
 use ratframe::{NewCC, RataguiBackend};
 use serde::Serialize;
+use serde_json::Value;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
@@ -103,7 +104,7 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub store_users_rx: Receiver<Vec<User>>,
     #[serde(skip)]
-    pub ticket_data_rx: Receiver<Option<TicketPayload>>,
+    pub ticket_data_rx: Receiver<Option<Value>>,
 
     /// Sends task data over crossbeam channel
     #[serde(skip)]
@@ -117,7 +118,7 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub store_users_tx: Sender<Vec<User>>,
     #[serde(skip)]
-    pub ticket_data_tx: Sender<Option<TicketPayload>>,
+    pub ticket_data_tx: Sender<Option<Value>>,
 
     /// Receives Database connection over crossbeam channel
     #[serde(skip)]
@@ -279,7 +280,7 @@ impl NewCC for MtechServer{
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
 
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
-        let (ticket_data_tx, ticket_data_rx) = channel::unbounded::<Option<TicketPayload>>();
+        let (ticket_data_tx, ticket_data_rx) = channel::unbounded::<Option<Value>>();
 
 
         let ctx = cc.egui_ctx.clone();
@@ -383,7 +384,8 @@ impl MtechServerContext{
         tasks: Vec<TaskPayload>, 
         col_names: Vec<String>, 
         database: Database,
-        filters: Vec<Filters>
+        filters: Vec<Filters>,
+        ticket_data_tx: Sender<Option<Value>>
     ) {
         if !self.task_layouts.contains_key(page) {
             let task_layout_opts = TaskLayout::new(
@@ -391,6 +393,7 @@ impl MtechServerContext{
                 filters,
                 col_names,
                 database,
+                ticket_data_tx
             );
 
             self.task_layouts.insert(page.to_string(), task_layout_opts);
@@ -401,31 +404,7 @@ impl MtechServerContext{
         let modal_type = self.modal_type.clone();
         let db = self.database.clone();
         let task_opt = if let Some(ModalType::TaskModal(ref id)) = modal_type{
-            let task = self.find_task_by_id(id).cloned(); // Find the task before the closure
-            let tx = self.ticket_data_tx.clone();
-            let tx1 = self.ticket_data_tx.clone();
-            let tx2 = self.ticket_data_tx.clone();
-            
-            if let Some(task) = task.clone(){
-                if let Some(ref db) = db{
-                    let db = db.clone();
-                    let db1 = db.clone();
-                    let db2 = db.clone();
-                    let mut task = task.clone();
-                    let mut task1 = task.clone();
-                    let mut task2 = task.clone();
-                    spawn_local(async move {
-                        task.get_computer_data(db, tx);
-                    });
-                    spawn_local(async move {
-                        task1.get_customer_data(db1, tx1);
-                    });
-                    spawn_local(async move {
-                        task2.get_service_data(db2, tx2);
-                    });
-                }
-            }
-            task
+            self.find_task_by_id(id).cloned()
         } else { None };
 
         self.modal_handler.ui(

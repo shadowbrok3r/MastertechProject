@@ -1,10 +1,11 @@
+use crossbeam::channel::Sender;
 use database::Database;
 use egui::{Button, RichText, ScrollArea, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
-use database::schema::{Priority, Status, TaskPayload, User};
+use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
 
-use crate::utilities::{ColumnLayout, Displayable, FilterTasks, TaskUiActions};
+use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Task, TaskUiActions};
 
 use super::modals::ModalType;
 use super::task_layout::TaskLayout;
@@ -22,7 +23,7 @@ impl ColumnLayout for TaskLayout {
         status: bool,
         priority: &Option<Priority>,
         complete: &Option<bool>,
-        current_user: &Option<User>
+        current_user: &Option<User>,
     ) {
         ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
         let header_frame = Frame::default()
@@ -56,7 +57,7 @@ impl ColumnLayout for TaskLayout {
                 {
                     strip
                         .sizes(column_width, column_names.len())
-                        .horizontal( |strip| self.task_headers(strip, column_names.clone(), header_frame));
+                        .horizontal( |strip| self.task_headers(strip, column_names.to_owned(), header_frame));
                 });
                 strip.empty();
                 strip
@@ -64,7 +65,7 @@ impl ColumnLayout for TaskLayout {
                 {
                     strip
                         .sizes(column_width, column_names.len())
-                        .horizontal( |strip| self.task_columns(strip, filters,&assignees,status,&priority,&complete,current_user,database,column_frame));
+                        .horizontal( |strip| self.task_columns(strip, filters,&assignees,status,&priority,&complete,current_user, database, column_frame));
                 });
             });
         });
@@ -87,22 +88,24 @@ impl ColumnLayout for TaskLayout {
                     let mut filtered = self.filter_items(
                         &filters,&None,&Some(status),&priority,&complete
                     );
-    
-                    
+
                     s.cell(|ui| {
                         column_frame.show(ui, |ui| {
                             ui.vertical_centered_justified(|ui| {
                                 ScrollArea::vertical()
                                 .auto_shrink(false)
                                 .show_viewport(ui, |ui, _| {
+                                    
                                     for task in filtered.iter_mut() {
                                         if let Some(store_users) = &assignees{
-                                            let action = task.display_task_cards(ui, database.clone(), &store_users.as_ref());
+                                            let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
                                             if let Some(action) = action{
                                                 match action{
                                                     TaskUiActions::OpenTaskModal(id) => {
                                                         self.show_modal = true;
                                                         self.modal = ModalType::TaskModal(id);
+                                                        let tx = self.ticket_data_tx.to_owned();
+                                                        task.get_ticket_payload(database.to_owned(), tx);
                                                     },
                                                 }
                                             }
@@ -126,7 +129,7 @@ impl ColumnLayout for TaskLayout {
                             .auto_shrink(false)
                             .show_viewport(ui, |ui, _| {
                                 for task in filtered.iter_mut() {
-                                    let _action = task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap());
+                                    let _action = task.display_task_cards(ui, database.to_owned(), &assignees.as_ref().unwrap());
                                     // info!("Action: {action:?}");
                                 }
                             });
@@ -137,12 +140,12 @@ impl ColumnLayout for TaskLayout {
         } else if let Some(users) = assignees {
             // Multiple users, iterate over each user
             for user in users.iter() {
-                let mut user_filters = filters.clone();
+                let mut user_filters = filters.to_owned();
                 user_filters.push(Filters::FilterAssignee);
     
                 let mut filtered = self.filter_items(
                     &user_filters,
-                    &Some(user.clone()),
+                    &Some(user.to_owned()),
                     &None,
                     &priority,
                     &complete,
@@ -156,7 +159,7 @@ impl ColumnLayout for TaskLayout {
                                 .show_viewport(ui, |ui, _| 
                             {
                                 for task in filtered.iter_mut() {
-                                    let _action = task.display_task_cards(ui, database.clone(), &assignees.as_ref().unwrap());
+                                    let _action = task.display_task_cards(ui, database.to_owned(), &assignees.as_ref().unwrap());
                                     
                                     // info!("Action: {action:?}");
                                 }
@@ -182,7 +185,7 @@ impl ColumnLayout for TaskLayout {
                         ui.with_layout(Layout::left_to_right(egui::Align::Center), |ui| 
                         {
                             ui.vertical_centered(|ui|{
-                                ui.colored_label(Color32::WHITE, RichText::new(name.clone()).heading());
+                                ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading());
                             });
                         });
     
