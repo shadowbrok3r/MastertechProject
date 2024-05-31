@@ -92,6 +92,54 @@ impl Task for TaskPayload{
                     Err(e) => error!("Error sending data: {e:?}")
                 };
         });
-        
+    }
+
+    fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>){
+        let id: RecordId = self.id.clone().unwrap().0;
+        spawn_local(async move {
+            
+            let get_data: Option<T> = db
+                .database
+                .query(format!("SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id={id}"))
+                .await
+                .unwrap()
+                .take(0).unwrap();
+
+            // let get_data: Option<T> = db.clone()
+            //     .database
+            //     .query(format!("SELECT service_ticket.customer FROM task WHERE id={id}"))
+            //     .await
+            //     .unwrap()
+            //     .take(0).unwrap();
+
+            // match tx.send(get_data){
+            //     Ok(_) => info!("Sent data"),
+            //     Err(e) => error!("Error sending data: {e:?}")
+            // };
+
+            // let get_data1: Option<T> = db.clone()
+            //     .database
+            //     .query(format!("SELECT service_ticket.computer.* FROM task WHERE id={id}"))
+            //     .await
+            //     .unwrap()
+            //     .take(0).unwrap();
+
+            // match tx.send(get_data){
+            //     Ok(_) => info!("Sent data"),
+            //     Err(e) => error!("Error sending data: {e:?}")
+            // };
+
+            // let get_data2: Option<T> = db.clone()
+            //     .database
+            //     .query(format!("SELECT service_ticket.* FROM task WHERE id={id}"))
+            //     .await
+            //     .unwrap()
+            //     .take(0).unwrap();
+
+            match tx.send(get_data){
+                Ok(_) => info!("Sent data"),
+                Err(e) => error!("Error sending data: {e:?}")
+            };
+        });
     }
 }

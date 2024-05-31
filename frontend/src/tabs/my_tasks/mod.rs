@@ -16,7 +16,7 @@ impl MtechServerContext{
                 Filters::FilterStatus
             ];
 
-            self.initialize_task_layout("my_tasks", tasks.to_owned(), col_names, database, filters);
+            self.initialize_task_layout("my_tasks", tasks.to_owned(), col_names, database, filters, self.ticket_data_tx.clone());
 
             if let Some(task_layout) = self.task_layouts.get_mut("my_tasks"){
                 task_layout.display(

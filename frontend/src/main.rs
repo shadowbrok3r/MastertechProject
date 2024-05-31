@@ -1,12 +1,12 @@
 // #[war(unused_imports)]
 use app_state::{check_authentication, AppState, MtechServer};
-use database::schema::{Store, TaskPayload};
+use database::schema::{Store, TicketData};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
-use utilities::{displays::{modal_handler::Modal, modals::ModalType, task_layout::TaskLayout}, get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}};
+use utilities::{displays::modals::ModalType, get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}, Task};
 use web_time::Instant;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use egui::{FontId, Style, Vec2};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
@@ -26,7 +26,7 @@ impl eframe::App for MtechServer {
         // wasm example for using web workers.. i dont even know if its required???
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(update) = data_update.take() {
-            log::debug!("Received update: {update:?}")
+            info!("Received update: {update:?}")
         }
 
         // For updating our Ratatui chart in the RataGuiBackend terminal
@@ -111,7 +111,11 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(ticket_data) = self.context.ticket_data_rx.try_recv(){
-
+            
+            if let Some(ticket) = ticket_data{
+                info!("Ticket data: {ticket:#?}");
+                // let x: TicketData = serde_json::from_value(ticket);
+            }
         }
 
         while let Ok(ref data) = self.context.tasks_rx.try_recv(){
