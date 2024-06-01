@@ -147,7 +147,7 @@ impl Displayable for TaskPayload{
                             checkin_head
                                 .show_unindented(ui, |ui| 
                             {
-                                self.interact_task_description(ui, database.clone());
+                                self.interact_checkin_notes(ui, database.clone());
                             });
                         });
                         s.cell(|ui| 
@@ -157,7 +157,7 @@ impl Displayable for TaskPayload{
                             rec_head
                                 .show_unindented(ui, |ui|
                             {
-                                self.interact_task_description(ui, database.clone());
+                                self.interact_recommendations(ui, database.clone());
                             });
                         });
                     });

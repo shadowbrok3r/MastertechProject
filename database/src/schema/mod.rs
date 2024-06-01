@@ -61,7 +61,7 @@ pub struct RecordSuccess{
 pub struct TaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
-    pub service_ticket: Option<TicketId>,
+    pub service_ticket: Option<TicketPayload>,
     // #[serde(skip)]
     pub everest_initials: String,
     pub task_description: Option<String>, 
@@ -69,31 +69,49 @@ pub struct TaskPayload{
     pub service_number: Option<i32>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
-    pub task_note: Option<Vec<TaskNoteId>>,
+    pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
     pub completed: bool,
     pub status: Status,
     pub dep: Option<String>
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TicketPayload{
-    pub service_ticket: TicketData,
-    pub customer_data: CustomerData,
-    pub computer_data: ComputerData
-}
-
 // #[derive(Serialize, Deserialize, Debug)]
-// pub struct TicketDataExt{
+// pub struct TicketPayload{
 //     pub service_ticket: TicketData,
 //     pub customer_data: CustomerData,
 //     pub computer_data: ComputerData
 // }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TicketPayload{
+    pub id: Option<TicketId>,
+    pub created_at: Option<String>,
+    // pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
+    pub customer: Option<CustomerData>,
+    pub computer: Option<ComputerData>,
+    pub service_task: Option<TaskId>,
+    pub service_number: i32,
+    /// Person that checked computer in
+    pub checkin_rep: String,
+    /// This is main initials on ticket
+    pub sales_rep: String,
+    pub checkin_notes: String,
+    pub recommendations: String,
+    pub tech: String,
+    pub salesman: String,
+    pub dep: String, // Store
+    pub terms: String,
+    pub ticket_total: String,
+    pub doc_alias: String, // type of order (service,sales,transfer)
+    pub current_antivirus: Option<Vec<String>>,
+    pub hardware_test_results: HardwareTests,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TicketData{
-    pub created_at: Option<String>,
     pub id: Option<TicketId>,
-    pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
+    pub created_at: Option<String>,
+    // pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
     pub customer: Option<CustomerId>,
     pub computer: Option<ComputerId>,
     pub service_task: Option<TaskId>,
@@ -114,7 +132,7 @@ pub struct TicketData{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
     pub part_order_links: Option<Vec<String>>,
@@ -130,7 +148,7 @@ pub struct CustomerData{
     pub num_inv: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ComputerData{
     pub id: Option<ComputerId>,
     pub customer: Option<CustomerId>,
@@ -185,7 +203,7 @@ pub struct ExtendedSeb {
     pub date_created: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DriveData{
     pub drive_letter: String,
     pub drive_type: String,
@@ -193,7 +211,7 @@ pub struct DriveData{
     pub space_left: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HardwareTests{
     pub hdd_test: String,
     pub ssd_test: String,

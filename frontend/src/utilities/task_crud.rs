@@ -1,5 +1,5 @@
 use crossbeam::channel::Sender;
-use database::{schema::{ComputerData, CustomerData, User, TaskNotePayload, TaskPayload, TicketData}, Database};
+use database::{schema::TaskPayload, Database};
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use surrealdb::opt::RecordId;
@@ -52,27 +52,27 @@ impl Task for TaskPayload{
         });
         
     }
-    fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>){
-        let id: RecordId = self.service_ticket.clone().unwrap().clone().0;
-        spawn_local(async move {
-            let query = format!(
-                "SELECT * FROM service_order WHERE id={id}"
-            );
-            let get_data: Option<T> = db
-                .database
-                .query(query)
-                .await
-                .unwrap()
-                .take(0).unwrap();
-            info!("get_data: {get_data:#?}");
+    // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>){
+    //     let id: RecordId = self.service_ticket.clone().unwrap().clone().0;
+    //     spawn_local(async move {
+    //         let query = format!(
+    //             "SELECT * FROM service_order WHERE id={id}"
+    //         );
+    //         let get_data: Option<T> = db
+    //             .database
+    //             .query(query)
+    //             .await
+    //             .unwrap()
+    //             .take(0).unwrap();
+    //         info!("get_data: {get_data:#?}");
 
-                match tx.send(get_data){
-                    Ok(_) => info!("Sent data"),
-                    Err(e) => error!("Error sending data: {e:?}")
-                };
-        });
+    //             match tx.send(get_data){
+    //                 Ok(_) => info!("Sent data"),
+    //                 Err(e) => error!("Error sending data: {e:?}")
+    //             };
+    //     });
         
-    }
+    // }
     fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>){
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
@@ -104,37 +104,6 @@ impl Task for TaskPayload{
                 .await
                 .unwrap()
                 .take(0).unwrap();
-
-            // let get_data: Option<T> = db.clone()
-            //     .database
-            //     .query(format!("SELECT service_ticket.customer FROM task WHERE id={id}"))
-            //     .await
-            //     .unwrap()
-            //     .take(0).unwrap();
-
-            // match tx.send(get_data){
-            //     Ok(_) => info!("Sent data"),
-            //     Err(e) => error!("Error sending data: {e:?}")
-            // };
-
-            // let get_data1: Option<T> = db.clone()
-            //     .database
-            //     .query(format!("SELECT service_ticket.computer.* FROM task WHERE id={id}"))
-            //     .await
-            //     .unwrap()
-            //     .take(0).unwrap();
-
-            // match tx.send(get_data){
-            //     Ok(_) => info!("Sent data"),
-            //     Err(e) => error!("Error sending data: {e:?}")
-            // };
-
-            // let get_data2: Option<T> = db.clone()
-            //     .database
-            //     .query(format!("SELECT service_ticket.* FROM task WHERE id={id}"))
-            //     .await
-            //     .unwrap()
-            //     .take(0).unwrap();
 
             match tx.send(get_data){
                 Ok(_) => info!("Sent data"),

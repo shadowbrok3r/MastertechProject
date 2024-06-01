@@ -1,7 +1,7 @@
 use crossbeam::channel::Sender;
 use displays::Filters;
 use egui::{Frame, Grid, Id, Response, RichText, Ui};
-use database::{schema::{Priority, Status, Store, TaskId, TaskNoteId, TaskPayload, TicketData, TicketId, TicketPayload, User, UserId}, Database};
+use database::{schema::{Priority, Status, Store, TaskId, TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketId, TicketPayload, User, UserId}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -56,7 +56,7 @@ pub trait Displayable{
                 ui.label(RichText::new(format!("Priority: {:?}", self.get_priority())));
                 ui.end_row();
                 ui.label(RichText::new(format!("get_task_name: {:?}", self.get_task_name())));
-                ui.label(RichText::new(format!("get_service_ticket: {:?}", self.get_service_ticket())));
+                // ui.label(RichText::new(format!("get_service_ticket: {:?}", self.get_service_ticket())));
                 ui.label(RichText::new(format!("get_everest_initials: {:?}", self.get_everest_initials())));
                 ui.label(RichText::new(format!("get_task_description: {:?}", self.get_task_description())));
                 ui.end_row();
@@ -92,11 +92,14 @@ pub trait Updatable { // This is correctly implemented
     fn update_dep(&mut self, store: Store, db: Database);
     fn update_priority(&mut self, priority: Option<Priority>, db: Database);
     fn update_task_description(&mut self, description: Option<String>, db: Database);
+    fn update_recommendations(&mut self, recommendations: Option<String>, db: Database);
+    fn update_checkin_notes(&mut self, checkin_notes: Option<String>, db: Database);
 }
 
 pub trait Interaction{ // This is correctly implemented
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
+    fn interact_checkin_notes(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_completed(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
@@ -127,7 +130,7 @@ pub trait LiveUpdate{
 pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
     fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
     fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
-    fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
+    // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
     fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
     fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
     // fn create_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
@@ -140,14 +143,14 @@ pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
 pub trait Aggregatable<ID>{
     fn get_id(&self) -> Option<ID>;
     fn get_task_name(&self) -> &str;
-    fn get_service_ticket(&self) -> Option<TicketId>;
+    // fn get_service_ticket(&self) -> Option<TicketId>;
     fn get_everest_initials(&self) -> &str;
     fn get_task_description(&self) -> Option<&str>;
     fn get_assignee(&self) -> Option<UserId>;
     fn get_service_number(&self) -> Option<i32>;
     fn get_due_date(&self) -> Option<&str>;
     fn get_priority(&self) -> &Priority;
-    fn get_task_note(&self) -> Option<&Vec<TaskNoteId>>;
+    fn get_task_note(&self) -> Option<&Vec<TaskNotePayload>>;
     fn is_completed(&self) -> bool;
     fn get_status(&self) -> &Status;
     fn get_dep(&self) -> Option<&str>;
@@ -162,9 +165,9 @@ impl Aggregatable<TaskId> for TaskPayload {
         &self.task_name
     }
     
-    fn get_service_ticket(&self) -> Option<TicketId> {
-        self.service_ticket.clone()
-    }
+    // fn get_service_ticket(&self) -> Option<TicketId> {
+    //     self.service_ticket.clone()
+    // }
     
     fn get_everest_initials(&self) -> &str {
         &self.everest_initials
@@ -190,7 +193,7 @@ impl Aggregatable<TaskId> for TaskPayload {
         &self.priority
     }
     
-    fn get_task_note(&self) -> Option<&Vec<TaskNoteId>> {
+    fn get_task_note(&self) -> Option<&Vec<TaskNotePayload>> {
         self.task_note.as_ref()
     }
     
@@ -216,9 +219,9 @@ impl Aggregatable<TicketId> for TicketData {
         &self.doc_alias // Assuming doc_alias serves as a name
     }
     
-    fn get_service_ticket(&self) -> Option<TicketId> {
-        Some(self.id.clone().unwrap()) // Assuming service_ticket maps to ticket ID
-    }
+    // fn get_service_ticket(&self) -> Option<TicketId> {
+    //     Some(self.id.clone().unwrap()) // Assuming service_ticket maps to ticket ID
+    // }
     
     fn get_everest_initials(&self) -> &str {
         &self.sales_rep // Assuming sales_rep can be considered as initials
@@ -244,7 +247,7 @@ impl Aggregatable<TicketId> for TicketData {
         unimplemented!() // No direct mapping in TicketData
     }
     
-    fn get_task_note(&self) -> Option<&Vec<TaskNoteId>> {
+    fn get_task_note(&self) -> Option<&Vec<TaskNotePayload>> {
         None // No direct mapping in TicketData
     }
     
