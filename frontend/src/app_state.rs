@@ -15,7 +15,7 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{TaskPayload, TicketData, TicketPayload, User}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{modals::{ModalType, Modal, ModalHandler}, task_layout::TaskLayout, Filters}, Task}
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{modals::{Modal, ModalHandler, ModalType, ModalTypes}, task_layout::TaskLayout, Filters}, Task}
 };
 
 #[derive(Serialize)]
