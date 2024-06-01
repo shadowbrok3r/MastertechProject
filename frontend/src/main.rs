@@ -1,10 +1,11 @@
 // #[war(unused_imports)]
 use app_state::{check_authentication, AppState, MtechServer};
-use database::schema::{Store, TicketData};
+use database::schema::{ComputerData, CustomerData, Store, TaskPayload, TicketData, TicketPayload};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
-use utilities::{displays::modals::ModalType, get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks}, handle_live_data::{handle_live_data, listen_tasks}, Task};
+use serde_json::{from_value, Value};
+use utilities::{displays::modals::ModalType, get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks, get_tasks}, handle_live_data::{handle_live_data, listen_tasks}, Task};
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{FontId, Style, Vec2};
@@ -64,14 +65,15 @@ impl eframe::App for MtechServer {
                     // as well as store users and live task notifications
                     let tasks_tx = self.context.tasks_tx.clone();
                     let my_tasks_tx = self.context.my_tasks_tx.clone();
-                    let store_tasks_tx = self.context.store_tasks_tx.clone();
-                    let completed_tasks_tx = self.context.completed_tasks_tx.clone();
+                    // let store_tasks_tx = self.context.store_tasks_tx.clone();
+                    // let completed_tasks_tx = self.context.completed_tasks_tx.clone();
                     let store_users_tx = self.context.store_users_tx.clone();
-                    
+
                     if let Some(usr) = self.context.current_user.as_ref(){
-                        get_my_tasks(db.clone(), my_tasks_tx, usr.id.clone());
-                        get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
-                        get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
+                        get_tasks(db.clone(), my_tasks_tx);
+                        // get_my_tasks(db.clone(), my_tasks_tx, usr.id.clone());
+                        // get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
+                        // get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
                         get_store_users(db.clone(), store_users_tx, Store::RIV);
                         listen_tasks(db.clone(), tasks_tx);
                         self.state = AppState::Authenticated;
@@ -95,55 +97,46 @@ impl eframe::App for MtechServer {
         }
         
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
+            info!("Task payloads: {tasks:?}");
             self.context.my_tasks = Some(tasks);
         }
 
-        if let Ok(tasks) = self.context.store_tasks_rx.try_recv(){
-            self.context.store_tasks = Some(tasks);
-        }
-
-        if let Ok(tasks) = self.context.completed_tasks_rx.try_recv(){
-            self.context.completed_tasks = Some(tasks);
-        }
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
             self.context.store_users = Some(users);
         }
 
         if let Ok(ticket_data) = self.context.ticket_data_rx.try_recv(){
-            
-            if let Some(ticket) = ticket_data{
-                info!("Ticket data: {ticket:#?}");
-                // let x: TicketData = serde_json::from_value(ticket);
+            for task_layout in self.context.task_layouts.values_mut(){
+                let open = &mut task_layout.show_modal;
+                
+                match &task_layout.modal{
+                    ModalType::CreateTaskModal => {
+                        if *open{
+                            self.context.modal_handler.open();
+                            *open = false;
+                        }
+                        self.context.modal_type = Some(ModalType::CreateTaskModal);
+                    },
+                    ModalType::TaskModal(id) => {
+                        if *open{
+                            self.context.modal_handler.open();
+                            *open = false;
+                        }
+                        self.context.modal_type = Some(ModalType::TaskModal(id.to_owned()));
+                        if let Some(ref ticket) = ticket_data{
+                            let ticket = parse_ticket_payload(ticket);
+                            self.context.ticket_map.insert(id.to_owned(), ticket.unwrap());
+                        }
+                    },
+                    ModalType::Null => {}
+                }
             }
         }
 
         while let Ok(ref data) = self.context.tasks_rx.try_recv(){
             for task_layout in self.context.task_layouts.values_mut(){
                 handle_live_data(data.to_owned(), &mut task_layout.tasks).unwrap();
-            }
-        }
-
-        for task_layout in self.context.task_layouts.values_mut(){
-            let open = &mut task_layout.show_modal;
-            
-            match &task_layout.modal{
-                ModalType::CreateTaskModal => {
-                    if *open{
-                        self.context.modal_handler.open();
-                        *open = false;
-                    }
-                    self.context.modal_type = Some(ModalType::CreateTaskModal);
-                },
-                ModalType::TaskModal(id) => {
-                    if *open{
-                        self.context.modal_handler.open();
-                        *open = false;
-                    }
-                    self.context.modal_type = Some(ModalType::TaskModal(id.to_owned()));
-
-                },
-                ModalType::Null => {}
             }
         }
 
@@ -166,6 +159,21 @@ impl eframe::App for MtechServer {
     }
 }
 
+fn parse_ticket_payload(json_data: &Value) -> anyhow::Result<TicketPayload, anyhow::Error> {
+    
+    // Extract the main service ticket part
+    let service_ticket = json_data.get("service_ticket").unwrap(); // : TicketData
+    let ticket_payload: TicketPayload = from_value(service_ticket.clone())?;
+    Ok(ticket_payload)
+}
+
+fn parse_task_payload(json_data: &Value) -> anyhow::Result<TaskPayload, anyhow::Error> {
+    
+    // Extract the main service ticket part
+    let task_data = json_data.get("task").unwrap(); // : TicketData
+    let task_payload: TaskPayload = from_value(task_data.clone())?;
+    Ok(task_payload)
+}
 
 
 // When compiling natively:

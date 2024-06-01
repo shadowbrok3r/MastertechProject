@@ -11,6 +11,7 @@ use super::Interaction;
 
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         let text_edit = TextEdit::singleline(&mut self.task_name).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
         if text_edit.changed(){
             self.update_task_name(self.task_name.clone(), database);
@@ -18,18 +19,49 @@ impl Interaction for TaskPayload {
         Some(text_edit)
     }
 
-    fn interact_task_description(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
-        
+    fn interact_checkin_notes(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         // ui.style_mut().visuals.widgets.inactive.fg = Color32::BLACK;
-        if let Some(description) = &self.task_description{
-            let _res = ui.label(
-                egui::RichText::new(description).color(Color32::WHITE)
-            );
+        if let Some(ref mut ticket) = self.service_ticket{
+            let text_edit = TextEdit::multiline(&mut ticket.checkin_notes)
+                .desired_rows(5)
+                .desired_width(ui.available_width())
+                .horizontal_align(egui::Align::Center)
+                .ui(ui);
+
+            if text_edit.changed(){
+                info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
+            }
             None
         }else{
-            let mut task_description = "No task description";
-            let text_edit = TextEdit::multiline(&mut task_description)
+            let text_edit = TextEdit::multiline(&mut "No task description")
+                .desired_rows(5)
+                .desired_width(ui.available_width())
+                .horizontal_align(egui::Align::Center)
+                .ui(ui);
+
+            if text_edit.changed(){
+                info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
+            }
+            Some(text_edit)
+        }
+    }
+
+    fn interact_task_description(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
+        if let Some(ref mut description) = self.task_description{
+            let text_edit = TextEdit::multiline(description)
+                .desired_rows(5)
+                .desired_width(ui.available_width())
+                .horizontal_align(egui::Align::Center)
+                .ui(ui);
+
+            if text_edit.changed(){
+                info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
+            }
+            None
+        }else{
+            let text_edit = TextEdit::multiline(&mut "No task description")
                 .desired_rows(5)
                 .desired_width(ui.available_width())
                 .horizontal_align(egui::Align::Center)
@@ -43,8 +75,8 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_recommendations(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
-        let mut recommendations = "These are test checkin notes";
-        let text_edit = TextEdit::multiline(&mut recommendations)
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
+        let text_edit = TextEdit::multiline(&mut self.service_ticket.as_mut().unwrap().recommendations)
             .desired_rows(6)
             .desired_width(ui.available_width())
             .horizontal_align(egui::Align::Center)
@@ -91,6 +123,7 @@ impl Interaction for TaskPayload {
             let stroke = Stroke::new(2.0, color_complete);
             let button = Button::new(hover_txt).stroke(stroke).small();
             let res = ui.add_sized(ui.available_size(), button);
+           
             // if res.hovered(){
             //     res.stroke(Stroke::new(2.0, color_incomplete));
             // }

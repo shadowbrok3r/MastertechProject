@@ -1,5 +1,6 @@
 
 use database::{schema::*, Database};
+use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
 use log::{info, error};
 use crossbeam::channel::Sender;
@@ -69,3 +70,26 @@ pub fn get_completed_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: St
 }
 
 
+pub fn get_tasks(db: Database, tx: Sender<Vec<TaskPayload>>){
+    spawn_local(async move {
+
+        let query = format!("SELECT * FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note");
+
+        let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = db
+            .database
+            .query(query)
+            .await
+            .unwrap()
+            .take(0);
+
+        match query_results{
+            Ok(data) => {
+                match tx.send(data){
+                    Ok(_) => drop(tx),
+                    Err(e) => error!("Error sending Task Data: {e:?}")
+                }
+            },
+            Err(e) => error!("Error unwrapping data: {e:?}"),
+        }
+    });
+}

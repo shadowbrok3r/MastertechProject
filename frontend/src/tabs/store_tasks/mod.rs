@@ -4,7 +4,7 @@ use egui::Ui;
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {
 
-        if let Some(tasks) = &self.store_tasks{
+        if let Some(tasks) = &self.my_tasks{
             self.store_tasks_opened = true;
             let mut col_names = Vec::new();
 
@@ -13,8 +13,6 @@ impl MtechServerContext{
                 
             }
             let database = self.database.as_ref().unwrap().clone();
-            // let store_users = self.store_users.as_ref().unwrap();
-            // tasks.sort_task_payloads();
 
             let filters = vec![
                 Filters::FilterAssignee, 

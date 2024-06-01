@@ -188,7 +188,39 @@ impl Updatable for TaskPayload {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
-                "UPDATE task SET description='{}' WHERE id={id}", description.unwrap()
+                "UPDATE task SET task_description='{}' WHERE id={id}", description.unwrap()
+            );
+            let _update_task: Vec<Record> = db
+                .database
+                .query(query)
+                .await
+                .unwrap()
+                .take(0)
+                .unwrap();
+        })
+    }
+    
+    fn update_recommendations(&mut self, recommendations: Option<String>, db: Database) {
+        let id: RecordId = self.id.clone().unwrap().0;
+        spawn_local(async move {
+            let query = format!(
+                "UPDATE service_order SET recommendations='{}' WHERE id={id}", recommendations.unwrap()
+            );
+            let _update_task: Vec<Record> = db
+                .database
+                .query(query)
+                .await
+                .unwrap()
+                .take(0)
+                .unwrap();
+        })
+    }
+    
+    fn update_checkin_notes(&mut self, checkin_notes: Option<String>, db: Database) {
+        let id: RecordId = self.id.clone().unwrap().0;
+        spawn_local(async move {
+            let query = format!(
+                "UPDATE service_order SET checkin_notes='{}' WHERE id={id}", checkin_notes.unwrap()
             );
             let _update_task: Vec<Record> = db
                 .database

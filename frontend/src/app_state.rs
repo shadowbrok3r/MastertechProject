@@ -54,7 +54,7 @@ pub struct MtechServerContext{
     // pub create_task_modal: Modal,
     pub modal_handler: ModalHandler,
     pub modal_type: Option<ModalType>,
-
+    pub ticket_map: HashMap<String, TicketPayload>,
     /// Terminal setup for console tab
     #[serde(skip)]
     pub terminal: Terminal<RataguiBackend>,
@@ -94,31 +94,24 @@ pub struct MtechServerContext{
 
     /// Receives task data over crossbeam channel
     #[serde(skip)]
-    pub tasks_rx: Receiver<(Action, TaskPayload)>,
-    #[serde(skip)]
-    pub my_tasks_rx: Receiver<Vec<TaskPayload>>,
-    #[serde(skip)]
-    pub store_tasks_rx: Receiver<Vec<TaskPayload>>,
-    #[serde(skip)]
-    pub completed_tasks_rx: Receiver<Vec<TaskPayload>>,
-    #[serde(skip)]
-    pub store_users_rx: Receiver<Vec<User>>,
-    #[serde(skip)]
-    pub ticket_data_rx: Receiver<Option<Value>>,
-
-    /// Sends task data over crossbeam channel
-    #[serde(skip)]
     pub tasks_tx: Sender<(Action, TaskPayload)>,
+    #[serde(skip)]
+    pub tasks_rx: Receiver<(Action, TaskPayload)>,
+
     #[serde(skip)]
     pub my_tasks_tx: Sender<Vec<TaskPayload>>,
     #[serde(skip)]
-    pub store_tasks_tx: Sender<Vec<TaskPayload>>,
-    #[serde(skip)]
-    pub completed_tasks_tx: Sender<Vec<TaskPayload>>,
+    pub my_tasks_rx: Receiver<Vec<TaskPayload>>,
+
     #[serde(skip)]
     pub store_users_tx: Sender<Vec<User>>,
     #[serde(skip)]
+    pub store_users_rx: Receiver<Vec<User>>,
+
+    #[serde(skip)]
     pub ticket_data_tx: Sender<Option<Value>>,
+    #[serde(skip)]
+    pub ticket_data_rx: Receiver<Option<Value>>,
 
     /// Receives Database connection over crossbeam channel
     #[serde(skip)]
@@ -266,12 +259,10 @@ impl NewCC for MtechServer{
             "BoldOblique".into(),
         );
 
-        
         let terminal = Terminal::new(backend).unwrap();
         let tick_rate = Duration::from_millis(30);
         let chart_app = App::new();
         let last_tick = Instant::now();
-
 
         let (db_tx, db_rx) = channel::unbounded();
         let (my_tasks_tx, my_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
@@ -326,6 +317,7 @@ impl NewCC for MtechServer{
             task_layouts: HashMap::new(),
             modal_handler,
             modal_type: None,
+            ticket_map: HashMap::new(),
             terminal,
             chart_app,
             tick_rate,
@@ -352,10 +344,6 @@ impl NewCC for MtechServer{
             tasks_rx,
             my_tasks_tx, 
             my_tasks_rx,
-            store_tasks_tx, 
-            store_tasks_rx,
-            completed_tasks_tx, 
-            completed_tasks_rx,
             ticket_data_tx,
             ticket_data_rx,
 
@@ -406,26 +394,36 @@ impl MtechServerContext{
         let task_opt = if let Some(ModalType::TaskModal(ref id)) = modal_type{
             self.find_task_by_id(id).cloned()
         } else { None };
-
-        self.modal_handler.ui(
-            ctx, 
-            || Modal::new("Create Task").default_height(800.0).min_width(800.0),
-            move |ui, _stay_open|
-        {
-            if let Some(mut modal_type) = modal_type {
-                match modal_type {
-                    ModalType::CreateTaskModal => modal_type.create_task_modal(ui),
-                    ModalType::TaskModal(_) => {
-                        if let Some(mut task) = task_opt {
+        
+        let ticket = if let Some(ModalType::TaskModal(ref id)) = modal_type{
+            self.ticket_map.get(id)
+        } else { None };
+        
+        if let Some(mut modal_type) = modal_type {
+            match modal_type {
+                ModalType::CreateTaskModal => {
+                    self.modal_handler.ui(
+                        ctx, 
+                        || Modal::new("Create Task").default_height(800.0).min_width(700.0).full_span_content(true),
+                        move |ui, _stay_open| modal_type.create_task_modal(ui) );
+                },
+                ModalType::TaskModal(ref id) => {
+                    if let Some(ticket) = ticket{
+                        if let Some(task) = task_opt {
                             if let Some(db) = db{
-                                modal_type.task_modal(ui, &mut task, db);
+                                
+                                self.modal_handler.ui(
+                                    ctx, 
+                                    || Modal::new("Create Task").default_height(800.0).min_width(700.0).full_span_content(true),
+                                    move |ui, _stay_open| modal_type.task_modal(ui, db, &task, ticket));
                             }
                         }
-                    },
-                    _ => {},
-                }
+                    }
+                },
+                _ => {},
             }
-        });
+        }
+        
         
     }
 
