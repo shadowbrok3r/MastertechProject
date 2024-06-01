@@ -71,10 +71,7 @@ impl eframe::App for MtechServer {
 
                     if let Some(usr) = self.context.current_user.as_ref(){
                         get_tasks(db.clone(), my_tasks_tx);
-                        // get_my_tasks(db.clone(), my_tasks_tx, usr.id.clone());
-                        // get_store_tasks(db.clone(), store_tasks_tx, Store::RIV);
-                        // get_completed_tasks(db.clone(), completed_tasks_tx, Store::RIV);
-                        get_store_users(db.clone(), store_users_tx, Store::RIV);
+                        get_store_users(db.clone(), store_users_tx, usr.store);
                         listen_tasks(db.clone(), tasks_tx);
                         self.state = AppState::Authenticated;
                     }

@@ -14,7 +14,6 @@ pub mod modals;
 pub mod create_task;
 pub mod column_layout;
 pub mod task_layout;
-pub mod modal_handler;
 
 #[derive(Clone, Serialize)]
 pub enum Filters{
