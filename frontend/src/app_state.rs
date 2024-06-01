@@ -15,7 +15,7 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{TaskPayload, TicketData, TicketPayload, User}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{modal_handler::{Modal, ModalHandler}, modals::ModalType, task_layout::TaskLayout, Filters}, Task}
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{modals::{ModalType, Modal, ModalHandler}, task_layout::TaskLayout, Filters}, Task}
 };
 
 #[derive(Serialize)]
@@ -414,7 +414,7 @@ impl MtechServerContext{
                                 
                                 self.modal_handler.ui(
                                     ctx, 
-                                    || Modal::new("Create Task").default_height(800.0).min_width(700.0).full_span_content(true),
+                                    || Modal::new("Ticket Information").default_height(800.0).min_width(700.0).full_span_content(true),
                                     move |ui, _stay_open| modal_type.task_modal(ui, db, &task, ticket));
                             }
                         }
