@@ -29,6 +29,10 @@ futures = "0.3.30"
 egui-toast = "0.13.0"
 wasm-cookies = { version= "0.2.1" }
 serde_json = "1.0.117"
+egui_form = "0.1.1"
+egui_animation = "0.4.0"
+egui_infinite_scroll = "0.3.0"
+egui_inbox = "0.4.1"
 
 
 # native:

@@ -3,8 +3,6 @@ use egui::Ui;
 
 impl MtechServerContext{
     pub fn completed_tasks(&mut self, ui: &mut Ui){ 
-        ui.horizontal(|ui|{ui.add_space(8.0);});
-
         if let Some(tasks) = &self.my_tasks{
             self.completed_tasks_opened = true;
             let mut col_names = Vec::new();

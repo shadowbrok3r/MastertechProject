@@ -3,8 +3,6 @@ use egui::Ui;
 
 impl MtechServerContext{
     pub fn my_tasks(&mut self, ui: &mut Ui){ 
-        ui.horizontal(|ui|{ui.add_space(8.0);});
-
         if let Some(tasks) = &self.my_tasks{
             self.my_tasks_opened = true;
 
@@ -13,7 +11,7 @@ impl MtechServerContext{
             
 
             let filters = vec![
-                Filters::FilterStatus
+                Filters::FilterStatus,
             ];
 
             self.initialize_task_layout("my_tasks", tasks.to_owned(), col_names, database, filters); // , self.ticket_data_tx.clone()

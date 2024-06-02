@@ -1,5 +1,5 @@
 // #[war(unused_imports)]
-use app_state::{check_authentication, AppState, MtechServer};
+use app_state::{check_authentication, AppState, MainPages, MtechServer};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
@@ -24,9 +24,10 @@ impl eframe::App for MtechServer {
         // Always checking authentication.
         match self.state{
             //if auth'd, user shall be allowed
-            app_state::AppState::Authenticated => self.main_page(ctx),
+            AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
             // if no auth, appstate will be login_page
-            app_state::AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
+            AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
+            AppState::Authenticated(_) => {},
         }
 
         // i have no god damn idea what this is really doing. it was a 
@@ -79,7 +80,7 @@ impl eframe::App for MtechServer {
                         get_tasks(db.clone(), my_tasks_tx);
                         get_store_users(db.clone(), store_users_tx, usr.store);
                         listen_tasks(db.clone(), tasks_tx);
-                        self.state = AppState::Authenticated;
+                        self.state = AppState::Authenticated(MainPages::Tasks);
                     }
                 },
                 Err(e) => {
@@ -217,6 +218,9 @@ fn set_style() -> Arc<Style>{
     custom_style.interaction.selectable_labels = false;
     custom_style.explanation_tooltips = false;
     custom_style.url_in_tooltip = false;
+    custom_style.interaction.interact_radius = 15.0;
+    custom_style.interaction.resize_grab_radius_side = 15.0;
+    custom_style.interaction.resize_grab_radius_corner = 18.0;
     let arc_style = Arc::new(custom_style);
     arc_style
 }

@@ -34,15 +34,16 @@ impl ModalTypes for CreateTaskModal{
     fn modal_state(&mut self) -> &mut ModalState {
         &mut self.state
     }
-    fn title(&self) -> String {
-        "Task Details".to_string()
+    fn title(mut self, title: String) -> Self {
+        self.modal_state().title = Some(title);
+        self
     }
 }
 
 
 impl DisplayModal for CreateTaskModal {
-    fn display(&self, ui: &mut Ui) -> Option<ModalAction>{
-        let mut response: Option<ModalAction> = None;
+    fn display(&self, ui: &mut Ui, _current_state: ModalAction) -> Option<ModalAction>{
+        let mut _response: Option<ModalAction> = None;
         StripBuilder::new(ui)
             .cell_layout(Layout::top_down_justified(Align::Center))
             .size(Size::exact(30.0))
@@ -81,7 +82,4 @@ impl DisplayModal for CreateTaskModal {
         None
     }
 
-    fn set_state(mut self, action: ModalAction){
-
-    }
 }

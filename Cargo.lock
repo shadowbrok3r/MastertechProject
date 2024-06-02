@@ -1157,6 +1157,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "concat-idents"
+version = "1.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f76990911f2267d837d9d0ad060aa63aaad170af40904b29461734c339030d4d"
+dependencies = [
+ "quote",
+ "syn 2.0.65",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1647,6 +1657,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_animation"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca4808a8068243c03715f0723d1050cbf5142fd37a5c9954555e5c46e6528384"
+dependencies = [
+ "egui",
+ "hello_egui_utils",
+ "simple-easing",
+]
+
+[[package]]
 name = "egui_dock"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1672,6 +1693,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_form"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfcf9a6e38d6b06b9203315b9c2f9d182b28e574cb899948cbf07bc5c94c60f6"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui_glow"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1684,6 +1714,39 @@ dependencies = [
  "memoffset 0.9.1",
  "wasm-bindgen",
  "web-sys",
+]
+
+[[package]]
+name = "egui_inbox"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b1938e7c5a0b8ef5194298fd35fcd89b3a7cec4f83bb4c1599b0a688e20a4ba"
+dependencies = [
+ "egui",
+ "parking_lot",
+]
+
+[[package]]
+name = "egui_infinite_scroll"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e12c5f3716e8457bbfbd831a64e10dd2cc00f6708793850fb836f8d2f11be690"
+dependencies = [
+ "egui",
+ "egui_inbox",
+ "egui_virtual_list",
+ "hello_egui_utils",
+ "web-time 1.1.0",
+]
+
+[[package]]
+name = "egui_virtual_list"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "142d3a0ad2ae4743e323ad1cb384bffd45abc36dac6f9833f0980c2b4d76af1a"
+dependencies = [
+ "egui",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -2527,6 +2590,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8"
 
 [[package]]
+name = "hello_egui_utils"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "859b60deb25f062a31770a730c1a46fd7051a9dbfe632eec11d4fce2693bb3c4"
+dependencies = [
+ "concat-idents",
+ "egui",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3168,8 +3241,12 @@ dependencies = [
  "egui",
  "egui-aesthetix",
  "egui-toast",
+ "egui_animation",
  "egui_dock",
  "egui_extras",
+ "egui_form",
+ "egui_inbox",
+ "egui_infinite_scroll",
  "env_logger 0.11.3",
  "futures",
  "gloo-worker",
@@ -4752,6 +4829,12 @@ name = "simdutf8"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27f6278552951f1f2b8cf9da965d10969b2efdea95a6ec47987ab46edfe263a"
+
+[[package]]
+name = "simple-easing"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "832ddd7df0d98d6fd93b973c330b7c8e0742d5cb8f1afc7dea89dba4d2531aa1"
 
 [[package]]
 name = "simple_asn1"

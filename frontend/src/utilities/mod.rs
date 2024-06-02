@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use displays::{create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, task_modal::{ModalAction, TaskModal}, Filters};
-use egui::{vec2, Align, Align2, Color32, Context, Frame, Id, LayerId, Layout, NumExt, Order, Painter, Rect, Response, Rounding, Shape, Ui, Window};
+use egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Ui, Widget, Window};
 use database::{schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,7 @@ pub enum TaskUiActions{
 pub enum ModalType{
     CreateTaskModal(CreateTaskModal),
     TaskModal(TaskModal),
+    ChatModal,
     #[default]
     Null,
 }
@@ -102,14 +103,17 @@ pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
 }
 
 pub trait DisplayModal{
-    fn display(&self, ui: &mut Ui) -> Option<ModalAction>;
-    fn set_state(self, action: ModalAction);
+    fn display(&self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>;
+    // fn set_state(self, action: ModalAction);
 }
 
 pub trait ModalTypes: Default{
     fn modal_state(&mut self) -> &mut ModalState;
 
-    fn title(&self) -> String;
+    fn title(mut self, title: String) -> Self where Self: Sized {
+        self.modal_state().title = Some(title);
+        self
+    }
 
     /// Set the minimum width of the modal window.
     fn min_width(mut self, min_width: f32) -> Self where Self: Sized {
@@ -141,22 +145,25 @@ pub trait ModalTypes: Default{
 
     /// Show the modal window.
     /// Typically called by [`ModalHandler::ui`].
-    fn ui<R>(&mut self, ctx: &Context, content_ui: impl FnOnce(&mut Ui, &mut bool) -> R) -> ModalResponse<R> {
+    fn ui<R>(&mut self, ctx: &Context, content_ui: impl FnOnce(&mut Ui, &mut bool, &mut ModalAction) -> R) -> ModalResponse<R> {
         // Implementation for showing the modal
         Self::dim_background(ctx);
 
         let mut open = ctx.input(|i| !i.key_pressed(egui::Key::Escape));
+        // let mut page_state = &;
 
         let screen_height = ctx.screen_rect().height();
+        let screen_width = ctx.screen_rect().width();
         let modal_vertical_margins = (75.0).at_most(screen_height * 0.1);
 
-        let mut window = Window::new(&self.title())
+        let mut window = Window::new(&*self.modal_state().title.as_ref().unwrap())
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(ctx.screen_rect().center_top() + vec2(0.0, modal_vertical_margins))
             .constrain_to(ctx.screen_rect())
             .max_height(screen_height - 2.0 * modal_vertical_margins)
+            .max_width(screen_width - 50.0)
             .collapsible(false)
-            .resizable(true)
+            // .resizable(true)
             .title_bar(false);
 
         if let Some(min_width) = self.modal_state().min_width {
@@ -172,20 +179,21 @@ pub trait ModalTypes: Default{
         }
 
         let response = window.show(ctx, |ui| {
+            
             let item_spacing_y = ui.spacing().item_spacing.y;
             ui.spacing_mut().item_spacing.y = 0.0;
 
             egui::Frame {
-                inner_margin: egui::Margin::symmetric(10.0, 0.0),
+                inner_margin: egui::Margin::symmetric(5.0, 0.0),
                 ..Default::default()
             }
             .show(ui, |ui| {
-                ui.add_space(10.0);
-                Self::title_bar(ui, &self.title(), &mut open);
+                Self::title_bar(ui, &self.modal_state().title.as_ref().unwrap_or(&"Modal".to_string()), &mut open);
                 ui.add_space(item_spacing_y);
 
                 egui::Frame {
                     inner_margin: egui::Margin {
+                        top: 0.0,
                         bottom: 10.0,
                         ..Default::default()
                     },
@@ -193,7 +201,7 @@ pub trait ModalTypes: Default{
                 }
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = item_spacing_y;
-                    content_ui(ui, &mut open)
+                    content_ui(ui, &mut open, &mut self.modal_state().page_state)
                 })
                 .inner
             })
@@ -204,7 +212,12 @@ pub trait ModalTypes: Default{
             .as_ref()
             .and_then(|response| {
                 ctx.input(|i| i.pointer.interact_pos())
-                    .map(|interact_pos| response.response.rect.contains(interact_pos))
+                    .map(|interact_pos| {
+                        let pos_x = interact_pos.x;
+                        let pos_y = interact_pos.y;
+                        let final_pos = Pos2::new(pos_x - 10.0, pos_y - 10.0);
+                        response.response.rect.contains(final_pos)
+                    })
             })
             .unwrap_or(false);
         if !cursor_was_over_window && ctx.input(|i| i.pointer.any_pressed()) {
@@ -214,6 +227,7 @@ pub trait ModalTypes: Default{
         ModalResponse {
             inner: response.and_then(|response| response.inner),
             open,
+            page_state: self.modal_state().page_state.clone()
         }
     }
 
@@ -226,26 +240,37 @@ pub trait ModalTypes: Default{
         painter.add(Shape::rect_filled(
             ctx.screen_rect(),
             Rounding::ZERO,
-            Color32::from_black_alpha(128),
+            Color32::from_black_alpha(210),
         ));
     }
 
     fn title_bar(ui: &mut Ui, title: &str, open: &mut bool) {
-        ui.horizontal(|ui| {
-            ui.strong(title);
+        let t: RichText = RichText::new(title).heading().strong();
+        egui::Frame::default()
+            .fill(Color32::from_rgb(20, 20, 25))
+            .rounding(Rounding{nw: 15.0,ne: 15.0,sw: 0.0,se: 0.0})
+            .inner_margin(Margin::same(7.0))
+            .outer_margin(Margin::same(0.0))
+            .show(ui, |ui| 
+        {
+            ui
+            .with_layout(
+                Layout::top_down(Align::Max), 
+            |ui|{
+                if Button::new(" X ").rounding(Rounding::same(10.0))
+                .fill(Color32::BLACK)
+                    .ui(ui)
+                    .clicked(){
+                        *open = false;
+                    }
+            });
 
-            ui.add_space(16.0);
-
-            let mut ui = ui.child_ui(
-                ui.max_rect(),
-                Layout::right_to_left(Align::Center),
-            );
-            if ui.button("X")
-                .clicked()
-            {
-                *open = false;
-            }
+            ui
+            .with_layout(
+                Layout::top_down(Align::Center), 
+            |ui|ui.heading(t));
         });
+        ui.separator();
     }
 }
 
