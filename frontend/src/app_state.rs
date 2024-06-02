@@ -455,12 +455,15 @@ impl MtechServer{
 pub fn check_authentication(
     db_tx: Sender<anyhow::Result<Database, Error>>
 ) -> Result<(AppState, Option<User>), Error>{
-    let cookie = wasm_cookies::get("jwt");
-    let user_cookie = wasm_cookies::get("user");
-
+    #[cfg(target_arch="wasm32-unknown-unknown")]{
+        let cookie = wasm_cookies::get("jwt");
+        let user_cookie = wasm_cookies::get("user");
+    }
+    
     let mut state = AppState::default();
     let mut current_user = None;
-
+    
+    #[cfg(target_arch="wasm32-unknown-unknown")]
     if let Some(cookie) = cookie{
 
         if let Some(usr) = user_cookie{

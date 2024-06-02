@@ -28,6 +28,7 @@ impl Login{
         spawn_local(async move {
             let database = Database::new(user, pass, None).await;
 
+            #[cfg(target_arch="wasm32-unknown-unknown")]
             match database{
                 Ok(db) => {
                     let cookie_opts = CookieOptions::default();
