@@ -111,24 +111,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-  #       - os: macos-latest
-  #         TARGET: aarch64-apple-darwin
-
-  #       - os: macos-latest
-  #         TARGET: x86_64-apple-darwin
-
-  #       - os: ubuntu-latest
-  #         TARGET: arm-unknown-linux-musleabihf
-
-        # - os: ubuntu-latest
-        #   TARGET: armv7-unknown-linux-musleabihf
-
         - os: ubuntu-latest
-          TARGET: x86_64-unknown-linux-musl
-
-        - os: windows-latest
-          TARGET: x86_64-pc-windows-msvc
-          EXTENSION: .exe
+          TARGET: wasm32-unknown-unknown
+        # - os: windows-latest
+        #   TARGET: x86_64-pc-windows-msvc
+        #   EXTENSION: .exe
 
     steps:
     - name: Building ${{ matrix.TARGET }}
