@@ -3,7 +3,7 @@ use egui::{Button, RichText, ScrollArea, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
 use database::schema::{Priority, Status, TaskPayload, User};
-use crate::utilities::{ColumnLayout, Displayable, FilterTasks, ModalType, Task, TaskUiActions};
+use crate::utilities::{ColumnLayout, Displayable, FilterTasks, ModalType, TaskUiActions};
 use super::create_task_modal::CreateTaskModal;
 use super::task_layout::TaskLayout;
 use super::task_modal::TaskModal;

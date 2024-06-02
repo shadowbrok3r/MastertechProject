@@ -1,4 +1,4 @@
-use std::{cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
+use std::{borrow::BorrowMut, cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
 use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
 use egui::{Align2, Context, Ui, WidgetText};
@@ -13,9 +13,9 @@ use serde_json::Value;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use database::{schema::{TaskPayload, TicketPayload, User}, Database};
+use database::{schema::{TaskPayload, User}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal, Filters}, DisplayModal, ModalType, ModalTypes}};
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{chats::ChatModal, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal, Filters}, DisplayModal, ModalType, ModalTypes}};
 
 #[derive(Serialize)]
 pub struct MtechServer{
@@ -28,8 +28,17 @@ pub struct MtechServer{
 }
 
 #[derive(Default, Serialize, Debug, PartialEq)]
+pub enum MainPages{
+    #[default]
+    Tasks,
+    ChatGpt,
+    Downloads,
+    WebConsole,
+}
+
+#[derive(Default, Serialize, Debug, PartialEq)]
 pub enum AppState{
-    Authenticated,
+    Authenticated(MainPages),
     #[default]
     NoAuth,
 }
@@ -51,8 +60,11 @@ pub struct MtechServerContext{
     pub task_layouts: HashMap<String, TaskLayout>,
     pub task_modal_handler: ModalHandler<TaskModal>,
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
-
-    pub ticket_map: HashMap<String, TicketPayload>,
+    #[serde(skip)]
+    pub chat_modal_handler: ModalHandler<ChatModal>,
+    #[serde(skip)]
+    pub chat_modal: ChatModal,
+    // pub ticket_map: HashMap<String, TicketPayload>,
 
     pub current_modal: ModalType,
 
@@ -304,6 +316,7 @@ impl NewCC for MtechServer{
 
         let task_modal_handler: ModalHandler<TaskModal> = ModalHandler::default();
         let create_task_modal_handler: ModalHandler<CreateTaskModal> = ModalHandler::default();
+        let chat_modal_handler: ModalHandler<ChatModal> = ModalHandler::default();
 
         let context = MtechServerContext{
             open_tabs,
@@ -317,8 +330,9 @@ impl NewCC for MtechServer{
             task_modal_handler,
             create_task_modal_handler,
             current_modal: ModalType::Null,
+            chat_modal_handler,
+            chat_modal: ChatModal::new(),
 
-            ticket_map: HashMap::new(),
             terminal,
             chart_app,
             tick_rate,
@@ -391,33 +405,35 @@ impl MtechServerContext{
     pub fn handle_modals(&mut self, ctx: &Context){
         match &self.current_modal {
             ModalType::TaskModal(task_modal) => {
-                let response = self.task_modal_handler.ui(
+                self.task_modal_handler.ui(
                     ctx, 
-                    |modal_action|task_modal.clone(),
-                    move |ui, _stay_open| {
-                        let action = task_modal.display(ui);
+                    ||TaskModal::default().title(task_modal.task.as_ref().unwrap().task_name.clone()),
+                    move |ui, _stay_open, page_state| {
+                        let action = task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action{
-                            *modal_action = action;
+                            *page_state = action;
                         }
                     });
-
-                if let Some(response) = response{
-                    // if let Some(action) = response{
-                    //     task_modal.set_state(action);
-                    // }
-                }
             },
             ModalType::CreateTaskModal(create_task_modal) => {
                 let response = self.create_task_modal_handler.ui(
                     ctx, 
-                    || create_task_modal.clone(),
-                    move |ui, _stay_open| create_task_modal.display(ui));
+                    || CreateTaskModal::default(),
+                    move |ui, _stay_open, page_state| create_task_modal.display(ui, page_state.to_owned()));
 
                 if let Some(response) = response{
-                    if let Some(action) = response{
-                        create_task_modal.set_state(action);
+                    if let Some(_action) = response{
+                        // create_task_modal.set_state(action);
                     }
                 }
+            }
+            ModalType::ChatModal => {
+                let chat_modal = self.chat_modal.borrow_mut();
+                self.chat_modal_handler.ui(
+                    ctx, 
+                    || ChatModal::new(),
+                    move |ui, _stay_open, _page_state| chat_modal.ui(ui));
+
             }
             _ => {},
         }
@@ -429,7 +445,8 @@ impl MtechServer{
     pub fn login_mut(&mut self) -> Option<&mut Login> {
         match self.state{
             AppState::NoAuth => Some(&mut self.login),
-            AppState::Authenticated => None
+            AppState::Authenticated(MainPages::Tasks) => None,
+            _ => None
         }
     }
 
@@ -466,7 +483,7 @@ pub fn check_authentication(
                     Err(err) => info!("Error sending db connection: {err:?}"),
                 }
             });
-            state = AppState::Authenticated;
+            state = AppState::Authenticated(MainPages::Tasks);
         }
     }
     info!("State // user   {:?} // {:?}", state, current_user);

@@ -1,8 +1,7 @@
 use eframe::egui::menu;
 use egui::{Button, CentralPanel, Color32, Frame, Layout, RichText, TopBottomPanel};
 use egui_dock::{DockArea, Style as DockStyle};
-
-use crate::app_state::MtechServer;
+use crate::{app_state::MtechServer, utilities::ModalType};
 
 impl MtechServer{
     pub fn main_page(&mut self, ctx: &egui::Context){
@@ -12,15 +11,23 @@ impl MtechServer{
         {
             menu::bar(ui, |ui| {
                 if let Some(usr) = &self.context.current_user{
-                    ui.add(Button::new("MasterTech Server"));
+                    if ui.add(Button::new("MasterTech Server")).clicked(){
+
+                    }
                     ui.add_space(50.0);
                     let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
                     ui.colored_label(Color32::from_additive_luminance(255), welcome_msg);
                     ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
-                        ui.add(Button::new("Store Tasks").fill(Color32::from_rgb_additive(255, 12, 180)));
-                        ui.add(Button::new("Web Console"));
-                        ui.add(Button::new("Downloads"));
-                        ui.add(Button::new("ChatGPT"));
+                        if ui.add(Button::new("Web Console")).clicked(){
+
+                        }
+                        if ui.add(Button::new("Downloads")).clicked(){
+
+                        }
+                        if ui.add(Button::new("ChatGPT")).clicked(){
+                            self.context.current_modal = ModalType::ChatModal;
+                            self.context.chat_modal_handler.open();
+                        }
                     });
                 }else{
                     ui.add(Button::new("Login"));

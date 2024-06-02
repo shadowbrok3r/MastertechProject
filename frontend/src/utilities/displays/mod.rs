@@ -11,6 +11,7 @@ use crate::utilities::{Displayable, Interaction};
 use super::{ColumnLayout, Sortable, TaskUiActions};
 
 pub mod modals;
+pub mod chats;
 pub mod create_task_modal;
 pub mod task_modal;
 pub mod column_layout;

@@ -75,6 +75,25 @@ pub struct TaskPayload{
     pub dep: Option<String>
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LiveTaskPayload{
+    pub id: Option<TaskId>,
+    pub task_name: String,
+    pub service_ticket: Option<TicketId>,
+    // #[serde(skip)]
+    pub everest_initials: String,
+    pub task_description: Option<String>, 
+    pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
+    pub service_number: Option<i32>,
+    pub due_date: String, // optional because if not provided, set due date to creation date
+    pub priority: Priority,
+    pub task_note: Option<Vec<TaskNoteId>>, // 
+    pub completed: bool,
+    pub status: Status,
+    pub dep: Option<String>
+}
+
+
 // #[derive(Serialize, Deserialize, Debug)]
 // pub struct TicketPayload{
 //     pub service_ticket: TicketData,
