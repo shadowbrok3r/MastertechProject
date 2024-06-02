@@ -20,7 +20,7 @@ impl MtechServerContext{
                 Filters::FilterCompleted
             ];
             
-            self.initialize_task_layout("completed_tasks", tasks.to_owned(), col_names, database, filters, self.ticket_data_tx.clone());
+            self.initialize_task_layout("completed_tasks", tasks.to_owned(), col_names, database, filters); // , self.ticket_data_tx.clone()
 
             if let Some(task_layout) = self.task_layouts.get_mut("completed_tasks"){
                 task_layout.display(

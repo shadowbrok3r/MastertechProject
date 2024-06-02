@@ -11,7 +11,7 @@ use surrealdb::{
 
 use self::schema::Record;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Database{
     pub database: Surreal<WsClient>,
     pub jwt: Option<Jwt>,

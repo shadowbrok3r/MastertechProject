@@ -11,7 +11,8 @@ use crate::utilities::{Displayable, Interaction};
 use super::{ColumnLayout, Sortable, TaskUiActions};
 
 pub mod modals;
-pub mod create_task;
+pub mod create_task_modal;
+pub mod task_modal;
 pub mod column_layout;
 pub mod task_layout;
 
@@ -23,8 +24,6 @@ pub enum Filters{
     FilterPriority,
     // FilterDate
 }
-
-
 
 impl Displayable for TaskPayload{
     fn display_task_cards(
@@ -84,10 +83,7 @@ impl Displayable for TaskPayload{
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
                                 if Button::new("⮫").small().ui(ui).clicked(){
-                                    // self.create_task_modal = true;
-                                    res = Some(TaskUiActions::OpenTaskModal(self.id.as_ref().unwrap().0.id.to_string()))
-                                    // self.task_modal(ui, database.clone());
-                                    
+                                    res = Some(TaskUiActions::OpenTaskModal(self.to_owned()))
                                 }
                             });
                         });
@@ -166,7 +162,6 @@ impl Displayable for TaskPayload{
         res
     }
 }
-
 
 fn setup_task_styling(ui: &mut Ui){
     ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;

@@ -1,7 +1,7 @@
 use crossbeam::channel::Sender;
-use displays::Filters;
-use egui::{Frame, Grid, Id, Response, RichText, Ui};
-use database::{schema::{Priority, Status, Store, TaskId, TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketId, TicketPayload, User, UserId}, Database};
+use displays::{create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, task_modal::{ModalAction, TaskModal}, Filters};
+use egui::{vec2, Align, Align2, Color32, Context, Frame, Id, LayerId, Layout, NumExt, Order, Painter, Rect, Response, Rounding, Shape, Ui, Window};
+use database::{schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -21,58 +21,20 @@ pub mod sortable;
 
 #[derive(Debug)]
 pub enum TaskUiActions{
-    OpenTaskModal(String)
+    OpenTaskModal(TaskPayload)
+}
+
+// pub type Xy = 
+#[derive(Serialize, Default, Clone, Debug)]
+pub enum ModalType{
+    CreateTaskModal(CreateTaskModal),
+    TaskModal(TaskModal),
+    #[default]
+    Null,
 }
 // This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
 pub trait Displayable{ 
     fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<TaskUiActions>;
-    // fn task_headers(&mut self,  s: Strip, column_names: Vec<String>, header_frame: Frame);
-    fn task_modal<ID>(&mut self, ui: &mut Ui, database: Database) //, data: &[T] <T: Aggregatable<ID>, ID: Debug>
-    where
-        Self: Aggregatable<ID> + Task,
-        ID: Debug,
-    {
-
-
-        
-        Grid::new(Id::new(format!("Grid ")))// self.id.as_ref().unwrap().0.id.clone()
-            .num_columns(4)
-            .show(ui, |ui| 
-        {
-            // for data in data{
-                // ui.label(RichText::new("Rep"));
-                // ui.label(RichText::new(format!("{:?}", self.checkin_rep)));
-                // ui.label(RichText::new("Split Rep"));
-                // ui.label(RichText::new(format!("{:?}", self.sales_rep)));
-                // ui.label(RichText::new("Phone #"));
-                // ui.label(RichText::new(format!("{:?}", self)));
-                // ui.label(RichText::new("Phone #2"));
-                // ui.label(RichText::new(format!("{:?}", self.rep)));
-                // ui.label(RichText::new("Email"));
-                // ui.label(RichText::new(format!("{:?}", self.rep)));
-                ui.label(RichText::new(format!("ID: {:?}", self.get_id())));
-                ui.label(RichText::new(format!("Name: {}", self.get_task_name())));
-                // ui.label(RichText::new(format!("Due Date: {}", self.get_due_date())));
-                ui.label(RichText::new(format!("Priority: {:?}", self.get_priority())));
-                ui.end_row();
-                ui.label(RichText::new(format!("get_task_name: {:?}", self.get_task_name())));
-                // ui.label(RichText::new(format!("get_service_ticket: {:?}", self.get_service_ticket())));
-                ui.label(RichText::new(format!("get_everest_initials: {:?}", self.get_everest_initials())));
-                ui.label(RichText::new(format!("get_task_description: {:?}", self.get_task_description())));
-                ui.end_row();
-                ui.label(RichText::new(format!("get_assignee: {:?}", self.get_assignee())));
-                ui.label(RichText::new(format!("get_service_number: {:?}", self.get_service_number())));
-                ui.label(RichText::new(format!("get_due_date: {:?}", self.get_due_date())));
-                ui.label(RichText::new(format!("get_priority: {:?}", self.get_priority())));
-                ui.end_row();
-                ui.label(RichText::new(format!("get_task_note: {:?}", self.get_task_note())));
-                ui.label(RichText::new(format!("is_completed: {:?}", self.is_completed())));
-                ui.label(RichText::new(format!("get_status: {:?}", self.get_status())));
-                ui.label(RichText::new(format!("get_dep: {:?}", self.get_dep())));
-            // }
-        });
-
-    }
 }
 
 // This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
@@ -139,6 +101,153 @@ pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
     // fn delete_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
 }
 
+pub trait DisplayModal{
+    fn display(&self, ui: &mut Ui) -> Option<ModalAction>;
+    fn set_state(self, action: ModalAction);
+}
+
+pub trait ModalTypes: Default{
+    fn modal_state(&mut self) -> &mut ModalState;
+
+    fn title(&self) -> String;
+
+    /// Set the minimum width of the modal window.
+    fn min_width(mut self, min_width: f32) -> Self where Self: Sized {
+        self.modal_state().min_width = Some(min_width);
+        self
+    }
+
+    /// Set the minimum height of the modal window.
+    fn min_height(mut self, min_height: f32) -> Self where Self: Sized {
+        self.modal_state().min_height = Some(min_height);
+        self
+    }
+
+    /// Set the default height of the modal window.
+    fn default_height(mut self, default_height: f32) -> Self where Self: Sized {
+        self.modal_state().default_height = Some(default_height);
+        self
+    }
+
+    /// Configure the content area of the modal for full span highlighting.
+    /// This includes:
+    /// - setting the vertical spacing to 0.0
+    /// - removing any padding at the bottom of the area
+    /// In this mode, the user code is responsible for adding spacing between items.
+    fn full_span_content(mut self, full_span_content: bool) -> Self where Self: Sized {
+        self.modal_state().full_span_content = full_span_content;
+        self
+    }
+
+    /// Show the modal window.
+    /// Typically called by [`ModalHandler::ui`].
+    fn ui<R>(&mut self, ctx: &Context, content_ui: impl FnOnce(&mut Ui, &mut bool) -> R) -> ModalResponse<R> {
+        // Implementation for showing the modal
+        Self::dim_background(ctx);
+
+        let mut open = ctx.input(|i| !i.key_pressed(egui::Key::Escape));
+
+        let screen_height = ctx.screen_rect().height();
+        let modal_vertical_margins = (75.0).at_most(screen_height * 0.1);
+
+        let mut window = Window::new(&self.title())
+            .pivot(Align2::CENTER_TOP)
+            .fixed_pos(ctx.screen_rect().center_top() + vec2(0.0, modal_vertical_margins))
+            .constrain_to(ctx.screen_rect())
+            .max_height(screen_height - 2.0 * modal_vertical_margins)
+            .collapsible(false)
+            .resizable(true)
+            .title_bar(false);
+
+        if let Some(min_width) = self.modal_state().min_width {
+            window = window.min_width(min_width);
+        }
+
+        if let Some(min_height) = self.modal_state().min_height {
+            window = window.min_height(min_height);
+        }
+
+        if let Some(default_height) = self.modal_state().default_height {
+            window = window.default_height(default_height);
+        }
+
+        let response = window.show(ctx, |ui| {
+            let item_spacing_y = ui.spacing().item_spacing.y;
+            ui.spacing_mut().item_spacing.y = 0.0;
+
+            egui::Frame {
+                inner_margin: egui::Margin::symmetric(10.0, 0.0),
+                ..Default::default()
+            }
+            .show(ui, |ui| {
+                ui.add_space(10.0);
+                Self::title_bar(ui, &self.title(), &mut open);
+                ui.add_space(item_spacing_y);
+
+                egui::Frame {
+                    inner_margin: egui::Margin {
+                        bottom: 10.0,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = item_spacing_y;
+                    content_ui(ui, &mut open)
+                })
+                .inner
+            })
+            .inner
+        });
+
+        let cursor_was_over_window = response
+            .as_ref()
+            .and_then(|response| {
+                ctx.input(|i| i.pointer.interact_pos())
+                    .map(|interact_pos| response.response.rect.contains(interact_pos))
+            })
+            .unwrap_or(false);
+        if !cursor_was_over_window && ctx.input(|i| i.pointer.any_pressed()) {
+            open = false;
+        }
+
+        ModalResponse {
+            inner: response.and_then(|response| response.inner),
+            open,
+        }
+    }
+
+    fn dim_background(ctx: &Context) {
+        let painter = Painter::new(
+            ctx.clone(),
+            LayerId::new(Order::PanelResizeLine, Id::new("DimLayer")),
+            Rect::EVERYTHING,
+        );
+        painter.add(Shape::rect_filled(
+            ctx.screen_rect(),
+            Rounding::ZERO,
+            Color32::from_black_alpha(128),
+        ));
+    }
+
+    fn title_bar(ui: &mut Ui, title: &str, open: &mut bool) {
+        ui.horizontal(|ui| {
+            ui.strong(title);
+
+            ui.add_space(16.0);
+
+            let mut ui = ui.child_ui(
+                ui.max_rect(),
+                Layout::right_to_left(Align::Center),
+            );
+            if ui.button("X")
+                .clicked()
+            {
+                *open = false;
+            }
+        });
+    }
+}
 
 pub trait Aggregatable<ID>{
     fn get_id(&self) -> Option<ID>;

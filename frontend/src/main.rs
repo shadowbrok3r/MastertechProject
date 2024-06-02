@@ -1,11 +1,9 @@
 // #[war(unused_imports)]
 use app_state::{check_authentication, AppState, MtechServer};
-use database::schema::{ComputerData, CustomerData, Store, TaskPayload, TicketData, TicketPayload};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
-use serde_json::{from_value, Value};
-use utilities::{displays::modals::ModalType, get_other::get_store_users, get_tasks::{get_completed_tasks, get_my_tasks, get_store_tasks, get_tasks}, handle_live_data::{handle_live_data, listen_tasks}, Task};
+use utilities::{ModalType, get_other::get_store_users, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}};
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{FontId, Style, Vec2};
@@ -22,6 +20,14 @@ impl eframe::App for MtechServer {
         // most important part of the whole app.. setting up our styling
         let arc_style = set_style();
         ctx.set_style(arc_style);
+
+        // Always checking authentication.
+        match self.state{
+            //if auth'd, user shall be allowed
+            app_state::AppState::Authenticated => self.main_page(ctx),
+            // if no auth, appstate will be login_page
+            app_state::AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
+        }
 
         // i have no god damn idea what this is really doing. it was a 
         // wasm example for using web workers.. i dont even know if its required???
@@ -103,33 +109,31 @@ impl eframe::App for MtechServer {
             self.context.store_users = Some(users);
         }
 
-        if let Ok(ticket_data) = self.context.ticket_data_rx.try_recv(){
-            for task_layout in self.context.task_layouts.values_mut(){
-                let open = &mut task_layout.show_modal;
-                
-                match &task_layout.modal{
-                    ModalType::CreateTaskModal => {
+        if self.context.task_layouts.values().all(|task_layout| task_layout.show_modal){
+
+            for task_layout in &mut self.context.task_layouts{
+                match task_layout.1.modal{
+                    ModalType::CreateTaskModal(_) => {
+                        let open = &mut task_layout.1.show_modal;
+                        self.context.current_modal = task_layout.1.modal.clone();
                         if *open{
-                            self.context.modal_handler.open();
+                            self.context.create_task_modal_handler.open();
                             *open = false;
                         }
-                        self.context.modal_type = Some(ModalType::CreateTaskModal);
                     },
-                    ModalType::TaskModal(id) => {
+                    ModalType::TaskModal(_) => {
+                        let open = &mut task_layout.1.show_modal;
+                        self.context.current_modal = task_layout.1.modal.clone();
                         if *open{
-                            self.context.modal_handler.open();
+                            self.context.task_modal_handler.open();
                             *open = false;
                         }
-                        self.context.modal_type = Some(ModalType::TaskModal(id.to_owned()));
-                        if let Some(ref ticket) = ticket_data{
-                            let ticket = parse_ticket_payload(ticket);
-                            self.context.ticket_map.insert(id.to_owned(), ticket.unwrap());
-                        }
                     },
-                    ModalType::Null => {}
+                    _ => (),
                 }
             }
         }
+        
 
         while let Ok(ref data) = self.context.tasks_rx.try_recv(){
             for task_layout in self.context.task_layouts.values_mut(){
@@ -140,14 +144,6 @@ impl eframe::App for MtechServer {
         self.context.handle_modals(ctx);
 
         self.context.toasts.show(ctx);
-
-        // Always checking authentication.
-        match self.state{
-            //if auth'd, user shall be allowed
-            app_state::AppState::Authenticated => self.main_page(ctx),
-            // if no auth, appstate will be login_page
-            app_state::AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
-        }
     }
 
     /// Called by the frame work to save state before shutdown.
@@ -156,21 +152,13 @@ impl eframe::App for MtechServer {
     }
 }
 
-fn parse_ticket_payload(json_data: &Value) -> anyhow::Result<TicketPayload, anyhow::Error> {
+// fn parse_ticket_payload(json_data: &Value) -> anyhow::Result<TicketPayload, anyhow::Error> {
     
-    // Extract the main service ticket part
-    let service_ticket = json_data.get("service_ticket").unwrap(); // : TicketData
-    let ticket_payload: TicketPayload = from_value(service_ticket.clone())?;
-    Ok(ticket_payload)
-}
-
-fn parse_task_payload(json_data: &Value) -> anyhow::Result<TaskPayload, anyhow::Error> {
-    
-    // Extract the main service ticket part
-    let task_data = json_data.get("task").unwrap(); // : TicketData
-    let task_payload: TaskPayload = from_value(task_data.clone())?;
-    Ok(task_payload)
-}
+//     // Extract the main service ticket part
+//     let service_ticket = json_data.get("service_ticket").unwrap(); // : TicketData
+//     let ticket_payload: TicketPayload = from_value(service_ticket.clone())?;
+//     Ok(ticket_payload)
+// }
 
 
 // When compiling natively:

@@ -1,14 +1,12 @@
-use crossbeam::channel::Sender;
 use database::Database;
 use egui::{Button, RichText, ScrollArea, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
-use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
-
-use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Task, TaskUiActions};
-
-use super::modals::ModalType;
+use database::schema::{Priority, Status, TaskPayload, User};
+use crate::utilities::{ColumnLayout, Displayable, FilterTasks, ModalType, Task, TaskUiActions};
+use super::create_task_modal::CreateTaskModal;
 use super::task_layout::TaskLayout;
+use super::task_modal::TaskModal;
 use super::Filters;
 
 
@@ -70,6 +68,7 @@ impl ColumnLayout for TaskLayout {
             });
         });
     }
+    
     fn task_columns(
         &mut self,
         mut s: Strip, 
@@ -101,11 +100,13 @@ impl ColumnLayout for TaskLayout {
                                             let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
                                             if let Some(action) = action{
                                                 match action{
-                                                    TaskUiActions::OpenTaskModal(id) => {
+                                                    TaskUiActions::OpenTaskModal(task) => {
                                                         self.show_modal = true;
-                                                        self.modal = ModalType::TaskModal(id);
-                                                        let tx = self.ticket_data_tx.to_owned();
-                                                        task.get_ticket_payload(database.to_owned(), tx);
+                                                        let mut task_modal = TaskModal::default();
+                                                        task_modal.database = Some(database.to_owned());
+                                                        task_modal.task = Some(task);
+                                                        self.modal = ModalType::TaskModal(task_modal);
+                                                        
                                                     },
                                                 }
                                             }
@@ -170,6 +171,7 @@ impl ColumnLayout for TaskLayout {
             }
         }
     }
+    
     fn task_headers(
         &mut self,
         mut s: Strip,
@@ -201,7 +203,7 @@ impl ColumnLayout for TaskLayout {
 
                             if response.clicked(){
                                 self.show_modal = true;
-                                self.modal = ModalType::CreateTaskModal;
+                                self.modal = ModalType::CreateTaskModal(CreateTaskModal::default());
                             }
 
                         });
