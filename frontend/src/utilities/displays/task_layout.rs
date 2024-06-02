@@ -1,12 +1,12 @@
-use crossbeam::channel::Sender;
-use database::{schema::{TicketData, TicketPayload}, Database};
+use database::Database;
 use eframe::egui::Ui;
 use egui::{Color32, Stroke};
 use database::schema::{Priority, TaskPayload, User};
 use serde::Serialize;
-use serde_json::Value;
 
-use super::{modals::ModalType, ColumnLayout, Filters, Sortable};
+use crate::utilities::ModalType;
+
+use super::{ColumnLayout, Filters, Sortable};
 
 
 #[derive(Serialize)]
@@ -19,8 +19,8 @@ pub struct TaskLayout{
     pub database: Database,
     pub modal: ModalType,
     pub show_modal: bool,
-    #[serde(skip)]
-    pub ticket_data_tx: Sender<Option<Value>>
+    // #[serde(skip)]
+    // pub ticket_data_tx: Sender<Option<Value>>
 }
 pub struct SortTasks{
     pub sort_by_status: bool,
@@ -35,7 +35,7 @@ impl TaskLayout {
         filters: Vec<Filters>,
         column_names: Vec<String>,
         database: Database,
-        ticket_data_tx: Sender<Option<Value>>
+        // ticket_data_tx: Sender<Option<Value>>
     ) -> Self {
         Self { 
             tasks,
@@ -45,7 +45,7 @@ impl TaskLayout {
             database,
             show_modal: false,
             modal: ModalType::Null,
-            ticket_data_tx
+            // ticket_data_tx
         }
     }
 

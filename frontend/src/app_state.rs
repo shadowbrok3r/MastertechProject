@@ -13,10 +13,9 @@ use serde_json::Value;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use database::{schema::{TaskPayload, TicketData, TicketPayload, User}, Database};
+use database::{schema::{TaskPayload, TicketPayload, User}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{modals::{Modal, ModalHandler, ModalType, ModalTypes}, task_layout::TaskLayout, Filters}, Task}
-};
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal, Filters}, DisplayModal, ModalType, ModalTypes}};
 
 #[derive(Serialize)]
 pub struct MtechServer{
@@ -35,7 +34,6 @@ pub enum AppState{
     NoAuth,
 }
 
-
 #[derive(Serialize)]
 pub struct MtechServerContext{
     /// collection of all open tabs in ui
@@ -51,10 +49,13 @@ pub struct MtechServerContext{
 
     /// Widgets / Modals / Ui for portions throughout the app
     pub task_layouts: HashMap<String, TaskLayout>,
-    // pub create_task_modal: Modal,
-    pub modal_handler: ModalHandler,
-    pub modal_type: Option<ModalType>,
+    pub task_modal_handler: ModalHandler<TaskModal>,
+    pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
+
     pub ticket_map: HashMap<String, TicketPayload>,
+
+    pub current_modal: ModalType,
+
     /// Terminal setup for console tab
     #[serde(skip)]
     pub terminal: Terminal<RataguiBackend>,
@@ -188,7 +189,6 @@ impl TabViewer for MtechServerContext {
 
 }
 
-
 impl NewCC for MtechServer{
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
@@ -266,8 +266,6 @@ impl NewCC for MtechServer{
 
         let (db_tx, db_rx) = channel::unbounded();
         let (my_tasks_tx, my_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
-        let (store_tasks_tx, store_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
-        let (completed_tasks_tx, completed_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
 
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
@@ -288,24 +286,25 @@ impl NewCC for MtechServer{
 
         let added_nodes = Vec::new();
 
-        let mut state = AppState::default();
-        let mut current_user = None;
+        let mut _state = AppState::default();
+        let mut _current_user = None;
 
         match check_authentication(db_tx.clone()){
             Ok(d) => {
                 info!("Got auth ok");
-                state = d.0;
-                current_user = d.1;
+                _state = d.0;
+                _current_user = d.1;
             },
             Err(e) => {
                 info!("Error with auth: {e:?}");
-                state = AppState::NoAuth;
-                current_user = None;
+                _state = AppState::NoAuth;
+                _current_user = None;
             },
         }
 
-        let modal_handler = ModalHandler::default();
-        
+        let task_modal_handler: ModalHandler<TaskModal> = ModalHandler::default();
+        let create_task_modal_handler: ModalHandler<CreateTaskModal> = ModalHandler::default();
+
         let context = MtechServerContext{
             open_tabs,
             style: None,
@@ -315,8 +314,10 @@ impl NewCC for MtechServer{
 
 
             task_layouts: HashMap::new(),
-            modal_handler,
-            modal_type: None,
+            task_modal_handler,
+            create_task_modal_handler,
+            current_modal: ModalType::Null,
+
             ticket_map: HashMap::new(),
             terminal,
             chart_app,
@@ -328,7 +329,7 @@ impl NewCC for MtechServer{
             db_tx, 
             db_rx,
 
-            current_user,
+            current_user: _current_user,
 
             live_tasks: None,
             my_tasks: None,
@@ -358,7 +359,7 @@ impl NewCC for MtechServer{
             login: Login::default(),
             context,
             tree,
-            state
+            state: _state
         }
     }
 
@@ -373,7 +374,7 @@ impl MtechServerContext{
         col_names: Vec<String>, 
         database: Database,
         filters: Vec<Filters>,
-        ticket_data_tx: Sender<Option<Value>>
+        // ticket_data_tx: Sender<Option<Value>>
     ) {
         if !self.task_layouts.contains_key(page) {
             let task_layout_opts = TaskLayout::new(
@@ -381,7 +382,6 @@ impl MtechServerContext{
                 filters,
                 col_names,
                 database,
-                ticket_data_tx
             );
 
             self.task_layouts.insert(page.to_string(), task_layout_opts);
@@ -389,51 +389,38 @@ impl MtechServerContext{
     }
 
     pub fn handle_modals(&mut self, ctx: &Context){
-        let modal_type = self.modal_type.clone();
-        let db = self.database.clone();
-        let task_opt = if let Some(ModalType::TaskModal(ref id)) = modal_type{
-            self.find_task_by_id(id).cloned()
-        } else { None };
-        
-        let ticket = if let Some(ModalType::TaskModal(ref id)) = modal_type{
-            self.ticket_map.get(id)
-        } else { None };
-        
-        if let Some(mut modal_type) = modal_type {
-            match modal_type {
-                ModalType::CreateTaskModal => {
-                    self.modal_handler.ui(
-                        ctx, 
-                        || Modal::new("Create Task").default_height(800.0).min_width(700.0).full_span_content(true),
-                        move |ui, _stay_open| modal_type.create_task_modal(ui) );
-                },
-                ModalType::TaskModal(ref id) => {
-                    if let Some(ticket) = ticket{
-                        if let Some(task) = task_opt {
-                            if let Some(db) = db{
-                                
-                                self.modal_handler.ui(
-                                    ctx, 
-                                    || Modal::new("Ticket Information").default_height(800.0).min_width(700.0).full_span_content(true),
-                                    move |ui, _stay_open| modal_type.task_modal(ui, db, &task, ticket));
-                            }
+        match &self.current_modal {
+            ModalType::TaskModal(task_modal) => {
+                let response = self.task_modal_handler.ui(
+                    ctx, 
+                    |modal_action|task_modal.clone(),
+                    move |ui, _stay_open| {
+                        let action = task_modal.display(ui);
+                        if let Some(action) = action{
+                            *modal_action = action;
                         }
-                    }
-                },
-                _ => {},
-            }
-        }
-        
-        
-    }
+                    });
 
-    pub fn find_task_by_id(&mut self, id: &String) -> Option<&mut TaskPayload> {
-        for task_layout in self.task_layouts.values_mut() {
-            if let Some(task) = task_layout.tasks.iter_mut().find(|task| task.id.as_ref().map(|t_id| t_id.0.id.to_string()) == Some(id.to_string())) {
-                return Some(task);
+                if let Some(response) = response{
+                    // if let Some(action) = response{
+                    //     task_modal.set_state(action);
+                    // }
+                }
+            },
+            ModalType::CreateTaskModal(create_task_modal) => {
+                let response = self.create_task_modal_handler.ui(
+                    ctx, 
+                    || create_task_modal.clone(),
+                    move |ui, _stay_open| create_task_modal.display(ui));
+
+                if let Some(response) = response{
+                    if let Some(action) = response{
+                        create_task_modal.set_state(action);
+                    }
+                }
             }
+            _ => {},
         }
-        None
     }
 }
 
