@@ -26,7 +26,7 @@ impl ColumnLayout for TaskLayout {
         filter_items: F
     )
     where
-        F: FnMut(&Vec<Filters>, &Option<&User>, &Option<Status>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>,
+        F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>,
     {
         ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
         let header_frame = Frame::default()
@@ -85,10 +85,10 @@ impl ColumnLayout for TaskLayout {
         current_user: &Option<User>,
         database: Database,
         column_frame: Frame,
-        filter_items: F
+        mut filter_items: F
     )
     where
-        F: FnMut(&Vec<Filters>, &Option<&User>, &Option<Status>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>,
+        F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>,
     {
         if let Some(_) = current_user {
             if status{
