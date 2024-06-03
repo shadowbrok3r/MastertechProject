@@ -394,13 +394,12 @@ impl MtechServerContext{
         tasks: Vec<TaskPayload>, 
         col_names: Vec<String>, 
         database: Database,
-        filters: Vec<Filters>,
+        // filters: Vec<Filters>,
         // ticket_data_tx: Sender<Option<Value>>
     ) {
         if !self.task_layouts.contains_key(page) {
             let task_layout_opts = TaskLayout::new(
                 tasks.to_owned(),
-                filters,
                 col_names,
                 database,
             );

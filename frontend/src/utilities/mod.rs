@@ -40,12 +40,33 @@ pub trait Displayable{
 
 // This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
 pub trait ColumnLayout{
-    fn layout_task_cols<F>(&mut self, ui: &mut Ui, column_names: Vec<String>, database: Database,filters: &Vec<Filters>, assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>, filter_items: F)
-    where
-        F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>;
-    fn task_columns<F>(&mut self,s: Strip, filters: &Vec<Filters>,assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>,database: Database,column_frame: Frame, filter_items: F)
-    where
-        F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>;
+    // fn layout_task_cols<F>(&mut self, ui: &mut Ui, column_names: Vec<String>, database: Database,filters: &Vec<Filters>, assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>, filter_items: F)
+    // where
+    //     F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>;
+    // fn task_columns<F>(&mut self,s: Strip, filters: &Vec<Filters>,assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>,database: Database,column_frame: Frame, filter_items: F)
+    // where
+        // F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>;
+    fn layout_task_cols<F>(
+        &mut self,
+        ui: &mut Ui, 
+        column_names: Vec<String>, 
+        database: Database,
+        assignees: &Option<Vec<User>>,
+        // status: bool,
+        // priority: &Option<Priority>,
+        // complete: &Option<bool>,
+        // current_user: &Option<User>,
+        filter_items: F
+    ) where
+        F: FnMut() -> Vec<TaskPayload>;
+    
+    fn task_columns(
+        &mut self,
+        s: Strip, 
+        filtered_tasks: Vec<TaskPayload>,
+        assignees: &Option<Vec<User>>,
+        database: Database,
+    );
     fn filter_items(&mut self,filters: &Vec<Filters>, assignee: &Option<User>,status: &Option<Status>,priority: &Option<Priority>,complete: &Option<bool>) -> Vec<TaskPayload>;
     fn task_headers(&mut self, s: Strip, column_names: Vec<String>, header_frame: Frame);
 }
