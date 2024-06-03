@@ -21,15 +21,6 @@ impl eframe::App for MtechServer {
         let arc_style = set_style();
         ctx.set_style(arc_style);
 
-        // Always checking authentication.
-        match self.state{
-            //if auth'd, user shall be allowed
-            AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
-            // if no auth, appstate will be login_page
-            AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
-            AppState::Authenticated(_) => {},
-        }
-
         // i have no god damn idea what this is really doing. it was a 
         // wasm example for using web workers.. i dont even know if its required???
         let data_update = self.context.data_update.as_mut().unwrap();
@@ -70,7 +61,7 @@ impl eframe::App for MtechServer {
                     
                     // get all of our channel Senders from crossbeam to get user/store/completed tasks, 
                     // as well as store users and live task notifications
-                    let tasks_tx = self.context.tasks_tx.clone();
+                    let live_tasks_tx = self.context.live_tasks_tx.clone();
                     let my_tasks_tx = self.context.my_tasks_tx.clone();
                     // let store_tasks_tx = self.context.store_tasks_tx.clone();
                     // let completed_tasks_tx = self.context.completed_tasks_tx.clone();
@@ -79,7 +70,7 @@ impl eframe::App for MtechServer {
                     if let Some(usr) = self.context.current_user.as_ref(){
                         get_tasks(db.clone(), my_tasks_tx);
                         get_store_users(db.clone(), store_users_tx, usr.store);
-                        listen_tasks(db.clone(), tasks_tx);
+                        listen_tasks(db.clone(), live_tasks_tx);
                         self.state = AppState::Authenticated(MainPages::Tasks);
                     }
                 },
@@ -98,6 +89,14 @@ impl eframe::App for MtechServer {
                     self.state = AppState::NoAuth;
                 }
             }
+        }
+        // Always checking authentication.
+        match self.state{
+            //if auth'd, user shall be allowed
+            AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
+            // if no auth, appstate will be login_page
+            AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
+            AppState::Authenticated(_) => {},
         }
         
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
@@ -136,7 +135,7 @@ impl eframe::App for MtechServer {
         }
         
 
-        while let Ok(ref data) = self.context.tasks_rx.try_recv(){
+        while let Ok(ref data) = self.context.live_tasks_rx.try_recv(){
             for task_layout in self.context.task_layouts.values_mut(){
                 handle_live_data(data.to_owned(), &mut task_layout.tasks).unwrap();
             }

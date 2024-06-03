@@ -16,6 +16,7 @@ impl Updatable for TaskPayload {
                 "UPDATE task SET completed={completed}, status='{:?}' WHERE id={id}",
                 Status::Complete
             );
+            info!("ID: {id:?}");
             let update_task: Vec<Record> = db
                 .database
                 .query(query)
