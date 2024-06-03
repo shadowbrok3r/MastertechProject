@@ -45,7 +45,7 @@ impl TaskLayout {
         }
     }
 
-    pub fn display(
+    pub fn display<F>(
         &mut self,
         ui: &mut Ui,
         store_users: &Option<Vec<User>>,
@@ -53,7 +53,11 @@ impl TaskLayout {
         priority: &Option<Priority>,
         complete: &Option<bool>,
         current_user: &Option<User>,
-    ){
+        filter_items: F
+    )
+        where
+            F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>
+    {
         let col_names = self.column_names.clone();
         let db = self.database.clone();
         let filters = &self.filters.clone();
@@ -70,7 +74,7 @@ impl TaskLayout {
             &priority,
             &complete,
             &current_user,
-            // |x, |
+            filter_items
         );
     }
 }
