@@ -13,7 +13,7 @@ use super::{ColumnLayout, Filters, Sortable};
 pub struct TaskLayout{
     pub tasks: Vec<TaskPayload>,
     pub style_options: TaskStyles,
-    pub filters: Vec<Filters>,
+    // pub filters: Vec<Filters>,
     pub column_names: Vec<String>,
     #[serde(skip)]
     pub database: Database,
@@ -30,14 +30,14 @@ pub struct SortTasks{
 impl TaskLayout { 
     pub fn new(
         tasks: Vec<TaskPayload>, 
-        filters: Vec<Filters>,
+        // filters: Vec<Filters>,
         column_names: Vec<String>,
         database: Database,
     ) -> Self {
         Self { 
             tasks,
             style_options: TaskStyles::default(),
-            filters,
+            // filters,
             column_names,
             database,
             show_modal: false,
@@ -53,29 +53,36 @@ impl TaskLayout {
         priority: &Option<Priority>,
         complete: &Option<bool>,
         current_user: &Option<User>,
-        filter_items: F
+        mut filter_items: F
     )
-        where
-            F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>
+        where F: FnMut() -> Vec<TaskPayload>
     {
         let col_names = self.column_names.clone();
         let db = self.database.clone();
-        let filters = &self.filters.clone();
+        // let filters = &self.filters.clone();
         
         self.tasks.sort_task_payloads();
         self.style_options.set(ui);
+
         self.layout_task_cols(
             ui, 
             col_names, 
             db, 
-            filters, 
             &store_users,
-            status,
-            &priority,
-            &complete,
-            &current_user,
             filter_items
         );
+        // self.layout_task_cols(
+        //     ui, 
+        //     col_names, 
+        //     db, 
+        //     filters, 
+        //     &store_users,
+        //     status,
+        //     &priority,
+        //     &complete,
+        //     &current_user,
+        //     filter_items
+        // );
     }
 }
 

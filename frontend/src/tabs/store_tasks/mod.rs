@@ -1,3 +1,5 @@
+use std::borrow::{Borrow, BorrowMut};
+
 use crate::{app_state::MtechServerContext, utilities::{displays::Filters, FilterTasks}};
 use database::schema::{Priority, TaskPayload, User};
 use egui::Ui;
@@ -5,7 +7,7 @@ use egui::Ui;
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {
 
-        if let Some(tasks) = &self.my_tasks{
+        if let Some(mut tasks) = &self.my_tasks{
             self.store_tasks_opened = true;
             let mut col_names = Vec::new();
 
@@ -15,40 +17,29 @@ impl MtechServerContext{
             }
             let database = self.database.as_ref().unwrap().clone();
 
-            let filters = vec![
-                Filters::FilterAssignee, 
-                Filters::FilterCompleted
-            ];
+            self.initialize_task_layout("store_tasks", tasks.to_owned(), col_names, database); 
 
-
-
-            // self.initialize_task_layout("store_tasks", tasks.to_owned(), col_names, database, filters); // , self.ticket_data_tx.clone()
-
-            if let Some(task_layout) = self.task_layouts.get_mut("store_tasks"){
-
-                let filter_items = 
-                    | filters: &Vec<Filters>, assignee: &Option<&User>, status: &Option<bool>, priority: &Option<Priority>, complete: &Option<bool>
-                    | -> Vec<TaskPayload> 
-                {
-                    let mut filtered_tasks = tasks.clone();
-                    if let Some(users) = &self.store_users{
-                        
-                        for user in users{
-                            filtered_tasks = tasks
-                                .filter_by_assignee(user)
+            if let Some(task_layout) = self.task_layouts.borrow_mut().get_mut("store_tasks") {
+                let store_users = self.store_users.borrow();
+                let mut filtered_tasks: Vec<TaskPayload> = tasks.borrow_mut::<Vec<TaskPayload>>().clone();
+                let filter_items = || -> Vec<TaskPayload> {
+                    
+                    if let Some(users) = &store_users {
+                        for user in users {
+                            filtered_tasks = filtered_tasks
+                                .filter_by_assignee(&user)
                                 .filter_by_completed(true);
                         }
-                        filtered_tasks.clone()
-                    }else{
-                        tasks.clone()
                     }
+                    filtered_tasks.to_owned()
                 };
+
                 task_layout.display(
-                    ui, 
-                    &self.store_users, 
-                    false, 
-                    &None, 
-                    &Some(false), 
+                    ui,
+                    &self.store_users,
+                    false,
+                    &None,
+                    &Some(false),
                     &None,
                     filter_items
                 );
