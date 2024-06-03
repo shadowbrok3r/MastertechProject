@@ -3,6 +3,7 @@ use egui::{Button, RichText, ScrollArea, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
 use database::schema::{Priority, Status, TaskPayload, User};
+use log::info;
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, ModalType, TaskUiActions};
 use super::create_task_modal::CreateTaskModal;
 use super::task_layout::TaskLayout;
@@ -11,7 +12,7 @@ use super::Filters;
 
 
 impl ColumnLayout for TaskLayout {
-    fn layout_task_cols(
+    fn layout_task_cols<F>(
         &mut self,
         ui: &mut egui::Ui, 
         column_names: Vec<String>, 
@@ -22,7 +23,11 @@ impl ColumnLayout for TaskLayout {
         priority: &Option<Priority>,
         complete: &Option<bool>,
         current_user: &Option<User>,
-    ) {
+        filter_items: F
+    )
+    where
+        F: FnMut(&Vec<Filters>, &Option<&User>, &Option<Status>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>,
+    {
         ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
         let header_frame = Frame::default()
             .fill(Color32::from_rgb(20, 20, 25))
@@ -63,13 +68,13 @@ impl ColumnLayout for TaskLayout {
                 {
                     strip
                         .sizes(column_width, column_names.len())
-                        .horizontal( |strip| self.task_columns(strip, filters,&assignees,status,&priority,&complete,current_user, database, column_frame));
+                        .horizontal( |strip| self.task_columns(strip, filters,&assignees,status,&priority,&complete,current_user, database, column_frame, filter_items));
                 });
             });
         });
     }
     
-    fn task_columns(
+    fn task_columns<F>(
         &mut self,
         mut s: Strip, 
         filters: &Vec<Filters>, 
@@ -79,8 +84,12 @@ impl ColumnLayout for TaskLayout {
         complete: &Option<bool>,
         current_user: &Option<User>,
         database: Database,
-        column_frame: Frame
-    ){
+        column_frame: Frame,
+        filter_items: F
+    )
+    where
+        F: FnMut(&Vec<Filters>, &Option<&User>, &Option<Status>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>,
+    {
         if let Some(_) = current_user {
             if status{
                 for status in Status::VALUES{
@@ -118,8 +127,37 @@ impl ColumnLayout for TaskLayout {
                         });
                     });
                 }
+            }else if let Some(users) = assignees {
+                // Multiple users, iterate over each user
+                for user in users.iter() {
+                    let mut user_filters = filters.to_owned();
+                    user_filters.push(Filters::FilterAssignee);
+        
+                    let mut filtered = self.filter_items(
+                        &user_filters,
+                        &Some(user.to_owned()),
+                        &None,
+                        &priority,
+                        &complete,
+                    );
+        
+                    s.cell(|ui| {
+                        column_frame.show(ui, |ui| {
+                            ui.vertical_centered_justified(|ui| {
+                                ScrollArea::vertical()
+                                    .auto_shrink(false)
+                                    .show_viewport(ui, |ui, _| 
+                                {
+                                    for task in filtered.iter_mut() {
+                                        let _action = task.display_task_cards(ui, database.to_owned(), &assignees.as_ref().unwrap());
+                                    }
+                                });
+                            });
+                        });
+                    });
+                }
             }else{
-                let mut filtered = self.filter_items(
+                let mut filtered: Vec<TaskPayload> = self.filter_items(
                     &filters,&None,&None,&priority,&complete
                 );
                 
@@ -138,38 +176,7 @@ impl ColumnLayout for TaskLayout {
                     });
                 });
             }
-        } else if let Some(users) = assignees {
-            // Multiple users, iterate over each user
-            for user in users.iter() {
-                let mut user_filters = filters.to_owned();
-                user_filters.push(Filters::FilterAssignee);
-    
-                let mut filtered = self.filter_items(
-                    &user_filters,
-                    &Some(user.to_owned()),
-                    &None,
-                    &priority,
-                    &complete,
-                );
-    
-                s.cell(|ui| {
-                    column_frame.show(ui, |ui| {
-                        ui.vertical_centered_justified(|ui| {
-                            ScrollArea::vertical()
-                                .auto_shrink(false)
-                                .show_viewport(ui, |ui, _| 
-                            {
-                                for task in filtered.iter_mut() {
-                                    let _action = task.display_task_cards(ui, database.to_owned(), &assignees.as_ref().unwrap());
-                                    
-                                    // info!("Action: {action:?}");
-                                }
-                            });
-                        });
-                    });
-                });
-            }
-        }
+        } 
     }
     
     fn task_headers(
@@ -226,6 +233,7 @@ impl ColumnLayout for TaskLayout {
             match filter {
                 Filters::FilterAssignee => {
                     if let Some(ref user) = assignee {
+                        info!("Filtering by assignee: {:?}", user.everest_initials);
                         acc_tasks.filter_by_assignee(user)
                     } else {
                         acc_tasks

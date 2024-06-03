@@ -19,8 +19,6 @@ pub struct TaskLayout{
     pub database: Database,
     pub modal: ModalType,
     pub show_modal: bool,
-    // #[serde(skip)]
-    // pub ticket_data_tx: Sender<Option<Value>>
 }
 pub struct SortTasks{
     pub sort_by_status: bool,
@@ -35,7 +33,6 @@ impl TaskLayout {
         filters: Vec<Filters>,
         column_names: Vec<String>,
         database: Database,
-        // ticket_data_tx: Sender<Option<Value>>
     ) -> Self {
         Self { 
             tasks,
@@ -45,7 +42,6 @@ impl TaskLayout {
             database,
             show_modal: false,
             modal: ModalType::Null,
-            // ticket_data_tx
         }
     }
 
@@ -58,9 +54,9 @@ impl TaskLayout {
         complete: &Option<bool>,
         current_user: &Option<User>,
     ){
-        let col_names = self.column_names.to_owned();
-        let db = self.database.to_owned();
-        let filters = &self.filters.to_owned();
+        let col_names = self.column_names.clone();
+        let db = self.database.clone();
+        let filters = &self.filters.clone();
         
         self.tasks.sort_task_payloads();
         self.style_options.set(ui);
@@ -73,7 +69,8 @@ impl TaskLayout {
             status,
             &priority,
             &complete,
-            &current_user
+            &current_user,
+            // |x, |
         );
     }
 }

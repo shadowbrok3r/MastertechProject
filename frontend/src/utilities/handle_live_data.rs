@@ -42,13 +42,16 @@ impl LiveUpdate for LiveTaskPayload {
     
     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         info!("Data was Deleted: {:?}", self);
-        // update_or_insert(existing_tasks, self);
+        update_or_insert(existing_tasks, self)?;
         Ok(())
     }
 }
 
 
-pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload) -> anyhow::Result<(), anyhow::Error>{
+pub fn update_or_insert(
+    tasks: &mut Vec<TaskPayload>, 
+    new_task: LiveTaskPayload,
+) -> anyhow::Result<(), anyhow::Error>{
     if let Some(ref id) = new_task.id {
         
         let mut updated = false;
@@ -57,7 +60,8 @@ pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload)
             if let Some(existing_id) = &task.id {
                 if existing_id == id{
                     info!("ID's match: {:?} // {:?}", existing_id, id);
-                    *task = new_task.clone();
+                    let updated_task = convert_live_to_task(new_task.clone(), task);
+                    *task = updated_task;
                     updated = true;
                     break;
                 }
@@ -65,34 +69,60 @@ pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload)
         }
 
         if !updated {
-            let new_task: TaskPayload = serde_json(new_task)?;    
+            info!("data was NOT updated");
+            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default());    
+            info!("new_task_converted: {new_task_converted:?}");
             // Insert the new task if it does not exist
-            tasks.push(new_task);
+            tasks.push(new_task_converted);
         }
     } else {
-        let new_task: TaskPayload = from_value(new_task)?;
+        info!("there was NO task id");
+        let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default());
+        info!("new_task_converted: {new_task_converted:?}");
         // If the new task does not have an ID, insert it
-        tasks.push(new_task);
+        tasks.push(new_task_converted);
     }
     Ok(())
 }
 
+pub fn convert_live_to_task(
+    live_task: LiveTaskPayload,
+    existing_task: &TaskPayload,
+) -> TaskPayload {
+    TaskPayload {
+        id: live_task.id,
+        task_name: live_task.task_name,
+        service_ticket: existing_task.service_ticket.clone(), // Preserve the existing service_ticket
+        everest_initials: live_task.everest_initials,
+        task_description: live_task.task_description,
+        assignee: live_task.assignee,
+        service_number: live_task.service_number,
+        due_date: live_task.due_date,
+        priority: live_task.priority,
+        task_note: existing_task.task_note.clone(), // Preserve the existing task_note
+        completed: live_task.completed,
+        status: live_task.status,
+        dep: live_task.dep,
+    }
+}
 
-pub fn listen_tasks<T>(db: Database, tx: Sender<(Action, T)>) 
-    where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
+
+
+pub fn listen_tasks(db: Database, tx: Sender<(Action, LiveTaskPayload)>) 
+    // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
 {
     spawn_local(async move {
-        let task_stream: Stream<Client, Vec<T>> = db.database.select(TASK_TABLE).live().await.unwrap();
+        let task_stream: Stream<Client, Vec<LiveTaskPayload>> = db.database.select(TASK_TABLE).live().await.unwrap();
         handle_streams(task_stream, tx).await;
     });
 }
 
 
 
-async fn handle_streams<T>(
-    mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,
-    tx: Sender<(Action, T)>
-) where T: Serialize + Deserialize<'static> + Debug{
+async fn handle_streams(
+    mut notification_stream: impl futures::Stream<Item = Result<Notification<LiveTaskPayload>, surrealdb::Error>> + Unpin,
+    tx: Sender<(Action, LiveTaskPayload)>
+){ //  where T: Serialize + Deserialize<'static> + Debug
     while let Some(notification) = notification_stream.next().await {
         match notification{
             Ok(notification) => {
@@ -109,42 +139,42 @@ async fn handle_streams<T>(
 }
 
 
-pub trait IntoTaskPayload {
-    fn into_task_payload(self) -> TaskPayload;
-}
+// pub trait IntoTaskPayload {
+//     fn into_task_payload(self) -> TaskPayload;
+// }
 
-impl IntoTaskPayload for LiveTaskPayload {
-    fn into_task_payload(self) -> TaskPayload {
-        // Parse the service_ticket field
-        let service_ticket = self.service_ticket.map(|ticket_str| {
-            // Implement parsing logic for TicketPayload from ticket_str
-            // For example:
-            serde_json::from_str::<TicketPayload>(&ticket_str.0.to_string()).unwrap()
-        });
+// impl IntoTaskPayload for LiveTaskPayload {
+//     fn into_task_payload(self) -> TaskPayload {
+//         // Parse the service_ticket field
+//         let service_ticket = self.service_ticket.map(|ticket_str| {
+//             // Implement parsing logic for TicketPayload from ticket_str
+//             // For example:
+//             serde_json::from_str::<TicketPayload>(&ticket_str.0.to_string()).unwrap()
+//         });
 
-        // Parse the task_note field
-        let task_note = self.task_note.map(|notes| {
-            notes.into_iter().map(|note_str| {
-                // Implement parsing logic for TaskNotePayload from note_str
-                // For example:
-                serde_json::from_str::<TaskNotePayload>(&note_str.0.to_string()).unwrap()
-            }).collect()
-        });
+//         // Parse the task_note field
+//         let task_note = self.task_note.map(|notes| {
+//             notes.into_iter().map(|note_str| {
+//                 // Implement parsing logic for TaskNotePayload from note_str
+//                 // For example:
+//                 serde_json::from_str::<TaskNotePayload>(&note_str.0.to_string()).unwrap()
+//             }).collect()
+//         });
 
-        TaskPayload {
-            id: self.id,
-            task_name: self.task_name,
-            service_ticket,
-            everest_initials: self.everest_initials,
-            task_description: self.task_description,
-            assignee: self.assignee,
-            service_number: self.service_number,
-            due_date: self.due_date,
-            priority: self.priority,
-            task_note,
-            completed: self.completed,
-            status: self.status,
-            dep: self.dep,
-        }
-    }
-}
+//         TaskPayload {
+//             id: self.id,
+//             task_name: self.task_name,
+//             service_ticket,
+//             everest_initials: self.everest_initials,
+//             task_description: self.task_description,
+//             assignee: self.assignee,
+//             service_number: self.service_number,
+//             due_date: self.due_date,
+//             priority: self.priority,
+//             task_note,
+//             completed: self.completed,
+//             status: self.status,
+//             dep: self.dep,
+//         }
+//     }
+// }
