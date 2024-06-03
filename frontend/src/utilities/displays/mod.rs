@@ -4,6 +4,7 @@ use egui::{Button, CollapsingHeader, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
+use log::info;
 use serde::Serialize;
 
 use crate::utilities::{Displayable, Interaction};
@@ -74,6 +75,7 @@ impl Displayable for TaskPayload{
                             ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
                                 self.interact_assignee_initials(ui, database.clone(), store_users);
                             });
+                            
                         });
 
                         s.cell(|ui|{

@@ -58,13 +58,10 @@ impl eframe::App for MtechServer {
             match db{
                 Ok(db) => {
                     self.context.database = Some(db.clone());
-                    
                     // get all of our channel Senders from crossbeam to get user/store/completed tasks, 
                     // as well as store users and live task notifications
                     let live_tasks_tx = self.context.live_tasks_tx.clone();
                     let my_tasks_tx = self.context.my_tasks_tx.clone();
-                    // let store_tasks_tx = self.context.store_tasks_tx.clone();
-                    // let completed_tasks_tx = self.context.completed_tasks_tx.clone();
                     let store_users_tx = self.context.store_users_tx.clone();
 
                     if let Some(usr) = self.context.current_user.as_ref(){

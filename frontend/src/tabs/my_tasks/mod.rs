@@ -12,6 +12,7 @@ impl MtechServerContext{
 
             let filters = vec![
                 Filters::FilterStatus,
+                Filters::FilterAssignee
             ];
 
             self.initialize_task_layout("my_tasks", tasks.to_owned(), col_names, database, filters); // , self.ticket_data_tx.clone()
