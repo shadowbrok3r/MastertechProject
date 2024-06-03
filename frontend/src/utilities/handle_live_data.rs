@@ -2,6 +2,7 @@ use database::schema::TaskPayload;
 use futures::StreamExt;
 use database::{schema::*, Database};
 use serde::{Deserialize, Serialize};
+use serde_json::{from_value, Value};
 use surrealdb::{method::Stream, Action, Notification};
 use wasm_bindgen_futures::spawn_local;
 use std::{marker, fmt::Debug};
@@ -12,7 +13,7 @@ use serde::de::DeserializeOwned;
 use super::LiveUpdate;
 
 
-pub fn handle_live_data(data: (Action, TaskPayload), existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
+pub fn handle_live_data(data: (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
     match data.0{
         Action::Create => {
             data.1.handle_live_create(existing_tasks)?;
@@ -28,7 +29,7 @@ pub fn handle_live_data(data: (Action, TaskPayload), existing_tasks: &mut Vec<Ta
     Ok(())
 }
 
-impl LiveUpdate for TaskPayload {
+impl LiveUpdate for LiveTaskPayload {
     fn handle_live_create(self, _existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         info!("Data was Created: {:?}", self);
         Ok(())
@@ -41,13 +42,13 @@ impl LiveUpdate for TaskPayload {
     
     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         info!("Data was Deleted: {:?}", self);
-        update_or_insert(existing_tasks, self);
+        // update_or_insert(existing_tasks, self);
         Ok(())
     }
 }
 
 
-pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: TaskPayload) {
+pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload) -> anyhow::Result<(), anyhow::Error>{
     if let Some(ref id) = new_task.id {
         
         let mut updated = false;
@@ -64,13 +65,16 @@ pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: TaskPayload) {
         }
 
         if !updated {
+            let new_task: TaskPayload = serde_json(new_task)?;    
             // Insert the new task if it does not exist
             tasks.push(new_task);
         }
     } else {
+        let new_task: TaskPayload = from_value(new_task)?;
         // If the new task does not have an ID, insert it
         tasks.push(new_task);
     }
+    Ok(())
 }
 
 
@@ -102,4 +106,45 @@ async fn handle_streams<T>(
             Err(err) => error!("Error: {err:?}")
         };
     }; 
+}
+
+
+pub trait IntoTaskPayload {
+    fn into_task_payload(self) -> TaskPayload;
+}
+
+impl IntoTaskPayload for LiveTaskPayload {
+    fn into_task_payload(self) -> TaskPayload {
+        // Parse the service_ticket field
+        let service_ticket = self.service_ticket.map(|ticket_str| {
+            // Implement parsing logic for TicketPayload from ticket_str
+            // For example:
+            serde_json::from_str::<TicketPayload>(&ticket_str.0.to_string()).unwrap()
+        });
+
+        // Parse the task_note field
+        let task_note = self.task_note.map(|notes| {
+            notes.into_iter().map(|note_str| {
+                // Implement parsing logic for TaskNotePayload from note_str
+                // For example:
+                serde_json::from_str::<TaskNotePayload>(&note_str.0.to_string()).unwrap()
+            }).collect()
+        });
+
+        TaskPayload {
+            id: self.id,
+            task_name: self.task_name,
+            service_ticket,
+            everest_initials: self.everest_initials,
+            task_description: self.task_description,
+            assignee: self.assignee,
+            service_number: self.service_number,
+            due_date: self.due_date,
+            priority: self.priority,
+            task_note,
+            completed: self.completed,
+            status: self.status,
+            dep: self.dep,
+        }
+    }
 }

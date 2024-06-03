@@ -13,7 +13,7 @@ use serde_json::Value;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use database::{schema::{TaskPayload, User}, Database};
+use database::{schema::{LiveTaskPayload, TaskPayload, User}, Database};
 use mtechserver_two::webworker::WebWorker;
 use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{chats::ChatModal, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal, Filters}, DisplayModal, ModalType, ModalTypes}};
 
@@ -98,7 +98,7 @@ pub struct MtechServerContext{
     pub completed_tasks_opened: bool,
 
     /// All contained task data from database
-    pub live_tasks: Option<TaskPayload>,
+    pub live_tasks: Option<LiveTaskPayload>,
     pub my_tasks: Option<Vec<TaskPayload>>,
     pub store_tasks: Option<Vec<TaskPayload>>,
     pub completed_tasks: Option<Vec<TaskPayload>>,
@@ -115,6 +115,11 @@ pub struct MtechServerContext{
     pub my_tasks_tx: Sender<Vec<TaskPayload>>,
     #[serde(skip)]
     pub my_tasks_rx: Receiver<Vec<TaskPayload>>,
+
+    #[serde(skip)]
+    pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
+    #[serde(skip)]
+    pub live_tasks_rx: Receiver<(Action, LiveTaskPayload)>,
 
     #[serde(skip)]
     pub store_users_tx: Sender<Vec<User>>,
@@ -282,7 +287,7 @@ impl NewCC for MtechServer{
 
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
         let (ticket_data_tx, ticket_data_rx) = channel::unbounded::<Option<Value>>();
-
+        let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
 
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
@@ -355,6 +360,8 @@ impl NewCC for MtechServer{
             store_tasks_opened: false,
             completed_tasks_opened: false,
 
+            live_tasks_tx,
+            live_tasks_rx,
             tasks_tx,
             tasks_rx,
             my_tasks_tx, 
@@ -455,15 +462,15 @@ impl MtechServer{
 pub fn check_authentication(
     db_tx: Sender<anyhow::Result<Database, Error>>
 ) -> Result<(AppState, Option<User>), Error>{
-    #[cfg(target_arch="wasm32-unknown-unknown")]{
+    // #[cfg(target_arch="wasm32-unknown-unknown")]{
         let cookie = wasm_cookies::get("jwt");
         let user_cookie = wasm_cookies::get("user");
-    }
+    // }
     
     let mut state = AppState::default();
     let mut current_user = None;
-    
-    #[cfg(target_arch="wasm32-unknown-unknown")]
+
+    // #[cfg(target_arch="wasm32-unknown-unknown")]
     if let Some(cookie) = cookie{
 
         if let Some(usr) = user_cookie{
