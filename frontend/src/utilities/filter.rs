@@ -18,7 +18,7 @@ impl FilterTasks for Vec<TaskPayload>{
             .collect()
     }
 
-    fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload> {
+    fn filter_by_completion(&self, completed: bool) -> Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| task.completed == completed)
             .cloned()

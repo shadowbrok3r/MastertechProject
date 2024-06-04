@@ -8,7 +8,7 @@ use wasm_bindgen_futures::spawn_local;
 use super::Updatable;
 
 impl Updatable for TaskPayload {
-    fn update_completed(&mut self, completed: bool, db: Database) {
+    fn update_completed(&self, completed: bool, db: Database) {
         // self.completed = completed;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
@@ -30,7 +30,7 @@ impl Updatable for TaskPayload {
         })
     }
 
-    fn update_due_date(&mut self, due_date: String, db: Database) {
+    fn update_due_date(&self, due_date: String, db: Database) {
         info!("Changing due date to {due_date:?}");
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
@@ -50,7 +50,7 @@ impl Updatable for TaskPayload {
         })
     }
 
-    fn update_assignee_initials(&mut self, initials: String, db: Database) {
+    fn update_assignee_initials(&self, initials: String, db: Database) {
         // self.everest_initials = Some(initials);
         info!("User initials: {:?}", initials.clone());
 
@@ -85,7 +85,7 @@ impl Updatable for TaskPayload {
         })
     }
 
-    fn update_task_name(&mut self, name: String, db: Database) {
+    fn update_task_name(&self, name: String, db: Database) {
         // self.task_name = name;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
@@ -105,7 +105,7 @@ impl Updatable for TaskPayload {
         })
     }
 
-    fn update_status(&mut self, status: Status, db: Database) {
+    fn update_status(&self, status: Status, db: Database) {
         // self.status = status;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
@@ -144,7 +144,7 @@ impl Updatable for TaskPayload {
         })
     }
 
-    fn update_dep(&mut self, dep: Store, db: Database) {
+    fn update_dep(&self, dep: Store, db: Database) {
         // self.dep = Some(dep);
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
@@ -164,7 +164,7 @@ impl Updatable for TaskPayload {
         })
     }
 
-    fn update_priority(&mut self, priority: Option<Priority>, db: Database) {
+    fn update_priority(&self, priority: Option<Priority>, db: Database) {
         // self.priority = priority;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
@@ -184,7 +184,7 @@ impl Updatable for TaskPayload {
         })
     }
 
-    fn update_task_description(&mut self, description: Option<String>, db: Database) {
+    fn update_task_description(&self, description: Option<String>, db: Database) {
         // self.task_description = description;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
@@ -201,7 +201,7 @@ impl Updatable for TaskPayload {
         })
     }
     
-    fn update_recommendations(&mut self, recommendations: Option<String>, db: Database) {
+    fn update_recommendations(&self, recommendations: Option<String>, db: Database) {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(
@@ -217,7 +217,7 @@ impl Updatable for TaskPayload {
         })
     }
     
-    fn update_checkin_notes(&mut self, checkin_notes: Option<String>, db: Database) {
+    fn update_checkin_notes(&self, checkin_notes: Option<String>, db: Database) {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!(

@@ -4,7 +4,7 @@ use egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, LayerId, La
 use database::{schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 
 // use serde::{Deserialize, Serialize};
 // use std::fmt::Debug;
@@ -58,30 +58,31 @@ pub trait ColumnLayout{
         // current_user: &Option<User>,
         filter_items: F
     ) where
-        F: FnMut() -> Vec<TaskPayload>;
+        F: FnMut() -> HashMap<String, Vec<TaskPayload>> + std::marker::Copy;
     
-    fn task_columns(
+    fn task_columns<F>(
         &mut self,
-        s: Strip, 
-        filtered_tasks: Vec<TaskPayload>,
+        s: &mut Strip, 
+        // filtered_tasks: Vec<TaskPayload>,
         assignees: &Option<Vec<User>>,
         database: Database,
-    );
+        filter_items: F
+    ) where F: FnMut() -> HashMap<String, Vec<TaskPayload>> + std::marker::Copy;
     fn filter_items(&mut self,filters: &Vec<Filters>, assignee: &Option<User>,status: &Option<Status>,priority: &Option<Priority>,complete: &Option<bool>) -> Vec<TaskPayload>;
-    fn task_headers(&mut self, s: Strip, column_names: Vec<String>, header_frame: Frame);
+    fn task_headers(self, s: Strip, column_names: Vec<String>);
 }
 
 pub trait Updatable { // This is correctly implemented
-    fn update_completed(&mut self, completed: bool, db: Database);
-    fn update_due_date(&mut self, due_date: String, db: Database);
-    fn update_assignee_initials(&mut self, initials: String, db: Database);
-    fn update_task_name(&mut self, name: String, db: Database);
-    fn update_status(&mut self, status: Status, db: Database);
-    fn update_dep(&mut self, store: Store, db: Database);
-    fn update_priority(&mut self, priority: Option<Priority>, db: Database);
-    fn update_task_description(&mut self, description: Option<String>, db: Database);
-    fn update_recommendations(&mut self, recommendations: Option<String>, db: Database);
-    fn update_checkin_notes(&mut self, checkin_notes: Option<String>, db: Database);
+    fn update_completed(&self, completed: bool, db: Database);
+    fn update_due_date(&self, due_date: String, db: Database);
+    fn update_assignee_initials(&self, initials: String, db: Database);
+    fn update_task_name(&self, name: String, db: Database);
+    fn update_status(&self, status: Status, db: Database);
+    fn update_dep(&self, store: Store, db: Database);
+    fn update_priority(&self, priority: Option<Priority>, db: Database);
+    fn update_task_description(&self, description: Option<String>, db: Database);
+    fn update_recommendations(&self, recommendations: Option<String>, db: Database);
+    fn update_checkin_notes(&self, checkin_notes: Option<String>, db: Database);
 }
 
 pub trait Interaction{ // This is correctly implemented
@@ -99,7 +100,7 @@ pub trait Interaction{ // This is correctly implemented
 
 pub trait FilterTasks{ 
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
-    fn filter_by_completed(&self, completed: bool) -> Vec<TaskPayload>;
+    fn filter_by_completion(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
     
