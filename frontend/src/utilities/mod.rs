@@ -1,14 +1,10 @@
 use crossbeam::channel::Sender;
-use displays::{create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, task_modal::{ModalAction, TaskModal}, Filters};
-use egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Ui, Widget, Window};
+use displays::{create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, task_modal::{ModalAction, TaskModal}};
+use egui::{vec2, Align, Align2, Button, Color32, Context, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Ui, Widget, Window};
 use database::{schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
-
-// use serde::{Deserialize, Serialize};
-// use std::fmt::Debug;
-
 pub mod displays;
 pub mod update_tasks;
 pub mod get_tasks;
@@ -21,7 +17,9 @@ pub mod sortable;
 
 #[derive(Debug)]
 pub enum TaskUiActions{
-    OpenTaskModal(TaskPayload)
+    OpenTaskModal(TaskPayload),
+    CreateTaskModal,
+    Response(Response)
 }
 
 // pub type Xy = 
@@ -33,43 +31,15 @@ pub enum ModalType{
     #[default]
     Null,
 }
-// This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
+
 pub trait Displayable{ 
     fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<TaskUiActions>;
 }
 
-// This is hot garbage, i need to impl Displayable for TASKLAYOUT, not TaskPayload. i need to split Ui from data functionality
 pub trait ColumnLayout{
-    // fn layout_task_cols<F>(&mut self, ui: &mut Ui, column_names: Vec<String>, database: Database,filters: &Vec<Filters>, assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>, filter_items: F)
-    // where
-    //     F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>;
-    // fn task_columns<F>(&mut self,s: Strip, filters: &Vec<Filters>,assignees: &Option<Vec<User>>,status: bool,priority: &Option<Priority>,complete: &Option<bool>,current_user: &Option<User>,database: Database,column_frame: Frame, filter_items: F)
-    // where
-        // F: FnMut(&Vec<Filters>, &Option<&User>, &Option<bool>, &Option<Priority>, &Option<bool>) -> Vec<TaskPayload>;
-    fn layout_task_cols<F>(
-        &mut self,
-        ui: &mut Ui, 
-        column_names: Vec<String>, 
-        database: Database,
-        assignees: &Option<Vec<User>>,
-        // status: bool,
-        // priority: &Option<Priority>,
-        // complete: &Option<bool>,
-        // current_user: &Option<User>,
-        filter_items: F
-    ) where
-        F: FnMut() -> HashMap<String, Vec<TaskPayload>> + std::marker::Copy;
-    
-    fn task_columns<F>(
-        &mut self,
-        s: &mut Strip, 
-        // filtered_tasks: Vec<TaskPayload>,
-        assignees: &Option<Vec<User>>,
-        database: Database,
-        filter_items: F
-    ) where F: FnMut() -> HashMap<String, Vec<TaskPayload>> + std::marker::Copy;
-    fn filter_items(&mut self,filters: &Vec<Filters>, assignee: &Option<User>,status: &Option<Status>,priority: &Option<Priority>,complete: &Option<bool>) -> Vec<TaskPayload>;
-    fn task_headers(self, s: Strip, column_names: Vec<String>);
+    fn layout_task_cols(&mut self, ui: &mut Ui,  column_names: Vec<String>,  database: Database, assignees: &Option<Vec<User>>, filter_items: HashMap<String, Vec<TaskPayload>>);
+    fn task_columns(&self,s: &mut Strip, assignees: &Option<Vec<User>>,database: Database,filter_items: HashMap<String, Vec<TaskPayload>>);
+    fn task_headers(&self, s: Strip, items: &HashMap<String, Vec<TaskPayload>>);
 }
 
 pub trait Updatable { // This is correctly implemented

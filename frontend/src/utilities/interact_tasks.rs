@@ -128,7 +128,7 @@ impl Interaction for TaskPayload {
             //     res.stroke(Stroke::new(2.0, color_incomplete));
             // }
             if res.clicked(){
-                info!("marked incomplete: {:?}// {:?}", self.id, self.task_name);
+                self.update_completed(false, database);
             }
             Some(res)
         }else{
@@ -143,8 +143,7 @@ impl Interaction for TaskPayload {
             //     button.stroke(Stroke::new(2.0, color_complete));
             // }
             if res.clicked(){
-                info!("marked completed: {:?}// {:?}", self.id, self.task_name);
-                self.update_completed(!self.completed, database);
+                self.update_completed(true, database);
             }
             Some(res)
         }

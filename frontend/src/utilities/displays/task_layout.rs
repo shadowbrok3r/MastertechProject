@@ -1,26 +1,26 @@
 use std::collections::HashMap;
 
+use crossbeam::channel::Sender;
 use database::Database;
 use eframe::egui::Ui;
 use egui::{Color32, Stroke};
 use database::schema::{Priority, TaskPayload, User};
 use serde::Serialize;
 
-use crate::utilities::ModalType;
+use crate::utilities::TaskUiActions;
 
-use super::{ColumnLayout, Filters, Sortable};
+use super::ColumnLayout;
 
 
 #[derive(Serialize)]
 pub struct TaskLayout{
-    pub tasks: Vec<TaskPayload>,
+    pub task_map: HashMap<String, Vec<TaskPayload>>,
     pub style_options: TaskStyles,
-    // pub filters: Vec<Filters>,
     pub column_names: Vec<String>,
     #[serde(skip)]
     pub database: Database,
-    pub modal: ModalType,
-    pub show_modal: bool,
+    #[serde(skip)]
+    pub ui_actions_tx: Sender<TaskUiActions>
 }
 pub struct SortTasks{
     pub sort_by_status: bool,
@@ -31,53 +31,42 @@ pub struct SortTasks{
 
 impl TaskLayout { 
     pub fn new(
-        tasks: Vec<TaskPayload>, 
+        task_map: HashMap<String, Vec<TaskPayload>>,
         column_names: Vec<String>,
         database: Database,
+        ui_actions_tx: Sender<TaskUiActions>
     ) -> Self {
         Self { 
-            tasks,
+            task_map,
             style_options: TaskStyles::default(),
             column_names,
             database,
-            show_modal: false,
-            modal: ModalType::Null,
+            ui_actions_tx
         }
     }
 
-    pub fn display<F>(
+    pub fn display(
         &mut self,
         ui: &mut Ui,
         store_users: &Option<Vec<User>>,
-        filter_items: F
-    )
-        where F: FnMut() -> HashMap<String, Vec<TaskPayload>> + std::marker::Copy
-    {
+        task_map: HashMap<String, Vec<TaskPayload>>
+    ){
         let col_names = self.column_names.clone();
         let db = self.database.clone();
-        
-        self.tasks.sort_task_payloads();
+  
         self.style_options.set(ui);
-
+        // self.task_.sort_task_payloads();
         self.layout_task_cols(
             ui, 
             col_names, 
             db, 
             &store_users,
-            filter_items
+            task_map
         );
-        // self.layout_task_cols(
-        //     ui, 
-        //     col_names, 
-        //     db, 
-        //     filters, 
-        //     &store_users,
-        //     status,
-        //     &priority,
-        //     &complete,
-        //     &current_user,
-        //     filter_items
-        // );
+    }
+
+    pub fn set_tasks(&mut self, tasks: HashMap<String, Vec<TaskPayload>>){
+        self.task_map = tasks;
     }
 }
 
