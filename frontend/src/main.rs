@@ -97,7 +97,6 @@ impl eframe::App for MtechServer {
         }
         
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
-            info!("Task payloads: {tasks:?}");
             self.context.my_tasks = Some(tasks);
         }
 

@@ -1,3 +1,6 @@
+use std::borrow::BorrowMut;
+use std::collections::HashMap;
+
 use database::Database;
 use egui::{Button, RichText, ScrollArea, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
@@ -22,19 +25,12 @@ impl ColumnLayout for TaskLayout {
         // priority: &Option<Priority>,
         // complete: &Option<bool>,
         // current_user: &Option<User>,
-        mut filter_items: F
+        filter_items: F
     )
     where
-        F: FnMut() -> Vec<TaskPayload>,
+        F: FnMut() -> HashMap<String, Vec<TaskPayload>> + std::marker::Copy
     {
         ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
-        let header_frame = Frame::default()
-            .fill(Color32::from_rgb(20, 20, 25))
-            .inner_margin(Margin::same(4.0))
-            .outer_margin(Margin::symmetric(4.0, 1.0))
-            .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
-
         let column_width = Size::exact(450.0);
     
         ScrollArea::horizontal()
@@ -51,9 +47,9 @@ impl ColumnLayout for TaskLayout {
                 strip
                     .strip(|strip| 
                 {
-                    strip
-                        .sizes(column_width, column_names.len())
-                        .horizontal( |strip| self.task_headers(strip, column_names.to_owned(), header_frame));
+                    // strip
+                    //     .sizes(column_width, column_names.len())
+                    //     .horizontal( |strip| self.task_headers(strip, column_names.to_owned(), header_frame));
                 });
                 strip.empty();
                 strip
@@ -61,27 +57,32 @@ impl ColumnLayout for TaskLayout {
                 {
                     strip
                         .sizes(column_width, column_names.len())
-                        .horizontal( |strip| {
+                        .horizontal( |mut strip| {
                             // self.task_columns(strip, filters,&assignees,status,&priority,&complete,current_user, database, column_frame, filter_items);
-                    
-                            self.task_columns(
-                                strip,
-                                filter_items(),
-                                assignees,
-                                database
-                            );
+                            for name in column_names.iter(){
+                                self.task_columns(
+                                    strip.borrow_mut(),
+                                    assignees,
+                                    database.to_owned(),
+                                    filter_items,
+                                );
+                            }
                         });
                 });
             });
         });
     }
-    fn task_columns(
+    fn task_columns<F>(
         &mut self,
-        mut s: Strip, 
-        filtered_tasks: Vec<TaskPayload>,
+        s: &mut Strip, 
+        // mut filtered_tasks: Vec<TaskPayload>,
         assignees: &Option<Vec<User>>,
         database: Database,
-    ) {
+        mut filter_items: F
+    )
+        where
+            F: FnMut() -> HashMap<String, Vec<TaskPayload>> + std::marker::Copy
+    {
         let column_frame = Frame::default()
             .fill(Color32::from_rgb(15, 15, 19))
             .inner_margin(Margin::same(8.0))
@@ -93,24 +94,27 @@ impl ColumnLayout for TaskLayout {
                 ui.vertical_centered_justified(|ui| {
                     ScrollArea::vertical()
                         .auto_shrink(false)
-                        .show_viewport(ui, |ui, _| {
-                            for mut task in filtered_tasks.into_iter() {
-                                if let Some(store_users) = &assignees {
-                                    let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
-                                    if let Some(action) = action {
-                                        match action {
-                                            TaskUiActions::OpenTaskModal(task) => {
-                                                self.show_modal = true;
-                                                let mut task_modal = TaskModal::default();
-                                                task_modal.database = Some(database.to_owned());
-                                                task_modal.task = Some(task);
-                                                self.modal = ModalType::TaskModal(task_modal);
-                                            },
-                                        }
+                        .show_viewport(ui, |ui, _| 
+                    {
+                        for task in filter_items().iter_mut() {
+                            // info!("Task: {task:?}");
+                            if let Some(store_users) = &assignees {
+                                let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
+                                if let Some(action) = action {
+                                    match action {
+                                        TaskUiActions::OpenTaskModal(task) => {
+                                            self.show_modal = true;
+                                            
+                                            let mut task_modal = TaskModal::default();
+                                            task_modal.database = Some(database.to_owned());
+                                            task_modal.task = Some(task);
+                                            self.modal = ModalType::TaskModal(task_modal);
+                                        },
                                     }
                                 }
                             }
-                        });
+                        }
+                    });
                 });
             });
         });
@@ -118,12 +122,18 @@ impl ColumnLayout for TaskLayout {
     
 
     fn task_headers(
-        &mut self,
+        mut self,
         mut s: Strip,
         column_names: Vec<String>,
-        header_frame: Frame,
     ) {
-        for name in &column_names{
+        let header_frame = Frame::default()
+            .fill(Color32::from_rgb(20, 20, 25))
+            .inner_margin(Margin::same(4.0))
+            .outer_margin(Margin::symmetric(4.0, 1.0))
+            .rounding(Rounding::same(5.0))
+            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
+
+        for name in column_names.iter(){
             s.cell(|ui|{
                 header_frame.show(ui, |ui|
                 {
@@ -179,7 +189,7 @@ impl ColumnLayout for TaskLayout {
                 },
                 Filters::FilterCompleted => {
                     if let Some(complete) = complete {
-                        acc_tasks.filter_by_completed(*complete)
+                        acc_tasks.filter_by_completion(*complete)
                     } else {
                         acc_tasks
                     }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use database::Database;
 use eframe::egui::Ui;
 use egui::{Color32, Stroke};
@@ -30,14 +32,12 @@ pub struct SortTasks{
 impl TaskLayout { 
     pub fn new(
         tasks: Vec<TaskPayload>, 
-        // filters: Vec<Filters>,
         column_names: Vec<String>,
         database: Database,
     ) -> Self {
         Self { 
             tasks,
             style_options: TaskStyles::default(),
-            // filters,
             column_names,
             database,
             show_modal: false,
@@ -49,17 +49,12 @@ impl TaskLayout {
         &mut self,
         ui: &mut Ui,
         store_users: &Option<Vec<User>>,
-        status: bool,
-        priority: &Option<Priority>,
-        complete: &Option<bool>,
-        current_user: &Option<User>,
-        mut filter_items: F
+        filter_items: F
     )
-        where F: FnMut() -> Vec<TaskPayload>
+        where F: FnMut() -> HashMap<String, Vec<TaskPayload>> + std::marker::Copy
     {
         let col_names = self.column_names.clone();
         let db = self.database.clone();
-        // let filters = &self.filters.clone();
         
         self.tasks.sort_task_payloads();
         self.style_options.set(ui);
