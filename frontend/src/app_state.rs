@@ -15,7 +15,7 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{LiveTaskPayload, TaskPayload, User}, Database};
 use mtechserver_two::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{chats::ChatModal, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal, Filters}, DisplayModal, ModalType, ModalTypes}};
+use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{chats::ChatModal, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal}, DisplayModal, ModalType, ModalTypes, TaskUiActions}};
 
 #[derive(Serialize)]
 pub struct MtechServer{
@@ -64,7 +64,7 @@ pub struct MtechServerContext{
     pub chat_modal_handler: ModalHandler<ChatModal>,
     #[serde(skip)]
     pub chat_modal: ChatModal,
-    // pub ticket_map: HashMap<String, TicketPayload>,
+    pub task_map: HashMap<String, Vec<TaskPayload>>,
 
     pub current_modal: ModalType,
 
@@ -99,9 +99,9 @@ pub struct MtechServerContext{
 
     /// All contained task data from database
     pub live_tasks: Option<LiveTaskPayload>,
-    pub my_tasks: Option<Vec<TaskPayload>>,
-    pub store_tasks: Option<Vec<TaskPayload>>,
-    pub completed_tasks: Option<Vec<TaskPayload>>,
+    pub tasks: Option<Vec<TaskPayload>>,
+    // pub store_tasks: Option<Vec<TaskPayload>>,
+    // pub completed_tasks: Option<Vec<TaskPayload>>,
     pub store_users: Option<Vec<User>>,
 
 
@@ -138,6 +138,10 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub db_tx:  Sender<anyhow::Result<Database, Error>>,
 
+    #[serde(skip)]
+    pub ui_actions_tx: Sender<TaskUiActions>,
+    #[serde(skip)]
+    pub ui_actions_rx: Receiver<TaskUiActions>,
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
@@ -288,7 +292,8 @@ impl NewCC for MtechServer{
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
         let (ticket_data_tx, ticket_data_rx) = channel::unbounded::<Option<Value>>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
-
+        let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
+        
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
@@ -338,6 +343,7 @@ impl NewCC for MtechServer{
             chat_modal_handler,
             chat_modal: ChatModal::new(),
 
+            task_map: HashMap::new(),
             terminal,
             chart_app,
             tick_rate,
@@ -351,9 +357,9 @@ impl NewCC for MtechServer{
             current_user: _current_user,
 
             live_tasks: None,
-            my_tasks: None,
-            store_tasks: None,
-            completed_tasks: None,
+            tasks: None,
+            // store_tasks: None,
+            // completed_tasks: None,
             store_users: None,
 
             my_tasks_opened: false,
@@ -371,6 +377,9 @@ impl NewCC for MtechServer{
 
             store_users_tx,
             store_users_rx,
+
+            ui_actions_tx,
+            ui_actions_rx,
 
             bridge: Some(bridge),
             data_update: Some(data_update),
@@ -391,19 +400,16 @@ impl MtechServerContext{
     pub fn initialize_task_layout(
         &mut self, 
         page: &str, 
-        tasks: Vec<TaskPayload>, 
         col_names: Vec<String>, 
         database: Database,
-        // filters: Vec<Filters>,
-        // ticket_data_tx: Sender<Option<Value>>
     ) {
         if !self.task_layouts.contains_key(page) {
             let task_layout_opts = TaskLayout::new(
-                tasks.to_owned(),
+                HashMap::new(),
                 col_names,
                 database,
+                self.ui_actions_tx.clone()
             );
-
             self.task_layouts.insert(page.to_string(), task_layout_opts);
         }
     }

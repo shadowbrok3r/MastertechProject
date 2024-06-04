@@ -1,15 +1,13 @@
 use database::Database;
 use eframe::egui::Ui;
-use egui::{Button, CollapsingHeader, Widget};
+use egui::{Align, Button, CollapsingHeader, Direction, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
-use log::info;
-use serde::Serialize;
 
 use crate::utilities::{Displayable, Interaction};
 
-use super::{ColumnLayout, Sortable, TaskUiActions};
+use super::{ColumnLayout, TaskUiActions};
 
 pub mod modals;
 pub mod chats;
@@ -17,15 +15,6 @@ pub mod create_task_modal;
 pub mod task_modal;
 pub mod column_layout;
 pub mod task_layout;
-
-#[derive(Clone, Serialize)]
-pub enum Filters{
-    FilterAssignee,
-    FilterCompleted,
-    FilterStatus,
-    FilterPriority,
-    // FilterDate
-}
 
 impl Displayable for TaskPayload{
     fn display_task_cards(
@@ -51,7 +40,7 @@ impl Displayable for TaskPayload{
             ui.set_width(400.0);
 
             StripBuilder::new(ui)
-                .cell_layout(Layout::top_down_justified(egui::Align::Center))
+                .cell_layout(Layout::top_down_justified(Align::Center))
                 .size(Size::exact(15.0))// Task Header
                 .size(Size::exact(4.0))
                 .size(Size::exact(15.0))// Task Footer
@@ -62,9 +51,9 @@ impl Displayable for TaskPayload{
                 strip.strip(|strip| 
                 {
                     strip
-                        .cell_layout(Layout::left_to_right(egui::Align::Min))
-                        .cell_layout(Layout::left_to_right(egui::Align::Center))
-                        .cell_layout(Layout::left_to_right(egui::Align::Max))
+                        .cell_layout(Layout::left_to_right(Align::Min))
+                        .cell_layout(Layout::left_to_right(Align::Center))
+                        .cell_layout(Layout::left_to_right(Align::Max))
                         .size(Size::relative(0.1))
                         .size(Size::remainder())
                         .size(Size::relative(0.1))
@@ -72,26 +61,26 @@ impl Displayable for TaskPayload{
                         .horizontal( |mut s| 
                     {
                         s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                            ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
                                 self.interact_assignee_initials(ui, database.clone(), store_users);
                             });
                             
                         });
 
                         s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                            ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
                                 self.interact_task_name(ui, database.clone());
                             });
                         });
                         s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                            ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
                                 if Button::new("⮫").small().ui(ui).clicked(){
                                     res = Some(TaskUiActions::OpenTaskModal(self.to_owned()))
                                 }
                             });
                         });
                         s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
+                            ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
                                 self.interact_completed(ui, database.clone());
                             });
                         });
@@ -102,28 +91,25 @@ impl Displayable for TaskPayload{
                 strip.strip(|strip| 
                 {
                     strip
-                        .cell_layout(Layout::left_to_right(egui::Align::Min))
-                        .cell_layout(Layout::left_to_right(egui::Align::Center))
-                        .cell_layout(Layout::left_to_right(egui::Align::Max))
+                        .cell_layout(Layout::left_to_right(Align::Min))
+                        .cell_layout(Layout::left_to_right(Align::Center))
+                        .cell_layout(Layout::left_to_right(Align::Max))
                         .size(Size::remainder())
                         .size(Size::remainder())
                         .size(Size::remainder())
                         .horizontal( |mut s| 
                     {
                         s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(egui::Direction::LeftToRight), |ui|{
-                                self.interact_priority(ui, database.clone());
-                            });
+                            ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), 
+                                |ui| self.interact_priority(ui, database.clone()));
                         });
                         s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(egui::Direction::TopDown), |ui|{
-                                self.interact_due_date(ui, database.clone());
-                            });
+                            ui.with_layout(Layout::centered_and_justified(Direction::TopDown), 
+                                |ui| self.interact_due_date(ui, database.clone()));
                         });
                         s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(egui::Direction::RightToLeft), |ui|{
-                                self.interact_status(ui, database.clone());
-                            });
+                            ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft),
+                                |ui| self.interact_status(ui, database.clone()));
                         });
                     });
                 });
@@ -131,32 +117,22 @@ impl Displayable for TaskPayload{
                 strip.strip(|strip| 
                 {
                     strip
-                        .cell_layout(Layout::left_to_right(egui::Align::Min))
+                        .cell_layout(Layout::left_to_right(Align::Min))
                         .size(Size::remainder())
                         .size(Size::remainder())
                         .horizontal( |mut s| 
                     {
                         s.cell(|ui|
                         {
-
                             let checkin_header = ui.make_persistent_id(format!("checkin_notes {:?}", self.id.as_ref().unwrap().0.id));
-                            
                             let checkin_head = CollapsingHeader::new("Checkin Notes").id_source(checkin_header);
-                            checkin_head
-                                .show_unindented(ui, |ui| 
-                            {
-                                self.interact_checkin_notes(ui, database.clone());
-                            });
+                            checkin_head.show_unindented(ui, |ui| self.interact_checkin_notes(ui, database.clone()));
                         });
                         s.cell(|ui| 
                         {
                             let rec_header = ui.make_persistent_id(format!("recommendations {:?}", self.id.as_ref().unwrap().0.id));
                             let rec_head = CollapsingHeader::new("Recommendations").id_source(rec_header);
-                            rec_head
-                                .show_unindented(ui, |ui|
-                            {
-                                self.interact_recommendations(ui, database.clone());
-                            });
+                            rec_head.show_unindented(ui, |ui| self.interact_recommendations(ui, database.clone()));
                         });
                     });
                 });

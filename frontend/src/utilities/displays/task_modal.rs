@@ -1,13 +1,12 @@
-use chrono::{Date, DateTime, Utc};
+use chrono::{DateTime, Utc};
 use database::{schema::TaskPayload, Database};
-use egui::{Align, Color32, Direction, Grid, Id, Layout, Margin, RichText, ScrollArea, Style, TextEdit, Ui, Widget};
+use egui::{Align, Color32, Grid, Layout, Margin, RichText, Style, TextEdit, Ui, Widget};
 use egui_extras::{Size, StripBuilder};
-use log::info;
 use serde::Serialize;
 
 use crate::utilities::{DisplayModal, ModalTypes};
 
-use super::modals::ModalState;
+use super::{chats::ChatModal, modals::ModalState};
 
 #[derive(Serialize, Clone, Debug)]
 pub struct TaskModal{
@@ -21,6 +20,7 @@ pub struct TaskModal{
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
     pub full_span_content: bool,
+
     pub state: ModalState
 }
 
@@ -103,6 +103,7 @@ impl DisplayModal for TaskModal {
                             };
                             if ui.selectable_label(task_note_page, RichText::new("💬").heading()).clicked(){
                                 response = Some(ModalAction::TaskNotePage);
+                                
                             };
                         });
                     });
@@ -123,7 +124,8 @@ impl DisplayModal for TaskModal {
                             ModalAction::TicketInfoPage => display_task_page(ui, self.task.as_ref()),
                             ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref()),
                             ModalAction::PartOrderPage => display_part_order_page(ui),
-                            _ => display_task_page(ui, self.task.as_ref()),
+                            // _ => display_chat_page(ui, self.chat)
+                            _ => display_task_page(ui, self.task.as_ref())
                         };
 
                         
@@ -137,12 +139,12 @@ impl DisplayModal for TaskModal {
 
 
 fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>){
-    fn return_colors(num: usize, style: &Style) -> Option<Color32>{
-        let mut col = Color32::from_rgb(30, 30, 38);
+    fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
+        let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
-            col = Color32::from_rgb(15, 15, 22);
-        }else{col = Color32::from_rgb(30, 30, 38);}
-        Some(col)
+            _col = Color32::from_rgb(15, 15, 22);
+        }else{_col = Color32::from_rgb(30, 30, 38);}
+        Some(_col)
     }
 
     if let Some(task) = task.as_ref(){
@@ -325,12 +327,12 @@ fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>){
 }
 
 fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
-    fn return_colors(num: usize, style: &Style) -> Option<Color32>{
-        let mut col = Color32::from_rgb(30, 30, 38);
+    fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
+        let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
-            col = Color32::from_rgb(15, 15, 22);
-        }else{col = Color32::from_rgb(30, 30, 38);}
-        Some(col)
+            _col = Color32::from_rgb(15, 15, 22);
+        }else{_col = Color32::from_rgb(30, 30, 38);}
+        Some(_col)
     }
 
     if let Some(task) = task.as_ref(){
@@ -338,87 +340,87 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
         let computer = ticket.computer.as_ref();
         if let Some(computer) = computer{
             let seb_info = computer.seb_info.as_ref();
-            if let Some(seb_info) = seb_info{
-
-                StripBuilder::new(ui)
-                    .size(Size::exact(180.0))
-                    .size(Size::exact(500.0))
-                    .vertical(|mut strip| 
-                {
-                    strip.strip(|s|{
-                        s
-                            .size(Size::exact(450.0))
-                            .size(Size::exact(10.0))
-                            .size(Size::exact(450.0))
-                            .horizontal(|mut s|
-                        {
-                            s.cell(|ui|{
-                                ui.group(|ui| {
-                                    // ui.label("Personnel Information");
-                                    Grid::new("group2").min_col_width(185.0).with_row_color(|num, style| return_colors(num, style))
-                                    .show(ui, |ui| {
-                                        ui.label("hostname:");
-                                        ui.label(&computer.hostname);
-                                        ui.end_row();
-                                        ui.label("operating_system:");
-                                        ui.label(&computer.operating_system);
-                                        ui.end_row();
-                                        ui.label("cpu:");
-                                        ui.label(&computer.cpu);
-                                        ui.end_row();
-                                        ui.label("gpu:");
-                                        ui.label(&computer.gpu);
-                                        ui.end_row();
-                                        ui.label("ram:");
-                                        ui.label(&computer.ram);
-                                        ui.end_row();
-                                        
-                                        // ui.label("current_antivirus:");
-                                        // ui.label(&ticket.current_antivirus);
-                                        // ui.end_row();
-                                        // ui.label("hardware_test_results:");
-                                        // ui.label(&ticket.hardware_test_results);
-                                        // ui.end_row();
-                                    });
+            
+            StripBuilder::new(ui)
+                .size(Size::exact(180.0))
+                .size(Size::exact(500.0))
+                .vertical(|mut strip| 
+            {
+                strip.strip(|s|{
+                    s
+                        .size(Size::exact(450.0))
+                        .size(Size::exact(10.0))
+                        .size(Size::exact(450.0))
+                        .horizontal(|mut s|
+                    {
+                        s.cell(|ui|{
+                            ui.group(|ui| {
+                                // ui.label("Personnel Information");
+                                Grid::new("group2").min_col_width(185.0).with_row_color(|num, style| return_colors(num, style))
+                                .show(ui, |ui| {
+                                    ui.label("hostname:");
+                                    ui.label(&computer.hostname);
+                                    ui.end_row();
+                                    ui.label("operating_system:");
+                                    ui.label(&computer.operating_system);
+                                    ui.end_row();
+                                    ui.label("cpu:");
+                                    ui.label(&computer.cpu);
+                                    ui.end_row();
+                                    ui.label("gpu:");
+                                    ui.label(&computer.gpu);
+                                    ui.end_row();
+                                    ui.label("ram:");
+                                    ui.label(&computer.ram);
+                                    ui.end_row();
+                                    
+                                    // ui.label("current_antivirus:");
+                                    // ui.label(&ticket.current_antivirus);
+                                    // ui.end_row();
+                                    // ui.label("hardware_test_results:");
+                                    // ui.label(&ticket.hardware_test_results);
+                                    // ui.end_row();
                                 });
-
                             });
-                            s.empty();
-                            s.cell(|ui| {
-                                ui.group(|ui| {
-                                    // ui.label("Ticket Information");
-                                    Grid::new("group1").min_col_width(50.0).with_row_color(|num, style| return_colors(num, style))
-                                    .show(ui, |ui| {
-                                        for drive_data in &computer.drives{
-                                            ui.label("Letter");
-                                            ui.label("Space Left / Total Size");
-                                            ui.label("Type");
-                                            ui.end_row();
 
-                                            ui.label(&drive_data.drive_letter);
-                                            ui.label(format!("{}Gb / {}Gb", &drive_data.space_left, &drive_data.total_size));
-                                            ui.label(&drive_data.drive_type);
-                                            ui.end_row();
+                        });
+                        s.empty();
+                        s.cell(|ui| {
+                            ui.group(|ui| {
+                                // ui.label("Ticket Information");
+                                Grid::new("group1").min_col_width(50.0).with_row_color(|num, style| return_colors(num, style))
+                                .show(ui, |ui| {
+                                    for drive_data in &computer.drives{
+                                        ui.label("Letter");
+                                        ui.label("Space Left / Total Size");
+                                        ui.label("Type");
+                                        ui.end_row();
 
-                                            ui.label("");
-                                            ui.label("");
-                                            ui.label("");
-                                        }
+                                        ui.label(&drive_data.drive_letter);
+                                        ui.label(format!("{}Gb / {}Gb", &drive_data.space_left, &drive_data.total_size));
+                                        ui.label(&drive_data.drive_type);
+                                        ui.end_row();
 
-                                    });
+                                        ui.label("");
+                                        ui.label("");
+                                        ui.label("");
+                                    }
+
                                 });
                             });
                         });
                     });
-                    strip.strip(|s|{
-                        s
-                            .size(Size::exact(450.0))
-                            .size(Size::exact(10.0))
-                            .size(Size::exact(450.0))
-                            .horizontal(|mut s|
-                        {
-                            s.cell(|ui|{
-                                ui.group(|ui| {
+                });
+                strip.strip(|s|{
+                    s
+                        .size(Size::exact(450.0))
+                        .size(Size::exact(10.0))
+                        .size(Size::exact(450.0))
+                        .horizontal(|mut s|
+                    {
+                        s.cell(|ui|{
+                            ui.group(|ui| {
+                                if let Some(seb_info) = seb_info{
                                     // ui.label("Order Details");
                                     Grid::new("group3").min_col_width(185.0).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
@@ -447,10 +449,14 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                                         ui.label(&seb_info.MachineName);
                                         ui.end_row();
                                     });
-                                });
+                                }else{
+                                    ui.label("No SEB information was sent with ticket.");
+                                }
                             });
-                            s.empty();
-                            s.cell(|ui|{
+                        });
+                        s.empty();
+                        s.cell(|ui|{
+                            if let Some(seb_info) = seb_info{
                                 if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
                                     ui.group(|ui| {
                                         // ui.label("Customer Information");
@@ -505,16 +511,23 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                                             ui.end_row();
                                         });
                                     });
+                                }else{
+                                    ui.label("SEB information was sent with ticket, but we didnt get the extended SEB info");
                                 }
-                            });
+                            }
                         });
                     });
                 });
-            }
-        }  
+            });
+            
+        } else { ui.label("Computer information was not sent with ticket"); }
     }
 }
 
 fn display_part_order_page(ui: &mut Ui){
     ui.label("New page");
+}
+
+fn display_chat_page(ui: &mut Ui, mut chat: ChatModal){
+    chat.ui(ui);
 }

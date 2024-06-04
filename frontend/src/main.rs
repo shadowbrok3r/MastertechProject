@@ -3,7 +3,7 @@ use app_state::{check_authentication, AppState, MainPages, MtechServer};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
-use utilities::{ModalType, get_other::get_store_users, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}};
+use utilities::{displays::{create_task_modal::CreateTaskModal, task_modal::TaskModal}, get_other::get_store_users, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}, ModalType, TaskUiActions};
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{FontId, Style, Vec2};
@@ -97,7 +97,7 @@ impl eframe::App for MtechServer {
         }
         
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
-            self.context.my_tasks = Some(tasks);
+            self.context.tasks = Some(tasks);
         }
 
 
@@ -105,35 +105,30 @@ impl eframe::App for MtechServer {
             self.context.store_users = Some(users);
         }
 
-        if self.context.task_layouts.values().all(|task_layout| task_layout.show_modal){
+        if let Ok(action) = self.context.ui_actions_rx.try_recv(){
+            match action{
+                TaskUiActions::OpenTaskModal(task) => {
+                    let mut task_modal = TaskModal::default();
+                    task_modal.database = Some(self.context.database.as_ref().unwrap().to_owned());
+                    task_modal.task = Some(task);
+                    self.context.current_modal = ModalType::TaskModal(task_modal);
+                    self.context.task_modal_handler.open();
+                },
+                TaskUiActions::CreateTaskModal => {
+                    let create_modal = CreateTaskModal::default();
+                    self.context.current_modal = ModalType::CreateTaskModal(create_modal);
+                    self.context.create_task_modal_handler.open();
+                },
+                TaskUiActions::Response(_res) => {
 
-            for task_layout in &mut self.context.task_layouts{
-                match task_layout.1.modal{
-                    ModalType::CreateTaskModal(_) => {
-                        let open = &mut task_layout.1.show_modal;
-                        self.context.current_modal = task_layout.1.modal.clone();
-                        if *open{
-                            self.context.create_task_modal_handler.open();
-                            *open = false;
-                        }
-                    },
-                    ModalType::TaskModal(_) => {
-                        let open = &mut task_layout.1.show_modal;
-                        self.context.current_modal = task_layout.1.modal.clone();
-                        if *open{
-                            self.context.task_modal_handler.open();
-                            *open = false;
-                        }
-                    },
-                    _ => (),
+                    
                 }
             }
         }
-        
 
         while let Ok(ref data) = self.context.live_tasks_rx.try_recv(){
-            for task_layout in self.context.task_layouts.values_mut(){
-                handle_live_data(data.to_owned(), &mut task_layout.tasks).unwrap();
+            if let Some(tasks) = &mut self.context.tasks{
+                handle_live_data(data.to_owned(), tasks).unwrap();
             }
         }
 
@@ -147,15 +142,6 @@ impl eframe::App for MtechServer {
         eframe::set_value(storage, eframe::APP_KEY, self); 
     }
 }
-
-// fn parse_ticket_payload(json_data: &Value) -> anyhow::Result<TicketPayload, anyhow::Error> {
-    
-//     // Extract the main service ticket part
-//     let service_ticket = json_data.get("service_ticket").unwrap(); // : TicketData
-//     let ticket_payload: TicketPayload = from_value(service_ticket.clone())?;
-//     Ok(ticket_payload)
-// }
-
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
