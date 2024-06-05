@@ -87,15 +87,7 @@ impl eframe::App for MtechServer {
                 }
             }
         }
-        // Always checking authentication.
-        match self.state{
-            //if auth'd, user shall be allowed
-            AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
-            // if no auth, appstate will be login_page
-            AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
-            AppState::Authenticated(_) => self.main_page(ctx),
-            AppState::CreateAccount => {}
-        }
+
         
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
             self.context.tasks = Some(tasks);
@@ -136,6 +128,16 @@ impl eframe::App for MtechServer {
             if let Some(tasks) = &mut self.context.tasks{
                 handle_live_data(data.to_owned(), tasks).unwrap();
             }
+        }
+
+        // Always checking authentication.
+        match self.state{
+            //if auth'd, user shall be allowed
+            AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
+            // if no auth, appstate will be login_page
+            AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
+            AppState::Authenticated(_) => self.main_page(ctx),
+            AppState::CreateAccount => {}
         }
 
         self.context.handle_modals(ctx);

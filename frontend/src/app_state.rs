@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
+use std::{cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
 use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
 use egui::{Align2, Context, Ui, WidgetText};
@@ -7,7 +7,8 @@ use egui_toast::Toasts;
 use gloo_worker::Spawnable;
 use log::info;
 use ratatui::Terminal;
-use ratframe::{NewCC, RataguiBackend};
+use ratframe::NewCC;
+use egui_ratatui::RataguiBackend;
 use serde::Serialize;
 use serde_json::Value;
 use surrealdb::Action;
@@ -67,6 +68,7 @@ pub struct MtechServerContext{
     pub chat_modal: Option<ChatModal>,
     pub task_map: HashMap<String, Vec<TaskPayload>>,
 
+    #[serde(skip)]
     pub current_modal: ModalType,
 
     /// Terminal setup for console tab
