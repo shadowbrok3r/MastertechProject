@@ -1,7 +1,7 @@
-use std::{borrow::{Borrow, BorrowMut}, cell::RefCell, rc::Rc};
+use std::{borrow::BorrowMut, cell::RefCell, rc::Rc};
 
 use chrono::{DateTime, Utc};
-use database::{schema::{TaskNotePayload, TaskPayload}, Database};
+use database::{schema::TaskPayload, Database};
 use egui::{Align, Color32, Grid, Layout, Margin, RichText, Style, TextEdit, Ui, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
@@ -88,7 +88,7 @@ impl DisplayModal for TaskModal {
             .cell_layout(Layout::top_down_justified(Align::Center))
             .size(Size::exact(30.0))
             .size(Size::exact(10.0))
-            .size(Size::exact(700.0))
+            .size(Size::relative(0.8))
             .vertical(|mut strip| 
         {
             strip
@@ -152,10 +152,14 @@ impl DisplayModal for TaskModal {
                             },
                             _ => display_task_page(ui, self.task.as_ref())
                         };
+                        ui.shrink_width_to_current();
+                        ui.shrink_height_to_current();
                     });
                 });
             });
         });
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
         response
     }
 }
@@ -346,6 +350,8 @@ fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>){
             });
 
         });
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
     }
 }
 
@@ -366,7 +372,7 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
             
             StripBuilder::new(ui)
                 .size(Size::exact(180.0))
-                .size(Size::exact(500.0))
+                .size(Size::exact(420.0))
                 .vertical(|mut strip| 
             {
                 strip.strip(|s|{
@@ -545,10 +551,116 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
             
         } else { ui.label("Computer information was not sent with ticket"); }
     }
+    ui.shrink_width_to_current();
+    ui.shrink_height_to_current();
 }
 
 fn display_part_order_page(ui: &mut Ui){
-    ui.label("New page");
+
+    StripBuilder::new(ui)
+        .size(Size::exact(100.0))
+        .size(Size::exact(115.0))
+        .size(Size::exact(20.0))
+        .size(Size::exact(100.0))
+        .vertical(|mut strip| 
+    {
+
+        strip.strip(|s|{
+            s
+                .size(Size::exact(300.0))
+                .size(Size::exact(10.0))
+                .size(Size::exact(300.0))
+                .horizontal(|mut s|
+            {
+                s.cell(|ui|{
+                    ui.label("Stuff:");
+                        TextEdit::singleline(&mut "SPO Stuff".to_string())
+                        .margin(Margin::same(5.0))
+                        .desired_width(ui.available_width())
+                        .code_editor()
+                        .ui(ui);
+                });
+                s.empty();
+                s.cell(|ui|{
+                    ui.label("The thing:");
+                    TextEdit::singleline(&mut "SPO Stuff".to_string())
+                    .margin(Margin::same(5.0))
+                    .desired_width(ui.available_width())
+                    .frame(true)
+                    .code_editor()
+                    .ui(ui);
+                    
+                });  
+            });
+        });
+        strip.strip(|s|{
+            s
+                .size(Size::exact(300.0))
+                .size(Size::exact(10.0))
+                .size(Size::exact(300.0))
+                .horizontal(|mut s|
+            {
+                s.cell(|ui|{
+                    ui.label("other thing:");
+                        TextEdit::singleline(&mut "SPO Stuff".to_string())
+                        .margin(Margin::same(5.0))
+                        .desired_width(ui.available_width())
+                        .code_editor()
+                        .ui(ui);
+                });
+                s.empty();
+                s.cell(|ui|{
+                    ui.label("bs");
+                    TextEdit::singleline(&mut "SPO Stuff".to_string())
+                    .margin(Margin::same(5.0))
+                    .desired_width(ui.available_width())
+                    .frame(true)
+                    .code_editor()
+                    .ui(ui);
+                    
+                });  
+            });
+        });
+        strip.empty();
+        strip.strip(|s|{
+            s
+                .size(Size::exact(150.0))
+                .vertical(|mut s|
+            {
+                s.strip(|s|{
+                    s
+                        .size(Size::exact(300.0))
+                        .size(Size::exact(10.0))
+                        .size(Size::exact(300.0))
+                        .horizontal(|mut s|
+                    {
+                        s.cell(|ui|{
+                            ui.label("Recommendations:");
+                                TextEdit::singleline(&mut "SPO Stuff".to_string())
+                                .margin(Margin::same(5.0))
+                                .desired_width(ui.available_width())
+                                .code_editor()
+                                .ui(ui);
+                        });
+                        s.empty();
+                        s.cell(|ui|{
+                            ui.label("Checkin Notes:");
+                            TextEdit::singleline(&mut "SPO Stuff".to_string())
+                            .margin(Margin::same(5.0))
+                            .desired_width(ui.available_width())
+                            .frame(true)
+                            .code_editor()
+                            .ui(ui);
+                            
+                        });    
+                    });
+                });
+            });
+        });
+
+    });
+    ui.shrink_width_to_current();
+    ui.shrink_height_to_current();
 }
 
 fn display_chat_page(ui: &mut Ui, chat_view: &mut ChatModal){

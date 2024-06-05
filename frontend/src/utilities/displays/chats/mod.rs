@@ -276,7 +276,7 @@ impl ChatModal {
                         ui.painter()
                             .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
 
-                        let text_edit = TextEdit::multiline(&mut "Enter a message")
+                        let _text_edit = TextEdit::multiline(&mut "Enter a message")
                         .desired_rows(5)
                         .desired_width(ui.available_width())
                         .horizontal_align(egui::Align::Center)
