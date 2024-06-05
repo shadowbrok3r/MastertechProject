@@ -2,12 +2,11 @@ use std::iter::repeat;
 use std::sync::Arc;
 use std::time::Duration;
 use std::usize;
-
+use database::schema::{TaskNotePayload, User};
 use eframe::emath::Vec2;
 use egui::{
-    Align, Frame, Label, Layout, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, Ui, Widget,
+    Align, Frame, Label, Layout, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, TextEdit, Ui, Widget
 };
-
 use egui_animation::animate_continuous;
 use egui_inbox::UiInbox;
 use egui_infinite_scroll::InfiniteScroll;
@@ -18,33 +17,25 @@ use crate::utilities::ModalTypes;
 
 use super::modals::ModalState;
 
-pub const CHAT_HISTORY: &str = include_str!("chat_history.txt");
-
-pub const CHAT_MESSAGES: &str = include_str!("chat.txt");
-
 #[derive(Debug, Default)]
 pub struct HistoryLoader {
     pub history: Vec<ChatMessage>,
-    pub messages: Vec<(ChatMessage, Duration)>,
+    pub messages: Vec<ChatMessage>,
 }
 
 impl HistoryLoader {
-    pub fn new() -> Self {
-        let history: Vec<_> = CHAT_HISTORY
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(|line| {
-                let (name, content) = line.split_once(": ").unwrap();
-
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: &User) -> Self {
+        let history: Vec<_> = messages.clone()
+            .into_iter()
+            .map(|chat_message|
                 ChatMessage {
-                    content: content.to_string(),
-                    from: if name == "me" {
+                    note: chat_message.note,
+                    from: if chat_message.everest_initials == current_user.everest_initials {
                         None
                     } else {
-                        Some(name.to_string())
+                        Some(chat_message.everest_initials)
                     },
-                }
-            })
+                })
             .rev()
             .collect();
 
@@ -54,32 +45,22 @@ impl HistoryLoader {
             .flat_map(|history| history.clone())
             .collect();
 
+            let messages = messages
+            .into_iter()
+            .map(|chat_message| 
+                ChatMessage {
+                    note: chat_message.note,
+                    from: if chat_message.everest_initials == current_user.everest_initials {
+                        None
+                    } else {
+                        Some(chat_message.everest_initials)
+                    },
+                }
+            )
+            .collect();
         Self {
             history,
-
-            messages: CHAT_MESSAGES
-                .lines()
-                .filter(|line| !line.is_empty())
-                .map(|line| {
-                    let (name, content) = line.split_once(": ").unwrap();
-
-                    let (name, duration) = name.split_once(", ").unwrap();
-
-                    let duration = Duration::from_secs_f32(duration.parse::<f32>().unwrap());
-
-                    (
-                        ChatMessage {
-                            content: content.to_string(),
-                            from: if name == "me" {
-                                None
-                            } else {
-                                Some(name.to_string())
-                            },
-                        },
-                        duration,
-                    )
-                })
-                .collect(),
+            messages
         }
     }
 
@@ -99,7 +80,7 @@ impl HistoryLoader {
 
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
-    pub content: String,
+    pub note: String,
     pub from: Option<String>,
 }
 
@@ -125,8 +106,8 @@ impl ModalTypes for ChatModal{
 }
 
 impl ChatModal {
-    pub fn new() -> Self {
-        let history_loader = Arc::new(HistoryLoader::new());
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: &User) -> Self {
+        let history_loader = Arc::new(HistoryLoader::new(messages, current_user));
 
         let inbox = UiInbox::new();
 
@@ -134,7 +115,7 @@ impl ChatModal {
 
         ChatModal {
             messages: InfiniteScroll::new().start_loader(move |cursor, cb| {
-                println!("Loading messages...");
+                info!("Loading messages...");
                 let history_loader = history_loader_clone.clone();
                 spawn_local(async move {
                     let (messages, cursor) = history_loader.load(cursor).await;
@@ -151,7 +132,7 @@ impl ChatModal {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
-        info!("In chat modal");
+        
         if !self.shown {
             self.shown = true;
 
@@ -159,7 +140,7 @@ impl ChatModal {
             self.history_loader
                 .messages
                 .iter()
-                .for_each(|(message, _)| {
+                .for_each(|message| {
                     let tx = tx.clone();
                     let message = message.clone();
                     tx.send(message).ok();
@@ -167,6 +148,7 @@ impl ChatModal {
         }
 
         self.inbox.read(ui).for_each(|message| {
+            info!("In chat modal: {:?}", message);
             self.messages.items.push(message);
             self.msgs_received += 1;
         });
@@ -174,9 +156,10 @@ impl ChatModal {
         ScrollArea::vertical()
             .animated(false)
             .max_height(400.0)
-            .auto_shrink([false, false])
+            // .auto_shrink([false, false])
             .stick_to_bottom(true)
             .show(ui, |ui| {
+                
                 ui.set_width(ui.available_width());
 
                 ui.vertical_centered(|ui| {
@@ -217,7 +200,7 @@ impl ChatModal {
                             )
                         };
 
-                        let content = RichText::new(&item.content);
+                        let content = RichText::new(&item.note);
                         let mut msg_width = measure(content.clone());
                         let name = if let Some(from) = &item.from {
                             let name = RichText::new(from).strong();
@@ -263,7 +246,7 @@ impl ChatModal {
                                         Label::new(from).ui(ui);
                                     }
 
-                                    ui.label(&item.content);
+                                    ui.label(&item.note);
                                 });
                             })
                             .response;
@@ -291,7 +274,13 @@ impl ChatModal {
                         };
 
                         ui.painter()
-                            .add(Shape::convex_polygon(points, msg_color, Stroke::NONE))
+                            .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
+
+                        let text_edit = TextEdit::multiline(&mut "Enter a message")
+                        .desired_rows(5)
+                        .desired_width(ui.available_width())
+                        .horizontal_align(egui::Align::Center)
+                        .ui(ui);
                     });
                 });
 
