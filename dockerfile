@@ -7,3 +7,7 @@ RUN rustup update
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev 
 RUN cargo install trunk
 COPY ./dist /dist
+COPY Trunk.toml Trunk.toml
+COPY ./frontend ./frontend
+COPY ./database ./database
+COPY Cargo.toml Cargo.toml

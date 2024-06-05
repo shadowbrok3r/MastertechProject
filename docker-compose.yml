@@ -79,7 +79,7 @@ services:
       - 8080:8080
     expose:
       - 8080
-    command: trunk serve
+    command: trunk serve -v --proxy-insecure
     volumes:
       - ./dist:/dist
       
