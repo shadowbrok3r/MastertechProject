@@ -1,4 +1,7 @@
 services:
+# docker tag mtechserver:latest mtechserver:latest
+# docker push mtechserver:latest
+# docker push shadowbrok3r/mtechserver:latest
 ############################################## -- TRAEFIK REVERSE PROXY -- ##############################################
   traefik:
     image: traefik:latest
@@ -82,7 +85,7 @@ services:
       
     labels:
       # Routers
-      - "traefik.http.routers.frontend.rule=Host(`master-tech.app`)"
+      - "traefik.http.routers.frontend.rule=Host(`server.master-tech.app`)"
       - "traefik.http.routers.frontend.entrypoints=websecure" 
       - "traefik.http.routers.frontend.tls=true"
       - "traefik.http.routers.frontend.tls.certresolver=digitalocean"
