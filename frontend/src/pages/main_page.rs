@@ -25,8 +25,8 @@ impl MtechServer{
 
                         }
                         if ui.add(Button::new("ChatGPT")).clicked(){
-                            self.context.current_modal = ModalType::ChatModal;
-                            self.context.chat_modal_handler.open();
+                            // self.context.current_modal = ModalType::ChatModal;
+                            // self.context.chat_modal_handler.open();
                         }
                     });
                 }else{

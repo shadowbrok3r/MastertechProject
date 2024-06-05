@@ -1,7 +1,10 @@
+use std::{borrow::{Borrow, BorrowMut}, cell::RefCell, rc::Rc};
+
 use chrono::{DateTime, Utc};
-use database::{schema::TaskPayload, Database};
+use database::{schema::{TaskNotePayload, TaskPayload}, Database};
 use egui::{Align, Color32, Grid, Layout, Margin, RichText, Style, TextEdit, Ui, Widget};
 use egui_extras::{Size, StripBuilder};
+use log::info;
 use serde::Serialize;
 
 use crate::utilities::{DisplayModal, ModalTypes};
@@ -15,7 +18,8 @@ pub struct TaskModal{
     pub database: Option<Database>, 
     #[serde(skip)]
     pub task: Option<TaskPayload>,
-
+    #[serde(skip)]
+    pub chat_view: Option<Rc<RefCell<ChatModal>>>,
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
@@ -45,6 +49,23 @@ impl Default for TaskModal{
             default_height: Some(800.0),
             full_span_content: false,
             state: ModalState::default(),
+            chat_view: None
+        }
+    }
+}
+
+impl TaskModal{
+    pub fn new(chats: ChatModal) -> Self {
+        Self {
+            title: "Task Details".to_string(),
+            database: None,
+            task: None,
+            min_width: Some(600.0),
+            min_height: Some(600.0),
+            default_height: Some(800.0),
+            full_span_content: false,
+            state: ModalState::default(),
+            chat_view: Some(Rc::new(RefCell::new(chats)))
         }
     }
 }
@@ -103,7 +124,6 @@ impl DisplayModal for TaskModal {
                             };
                             if ui.selectable_label(task_note_page, RichText::new("💬").heading()).clicked(){
                                 response = Some(ModalAction::TaskNotePage);
-                                
                             };
                         });
                     });
@@ -124,11 +144,14 @@ impl DisplayModal for TaskModal {
                             ModalAction::TicketInfoPage => display_task_page(ui, self.task.as_ref()),
                             ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref()),
                             ModalAction::PartOrderPage => display_part_order_page(ui),
-                            // _ => display_chat_page(ui, self.chat)
+                            ModalAction::TaskNotePage => {
+                                if let Some(chat_view) = &self.chat_view{
+                                    info!("Got chat_view");
+                                    display_chat_page(ui, &mut chat_view.take());
+                                }
+                            },
                             _ => display_task_page(ui, self.task.as_ref())
                         };
-
-                        
                     });
                 });
             });
@@ -528,6 +551,6 @@ fn display_part_order_page(ui: &mut Ui){
     ui.label("New page");
 }
 
-fn display_chat_page(ui: &mut Ui, mut chat: ChatModal){
-    chat.ui(ui);
+fn display_chat_page(ui: &mut Ui, chat_view: &mut ChatModal){
+    chat_view.borrow_mut().ui(ui);
 }

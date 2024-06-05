@@ -63,7 +63,7 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub chat_modal_handler: ModalHandler<ChatModal>,
     #[serde(skip)]
-    pub chat_modal: ChatModal,
+    pub chat_modal: Option<ChatModal>,
     pub task_map: HashMap<String, Vec<TaskPayload>>,
 
     pub current_modal: ModalType,
@@ -341,7 +341,7 @@ impl NewCC for MtechServer{
             create_task_modal_handler,
             current_modal: ModalType::Null,
             chat_modal_handler,
-            chat_modal: ChatModal::new(),
+            chat_modal: None,
 
             task_map: HashMap::new(),
             terminal,
@@ -397,12 +397,7 @@ impl NewCC for MtechServer{
 }
 
 impl MtechServerContext{
-    pub fn initialize_task_layout(
-        &mut self, 
-        page: &str, 
-        col_names: Vec<String>, 
-        database: Database,
-    ) {
+    pub fn initialize_task_layout(&mut self, page: &str, col_names: Vec<String>, database: Database){
         if !self.task_layouts.contains_key(page) {
             let task_layout_opts = TaskLayout::new(
                 HashMap::new(),
@@ -417,9 +412,23 @@ impl MtechServerContext{
     pub fn handle_modals(&mut self, ctx: &Context){
         match &self.current_modal {
             ModalType::TaskModal(task_modal) => {
+                let modal = if let Some(task) = &task_modal.task{
+                    if let Some(notes) = &task.task_note{
+                        let chat_modal = ChatModal::new(notes.clone(), self.current_user.as_ref().unwrap());
+                        // info!("We have notes! {:?}", notes);
+                        TaskModal::new(chat_modal).title(task_modal.task.as_ref().unwrap().task_name.clone())
+                    }else{
+                        info!("no notes");
+                        TaskModal::default().title(task_modal.task.as_ref().unwrap().task_name.clone())
+                    }
+                }else{
+                    info!("No task payload?");
+                    TaskModal::default().title(task_modal.task.as_ref().unwrap().task_name.clone())
+                };
+
                 self.task_modal_handler.ui(
                     ctx, 
-                    ||TaskModal::default().title(task_modal.task.as_ref().unwrap().task_name.clone()),
+                    || modal,
                     move |ui, _stay_open, page_state| {
                         let action = task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action{
@@ -439,21 +448,23 @@ impl MtechServerContext{
                     }
                 }
             }
-            ModalType::ChatModal => {
-                let chat_modal = self.chat_modal.borrow_mut();
-                self.chat_modal_handler.ui(
-                    ctx, 
-                    || ChatModal::new(),
-                    move |ui, _stay_open, _page_state| chat_modal.ui(ui));
+            // ModalType::ChatModal(task_notes) => {
+            //     let notes = task_notes.clone();
+            //     if let Some(current_user) = self.current_user.as_ref(){
+            //         self.chat_modal_handler.ui(
+            //             ctx, 
+            //             || ChatModal::new(notes, current_user),
+            //             move |ui, _stay_open, _page_state| chat_modal.ui(ui));
+            //         }
 
-            }
+            // }
             _ => {},
         }
     }
 }
 
+/// Private method to access login state only within NoAuth context
 impl MtechServer{
-    // Private method to access login state only within NoAuth context
     pub fn login_mut(&mut self) -> Option<&mut Login> {
         match self.state{
             AppState::NoAuth => Some(&mut self.login),

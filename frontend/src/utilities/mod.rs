@@ -27,7 +27,7 @@ pub enum TaskUiActions{
 pub enum ModalType{
     CreateTaskModal(CreateTaskModal),
     TaskModal(TaskModal),
-    ChatModal,
+    ChatModal(Vec<TaskNotePayload>),
     #[default]
     Null,
 }

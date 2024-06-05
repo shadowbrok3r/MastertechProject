@@ -55,7 +55,6 @@ impl TaskLayout {
         let db = self.database.clone();
   
         self.style_options.set(ui);
-        // self.task_.sort_task_payloads();
         self.layout_task_cols(
             ui, 
             col_names, 
