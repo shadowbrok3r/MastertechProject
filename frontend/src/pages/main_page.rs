@@ -1,7 +1,7 @@
 use eframe::egui::menu;
 use egui::{Button, CentralPanel, Color32, Frame, Layout, RichText, TopBottomPanel};
 use egui_dock::{DockArea, Style as DockStyle};
-use crate::{app_state::MtechServer, utilities::ModalType};
+use crate::app_state::{AppState, MainPages, MtechServer};
 
 impl MtechServer{
     pub fn main_page(&mut self, ctx: &egui::Context){
@@ -18,15 +18,17 @@ impl MtechServer{
                     let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
                     ui.colored_label(Color32::from_additive_luminance(255), welcome_msg);
                     ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
+                        if ui.add(Button::new("Logout")).clicked(){
+                            self.state = AppState::NoAuth;
+                        }
                         if ui.add(Button::new("Web Console")).clicked(){
-
+                            self.state = AppState::Authenticated(MainPages::WebConsole);
                         }
                         if ui.add(Button::new("Downloads")).clicked(){
-
+                            self.state = AppState::Authenticated(MainPages::Downloads);
                         }
                         if ui.add(Button::new("ChatGPT")).clicked(){
-                            // self.context.current_modal = ModalType::ChatModal;
-                            // self.context.chat_modal_handler.open();
+                            self.state = AppState::Authenticated(MainPages::ChatGpt);
                         }
                     });
                 }else{

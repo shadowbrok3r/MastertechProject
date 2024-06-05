@@ -39,6 +39,7 @@ pub enum MainPages{
 #[derive(Default, Serialize, Debug, PartialEq)]
 pub enum AppState{
     Authenticated(MainPages),
+    CreateAccount,
     #[default]
     NoAuth,
 }

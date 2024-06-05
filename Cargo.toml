@@ -7,7 +7,6 @@ members=["frontend", "database", "my_proc_macros"]
 database = { path = "database" }
 serde = { version = "1.0.198", features = ["derive"] }
 surrealdb = { version = "1.5.1", features = ["protocol-ws"] } # kv-speedb "protocol-http", "native-tls"
-dotenv="0.15.0"
 anyhow = "1.0.83"
 log="0.4"
 chrono = "0.4.38"

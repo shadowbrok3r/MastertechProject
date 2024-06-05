@@ -18,7 +18,7 @@ wasm-bindgen = "0.2.92"
 egui_extras = { version = "0.27.2", features = ["datepicker"]}
 egui-aesthetix = { version = "0.2.3", features = ["carl"] }
 egui_dock = "0.12.0"
-ratframe = "1.1.4"
+ratframe = "2"
 ratatui = { version = "0.26.3", default-features = false }
 web-time = "1.1.0"
 wasm-bindgen-futures = "0.4"
@@ -29,7 +29,7 @@ futures = "0.3.30"
 egui-toast = "0.13.0"
 wasm-cookies = { version= "0.2.1" }
 serde_json = "1.0.117"
-egui_form = "0.1.1"
+egui_form = {version="0.1.1", features = ["validator_validator"]}
 egui_animation = "0.4.0"
 egui_infinite_scroll = "0.3.0"
 egui_inbox = "0.4.1"
