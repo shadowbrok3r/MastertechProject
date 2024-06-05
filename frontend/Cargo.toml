@@ -10,7 +10,7 @@ log  = { workspace=true }
 serde = { workspace=true }
 surrealdb = { workspace=true }
 chrono = { workspace=true }
-my_proc_macros = { path = "../my_proc_macros" }
+# my_proc_macros = { path = "../my_proc_macros" }
 
 egui ={ version="0.27.2", features = ["persistence"]} # "callstack", "log"
 eframe = { version="0.27.2", default-features = false, features=["wgpu"] }

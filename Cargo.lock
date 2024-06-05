@@ -3242,7 +3242,6 @@ dependencies = [
  "futures",
  "gloo-worker",
  "log",
- "my_proc_macros",
  "ratatui",
  "ratframe",
  "serde",
@@ -3252,15 +3251,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-cookies",
  "web-time 1.1.0",
-]
-
-[[package]]
-name = "my_proc_macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.65",
 ]
 
 [[package]]
