@@ -58,6 +58,8 @@ impl Login{
 
 impl MtechServer{
     pub fn login_page(&mut self, ctx: &egui::Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>) {
+        wasm_cookies::delete("user");
+        wasm_cookies::delete("jwt");
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
             .show(ctx, |ui| 
@@ -92,7 +94,7 @@ impl MtechServer{
                                         if ui.toggle_value(&mut  bo, RichText::new("Create Account").small_raised())
                                             .clicked()
                                         {
-
+                                            // self.state = AppState::CreateAccount;
                                         }
 
                                         TextEdit::singleline(&mut login.username)

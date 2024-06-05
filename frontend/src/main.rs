@@ -93,7 +93,8 @@ impl eframe::App for MtechServer {
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
             // if no auth, appstate will be login_page
             AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
-            AppState::Authenticated(_) => {},
+            AppState::Authenticated(_) => self.main_page(ctx),
+            AppState::CreateAccount => {}
         }
         
         if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
