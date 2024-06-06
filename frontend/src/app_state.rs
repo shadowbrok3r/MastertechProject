@@ -103,10 +103,7 @@ pub struct MtechServerContext{
     /// All contained task data from database
     pub live_tasks: Option<LiveTaskPayload>,
     pub tasks: Option<Vec<TaskPayload>>,
-    // pub store_tasks: Option<Vec<TaskPayload>>,
-    // pub completed_tasks: Option<Vec<TaskPayload>>,
     pub store_users: Option<Vec<User>>,
-
 
     /// Receives task data over crossbeam channel
     #[serde(skip)]
@@ -130,9 +127,9 @@ pub struct MtechServerContext{
     pub store_users_rx: Receiver<Vec<User>>,
 
     #[serde(skip)]
-    pub ticket_data_tx: Sender<Option<Value>>,
+    pub app_state_tx: Sender<AppState>,
     #[serde(skip)]
-    pub ticket_data_rx: Receiver<Option<Value>>,
+    pub app_state_rx: Receiver<AppState>,
 
     /// Receives Database connection over crossbeam channel
     #[serde(skip)]
@@ -218,7 +215,6 @@ impl NewCC for MtechServer{
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         let mut tree = DockState::new(
             vec![
-                "My Tasks".to_owned(),
                 "Store Tasks".to_owned(),
                 "Completed Tasks".to_owned(),
             ]
@@ -240,7 +236,7 @@ impl NewCC for MtechServer{
             .main_surface_mut()
             .split_below(
                 NodeIndex::root(),
-                0.65, 
+                0.6, 
                 vec![
                     "Terminal".to_owned(),
             ]
@@ -250,8 +246,8 @@ impl NewCC for MtechServer{
             .main_surface_mut()
             .split_left(
             b,
-            0.45,
-            vec!["Web Console".to_owned()],
+            0.78,
+            vec!["My Tasks".to_owned()],
         );
 
         // let [_, _] = tree
@@ -293,7 +289,7 @@ impl NewCC for MtechServer{
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
 
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
-        let (ticket_data_tx, ticket_data_rx) = channel::unbounded::<Option<Value>>();
+        let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
         
@@ -375,8 +371,8 @@ impl NewCC for MtechServer{
             tasks_rx,
             my_tasks_tx, 
             my_tasks_rx,
-            ticket_data_tx,
-            ticket_data_rx,
+            app_state_tx,
+            app_state_rx,
 
             store_users_tx,
             store_users_rx,
@@ -413,7 +409,7 @@ impl MtechServerContext{
     }
 
     pub fn handle_modals(&mut self, ctx: &Context){
-        match &self.current_modal {
+        match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
                 let modal = if let Some(task) = &task_modal.task{
                     if let Some(notes) = &task.task_note{
@@ -442,8 +438,8 @@ impl MtechServerContext{
             ModalType::CreateTaskModal(create_task_modal) => {
                 let response = self.create_task_modal_handler.ui(
                     ctx, 
-                    || CreateTaskModal::default(),
-                    move |ui, _stay_open, page_state| create_task_modal.display(ui, page_state.to_owned()));
+                    || CreateTaskModal::default().title("Create Task".to_string()),
+                    |ui, _stay_open, page_state| create_task_modal.display(ui, page_state.to_owned()));
 
                 if let Some(response) = response{
                     if let Some(_action) = response{

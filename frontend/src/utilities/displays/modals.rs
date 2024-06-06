@@ -47,7 +47,7 @@ impl <M: ModalTypes>ModalHandler<M> {
         &mut self,
         ctx: &egui::Context,
         make_modal: impl FnOnce() -> M,
-        content_ui: impl FnOnce(&mut egui::Ui, &mut bool, &mut ModalAction) -> R,
+        content_ui: impl FnMut(&mut egui::Ui, &mut bool, &mut ModalAction) -> R,
     ) -> Option<R> {
         if self.modal.is_none() && self.should_open {
             self.modal = Some(make_modal());

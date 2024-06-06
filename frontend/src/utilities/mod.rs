@@ -99,7 +99,7 @@ pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
 }
 
 pub trait DisplayModal{
-    fn display(&self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>;
+    fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>;
     // fn set_state(self, action: ModalAction);
 }
 

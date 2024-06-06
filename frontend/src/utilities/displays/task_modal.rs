@@ -2,7 +2,7 @@ use std::{borrow::BorrowMut, cell::RefCell, rc::Rc};
 
 use chrono::{DateTime, Utc};
 use database::{schema::TaskPayload, Database};
-use egui::{Align, Color32, Grid, Layout, Margin, RichText, Style, TextEdit, Ui, Widget};
+use egui::{Align, Color32, ComboBox, FontId, Frame, Grid, Layout, Margin, RichText, Style, TextEdit, Ui, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use serde::Serialize;
@@ -82,7 +82,7 @@ impl ModalTypes for TaskModal{
 
 
 impl DisplayModal for TaskModal {
-    fn display(&self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>{
+    fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>{
         let mut response: Option<ModalAction> = None;
         StripBuilder::new(ui)
             .cell_layout(Layout::top_down_justified(Align::Center))
@@ -141,9 +141,21 @@ impl DisplayModal for TaskModal {
                     strip.cell(|ui|
                     {
                         match current_page_state{
-                            ModalAction::TicketInfoPage => display_task_page(ui, self.task.as_ref()),
-                            ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref()),
-                            ModalAction::PartOrderPage => display_part_order_page(ui),
+                            ModalAction::TicketInfoPage => {
+                                ui.horizontal_centered(|ui|{
+                                    display_task_page(ui, self.task.as_ref())
+                                });
+                            },
+                            ModalAction::ComputerInfoPage => {
+                                ui.horizontal_centered(|ui|{
+                                    display_computer_page(ui, self.task.as_ref())
+                                });
+                            },
+                            ModalAction::PartOrderPage => {
+                                ui.horizontal_centered(|ui|{
+                                    display_part_order_page(ui)
+                                });
+                            },
                             ModalAction::TaskNotePage => {
                                 if let Some(chat_view) = &self.chat_view{
                                     info!("Got chat_view");
@@ -383,58 +395,56 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                         .horizontal(|mut s|
                     {
                         s.cell(|ui|{
-                            ui.group(|ui| {
-                                // ui.label("Personnel Information");
-                                Grid::new("group2").min_col_width(185.0).with_row_color(|num, style| return_colors(num, style))
-                                .show(ui, |ui| {
-                                    ui.label("hostname:");
-                                    ui.label(&computer.hostname);
-                                    ui.end_row();
-                                    ui.label("operating_system:");
-                                    ui.label(&computer.operating_system);
-                                    ui.end_row();
-                                    ui.label("cpu:");
-                                    ui.label(&computer.cpu);
-                                    ui.end_row();
-                                    ui.label("gpu:");
-                                    ui.label(&computer.gpu);
-                                    ui.end_row();
-                                    ui.label("ram:");
-                                    ui.label(&computer.ram);
-                                    ui.end_row();
-                                    
-                                    // ui.label("current_antivirus:");
-                                    // ui.label(&ticket.current_antivirus);
-                                    // ui.end_row();
-                                    // ui.label("hardware_test_results:");
-                                    // ui.label(&ticket.hardware_test_results);
-                                    // ui.end_row();
+                            ui.horizontal_centered(|ui|{
+                                ui.group(|ui| {
+                                    // ui.label("Personnel Information");
+                                    Grid::new("group2").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                                    .show(ui, |ui| {
+                                        ui.label("hostname:");
+                                        ui.label(&computer.hostname);
+                                        ui.end_row();
+                                        ui.label("operating_system:");
+                                        ui.label(&computer.operating_system);
+                                        ui.end_row();
+                                        ui.label("cpu:");
+                                        ui.label(&computer.cpu);
+                                        ui.end_row();
+                                        ui.label("gpu:");
+                                        ui.label(&computer.gpu);
+                                        ui.end_row();
+                                        ui.label("ram:");
+                                        ui.label(&computer.ram);
+                                        ui.end_row();
+                                        
+                                        // ui.label("current_antivirus:");
+                                        // ui.label(&ticket.current_antivirus);
+                                        // ui.end_row();
+                                        // ui.label("hardware_test_results:");
+                                        // ui.label(&ticket.hardware_test_results);
+                                        // ui.end_row();
+                                    });
                                 });
                             });
-
                         });
                         s.empty();
                         s.cell(|ui| {
-                            ui.group(|ui| {
-                                // ui.label("Ticket Information");
-                                Grid::new("group1").min_col_width(50.0).with_row_color(|num, style| return_colors(num, style))
-                                .show(ui, |ui| {
-                                    for drive_data in &computer.drives{
+                            ui.horizontal_centered(|ui|{
+                                ui.group(|ui| {
+                                    // ui.label("Ticket Information");
+                                    Grid::new("group1").min_col_width(50.0).with_row_color(|num, style| return_colors(num, style))
+                                    .show(ui, |ui| {
                                         ui.label("Letter");
                                         ui.label("Space Left / Total Size");
                                         ui.label("Type");
                                         ui.end_row();
-
-                                        ui.label(&drive_data.drive_letter);
-                                        ui.label(format!("{}Gb / {}Gb", &drive_data.space_left, &drive_data.total_size));
-                                        ui.label(&drive_data.drive_type);
-                                        ui.end_row();
-
-                                        ui.label("");
-                                        ui.label("");
-                                        ui.label("");
-                                    }
-
+                                        
+                                        for drive_data in &computer.drives{
+                                            ui.label(&drive_data.drive_letter);
+                                            ui.label(format!("{}Gb / {}Gb", &drive_data.space_left, &drive_data.total_size));
+                                            ui.label(&drive_data.drive_type);
+                                            ui.end_row();
+                                        }
+                                    });
                                 });
                             });
                         });
@@ -448,102 +458,108 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                         .horizontal(|mut s|
                     {
                         s.cell(|ui|{
-                            ui.group(|ui| {
-                                if let Some(seb_info) = seb_info{
-                                    // ui.label("Order Details");
-                                    Grid::new("group3").min_col_width(185.0).with_row_color(|num, style| return_colors(num, style))
-                                    .show(ui, |ui| {
-                                        ui.label("InstalledDeviceId:");
-                                        ui.label(&seb_info.InstalledDeviceId);
-                                        ui.end_row();
-                                        ui.label("InstallInstanceId:");
-                                        ui.label(&seb_info.InstallInstanceId);
-                                        ui.end_row();
-                                        ui.label("HasIssues:");
-                                        ui.label(&seb_info.HasIssues);
-                                        ui.end_row();
-                                        ui.label("InstallationStage:");
-                                        ui.label(&seb_info.InstallationStage);
-                                        ui.end_row();
-                                        ui.label("ReasonCode:");
-                                        ui.label(&seb_info.ReasonCode);
-                                        ui.end_row();
-                                        ui.label("ActivationCode:");
-                                        ui.label(&seb_info.ActivationCode);
-                                        ui.end_row();
-                                        ui.label("InstallVersion:");
-                                        ui.label(&seb_info.InstallVersion);
-                                        ui.end_row();
-                                        ui.label("MachineName:");
-                                        ui.label(&seb_info.MachineName);
-                                        ui.end_row();
-                                    });
-                                }else{
-                                    ui.label("No SEB information was sent with ticket.");
-                                }
+                            ui.horizontal_centered(|ui|{
+                                ui.group(|ui| {
+                                    if let Some(seb_info) = seb_info{
+                                        // ui.label("Order Details");
+                                        Grid::new("group3").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                                        .show(ui, |ui| {
+                                            ui.label("InstalledDeviceId:");
+                                            ui.label(RichText::new(&seb_info.InstalledDeviceId).small().font(FontId::proportional(8.0)));
+                                            ui.end_row();
+                                            ui.label("InstallInstanceId:");
+                                            ui.label(RichText::new(&seb_info.InstallInstanceId).small().font(FontId::proportional(8.0)));
+                                            ui.end_row();
+                                            ui.label("HasIssues:");
+                                            ui.label(&seb_info.HasIssues);
+                                            ui.end_row();
+                                            ui.label("InstallationStage:");
+                                            ui.label(&seb_info.InstallationStage);
+                                            ui.end_row();
+                                            ui.label("ReasonCode:");
+                                            ui.label(&seb_info.ReasonCode);
+                                            ui.end_row();
+                                            ui.label("ActivationCode:");
+                                            ui.label(&seb_info.ActivationCode);
+                                            ui.end_row();
+                                            ui.label("InstallVersion:");
+                                            ui.label(&seb_info.InstallVersion);
+                                            ui.end_row();
+                                            ui.label("MachineName:");
+                                            ui.label(&seb_info.MachineName);
+                                            ui.end_row();
+                                        });
+                                    }else{
+                                        ui.shrink_height_to_current();
+                                        ui.shrink_width_to_current();
+                                        ui.label("No SEB information was sent with ticket.");
+                                    }
+                                });
                             });
                         });
                         s.empty();
                         s.cell(|ui|{
-                            if let Some(seb_info) = seb_info{
-                                if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
-                                    ui.group(|ui| {
-                                        // ui.label("Customer Information");
-                                        Grid::new("customer_data").min_col_width(185.0).with_row_color(|num, style| return_colors(num, style))
-                                        .show(ui, |ui| {
-                                            ui.label("email:");
-                                            ui.label(&extended_seb.email);
-                                            ui.end_row();
-                                            ui.label("phone:");
-                                            ui.label(&extended_seb.phone);
-                                            ui.end_row();
-                                            ui.label("device_name:");
-                                            ui.label(&extended_seb.device_name);
-                                            ui.end_row();
-                                            ui.label("device_id:");
-                                            ui.label(&extended_seb.device_id);
-                                            ui.end_row();
-                                            ui.label("state:");
-                                            ui.label(&extended_seb.state);
-                                            ui.end_row();
-                                            ui.label("usage_gb:");
-                                            ui.label(&extended_seb.usage_gb);
-                                            ui.end_row();
-                                            ui.label("date_device_created:");
-                                            ui.label(&extended_seb.date_device_created);
-                                            ui.end_row();
-                                            ui.label("activated:");
-                                            ui.label(&extended_seb.activated);
-                                            ui.end_row();
-                                            ui.label("activation_code:");
-                                            ui.label(&extended_seb.activation_code);
-                                            ui.end_row();
-                                            ui.label("last_complete_backup:");
-                                            ui.label(&extended_seb.last_complete_backup);
-                                            ui.end_row();
-                                            ui.label("last_client_status_update:");
-                                            ui.label(&extended_seb.last_client_status_update);
-                                            ui.end_row();
-                                            ui.label("id_recurly_account:");
-                                            ui.label(&extended_seb.id_recurly_account);
-                                            ui.end_row();
-                                            ui.label("date_last_scan:");
-                                            ui.end_row();
-                                            ui.label("current_period_ends_at:");
-                                            ui.label(&extended_seb.current_period_ends_at);
-                                            ui.end_row();
-                                            ui.label("date_modified:");
-                                            ui.label(&extended_seb.date_modified);
-                                            ui.end_row();
-                                            ui.label("date_created:");
-                                            ui.label(&extended_seb.date_created);
-                                            ui.end_row();
+                            ui.horizontal_centered(|ui|{
+                                if let Some(seb_info) = seb_info{
+                                    if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
+                                        ui.group(|ui| {
+                                            // ui.label("Customer Information");
+                                            Grid::new("customer_data").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                                            .show(ui, |ui| {
+                                                ui.label("email:");
+                                                ui.label(&extended_seb.email);
+                                                ui.end_row();
+                                                ui.label("phone:");
+                                                ui.label(&extended_seb.phone);
+                                                ui.end_row();
+                                                ui.label("device_name:");
+                                                ui.label(RichText::new(&extended_seb.device_name).small().font(FontId::proportional(8.0)));
+                                                ui.end_row();
+                                                ui.label("device_id:");
+                                                ui.label(RichText::new(&extended_seb.device_id).small().font(FontId::proportional(8.0)));
+                                                ui.end_row();
+                                                ui.label("state:");
+                                                ui.label(&extended_seb.state);
+                                                ui.end_row();
+                                                ui.label("usage_gb:");
+                                                ui.label(&extended_seb.usage_gb);
+                                                ui.end_row();
+                                                ui.label("date_device_created:");
+                                                ui.label(&extended_seb.date_device_created);
+                                                ui.end_row();
+                                                ui.label("activated:");
+                                                ui.label(&extended_seb.activated);
+                                                ui.end_row();
+                                                ui.label("activation_code:");
+                                                ui.label(RichText::new(&extended_seb.activation_code).small().font(FontId::proportional(8.0)));
+                                                ui.end_row();
+                                                ui.label("last_complete_backup:");
+                                                ui.label(&extended_seb.last_complete_backup);
+                                                ui.end_row();
+                                                ui.label("last_client_status_update:");
+                                                ui.label(&extended_seb.last_client_status_update);
+                                                ui.end_row();
+                                                ui.label("id_recurly_account:");
+                                                ui.label(&extended_seb.id_recurly_account);
+                                                ui.end_row();
+                                                ui.label("date_last_scan:");
+                                                ui.end_row();
+                                                ui.label("current_period_ends_at:");
+                                                ui.label(&extended_seb.current_period_ends_at);
+                                                ui.end_row();
+                                                ui.label("date_modified:");
+                                                ui.label(&extended_seb.date_modified);
+                                                ui.end_row();
+                                                ui.label("date_created:");
+                                                ui.label(&extended_seb.date_created);
+                                                ui.end_row();
+                                            });
                                         });
-                                    });
-                                }else{
-                                    ui.label("SEB information was sent with ticket, but we didnt get the extended SEB info");
+                                    }else{
+                                        ui.label("SEB information was sent with ticket, but we didnt get the extended SEB info");
+                                    }
                                 }
-                            }
+                            });
                         });
                     });
                 });
@@ -556,108 +572,136 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
 }
 
 fn display_part_order_page(ui: &mut Ui){
-
     StripBuilder::new(ui)
-        .size(Size::exact(100.0))
-        .size(Size::exact(115.0))
-        .size(Size::exact(20.0))
-        .size(Size::exact(100.0))
+        .size(Size::exact(50.0))
+        .size(Size::exact(50.0))
+        .size(Size::exact(120.0))
+        .size(Size::exact(50.0))
         .vertical(|mut strip| 
     {
 
         strip.strip(|s|{
             s
-                .size(Size::exact(300.0))
+                .size(Size::exact(170.0))
                 .size(Size::exact(10.0))
-                .size(Size::exact(300.0))
+                .size(Size::exact(170.0))
                 .horizontal(|mut s|
             {
                 s.cell(|ui|{
-                    ui.label("Stuff:");
-                        TextEdit::singleline(&mut "SPO Stuff".to_string())
-                        .margin(Margin::same(5.0))
-                        .desired_width(ui.available_width())
-                        .code_editor()
-                        .ui(ui);
+                    ui.label("SPO Status");
+                    ComboBox::new("AwaitingQuoteCombo", "")
+                        .selected_text("Status")
+                        .width(ui.available_width())
+                        .show_ui(ui, |ui| 
+                    {
+                        ui.selectable_value(&mut "Status".to_string(), "Status".to_string(), "Status");
+                        ui.selectable_value(&mut "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval");
+                        ui.selectable_value(&mut "Quote Fullfilled".to_string(), "Quote Fullfilled".to_string(), "Quote Fullfilled");
+                        ui.selectable_value(&mut "Awaiting Quote".to_string(), "Awaiting Quote".to_string(), "Awaiting Quote");
+                    });
                 });
                 s.empty();
                 s.cell(|ui|{
-                    ui.label("The thing:");
-                    TextEdit::singleline(&mut "SPO Stuff".to_string())
-                    .margin(Margin::same(5.0))
-                    .desired_width(ui.available_width())
-                    .frame(true)
-                    .code_editor()
-                    .ui(ui);
-                    
+                    ui.label("Manufacturer");
+                    ComboBox::new("ManufacturerCombo", "")
+                        .selected_text("PCL")
+                        .width(ui.available_width())
+                        .show_ui(ui, |ui| 
+                    {
+                        ui.selectable_value(&mut "PCL".to_string(), "PCL".to_string(), "PCL");
+                        ui.selectable_value(&mut "Other".to_string(), "Other".to_string(), "Other");
+                    });
+                });
+            });
+        });
+        strip.strip(|s|{
+            s
+                .size(Size::exact(170.0))
+                .size(Size::exact(10.0))
+                .size(Size::exact(170.0))
+                .horizontal(|mut s|
+            {
+                s.cell(|ui|{
+                    ui.label("MFG Model #");
+                        TextEdit::singleline(&mut "MFG Model #".to_string())
+                            .margin(Margin::same(5.0))
+                            .desired_width(ui.available_width())
+                            .code_editor()
+                            .ui(ui);
+                });
+                s.empty();
+                s.cell(|ui|{
+                    ui.label("MFG P/N");
+                    TextEdit::singleline(&mut "MFG P/N".to_string())
+                        .margin(Margin::same(5.0))
+                        .desired_width(ui.available_width())
+                        .frame(true)
+                        .code_editor()
+                        .ui(ui);
                 });  
             });
         });
         strip.strip(|s|{
             s
-                .size(Size::exact(300.0))
-                .size(Size::exact(10.0))
-                .size(Size::exact(300.0))
-                .horizontal(|mut s|
-            {
-                s.cell(|ui|{
-                    ui.label("other thing:");
-                        TextEdit::singleline(&mut "SPO Stuff".to_string())
-                        .margin(Margin::same(5.0))
-                        .desired_width(ui.available_width())
-                        .code_editor()
-                        .ui(ui);
-                });
-                s.empty();
-                s.cell(|ui|{
-                    ui.label("bs");
-                    TextEdit::singleline(&mut "SPO Stuff".to_string())
-                    .margin(Margin::same(5.0))
-                    .desired_width(ui.available_width())
-                    .frame(true)
-                    .code_editor()
-                    .ui(ui);
-                    
-                });  
-            });
-        });
-        strip.empty();
-        strip.strip(|s|{
-            s
-                .size(Size::exact(150.0))
+                .size(Size::exact(170.0))
                 .vertical(|mut s|
             {
                 s.strip(|s|{
                     s
-                        .size(Size::exact(300.0))
+                        .size(Size::exact(170.0))
                         .size(Size::exact(10.0))
-                        .size(Size::exact(300.0))
+                        .size(Size::exact(170.0))
                         .horizontal(|mut s|
                     {
                         s.cell(|ui|{
-                            ui.label("Recommendations:");
-                                TextEdit::singleline(&mut "SPO Stuff".to_string())
+                            ui.label("Part Description:");
+                            TextEdit::multiline(&mut "Part Description".to_string())
                                 .margin(Margin::same(5.0))
+                                .desired_rows(6)
                                 .desired_width(ui.available_width())
                                 .code_editor()
                                 .ui(ui);
                         });
                         s.empty();
                         s.cell(|ui|{
-                            ui.label("Checkin Notes:");
-                            TextEdit::singleline(&mut "SPO Stuff".to_string())
-                            .margin(Margin::same(5.0))
-                            .desired_width(ui.available_width())
-                            .frame(true)
-                            .code_editor()
-                            .ui(ui);
+                            ui.label("Notes");
+                            TextEdit::multiline(&mut "Notes".to_string())
+                                .margin(Margin::same(5.0))
+                                .desired_rows(6)
+                                .desired_width(ui.available_width())
+                                .code_editor()
+                                .ui(ui);
                             
                         });    
                     });
                 });
             });
         });
-
+        strip.strip(|s|{
+            s
+                .size(Size::exact(170.0))
+                .vertical(|mut s|
+            {
+                s.strip(|s|{
+                    s
+                        .size(Size::exact(170.0))
+                        .size(Size::exact(10.0))
+                        .size(Size::exact(170.0))
+                        .horizontal(|mut s|
+                    {
+                        s.cell(|ui|{
+                            ui.label("LCD?");
+                            let _ = ui.radio(false, "LCD?");
+                        });
+                        s.empty();
+                        s.cell(|ui|{
+                            ui.label("Upload Picture");
+                            
+                        });    
+                    });
+                });
+            });
+        });
     });
     ui.shrink_width_to_current();
     ui.shrink_height_to_current();

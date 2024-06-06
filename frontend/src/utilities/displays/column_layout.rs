@@ -19,18 +19,21 @@ impl ColumnLayout for TaskLayout {
         assignees: &Option<Vec<User>>,
         filter_items: HashMap<String, Vec<TaskPayload>>
     ){
-        ui.style_mut().visuals.window_rounding = Rounding::same(5.0);
+        ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
+        
         let column_width = Size::exact(450.0);
     
         ScrollArea::horizontal()
-            .hscroll(true)
+            // .hscroll(false)
+            // .min_scrolled_height(250.0)
             .show_viewport(ui, |ui, _|
         {
+            let x: f32 = ui.available_height() - 40.0;
             StripBuilder::new(ui)
                 .cell_layout(Layout::top_down_justified(egui::Align::Center))
-                .size(Size::relative(0.01))
-                .size(Size::relative(0.07))
-                .size(Size::relative(0.92))
+                .size(Size::exact(30.0))
+                .size(Size::exact(5.0))
+                .size(Size::exact(x))
                 .vertical(|mut strip| 
             {
                 strip
