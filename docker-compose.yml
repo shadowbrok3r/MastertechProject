@@ -1,6 +1,5 @@
 services:
-# docker tag mtechserver:latest mtechserver:latest
-# docker push mtechserver:latest
+# docker image tag mtechserver:latest shadowbrok3r/mtechserver:latest 
 # docker push shadowbrok3r/mtechserver:latest
 ############################################## -- TRAEFIK REVERSE PROXY -- ##############################################
   traefik:
