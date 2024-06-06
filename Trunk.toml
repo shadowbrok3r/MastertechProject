@@ -2,20 +2,20 @@
 
 [build]
 # The index HTML file to drive the bundling process.
-# target = "frontend/index.html"
-# # Build in release mode.
-# release = true
-# # The output dir for all final assets.
-# dist = "dist"
-# # The public URL from which assets are to be served.
-# public_url = "/"
-# # Whether to include hash values in the output file names.
+target = "frontend/index.html"
+# Build in release mode.
+release = true
+# The output dir for all final assets.
+dist = "dist"
+# The public URL from which assets are to be served.
+public_url = "/"
+# Whether to include hash values in the output file names.
 
-# [serve]
-# # The address to serve on.
-# address = "0.0.0.0"
-# # The port to serve on.
-# port = 8080
+[serve]
+# The address to serve on.
+address = "0.0.0.0"
+# The port to serve on.
+port = 8080
 # Additional headers set for responses.
 # headers = { "test-header" = "header value", "test-header2" = "header value 2" }
 # Protocol used for autoreload WebSockets connection.

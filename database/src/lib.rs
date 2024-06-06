@@ -48,7 +48,7 @@ struct Auth {
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
         // dotenv::var("DB_URL").expect("No Env var for DB_URL");
-        let db_url = "localhost:8000".to_string(); 
+        let db_url = "surrealdb.master-tech.app".to_string(); 
         // let root_user = dotenv::var("SURREAL_USER").expect("No Env var for SURREAL_USER");
         // let root_pass = dotenv::var("SURREAL_PASS").expect("No Env var for SURREAL_PASS");
         match jwt{
