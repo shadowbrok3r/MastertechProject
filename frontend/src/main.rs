@@ -130,6 +130,9 @@ impl eframe::App for MtechServer {
             }
         }
 
+        if let Ok(state) = self.context.app_state_rx.try_recv(){
+            self.state = state
+        }
         // Always checking authentication.
         match self.state{
             //if auth'd, user shall be allowed
@@ -210,6 +213,7 @@ fn set_style() -> Arc<Style>{
     custom_style.interaction.interact_radius = 15.0;
     custom_style.interaction.resize_grab_radius_side = 15.0;
     custom_style.interaction.resize_grab_radius_corner = 18.0;
+    
     let arc_style = Arc::new(custom_style);
     arc_style
 }

@@ -14,16 +14,16 @@ impl MtechServer{
                     if ui.add(Button::new("MasterTech Server")).clicked(){
 
                     }
-                    ui.add_space(50.0);
+                    ui.add_space(20.0);
                     let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
-                    ui.colored_label(Color32::from_additive_luminance(255), welcome_msg);
+                    ui.colored_label(Color32::from_rgb(100,50,100), welcome_msg);
                     ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
                         if ui.add(Button::new("Logout")).clicked(){
                             self.state = AppState::NoAuth;
                         }
-                        if ui.add(Button::new("Web Console")).clicked(){
-                            self.state = AppState::Authenticated(MainPages::WebConsole);
-                        }
+                        // if ui.add(Button::new("Web Console")).clicked(){
+                        //     self.state = AppState::Authenticated(MainPages::WebConsole);
+                        // }
                         if ui.add(Button::new("Downloads")).clicked(){
                             self.state = AppState::Authenticated(MainPages::Downloads);
                         }
@@ -83,8 +83,10 @@ impl MtechServer{
                 style.main_surface_border_rounding.ne = 15.0;
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
                 
+                // egui_dock
                 DockArea::new(&mut self.tree)
                     .style(style)
+                    // .
                     .show_close_buttons(true)
                     .show_add_buttons(true)
                     .show_add_popup(true)
