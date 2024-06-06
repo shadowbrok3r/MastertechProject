@@ -1,5 +1,5 @@
 use gloo_worker::Registrable;
-use mtechserver_two::webworker;
+use mtechserver::webworker;
 fn main() {
     webworker::WebWorker::registrar().register();
 }

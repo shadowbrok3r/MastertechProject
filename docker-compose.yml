@@ -68,9 +68,11 @@ services:
 ############################################## -- FRONTEND -- ##############################################
   frontend:
     container_name: "wasm"
+    runtime: io.containerd.wasmedge.v1
+    platform: wasi/wasm32
     build:
       context: .
-      dockerfile: dockerfile
+      dockerfile: ./Dockerfile
     restart: always
     networks:
         - web
