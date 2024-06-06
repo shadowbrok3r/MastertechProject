@@ -11,3 +11,4 @@ COPY Trunk.toml Trunk.toml
 COPY ./frontend ./frontend
 COPY ./database ./database
 COPY Cargo.toml Cargo.toml
+COPY frontend/index.html frontend/index.html 
