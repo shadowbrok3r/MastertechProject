@@ -5,7 +5,7 @@ use schema::User;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws}, opt::auth::{Jwt, Scope}, Error, Surreal // http::{Client as HttpClient, Https},
+    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Scope}, Error, Surreal // http::{Client as HttpClient, Https},
 };
         
 
@@ -53,7 +53,7 @@ impl Database{
         // let root_pass = dotenv::var("SURREAL_PASS").expect("No Env var for SURREAL_PASS");
         match jwt{
             Some(jwt) => {
-                let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url) // localhost:8000
+                let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url) // localhost:8000
                     .await?;
 
                 info!("auth: {:?}", jwt.clone());
