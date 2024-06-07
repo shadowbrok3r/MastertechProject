@@ -67,7 +67,7 @@ services:
       - "traefik.http.middlewares.corsHeader.headers.addVaryHeader=true"
 
 ############################################## -- FRONTEND -- ##############################################
-  frontend:
+  wasm:
     container_name: "wasm"
     runtime: io.containerd.wasmedge.v1
     platform: wasi/wasm32
@@ -77,23 +77,23 @@ services:
     restart: always
     networks:
         - web
-    # ports:
-    #   - 8080:8080
-    # expose:
-    #   - 8080
+    ports:
+      - 8080:8080
+    expose:
+      - 8080
     command: trunk serve
     volumes:
       - ./dist:/dist
     labels:
       # Routers
-      - "traefik.http.routers.frontend.rule=Host(`server.master-tech.app`)"
-      - "traefik.http.routers.frontend.entrypoints=websecure" 
-      - "traefik.http.routers.frontend.tls=true"
-      - "traefik.http.routers.frontend.tls.certresolver=digitalocean"
-      - "traefik.http.routers.frontend.middlewares=corsHeader"
+      - "traefik.http.routers.wasm.rule=Host(`shadowbrker.app`)"
+      - "traefik.http.routers.wasm.entrypoints=websecure" 
+      - "traefik.http.routers.wasm.tls=true"
+      - "traefik.http.routers.wasm.tls.certresolver=digitalocean"
+      - "traefik.http.routers.wasm.middlewares=corsHeader"
       # Services
-      - "traefik.http.routers.frontend.service=frontend"
-      - "traefik.http.services.frontend.loadbalancer.server.port=8080"
+      - "traefik.http.routers.wasm.service=wasm"
+      - "traefik.http.services.wasm.loadbalancer.server.port=8080"
 
 ############################################## -- SURREALDB -- ##############################################
   surrealdb:

@@ -44,4 +44,4 @@ COPY frontend/index.html frontend/index.html
 # 
 # FROM scratch
 # ENTRYPOINT [ "mtechserver-bb39a05226a8fb4c_bg.wasm" ]
-# COPY --link --from=build dist/mtechserver-bb39a05226a8fb4c_bg.wasm /mtechserver-bb39a05226a8fb4c_bg.wasm
+# COPY --link --from=build dist/mtechserver-bb39a05226a8fb4c_bg.wasm /mtechserver-bb39a05226a8fb4c_bg.wasmd
