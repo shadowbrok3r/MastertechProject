@@ -11,6 +11,16 @@ COPY ./database ./database
 COPY Cargo.toml Cargo.toml
 COPY frontend/index.html frontend/index.html 
 
+
+
+
+
+
+
+
+
+
+
 # FROM --platform=$BUILDPLATFORM rust:latest AS buildbase
 # WORKDIR /src
 # RUN rustup target add wasm32-unknown-unknown

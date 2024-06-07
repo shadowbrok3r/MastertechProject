@@ -39,21 +39,12 @@ struct Auth {
     password: String,
 }
 
-// impl Default for Database{
-//     fn default() -> Self {
-//         Self { database: Default::default(), jwt: Default::default(), user: Default::default() }
-//     }
-// }
-
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
-        // dotenv::var("DB_URL").expect("No Env var for DB_URL");
-        let db_url = "surrealdb.master-tech.app".to_string(); 
-        // let root_user = dotenv::var("SURREAL_USER").expect("No Env var for SURREAL_USER");
-        // let root_pass = dotenv::var("SURREAL_PASS").expect("No Env var for SURREAL_PASS");
+        let db_url = "surrealdb-tikv.surrealdb.svc.cluster.local:8000".to_string(); 
         match jwt{
             Some(jwt) => {
-                let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url) // localhost:8000
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url) // localhost:8000
                     .await?;
 
                 info!("auth: {:?}", jwt.clone());
