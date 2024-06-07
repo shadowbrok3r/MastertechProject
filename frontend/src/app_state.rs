@@ -10,13 +10,20 @@ use ratatui::Terminal;
 use ratframe::NewCC;
 use egui_ratatui::RataguiBackend;
 use serde::Serialize;
-use serde_json::Value;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{LiveTaskPayload, TaskPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
-use crate::{pages::login_page::Login, tabs::terminal::chart::App, utilities::{displays::{chats::ChatModal, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal}, DisplayModal, ModalType, ModalTypes, TaskUiActions}};
+use crate::{
+    pages::login_page::Login, tabs::terminal::chart::App, 
+    utilities::{
+        displays::{
+            chats::ChatModal, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal
+        }, 
+        DisplayModal, ModalType, ModalTypes, TaskUiActions
+    }
+};
 
 #[derive(Serialize)]
 pub struct MtechServer{
@@ -47,58 +54,14 @@ pub enum AppState{
 
 #[derive(Serialize)]
 pub struct MtechServerContext{
-    /// collection of all open tabs in ui
-    pub open_tabs: HashSet<String>,
-    /// egui dock styling
-    #[serde(skip)]
-    pub style: Option<egui_dock::Style>,
-    #[serde(skip)]
-    pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
-
-    #[serde(skip)]
-    pub toasts: Toasts,
-
-    /// Widgets / Modals / Ui for portions throughout the app
-    pub task_layouts: HashMap<String, TaskLayout>,
-    pub task_modal_handler: ModalHandler<TaskModal>,
-    pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
-    #[serde(skip)]
-    pub chat_modal_handler: ModalHandler<ChatModal>,
-    #[serde(skip)]
-    pub chat_modal: Option<ChatModal>,
+    pub current_user: Option<User>,
     pub task_map: HashMap<String, Vec<TaskPayload>>,
-
-    #[serde(skip)]
-    pub current_modal: ModalType,
-
-    /// Terminal setup for console tab
-    #[serde(skip)]
-    pub terminal: Terminal<RataguiBackend>,
-
-
-    /// example chart for console tab
-    #[serde(skip)]
-    pub chart_app: App,
-    /// update period for chart
-    pub tick_rate: Duration,
-    /// last tick of example chart
-    #[serde(skip)]
-    pub last_tick: Instant,
-
-
     ///Gets data from the first run of the main loop
     pub first_run: bool,
-    
+
     /// Database connection
     #[serde(skip)]
     pub database: Option<Database>,
-
-
-    pub current_user: Option<User>,
-
-    pub my_tasks_opened: bool,
-    pub store_tasks_opened: bool,
-    pub completed_tasks_opened: bool,
 
     /// All contained task data from database
     pub live_tasks: Option<LiveTaskPayload>,
@@ -146,121 +109,55 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
     pub data_update: Option<Rc<Cell<Option<u32>>>>,
-}
 
-impl TabViewer for MtechServerContext {
-    type Tab = String;
+    /// Terminal setup for console tab
+    #[serde(skip)]
+    pub terminal: Terminal<RataguiBackend>,
+    /// example chart for console tab
+    #[serde(skip)]
+    pub chart_app: App,
+    /// update period for chart
+    pub tick_rate: Duration,
+    /// last tick of example chart
+    #[serde(skip)]
+    pub last_tick: Instant,
 
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-
-        match tab.as_str() {
-            "Lil menu" => self.simple_demo_menu(ui),
-            "Terminal" => self.terminal(ui),
-            "Store Tasks" => self.store_tasks(ui),
-            "My Tasks" => self.my_tasks(ui),
-            "Web Console" => self.web_console(ui),
-            "Completed Tasks" => self.completed_tasks(ui),
-            _ => { } 
-        }
-    }
-
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        match tab.as_str() {
-            "My Tasks" => self.simple_demo_menu(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
-    }
-    
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-    
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
-    }
-    
-    fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
-        self.added_nodes.push((surface_index, node_index));
-    }
-
-    fn add_popup(&mut self, ui: &mut Ui, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        ui.set_width(100.0);
-        let tabs = &[
-            &"Terminal".to_string(),
-            &"Web Console".to_string(),
-            &"Store Tasks".to_string(),
-            &"My Tasks".to_string(),
-            &"Completed Tasks".to_string()
-        ];
-
-        for tab in tabs{
-            if ui.selectable_label(self.open_tabs.contains(*tab), *tab)
-                .clicked()
-            {
-                if !self.open_tabs.contains(*tab){
-                    self.on_add(SurfaceIndex::main(), NodeIndex::root());
-                }
-            }
-        }
-    }
-
+    /// Widgets / Modals / Ui for portions throughout the app
+    pub my_tasks_opened: bool,
+    pub store_tasks_opened: bool,
+    pub completed_tasks_opened: bool,
+    pub task_layouts: HashMap<String, TaskLayout>,
+    #[serde(skip)]
+    pub current_modal: ModalType,
+    pub task_modal_handler: ModalHandler<TaskModal>,
+    pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
+    #[serde(skip)]
+    pub chat_modal_handler: ModalHandler<ChatModal>,
+    #[serde(skip)]
+    pub chat_modal: Option<ChatModal>,
+    /// collection of all open tabs in ui
+    pub open_tabs: HashSet<String>,
+    /// egui dock styling
+    #[serde(skip)]
+    pub style: Option<egui_dock::Style>,
+    #[serde(skip)]
+    pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
+    #[serde(skip)]
+    pub toasts: Toasts,
 }
 
 impl NewCC for MtechServer{
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
-        let mut tree = DockState::new(
-            vec![
-                "Store Tasks".to_owned(),
-                "Completed Tasks".to_owned(),
-            ]
-        );
+        setup_custom_fonts(&cc.egui_ctx);
 
+        let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned()]);
+        // let [_a, _b] = tree.main_surface_mut().split_left(NodeIndex::root(), 0.10, vec!["Store Tasks".to_owned()]);
+        let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned()]);
+        let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned()]);
+        // let [_, _] = tree.main_surface_mut().split_left(b,0.20,vec!["Scripts".to_owned()]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
-
-        
-        // let [_a, _b] = tree
-        //     .main_surface_mut()
-        //     .split_left(
-        //         NodeIndex::root(),
-        //         0.10, 
-        //         vec![
-        //             "Store Tasks".to_owned(),
-        // ]);
-
-        let [_a, b] = tree
-            .main_surface_mut()
-            .split_below(
-                NodeIndex::root(),
-                0.6, 
-                vec![
-                    "Terminal".to_owned(),
-            ]
-        );
-
-        let [_, _] = tree
-            .main_surface_mut()
-            .split_left(
-            b,
-            0.78,
-            vec!["My Tasks".to_owned()],
-        );
-
-        // let [_, _] = tree
-        //     .main_surface_mut()
-        //     .split_left(
-        //     b,
-        //     0.20,
-        //     vec!["Scripts".to_owned()],
-        // );
-
-
         let mut open_tabs = HashSet::new();
-
         for node in tree[SurfaceIndex::main()].iter() {
             if let Node::Leaf { tabs, .. } = node {
                 for tab in tabs {
@@ -268,7 +165,6 @@ impl NewCC for MtechServer{
                 }
             }
         }
-        
         
         let backend = RataguiBackend::new_with_fonts(
             10,
@@ -279,20 +175,6 @@ impl NewCC for MtechServer{
             "BoldOblique".into(),
         );
 
-        let terminal = Terminal::new(backend).unwrap();
-        let tick_rate = Duration::from_millis(30);
-        let chart_app = App::new();
-        let last_tick = Instant::now();
-
-        let (db_tx, db_rx) = channel::unbounded();
-        let (my_tasks_tx, my_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
-        let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
-
-        let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
-        let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
-        let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
-        let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
-        
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
@@ -303,92 +185,78 @@ impl NewCC for MtechServer{
             })
             .spawn("./dummy_worker.js");
 
-        setup_custom_fonts(&cc.egui_ctx);
+        // match check_authentication(db_tx.clone()){
+        //     Ok(d) => {
+        //         info!("Got auth ok");
+        //         _state = d.0;
+        //         _current_user = d.1;
+        //     },
+        //     Err(e) => {
+        //         info!("Error with auth: {e:?}");
+        //         _state = AppState::NoAuth;
+        //         _current_user = None;
+        //     },
+        // }
 
-        let added_nodes = Vec::new();
-
-        let mut _state = AppState::default();
-        let mut _current_user = None;
-
-        match check_authentication(db_tx.clone()){
-            Ok(d) => {
-                info!("Got auth ok");
-                _state = d.0;
-                _current_user = d.1;
-            },
-            Err(e) => {
-                info!("Error with auth: {e:?}");
-                _state = AppState::NoAuth;
-                _current_user = None;
-            },
-        }
-
-        let task_modal_handler: ModalHandler<TaskModal> = ModalHandler::default();
-        let create_task_modal_handler: ModalHandler<CreateTaskModal> = ModalHandler::default();
-        let chat_modal_handler: ModalHandler<ChatModal> = ModalHandler::default();
+        let (db_tx, db_rx) = channel::unbounded();
+        let (my_tasks_tx, my_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
+        let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
+        let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
+        let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
+        let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
+        let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
 
         let context = MtechServerContext{
-            open_tabs,
-            style: None,
-            added_nodes,
-
-            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
-
-
-            task_layouts: HashMap::new(),
-            task_modal_handler,
-            create_task_modal_handler,
-            current_modal: ModalType::Null,
-            chat_modal_handler,
-            chat_modal: None,
+            current_user: None,
+            first_run: true,
+            
+            database: None,
 
             task_map: HashMap::new(),
-            terminal,
-            chart_app,
-            tick_rate,
-            last_tick,
-
-            first_run: true,
-            database: None,
-            db_tx, 
-            db_rx,
-
-            current_user: _current_user,
-
             live_tasks: None,
             tasks: None,
-            // store_tasks: None,
-            // completed_tasks: None,
             store_users: None,
 
+            // CHANNEL SENDERS / RECEIVERS
+            db_tx, db_rx,
+            live_tasks_tx, live_tasks_rx,
+            tasks_tx, tasks_rx,
+            my_tasks_tx,  my_tasks_rx,
+            app_state_tx, app_state_rx,
+            store_users_tx, store_users_rx,
+            ui_actions_tx, ui_actions_rx,
+
+            // MODALS / LAYOUTS
+            task_layouts: HashMap::new(),
+            current_modal: ModalType::Null,
+            task_modal_handler: ModalHandler::default(),
+            create_task_modal_handler: ModalHandler::default(),
+            chat_modal_handler: ModalHandler::default(),
+            chat_modal: None,
+
+            // TERMINAL STUFF
+            terminal: Terminal::new(backend).unwrap(),
+            tick_rate: Duration::from_millis(30),
+            chart_app: App::new(),
+            last_tick: Instant::now(),
+            
+            // MISC / EVERYTHING ELSE
+            bridge: Some(bridge),
+            data_update: Some(data_update),
+            open_tabs,
+            style: None,
+            added_nodes: Vec::new(),
             my_tasks_opened: false,
             store_tasks_opened: false,
             completed_tasks_opened: false,
-
-            live_tasks_tx,
-            live_tasks_rx,
-            tasks_tx,
-            tasks_rx,
-            my_tasks_tx, 
-            my_tasks_rx,
-            app_state_tx,
-            app_state_rx,
-
-            store_users_tx,
-            store_users_rx,
-
-            ui_actions_tx,
-            ui_actions_rx,
-
-            bridge: Some(bridge),
-            data_update: Some(data_update),
+            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
         };
         
         Self {
             login: Login::default(),
             context,
             tree,
-            state: _state
+            state: AppState::default()
         }
     }
 
@@ -515,6 +383,67 @@ pub fn check_authentication(
     Ok((state, current_user))
 }
 
+impl TabViewer for MtechServerContext {
+    type Tab = String;
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+
+        match tab.as_str() {
+            "Lil menu" => self.simple_demo_menu(ui),
+            "Terminal" => self.terminal(ui),
+            "Store Tasks" => self.store_tasks(ui),
+            "My Tasks" => self.my_tasks(ui),
+            "Web Console" => self.web_console(ui),
+            "Completed Tasks" => self.completed_tasks(ui),
+            _ => { } 
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        match tab.as_str() {
+            "My Tasks" => self.simple_demo_menu(ui),
+            _ => {
+                ui.label(tab.to_string());
+                ui.label("This is a context menu");
+            }
+        }
+    }
+    
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.as_str().into()
+    }
+    
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        self.open_tabs.remove(tab);
+        true
+    }
+    
+    fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
+        self.added_nodes.push((surface_index, node_index));
+    }
+
+    fn add_popup(&mut self, ui: &mut Ui, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        ui.set_width(100.0);
+        let tabs = &[
+            &"Terminal".to_string(),
+            &"Web Console".to_string(),
+            &"Store Tasks".to_string(),
+            &"My Tasks".to_string(),
+            &"Completed Tasks".to_string()
+        ];
+
+        for tab in tabs{
+            if ui.selectable_label(self.open_tabs.contains(*tab), *tab)
+                .clicked()
+            {
+                if !self.open_tabs.contains(*tab){
+                    self.on_add(SurfaceIndex::main(), NodeIndex::root());
+                }
+            }
+        }
+    }
+
+}
 
 fn setup_custom_fonts(ctx: &egui::Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).

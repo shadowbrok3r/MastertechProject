@@ -1,6 +1,7 @@
 services:
 # docker image tag mtechserver:latest shadowbrok3r/mtechserver:latest 
 # docker push shadowbrok3r/mtechserver:latest
+# podman push 9038b33bb284 docker://docker.io/shadowbrok3r/mtechserver:latest  
 ############################################## -- TRAEFIK REVERSE PROXY -- ##############################################
   traefik:
     image: traefik:latest
@@ -76,14 +77,13 @@ services:
     restart: always
     networks:
         - web
-    ports:
-      - 8080:8080
-    expose:
-      - 8080
-    command: trunk serve -v --proxy-insecure
+    # ports:
+    #   - 8080:8080
+    # expose:
+    #   - 8080
+    command: trunk serve
     volumes:
       - ./dist:/dist
-      
     labels:
       # Routers
       - "traefik.http.routers.frontend.rule=Host(`server.master-tech.app`)"

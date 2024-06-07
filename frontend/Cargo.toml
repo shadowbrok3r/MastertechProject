@@ -10,29 +10,28 @@ log  = { workspace=true }
 serde = { workspace=true }
 surrealdb = { workspace=true }
 chrono = { workspace=true }
-# my_proc_macros = { path = "../my_proc_macros" }
 
-egui ={ version="0.27.2", features = ["persistence"]} # "callstack", "log"
-eframe = { version="0.27.2", default-features = false, features=["wgpu"] }
-wasm-bindgen = "0.2.92"
-egui_extras = { version = "0.27.2", features = ["datepicker"]}
-egui-aesthetix = { version = "0.2.3", features = ["carl"] }
-egui_dock = "0.12.0"
+egui ={ version="0.27", features = ["persistence"]} # "callstack", "log"
+eframe = { version="0.27", default-features = false, features=["wgpu"] }
+wasm-bindgen = "0.2"
+egui_extras = { version = "0.27", features = ["datepicker"]}
+egui-aesthetix = { version = "0.2", features = ["carl"] }
+egui_dock = "0.12"
 ratframe = "1"
-ratatui = { version = "0.26.3", default-features = false }
-web-time = "1.1.0"
+ratatui = { version = "0.26", default-features = false }
+web-time = "1.1"
 wasm-bindgen-futures = "0.4"
-crossbeam = "0.8.4"
-console_error_panic_hook = "0.1.7"
-gloo-worker = "0.5.0"
-futures = "0.3.30"
-egui-toast = "0.13.0"
-wasm-cookies = { version= "0.2.1" }
-serde_json = "1.0.117"
-egui_form = {version="0.1.1", features = ["validator_validator"]}
-egui_animation = "0.4.0"
-egui_infinite_scroll = "0.3.0"
-egui_inbox = "0.4.1"
+crossbeam = "0.8"
+console_error_panic_hook = "0.1"
+gloo-worker = "0.5"
+futures = "0.3"
+egui-toast = "0.13"
+wasm-cookies = { version= "0.2" }
+serde_json = "1"
+egui_form = {version="0.1", features = ["validator_validator"]}
+egui_animation = "0.4"
+egui_infinite_scroll = "0.3"
+egui_inbox = "0.4"
 egui_ratatui = "0.0.5"
 
 

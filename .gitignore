@@ -1,6 +1,7 @@
 # Mac stuff:
 .DS_Store
 
+dist
 
 # Rust compile target directories:
 target
