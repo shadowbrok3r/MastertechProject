@@ -67,7 +67,7 @@ services:
       - "traefik.http.middlewares.corsHeader.headers.addVaryHeader=true"
 
 ############################################## -- FRONTEND -- ##############################################
-  wasm:
+  frontend:
     container_name: "wasm"
     runtime: io.containerd.wasmedge.v1
     platform: wasi/wasm32
@@ -77,10 +77,10 @@ services:
     restart: always
     networks:
         - web
-    ports:
-      - 8080:8080
-    expose:
-      - 8080
+    # ports:
+    #   - 8080:8080
+    # expose:
+      # - 8080
     command: trunk serve
     volumes:
       - ./dist:/dist
