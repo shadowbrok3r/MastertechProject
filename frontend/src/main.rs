@@ -219,6 +219,25 @@ impl eframe::App for MtechServer {
     }
 }
 
+// When compiling to web using trunk:
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    use log::LevelFilter;
+    eframe::WebLogger::init(LevelFilter::Debug).ok();
+    let web_options = eframe::WebOptions::default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        eframe::WebRunner::new()
+            .start(
+                "mtech_canvas", // hardcode it
+                web_options,
+                Box::new(|cc| Box::new(MtechServer::new(cc))),
+            )
+            .await
+            .expect("failed to start eframe");
+    });
+}
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
@@ -239,26 +258,6 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| Box::new(MtechServer::new(cc))),
     )
 }
-
-// When compiling to web using trunk:
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    use log::LevelFilter;
-    eframe::WebLogger::init(LevelFilter::Debug).ok();
-    let web_options = eframe::WebOptions::default();
-
-    wasm_bindgen_futures::spawn_local(async {
-        eframe::WebRunner::new()
-            .start(
-                "mtech_canvas", // hardcode it
-                web_options,
-                Box::new(|cc| Box::new(MtechServer::new(cc))),
-            )
-            .await
-            .expect("failed to start eframe");
-    });
-}
-
 
 fn set_style() -> Arc<Style>{
     let theme = CarlDark;
