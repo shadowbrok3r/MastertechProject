@@ -26,7 +26,7 @@ struct Signup {
 }
 
 impl Signup{
-    pub fn signup(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>){
+    pub fn signup(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>){
         let user = self.username.clone();
         let pass = self.password.clone();
         spawn_local(async move {
@@ -35,7 +35,7 @@ impl Signup{
             // #[cfg(target_arch="wasm32-unknown-unknown")]
             match database{
                 Ok(db) => {
-                    let cookie_opts = CookieOptions::default();
+                    let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::Strict);
                     if let Some(ref cookie) = db.jwt{
                         if let Some(ref usr) = db.user{
                             wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);

@@ -42,7 +42,20 @@ impl eframe::App for MtechServer {
             match check_authentication(self.context.db_tx.clone()){
                 Ok(d) => {
                     self.state = d.0;
-                    self.context.current_user = d.1;
+                    if let Some(ref usr) = d.1{
+                        let toast = &mut self.context.toasts;
+                        
+                        let auth_toast = Toast{
+                            kind: ToastKind::Success,
+                            text: format!("Welcome, {}", usr.name).into(),
+                            options: ToastOptions::default()
+                                .show_progress(true)
+                                .duration_in_seconds(6.0)
+                        };
+                        toast.add(auth_toast);
+
+                        self.context.current_user = d.1;
+                    }
                 },
                 Err(e) => {
                     info!("Error with auth: {e:?}");
@@ -68,7 +81,45 @@ impl eframe::App for MtechServer {
                         get_tasks(db.clone(), my_tasks_tx);
                         get_store_users(db.clone(), store_users_tx, usr.store);
                         listen_tasks(db.clone(), live_tasks_tx);
-                        self.state = AppState::Authenticated(MainPages::Tasks);
+
+                        let toast = &mut self.context.toasts;
+    
+                        let auth_toast = Toast{
+                            kind: ToastKind::Success,
+                            text: format!("Logged in successfully\nWelcome, {}", usr.name).into(),
+                            options: ToastOptions::default()
+                                .show_progress(true)
+                                .duration_in_seconds(6.0)
+                        };
+                        toast.add(auth_toast);
+                    }else{
+                        match check_authentication(self.context.db_tx.clone()){
+                            Ok(d) => {
+                                self.state = d.0;
+                                if let Some(ref usr) = d.1{
+                                    self.context.current_user = Some(usr.clone());
+                                    get_tasks(db.clone(), my_tasks_tx);
+                                    get_store_users(db.clone(), store_users_tx, usr.store);
+                                    listen_tasks(db.clone(), live_tasks_tx);
+            
+                                    let toast = &mut self.context.toasts;
+                
+                                    let auth_toast = Toast{
+                                        kind: ToastKind::Success,
+                                        text: format!("Welcome, {}", usr.name).into(),
+                                        options: ToastOptions::default()
+                                            .show_progress(true)
+                                            .duration_in_seconds(6.0)
+                                    };
+                                    toast.add(auth_toast);
+                                }
+                            },
+                            Err(e) => {
+                                info!("Error with auth: {e:?}");
+                                self.state = AppState::NoAuth;
+                                self.context.current_user = None;
+                            },
+                        };
                     }
                 },
                 Err(e) => {
@@ -131,16 +182,30 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(state) = self.context.app_state_rx.try_recv(){
+            info!("Got a new state: {state:?}");
             self.state = state
         }
+
         // Always checking authentication.
         match self.state{
             //if auth'd, user shall be allowed
-            AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
+            AppState::Authenticated(MainPages::Tasks) => {
+                // info!("Main page state");
+                self.main_page(ctx);
+            },
             // if no auth, appstate will be login_page
-            AppState::NoAuth => self.login_page(ctx, self.context.db_tx.clone()),
-            AppState::Authenticated(_) => self.main_page(ctx),
-            AppState::CreateAccount => {}
+            AppState::NoAuth => {
+                self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
+
+                // info!("Login page state");
+            },
+            AppState::Authenticated(_) => {
+                self.main_page(ctx);
+                // info!("Authed state");
+            },
+            AppState::CreateAccount => {
+                // info!("Create Account state");
+            }
         }
 
         self.context.handle_modals(ctx);

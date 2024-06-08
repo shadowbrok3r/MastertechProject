@@ -1,6 +1,7 @@
 use eframe::egui::menu;
 use egui::{Button, CentralPanel, Color32, Frame, Layout, RichText, TopBottomPanel};
 use egui_dock::{DockArea, Style as DockStyle};
+use log::info;
 use crate::app_state::{AppState, MainPages, MtechServer};
 
 impl MtechServer{
@@ -19,16 +20,31 @@ impl MtechServer{
                     ui.colored_label(Color32::from_rgb(100,50,100), welcome_msg);
                     ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
                         if ui.add(Button::new("Logout")).clicked(){
+                            wasm_cookies::delete("user");
+                            wasm_cookies::delete("jwt");
+                            
                             self.state = AppState::NoAuth;
+                            match self.context.app_state_tx.send(AppState::NoAuth){
+                                Ok(_) => info!("Logged out"),
+                                Err(e) => info!("Error: {e:?}"),
+                            }
                         }
                         // if ui.add(Button::new("Web Console")).clicked(){
                         //     self.state = AppState::Authenticated(MainPages::WebConsole);
                         // }
                         if ui.add(Button::new("Downloads")).clicked(){
                             self.state = AppState::Authenticated(MainPages::Downloads);
+                            match self.context.app_state_tx.send(AppState::Authenticated(MainPages::Downloads)){
+                                Ok(_) => info!("Logged out"),
+                                Err(e) => info!("Error: {e:?}"),
+                            }
                         }
                         if ui.add(Button::new("ChatGPT")).clicked(){
                             self.state = AppState::Authenticated(MainPages::ChatGpt);
+                            match self.context.app_state_tx.send(AppState::Authenticated(MainPages::ChatGpt)){
+                                Ok(_) => info!("Logged out"),
+                                Err(e) => info!("Error: {e:?}"),
+                            }
                         }
                     });
                 }else{
