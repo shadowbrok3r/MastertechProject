@@ -1,6 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
 use database::schema::{Priority, Status, UserId};
-use egui::{Align, Button, ComboBox, Direction, FontId, Layout, RichText, TextEdit, Ui, Vec2, Widget};
+use egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use log::info;
 use serde::Serialize;
@@ -56,6 +56,19 @@ impl ModalTypes for CreateTaskModal{
 
 impl DisplayModal for CreateTaskModal {
     fn display(&mut self, ui: &mut Ui, _current_state: ModalAction) -> Option<ModalAction>{
+        ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
+        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+        ui.style_mut().visuals.widgets.inactive.bg_fill =  Color32::GOLD;
+        ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+        ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+        ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+        
         let mut _response: Option<ModalAction> = None;
         StripBuilder::new(ui)
         .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
@@ -78,23 +91,12 @@ impl DisplayModal for CreateTaskModal {
                     {
                         ui.horizontal_top(|ui| 
                         { 
+                            ui.style_mut().override_font_id = Some(FontId::proportional(15.0));
                             TextEdit::singleline(&mut self.task_name)
                                 .hint_text("Task Name")
                                 .desired_width(130.0)
                                 .ui(ui);
-                            
-                            ComboBox::new("StatusComboBox", "")
-                                .selected_text(RichText::new(format!("{}", &self.task_status.as_str())))
-                                // .width(ui.available_width())
-                                .show_ui(ui, |ui| 
-                            {
-                                for mut status in Status::VALUES{
-                                    let status_change = ui.selectable_value(&mut self.task_status, status.to_owned(), status.as_str());
-                                    if status_change.clicked(){
-                                        
-                                    }
-                                }
-                            });
+                        
 
                             ComboBox::new("PriorityComboBox", "")
                                 .selected_text(RichText::new(format!("{}", &self.task_priority.as_str())))
@@ -110,53 +112,59 @@ impl DisplayModal for CreateTaskModal {
                             });
                             // let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
                             // let id = self.id.clone().unwrap().0.id.to_string();
-                            {
-                                ui.style_mut().override_font_id = Some(FontId::proportional(6.0));
-                                ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
-                                let date_picker = DatePickerButton::new(&mut self.due_date)
-                                    .calendar(true)
-                                    .calendar_week(false)
-                                    .combo_boxes(true)
-                                    .format("%m/%d/%y")
-                                    .ui(ui);
-                                if date_picker.changed(){
-                                    // Combine the NaiveDate with a default time to create a DateTime<Utc>
-                                    // let date_time = NaiveDate::from_ymd_opt(due_date.year(), due_date.month(), due_date.day())
-                                    //     .unwrap()
-                                    //     .and_hms_opt(0, 0, 0)
-                                    //     .unwrap()
-                                    //     .and_local_timezone(Utc)
-                                    //     .unwrap();
-                                    // let rfc3339_date = date_time.to_rfc3339();
-                                    // let date = due_date.clone().to_string();
-                                    // // self.update_due_date(rfc3339_date.clone(), database);
-                                    // info!("date_widget changed: {:?}// {:?} ", self.task_name,  date);
-                                }
+                            let date_picker = DatePickerButton::new(&mut self.due_date)
+                                .calendar(true)
+                                .calendar_week(false)
+                                .combo_boxes(true)
+                                .format("%m/%d/%y")
+                                .ui(ui);
+                            if date_picker.changed(){
+                                // Combine the NaiveDate with a default time to create a DateTime<Utc>
+                                // let date_time = NaiveDate::from_ymd_opt(due_date.year(), due_date.month(), due_date.day())
+                                //     .unwrap()
+                                //     .and_hms_opt(0, 0, 0)
+                                //     .unwrap()
+                                //     .and_local_timezone(Utc)
+                                //     .unwrap();
+                                // let rfc3339_date = date_time.to_rfc3339();
+                                // let date = due_date.clone().to_string();
+                                // // self.update_due_date(rfc3339_date.clone(), database);
+                                // info!("date_widget changed: {:?}// {:?} ", self.task_name,  date);
                             }
-                    
-
-
-
                         });
 
                         TextEdit::multiline(&mut self.description)
                             .hint_text("Task Description")
-                            .desired_rows(6)
+                            .desired_rows(3)
                             .code_editor()
                             .desired_width(200.0)
                             .ui(ui);
 
-                        ui.horizontal(|ui| {
+                        ui.horizontal_top(|ui| {
+                            ComboBox::new("AssigneeComboBox", "")
+                                .selected_text(RichText::new(format!("{}", &self.task_status.as_str())))
+                                // .width(ui.available_width())
+                                .show_ui(ui, |ui| 
+                            {
+                                for mut status in Status::VALUES{
+                                    let status_change = ui.selectable_value(&mut self.task_status, status.to_owned(), status.as_str());
+                                    if status_change.clicked(){
+                                        
+                                    }
+                                }
+                            });
                             if Button::new("Create Task")
-                                .min_size(Vec2::new(100.0, 16.0))
+                                .min_size(Vec2::new(120.0, 20.0))
+                                .fill(Color32::from_rgb(30, 30, 35))
+                                .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
                                 .ui(ui)
                                 .clicked()
                             {
                                 
-                            }
+                            }// ui.vertical_centered(|ui| {});
                         });
                     });
-                    s.empty();
+                    s.empty()
                 });
             });
             s.empty();

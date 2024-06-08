@@ -2,7 +2,7 @@ use std::{borrow::BorrowMut, cell::RefCell, rc::Rc};
 
 use chrono::{DateTime, Utc};
 use database::{schema::TaskPayload, Database};
-use egui::{Align, Color32, ComboBox, FontId, Frame, Grid, Layout, Margin, RichText, Style, TextEdit, Ui, Widget};
+use egui::{Align, Color32, ComboBox, FontId, Frame, Grid, Layout, Margin, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use serde::Serialize;
@@ -84,6 +84,19 @@ impl ModalTypes for TaskModal{
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>{
         let mut response: Option<ModalAction> = None;
+        ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
+        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+        ui.style_mut().visuals.widgets.inactive.bg_fill =  Color32::GOLD;
+        ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+        ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+        ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+        
         StripBuilder::new(ui)
             .cell_layout(Layout::top_down_justified(Align::Center))
             .size(Size::exact(30.0))
@@ -382,23 +395,24 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
         if let Some(computer) = computer{
             let seb_info = computer.seb_info.as_ref();
             
-            StripBuilder::new(ui)
-                .size(Size::exact(180.0))
-                .size(Size::exact(420.0))
-                .vertical(|mut strip| 
+            ScrollArea::vertical()
+                .max_height(600.0)
+                .show(ui, |ui| 
             {
-                strip.strip(|s|{
-                    s
-                        .size(Size::exact(450.0))
-                        .size(Size::exact(10.0))
-                        .size(Size::exact(450.0))
-                        .horizontal(|mut s|
+                ui.vertical_centered_justified(|ui| {
+
+                
+                    StripBuilder::new(ui)
+                        .size(Size::exact(180.0))
+                        .size(Size::remainder())
+                        .vertical(|mut strip| 
                     {
-                        s.cell(|ui|{
-                            ui.horizontal_centered(|ui|{
+                        strip.cell(|ui|
+                        {
+                            ui.vertical_centered_justified(|ui|{
                                 ui.group(|ui| {
                                     // ui.label("Personnel Information");
-                                    Grid::new("group2").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                                    Grid::new("group2").min_col_width(ui.available_width() /2.0).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
                                         ui.label("hostname:");
                                         ui.label(&computer.hostname);
@@ -424,14 +438,9 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                                         // ui.end_row();
                                     });
                                 });
-                            });
-                        });
-                        s.empty();
-                        s.cell(|ui| {
-                            ui.horizontal_centered(|ui|{
                                 ui.group(|ui| {
                                     // ui.label("Ticket Information");
-                                    Grid::new("group1").min_col_width(50.0).with_row_color(|num, style| return_colors(num, style))
+                                    Grid::new("group1").min_col_width(ui.available_width() / 3.0).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
                                         ui.label("Letter");
                                         ui.label("Space Left / Total Size");
@@ -448,21 +457,15 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                                 });
                             });
                         });
-                    });
-                });
-                strip.strip(|s|{
-                    s
-                        .size(Size::exact(450.0))
-                        .size(Size::exact(10.0))
-                        .size(Size::exact(450.0))
-                        .horizontal(|mut s|
-                    {
-                        s.cell(|ui|{
-                            ui.horizontal_centered(|ui|{
+                        strip.cell(|ui|{
+                            ui.vertical_centered_justified(|ui|{
+                                ui.separator();
+                                ui.heading("SEB Information");
                                 ui.group(|ui| {
                                     if let Some(seb_info) = seb_info{
+                                        
                                         // ui.label("Order Details");
-                                        Grid::new("group3").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                                        Grid::new("group3").min_col_width(ui.available_width() /2.0).with_row_color(|num, style| return_colors(num, style))
                                         .show(ui, |ui| {
                                             ui.label("InstalledDeviceId:");
                                             ui.label(RichText::new(&seb_info.InstalledDeviceId).small().font(FontId::proportional(8.0)));
@@ -495,16 +498,11 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                                         ui.label("No SEB information was sent with ticket.");
                                     }
                                 });
-                            });
-                        });
-                        s.empty();
-                        s.cell(|ui|{
-                            ui.horizontal_centered(|ui|{
                                 if let Some(seb_info) = seb_info{
                                     if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
                                         ui.group(|ui| {
                                             // ui.label("Customer Information");
-                                            Grid::new("customer_data").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                                            Grid::new("customer_data").min_col_width(ui.available_width() /2.0).with_row_color(|num, style| return_colors(num, style))
                                             .show(ui, |ui| {
                                                 ui.label("email:");
                                                 ui.label(&extended_seb.email);
@@ -564,7 +562,6 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                     });
                 });
             });
-            
         } else { ui.label("Computer information was not sent with ticket"); }
     }
     ui.shrink_width_to_current();
@@ -588,13 +585,11 @@ fn display_part_order_page(ui: &mut Ui){
                 .horizontal(|mut s|
             {
                 s.cell(|ui|{
-                    ui.label("SPO Status");
                     ComboBox::new("AwaitingQuoteCombo", "")
-                        .selected_text("Status")
                         .width(ui.available_width())
+                        .selected_text("Awaiting Quote")
                         .show_ui(ui, |ui| 
                     {
-                        ui.selectable_value(&mut "Status".to_string(), "Status".to_string(), "Status");
                         ui.selectable_value(&mut "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval");
                         ui.selectable_value(&mut "Quote Fullfilled".to_string(), "Quote Fullfilled".to_string(), "Quote Fullfilled");
                         ui.selectable_value(&mut "Awaiting Quote".to_string(), "Awaiting Quote".to_string(), "Awaiting Quote");
@@ -602,7 +597,6 @@ fn display_part_order_page(ui: &mut Ui){
                 });
                 s.empty();
                 s.cell(|ui|{
-                    ui.label("Manufacturer");
                     ComboBox::new("ManufacturerCombo", "")
                         .selected_text("PCL")
                         .width(ui.available_width())
@@ -622,16 +616,14 @@ fn display_part_order_page(ui: &mut Ui){
                 .horizontal(|mut s|
             {
                 s.cell(|ui|{
-                    ui.label("MFG Model #");
-                        TextEdit::singleline(&mut "MFG Model #".to_string())
-                            .margin(Margin::same(5.0))
-                            .desired_width(ui.available_width())
-                            .code_editor()
-                            .ui(ui);
+                    TextEdit::singleline(&mut "MFG Model #".to_string())
+                        .margin(Margin::same(5.0))
+                        .desired_width(ui.available_width())
+                        .code_editor()
+                        .ui(ui);
                 });
                 s.empty();
                 s.cell(|ui|{
-                    ui.label("MFG P/N");
                     TextEdit::singleline(&mut "MFG P/N".to_string())
                         .margin(Margin::same(5.0))
                         .desired_width(ui.available_width())
@@ -654,7 +646,6 @@ fn display_part_order_page(ui: &mut Ui){
                         .horizontal(|mut s|
                     {
                         s.cell(|ui|{
-                            ui.label("Part Description:");
                             TextEdit::multiline(&mut "Part Description".to_string())
                                 .margin(Margin::same(5.0))
                                 .desired_rows(6)
@@ -664,7 +655,6 @@ fn display_part_order_page(ui: &mut Ui){
                         });
                         s.empty();
                         s.cell(|ui|{
-                            ui.label("Notes");
                             TextEdit::multiline(&mut "Notes".to_string())
                                 .margin(Margin::same(5.0))
                                 .desired_rows(6)
@@ -690,13 +680,11 @@ fn display_part_order_page(ui: &mut Ui){
                         .horizontal(|mut s|
                     {
                         s.cell(|ui|{
-                            ui.label("LCD?");
                             let _ = ui.radio(false, "LCD?");
                         });
                         s.empty();
                         s.cell(|ui|{
                             ui.label("Upload Picture");
-                            
                         });    
                     });
                 });
