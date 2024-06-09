@@ -86,89 +86,90 @@ impl MtechServer{
             StripBuilder::new(ui)
                 .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
                 .sizes(Size::remainder(), 3)
-                .vertical(|mut s| {
-                    s.cell(|ui| {
-                        ui.add_space(50.0);
-                        let font = FontId::proportional(30.0);
-                        ui.style_mut().override_font_id = Some(font);
-                        ui.label("Mastertech Server");
-                    });
-                    s.strip(|s| 
+                .vertical(|mut s| 
+            {
+                s.cell(|ui| {
+                    ui.add_space(50.0);
+                    let font = FontId::proportional(30.0);
+                    ui.style_mut().override_font_id = Some(font);
+                    ui.label("Mastertech Server");
+                });
+                s.strip(|s| 
+                {
+                    s
+                        .cell_layout(Layout::centered_and_justified(Direction::TopDown))
+                        .sizes(Size::remainder(), 3)
+                        .horizontal(|mut s| 
                     {
-                        s
-                            .cell_layout(Layout::centered_and_justified(Direction::TopDown))
-                            .sizes(Size::remainder(), 3)
-                            .horizontal(|mut s| 
+                        s.empty();
+                        s.cell(|ui| 
                         {
-                            s.empty();
-                            s.cell(|ui| 
-                            {
-                                ui.vertical_centered(|ui| 
-                                { 
-                                    ui.add_space(ui.available_height() / 2.5);
-                                    let font = FontId::proportional(18.0);
-                                    ui.style_mut().override_font_id = Some(font);
+                            ui.vertical_centered(|ui| 
+                            { 
+                                ui.add_space(ui.available_height() / 2.5);
+                                let font = FontId::proportional(18.0);
+                                ui.style_mut().override_font_id = Some(font);
 
-                                    ui.label("Please Login");
-                                    ui.add_space(20.0);
-                                    if let Some(login) = self.login_mut(){
+                                ui.label("Please Login");
+                                ui.add_space(20.0);
+                                if let Some(login) = self.login_mut(){
 
-                                        TextEdit::singleline(&mut login.username)
-                                            .hint_text("Email")
-                                            .desired_width(180.0)
-                                            .ui(ui);
+                                    TextEdit::singleline(&mut login.username)
+                                        .hint_text("Email")
+                                        .desired_width(180.0)
+                                        .ui(ui);
 
-                                        ui.add_space(2.0);
+                                    ui.add_space(2.0);
 
-                                        let enter = ui.input_mut(|i| i.key_pressed(Key::Enter));
+                                    let enter = ui.input_mut(|i| i.key_pressed(Key::Enter));
 
-                                        if TextEdit::singleline(&mut login.password)
-                                            .hint_text("Password")
-                                            .desired_width(180.0)
-                                            .password(true)
-                                            .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                                            .ui(ui)
-                                            .has_focus()
-                                        {
-                                            if enter && !login.password.is_empty() && !login.username.is_empty(){
-                                                info!("ENTER PRESSED");
-                                                login.login(db_tx.clone(), appstate_tx.clone());
-                                            }
-                                        }
-
-                                        ui.add_space(30.0);
-
-                                        if Button::new("Create Account")
-                                        .fill(Color32::from_rgb(30, 30, 35))
-                                        .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
-                                        .min_size(Vec2::new(140.0, 15.0))
+                                    if TextEdit::singleline(&mut login.password)
+                                        .hint_text("Password")
+                                        .desired_width(180.0)
+                                        .password(true)
+                                        .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                                         .ui(ui)
-                                        .clicked()
-                                        {
-                                            match appstate_tx.send(AppState::CreateAccount){
-                                                Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                                Err(e) => info!("Error {e:?}"),
-                                            }
-                                        }
-                                        ui.add_space(3.0);
-
-                                        if Button::new("Submit")
-                                        .fill(Color32::from_rgb(30, 30, 35))
-                                        .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
-                                        .min_size(Vec2::new(140.0, 40.0))
-                                        .ui(ui)
-                                        .clicked()
-                                        {
-                                            login.login(db_tx, appstate_tx.clone());
+                                        .has_focus()
+                                    {
+                                        if enter && !login.password.is_empty() && !login.username.is_empty(){
+                                            info!("ENTER PRESSED");
+                                            login.login(db_tx.clone(), appstate_tx.clone());
                                         }
                                     }
-                                });
+
+                                    ui.add_space(30.0);
+
+                                    if Button::new("Create Account")
+                                    .fill(Color32::from_rgb(30, 30, 35))
+                                    .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
+                                    .min_size(Vec2::new(140.0, 15.0))
+                                    .ui(ui)
+                                    .clicked()
+                                    {
+                                        match appstate_tx.send(AppState::CreateAccount){
+                                            Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
+                                            Err(e) => info!("Error {e:?}"),
+                                        }
+                                    }
+                                    ui.add_space(3.0);
+
+                                    if Button::new("Submit")
+                                    .fill(Color32::from_rgb(30, 30, 35))
+                                    .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
+                                    .min_size(Vec2::new(140.0, 40.0))
+                                    .ui(ui)
+                                    .clicked()
+                                    {
+                                        login.login(db_tx, appstate_tx.clone());
+                                    }
+                                }
                             });
-                            s.empty();
                         });
+                        s.empty();
                     });
-                    s.empty();
                 });
+                s.empty();
+            });
         });
     }
 

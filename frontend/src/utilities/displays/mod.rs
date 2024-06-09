@@ -28,11 +28,11 @@ impl Displayable for TaskPayload{
         let mut res: Option<TaskUiActions> = None;
 
         Frame::default()
-            .fill(Color32::from_rgb(20, 20, 28))
+            .fill(Color32::from_rgb(22,22,26))
             .inner_margin(Margin::same(8.0))
             .outer_margin(Margin::same(5.0))
             .rounding(Rounding::same(15.0))
-            .stroke(Stroke::new(1.0, Color32::DARK_GRAY))
+            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(150)))
             .show(ui, |ui| 
         {
             ui.set_max_height(300.0);

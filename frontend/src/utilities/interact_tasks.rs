@@ -11,7 +11,8 @@ use super::Interaction;
 
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
+        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
         if text_edit.changed(){
             self.update_task_name(self.task_name.clone(), database);
@@ -21,7 +22,7 @@ impl Interaction for TaskPayload {
 
     fn interact_checkin_notes(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
-        // ui.style_mut().visuals.widgets.inactive.fg = Color32::BLACK;
+        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         if let Some(ref mut ticket) = self.service_ticket{
             let text_edit = TextEdit::multiline(&mut ticket.checkin_notes)
                 .desired_rows(5)
@@ -48,6 +49,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_task_description(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
+        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         if let Some(ref mut description) = self.task_description{
             let text_edit = TextEdit::multiline(description)
@@ -75,6 +77,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_recommendations(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
+        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         let text_edit = TextEdit::multiline(&mut self.service_ticket.as_mut().unwrap().recommendations)
             .desired_rows(6)
@@ -170,7 +173,7 @@ impl Interaction for TaskPayload {
     fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
-            .width(ui.available_width() / 1.3)
+            .width(ui.available_width() - 2.0)
             .height(ui.available_height() - 2.0)
             .show_ui(ui, |ui| 
         {

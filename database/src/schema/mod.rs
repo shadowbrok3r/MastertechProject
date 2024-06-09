@@ -1,3 +1,5 @@
+use std::default;
+
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
 
@@ -338,8 +340,9 @@ struct CommandRequest {
     _command: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default)]
 pub enum Store{
+    #[default]
     RIV,
     LTN,
     MUR,
