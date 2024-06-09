@@ -2,14 +2,14 @@ use std::{borrow::BorrowMut, cell::RefCell, rc::Rc};
 
 use chrono::{DateTime, Utc};
 use database::{schema::TaskPayload, Database};
-use egui::{Align, Color32, ComboBox, FontId, Frame, Grid, Layout, Margin, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Widget};
+use egui::{epaint::Shadow, Align, Color32, ComboBox, Direction, FontId, Frame, Grid, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use serde::Serialize;
 
 use crate::utilities::{DisplayModal, ModalTypes};
 
-use super::{chats::ChatModal, modals::ModalState};
+use super::{chats::ChatView, modals::ModalState};
 
 #[derive(Serialize, Clone, Debug)]
 pub struct TaskModal{
@@ -19,7 +19,7 @@ pub struct TaskModal{
     #[serde(skip)]
     pub task: Option<TaskPayload>,
     #[serde(skip)]
-    pub chat_view: Option<Rc<RefCell<ChatModal>>>,
+    pub chat_view: Option<ChatView>,
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
@@ -55,7 +55,7 @@ impl Default for TaskModal{
 }
 
 impl TaskModal{
-    pub fn new(chats: ChatModal) -> Self {
+    pub fn new(chats: ChatView) -> Self {
         Self {
             title: "Task Details".to_string(),
             database: None,
@@ -65,7 +65,7 @@ impl TaskModal{
             default_height: Some(800.0),
             full_span_content: false,
             state: ModalState::default(),
-            chat_view: Some(Rc::new(RefCell::new(chats)))
+            chat_view: Some(chats)
         }
     }
 }
@@ -96,6 +96,7 @@ impl DisplayModal for TaskModal {
         ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
         ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
         ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+        let avail_size = Vec2::new(570.0,600.0);
         
         StripBuilder::new(ui)
             .cell_layout(Layout::top_down_justified(Align::Center))
@@ -125,7 +126,7 @@ impl DisplayModal for TaskModal {
                                 ModalAction::TaskNotePage => { task_note_page = true },
                                 _ => {ticket_page = true},
                             };
-
+                            ui.add_space(avail_size.x / 2.2);
                             if ui.selectable_label(ticket_page, RichText::new("🖹").heading()).clicked(){
                                 response = Some(ModalAction::TicketInfoPage);
                             };
@@ -148,16 +149,16 @@ impl DisplayModal for TaskModal {
                 .strip(|strip| 
             {
                 strip
-                    .size(Size::exact(600.0))
+                    .size(Size::exact(avail_size.y))
                     .horizontal( |mut strip| 
                 {
                     strip
                         .strip(|s| 
                     {
                         s
-                            .size(Size::exact(30.0))
-                            .size(Size::exact(530.0))
-                            .size(Size::exact(30.0))
+                            .size(Size::exact(15.0))
+                            .size(Size::exact(avail_size.x))
+                            .size(Size::exact(15.0))
                             .cell_layout(Layout::top_down(Align::Center))
                             .cell_layout(Layout::top_down(Align::Center))
                             .cell_layout(Layout::top_down(Align::Center))
@@ -168,28 +169,27 @@ impl DisplayModal for TaskModal {
                                 match current_page_state{
                                     ModalAction::TicketInfoPage => {
                                         ui.horizontal_centered(|ui|{
-                                            display_task_page(ui, self.task.as_ref())
+                                            display_task_page(ui, self.task.as_ref(), avail_size)
                                         });
                                     },
                                     ModalAction::ComputerInfoPage => {
                                         ui.horizontal_centered(|ui|{
-                                            display_computer_page(ui, self.task.as_ref())
+                                            display_computer_page(ui, self.task.as_ref(), avail_size)
                                         });
                                     },
                                     ModalAction::PartOrderPage => {
                                         ui.horizontal_centered(|ui|{
-                                            display_part_order_page(ui)
+                                            display_part_order_page(ui, avail_size)
                                         });
                                     },
                                     ModalAction::TaskNotePage => {
                                         if let Some(chat_view) = &self.chat_view{
-                                            info!("Got chat_view");
-                                            display_chat_page(ui, &mut chat_view.take());
+                                            display_chat_page(ui, chat_view, avail_size);
                                         }
                                     },
                                     _ => {
                                         ui.horizontal_centered(|ui|{
-                                            display_task_page(ui, self.task.as_ref())
+                                            display_task_page(ui, self.task.as_ref(), avail_size)
                                         });
                                     }
                                 };
@@ -207,7 +207,7 @@ impl DisplayModal for TaskModal {
 }
 
 
-fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>){
+fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Vec2){
     fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
         let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
@@ -231,7 +231,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>){
             strip.strip(|s|{
                 s
                     .size(Size::exact(300.0))
-                    .size(Size::exact(10.0))
+                    .size(Size::exact(15.0))
                     .size(Size::exact(300.0))
                     .horizontal(|mut s|
                 {
@@ -399,7 +399,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>){
     }
 }
 
-fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
+fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Vec2){
     fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
         let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
@@ -413,25 +413,26 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
         let computer = ticket.computer.as_ref();
         if let Some(computer) = computer{
             let seb_info = computer.seb_info.as_ref();
-            
-            ScrollArea::vertical()
-                .max_height(600.0)
-                .show(ui, |ui| 
-            {
-                ui.vertical_centered_justified(|ui| {
+            ui.add_space(30.0);
 
-                
-                    StripBuilder::new(ui)
-                        .size(Size::exact(180.0))
-                        .size(Size::remainder())
-                        .vertical(|mut strip| 
+            StripBuilder::new(ui)
+                .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
+                .size(Size::exact(avail_size.y))
+                .vertical(|mut s| 
+            {
+                s.strip(|s| 
+                {
+                    s
+                        .cell_layout(Layout::centered_and_justified(Direction::TopDown))
+                        .size(Size::exact(avail_size.x))
+                        .horizontal(|mut s| 
                     {
-                        strip.cell(|ui|
+                        s.cell(|ui| 
                         {
+                            // ui.label(format!("ui.available_width() {}", ui.available_width()));
                             ui.vertical_centered_justified(|ui|{
                                 ui.group(|ui| {
-                                    // ui.label("Personnel Information");
-                                    Grid::new("group2").min_col_width(ui.available_width() /2.0).with_row_color(|num, style| return_colors(num, style))
+                                    Grid::new("group2").min_col_width(avail_size.x / 2.0).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
                                         ui.label("hostname:");
                                         ui.label(&computer.hostname);
@@ -459,7 +460,7 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                                 });
                                 ui.group(|ui| {
                                     // ui.label("Ticket Information");
-                                    Grid::new("group1").min_col_width(ui.available_width() / 3.0).with_row_color(|num, style| return_colors(num, style))
+                                    Grid::new("group1").min_col_width(avail_size.x / 3.0).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
                                         ui.label("Letter");
                                         ui.label("Space Left / Total Size");
@@ -475,109 +476,119 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                                     });
                                 });
                             });
-                        });
-                        strip.cell(|ui|{
                             ui.vertical_centered_justified(|ui|{
+                                ui.add_space(8.0);
                                 ui.separator();
+                                ui.add_space(8.0);
                                 ui.heading("SEB Information");
-                                ui.group(|ui| {
-                                    if let Some(seb_info) = seb_info{
-                                        
-                                        // ui.label("Order Details");
-                                        Grid::new("group3").min_col_width(ui.available_width() /2.0).with_row_color(|num, style| return_colors(num, style))
-                                        .show(ui, |ui| {
-                                            ui.label("InstalledDeviceId:");
-                                            ui.label(RichText::new(&seb_info.InstalledDeviceId).small().font(FontId::proportional(8.0)));
-                                            ui.end_row();
-                                            ui.label("InstallInstanceId:");
-                                            ui.label(RichText::new(&seb_info.InstallInstanceId).small().font(FontId::proportional(8.0)));
-                                            ui.end_row();
-                                            ui.label("HasIssues:");
-                                            ui.label(&seb_info.HasIssues);
-                                            ui.end_row();
-                                            ui.label("InstallationStage:");
-                                            ui.label(&seb_info.InstallationStage);
-                                            ui.end_row();
-                                            ui.label("ReasonCode:");
-                                            ui.label(&seb_info.ReasonCode);
-                                            ui.end_row();
-                                            ui.label("ActivationCode:");
-                                            ui.label(&seb_info.ActivationCode);
-                                            ui.end_row();
-                                            ui.label("InstallVersion:");
-                                            ui.label(&seb_info.InstallVersion);
-                                            ui.end_row();
-                                            ui.label("MachineName:");
-                                            ui.label(&seb_info.MachineName);
-                                            ui.end_row();
-                                        });
-                                    }else{
-                                        ui.shrink_height_to_current();
-                                        ui.shrink_width_to_current();
-                                        ui.label("No SEB information was sent with ticket.");
-                                    }
-                                });
-                                if let Some(seb_info) = seb_info{
-                                    if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
-                                        ui.group(|ui| {
-                                            // ui.label("Customer Information");
-                                            Grid::new("customer_data").min_col_width(ui.available_width() /2.0).with_row_color(|num, style| return_colors(num, style))
+                                ui.add_space(8.0);
+                                ui.separator();
+                                ui.add_space(8.0);
+                                ScrollArea::vertical()
+                                    .max_height(avail_size.y)
+                                    .max_width(f32::INFINITY)
+                                    .show(ui, |ui| 
+                                {
+                                    ui.group(|ui| {
+                                        if let Some(seb_info) = seb_info{
+                                            
+                                            // ui.label("Order Details");
+                                            Grid::new("group3").min_col_width(avail_size.x / 2.0).with_row_color(|num, style| return_colors(num, style))
                                             .show(ui, |ui| {
-                                                ui.label("email:");
-                                                ui.label(&extended_seb.email);
+                                                ui.label("InstalledDeviceId:");
+                                                ui.label(RichText::new(&seb_info.InstalledDeviceId).small().font(FontId::proportional(8.0)));
                                                 ui.end_row();
-                                                ui.label("phone:");
-                                                ui.label(&extended_seb.phone);
+                                                ui.label("InstallInstanceId:");
+                                                ui.label(RichText::new(&seb_info.InstallInstanceId).small().font(FontId::proportional(8.0)));
                                                 ui.end_row();
-                                                ui.label("device_name:");
-                                                ui.label(RichText::new(&extended_seb.device_name).small().font(FontId::proportional(8.0)));
+                                                ui.label("HasIssues:");
+                                                ui.label(&seb_info.HasIssues);
                                                 ui.end_row();
-                                                ui.label("device_id:");
-                                                ui.label(RichText::new(&extended_seb.device_id).small().font(FontId::proportional(8.0)));
+                                                ui.label("InstallationStage:");
+                                                ui.label(&seb_info.InstallationStage);
                                                 ui.end_row();
-                                                ui.label("state:");
-                                                ui.label(&extended_seb.state);
+                                                ui.label("ReasonCode:");
+                                                ui.label(&seb_info.ReasonCode);
                                                 ui.end_row();
-                                                ui.label("usage_gb:");
-                                                ui.label(&extended_seb.usage_gb);
+                                                ui.label("ActivationCode:");
+                                                ui.label(&seb_info.ActivationCode);
                                                 ui.end_row();
-                                                ui.label("date_device_created:");
-                                                ui.label(&extended_seb.date_device_created);
+                                                ui.label("InstallVersion:");
+                                                ui.label(&seb_info.InstallVersion);
                                                 ui.end_row();
-                                                ui.label("activated:");
-                                                ui.label(&extended_seb.activated);
-                                                ui.end_row();
-                                                ui.label("activation_code:");
-                                                ui.label(RichText::new(&extended_seb.activation_code).small().font(FontId::proportional(8.0)));
-                                                ui.end_row();
-                                                ui.label("last_complete_backup:");
-                                                ui.label(&extended_seb.last_complete_backup);
-                                                ui.end_row();
-                                                ui.label("last_client_status_update:");
-                                                ui.label(&extended_seb.last_client_status_update);
-                                                ui.end_row();
-                                                ui.label("id_recurly_account:");
-                                                ui.label(&extended_seb.id_recurly_account);
-                                                ui.end_row();
-                                                ui.label("date_last_scan:");
-                                                ui.end_row();
-                                                ui.label("current_period_ends_at:");
-                                                ui.label(&extended_seb.current_period_ends_at);
-                                                ui.end_row();
-                                                ui.label("date_modified:");
-                                                ui.label(&extended_seb.date_modified);
-                                                ui.end_row();
-                                                ui.label("date_created:");
-                                                ui.label(&extended_seb.date_created);
+                                                ui.label("MachineName:");
+                                                ui.label(&seb_info.MachineName);
                                                 ui.end_row();
                                             });
-                                        });
-                                    }else{
-                                        ui.horizontal(|ui|{
-                                            ui.label("SEB information was sent with ticket, but we didnt get the extended SEB info");
-                                        });
+                                        }else{
+                                            ui.horizontal(|ui|{
+                                                ui.label("No SEB information was sent with ticket.");
+                                            });
+                                        }
+                                    });
+                                    if let Some(seb_info) = seb_info{
+                                        if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
+                                            ui.group(|ui| {
+                                                // ui.label("Customer Information");
+                                                Grid::new("customer_data").min_col_width(avail_size.x / 2.0).with_row_color(|num, style| return_colors(num, style))
+                                                .show(ui, |ui| {
+                                                    ui.label("email:");
+                                                    ui.label(&extended_seb.email);
+                                                    ui.end_row();
+                                                    ui.label("phone:");
+                                                    ui.label(&extended_seb.phone);
+                                                    ui.end_row();
+                                                    ui.label("device_name:");
+                                                    ui.label(&extended_seb.device_name);
+                                                    ui.end_row();
+                                                    ui.label("device_id:");
+                                                    ui.label(&extended_seb.device_id);
+                                                    ui.end_row();
+                                                    ui.label("state:");
+                                                    ui.label(&extended_seb.state);
+                                                    ui.end_row();
+                                                    ui.label("usage_gb:");
+                                                    ui.label(&extended_seb.usage_gb);
+                                                    ui.end_row();
+                                                    ui.label("date_device_created:");
+                                                    ui.label(&extended_seb.date_device_created);
+                                                    ui.end_row();
+                                                    ui.label("activated:");
+                                                    ui.label(&extended_seb.activated);
+                                                    ui.end_row();
+                                                    ui.label("activation_code:");
+                                                    ui.label(&extended_seb.activation_code);
+                                                    ui.end_row();
+                                                    ui.label("last_complete_backup:");
+                                                    ui.label(&extended_seb.last_complete_backup);
+                                                    ui.end_row();
+                                                    ui.label("last_client_status_update:");
+                                                    ui.label(&extended_seb.last_client_status_update);
+                                                    ui.end_row();
+                                                    ui.label("id_recurly_account:");
+                                                    ui.label(&extended_seb.id_recurly_account);
+                                                    ui.end_row();
+                                                    ui.label("date_last_scan:");
+                                                    ui.end_row();
+                                                    ui.label("current_period_ends_at:");
+                                                    ui.label(&extended_seb.current_period_ends_at);
+                                                    ui.end_row();
+                                                    ui.label("date_modified:");
+                                                    ui.label(&extended_seb.date_modified);
+                                                    ui.end_row();
+                                                    ui.label("date_created:");
+                                                    ui.label(&extended_seb.date_created);
+                                                    ui.end_row();
+                                                });
+                                            });
+                                        }else{
+                                            ui.add_space(15.0);
+                                            ui.horizontal(|ui|{
+                                                ui.label("SEB information was sent with ticket, but we didnt get the extended SEB info");
+                                            });
+                                        }
                                     }
-                                }
+                                });
                             });
                         });
                     });
@@ -589,125 +600,80 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
     ui.shrink_height_to_current();
 }
 
-fn display_part_order_page(ui: &mut Ui){
-    ui.vertical_centered(|ui| {
-        StripBuilder::new(ui)
-            .size(Size::exact(50.0))
-            .size(Size::exact(50.0))
-            .size(Size::exact(120.0))
-            .size(Size::exact(50.0))
-            .vertical(|mut strip| 
-        {
+fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
 
-            strip.strip(|s|{
-                s
-                    .size(Size::exact(170.0))
-                    .size(Size::exact(10.0))
-                    .size(Size::exact(170.0))
-                    .horizontal(|mut s|
+    StripBuilder::new(ui)
+        .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
+        .sizes(Size::remainder(), 2)
+        .vertical(|mut s| 
+    {
+        s.strip(|s| 
+        {
+            s
+                .cell_layout(Layout::centered_and_justified(Direction::TopDown))
+                .size(Size::exact(avail_size.x / 3.2))
+                .size(Size::exact(200.0))
+                .horizontal(|mut s| 
+            {
+                s.empty();
+                s.cell(|ui| 
                 {
-                    s.cell(|ui|{
-                        ComboBox::new("AwaitingQuoteCombo", "")
-                            .width(ui.available_width())
-                            .selected_text("Awaiting Quote")
-                            .show_ui(ui, |ui| 
-                        {
-                            ui.selectable_value(&mut "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval");
-                            ui.selectable_value(&mut "Quote Fullfilled".to_string(), "Quote Fullfilled".to_string(), "Quote Fullfilled");
-                            ui.selectable_value(&mut "Awaiting Quote".to_string(), "Awaiting Quote".to_string(), "Awaiting Quote");
+                    ui.vertical_centered(|ui| {
+                        ui.horizontal(|ui| {
+                            ComboBox::new("AwaitingQuoteCombo", "")
+                                .selected_text("Awaiting Quote")
+                                .show_ui(ui, |ui| 
+                            {
+                                ui.selectable_value(&mut "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval");
+                                ui.selectable_value(&mut "Quote Fullfilled".to_string(), "Quote Fullfilled".to_string(), "Quote Fullfilled");
+                                ui.selectable_value(&mut "Awaiting Quote".to_string(), "Awaiting Quote".to_string(), "Awaiting Quote");
+                            });
+                            ComboBox::new("ManufacturerCombo", "")
+                                .selected_text("PCL")
+                                .show_ui(ui, |ui| 
+                            {
+                                ui.selectable_value(&mut "PCL".to_string(), "PCL".to_string(), "PCL");
+                                ui.selectable_value(&mut "Other".to_string(), "Other".to_string(), "Other");
+                                
+                            });
                         });
-                    });
-                    s.empty();
-                    s.cell(|ui|{
-                        ComboBox::new("ManufacturerCombo", "")
-                            .selected_text("PCL")
-                            .width(ui.available_width())
-                            .show_ui(ui, |ui| 
-                        {
-                            ui.selectable_value(&mut "PCL".to_string(), "PCL".to_string(), "PCL");
-                            ui.selectable_value(&mut "Other".to_string(), "Other".to_string(), "Other");
-                        });
-                    });
-                });
-            });
-            strip.strip(|s|{
-                s
-                    .size(Size::exact(170.0))
-                    .size(Size::exact(10.0))
-                    .size(Size::exact(170.0))
-                    .horizontal(|mut s|
-                {
-                    s.cell(|ui|{
+
+                        ui.add_space(15.0);
+
                         TextEdit::singleline(&mut "MFG Model #".to_string())
                             .margin(Margin::same(5.0))
-                            .desired_width(ui.available_width())
                             .code_editor()
                             .ui(ui);
-                    });
-                    s.empty();
-                    s.cell(|ui|{
+
+                        ui.add_space(15.0);
+
                         TextEdit::singleline(&mut "MFG P/N".to_string())
                             .margin(Margin::same(5.0))
-                            .desired_width(ui.available_width())
                             .frame(true)
                             .code_editor()
                             .ui(ui);
-                    });  
-                });
-            });
-            strip.strip(|s|{
-                s
-                    .size(Size::exact(170.0))
-                    .vertical(|mut s|
-                {
-                    s.strip(|s|{
-                        s
-                            .size(Size::exact(170.0))
-                            .size(Size::exact(10.0))
-                            .size(Size::exact(170.0))
-                            .horizontal(|mut s|
-                        {
-                            s.cell(|ui|{
-                                TextEdit::multiline(&mut "Part Description".to_string())
-                                    .margin(Margin::same(5.0))
-                                    .desired_rows(6)
-                                    .desired_width(ui.available_width())
-                                    .code_editor()
-                                    .ui(ui);
-                            });
-                            s.empty();
-                            s.cell(|ui|{
-                                TextEdit::multiline(&mut "Notes".to_string())
-                                    .margin(Margin::same(5.0))
-                                    .desired_rows(6)
-                                    .desired_width(ui.available_width())
-                                    .code_editor()
-                                    .ui(ui);
-                                
-                            });    
-                        });
-                    });
-                });
-            });
-            strip.strip(|s|{
-                s
-                    .size(Size::exact(170.0))
-                    .vertical(|mut s|
-                {
-                    s.strip(|s|{
-                        s
-                            .size(Size::exact(170.0))
-                            .size(Size::exact(10.0))
-                            .size(Size::exact(170.0))
-                            .horizontal(|mut s|
-                        {
-                            s.cell(|ui|{
-                                let _ = ui.radio(false, "LCD?");
-                            });
-                            s.empty();
-                            s.cell(|ui|{
-                                ui.label("Upload Picture");
-                            });    
+                    
+                        ui.add_space(15.0);
+
+                        TextEdit::singleline(&mut "Part Description".to_string())
+                            .margin(Margin::same(5.0))
+                            .code_editor()
+                            .ui(ui);
+                        
+                        ui.add_space(15.0);
+
+                        TextEdit::multiline(&mut "Notes".to_string())
+                            .margin(Margin::same(5.0))
+                            .desired_rows(3)
+                            .code_editor()
+                            .ui(ui);
+
+                        ui.add_space(15.0);
+
+                        ui.horizontal(|ui| { 
+                            let _ = ui.radio(false, "LCD?");
+                            ui.add_space(ui.available_width() / 2.0);
+                            ui.label("Upload Picture");
                         });
                     });
                 });
@@ -718,6 +684,22 @@ fn display_part_order_page(ui: &mut Ui){
     ui.shrink_height_to_current();
 }
 
-fn display_chat_page(ui: &mut Ui, chat_view: &mut ChatModal){
-    chat_view.borrow_mut().ui(ui);
+fn display_chat_page(ui: &mut Ui, chat_view: &ChatView, avail_size: Vec2){
+    let mut shadow = Shadow::default();
+    shadow.blur = 10.0;
+    shadow.spread = 5.0;
+    shadow.color = Color32::from_rgb(40,36,40);
+    ui.shrink_width_to_current();
+    Frame::none()
+        .fill(Color32::from_rgb(20,20,30))
+        .inner_margin(Margin::same(5.0))
+        .shadow(shadow)
+        .stroke(ui.style().visuals.widgets.inactive.bg_stroke)
+        .rounding(Rounding::same(10.0))
+        .show(ui, |ui| {
+            ui.set_min_width(avail_size.x);
+            ui.shrink_width_to_current();
+            chat_view.ui(ui);
+        });
+    ui.shrink_width_to_current();
 }

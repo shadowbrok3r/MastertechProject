@@ -1,9 +1,10 @@
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
-use database::schema::{Priority, Status, UserId};
+use database::{schema::{Priority, Record, Status, Store, TaskPayload, UserId, TASK_TABLE}, Database};
 use egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use log::info;
 use serde::Serialize;
+use wasm_bindgen_futures::spawn_local;
 
 use crate::utilities::{DisplayModal, ModalTypes};
 
@@ -23,13 +24,13 @@ pub struct CreateTaskModal{
     pub due_date: NaiveDate,
     pub description: String,
     pub assignee: Option<UserId>,
-
+    #[serde(skip)]
     pub state: ModalState
 }
 
 impl CreateTaskModal{
     /// Create a new modal with the given title.
-    pub fn new(title: &str) -> Self {
+    pub fn new(title: &str, database: Database) -> Self {
         Self {
             title: title.to_owned(),
             min_width: Some(600.0),
@@ -58,7 +59,6 @@ impl DisplayModal for CreateTaskModal {
     fn display(&mut self, ui: &mut Ui, _current_state: ModalAction) -> Option<ModalAction>{
         ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
         ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        ui.style_mut().visuals.widgets.inactive.bg_fill =  Color32::GOLD;
         ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
         ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
         ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
@@ -160,7 +160,30 @@ impl DisplayModal for CreateTaskModal {
                                 .ui(ui)
                                 .clicked()
                             {
-                                
+                                let task_payload = TaskPayload{
+                                    task_name: self.task_name.clone(),
+                                    everest_initials: "".to_string(),
+                                    task_description: Some(self.description.clone()),
+                                    assignee: Some(self.assignee.as_ref().unwrap().clone()),
+                                    due_date: self.due_date.to_string(),
+                                    priority: self.task_priority.clone(),
+                                    task_note: None,
+                                    completed: false,
+                                    status: Status::Todo,
+                                    dep: Some("RIV".to_string()),
+                                    ..Default::default()
+                                };
+
+                                // spawn_local(async move{
+
+                                //     let create_record: Vec<Record>= database
+                                //         .database
+                                //         .create(TASK_TABLE)
+                                //         .content(task_payload)
+                                //         .await
+                                //         .unwrap();
+                            
+                                // });
                             }// ui.vertical_centered(|ui| {});
                         });
                     });

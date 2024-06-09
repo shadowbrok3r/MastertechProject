@@ -19,7 +19,7 @@ use crate::{
     pages::login_page::Login, tabs::terminal::chart::App, 
     utilities::{
         displays::{
-            chats::ChatModal, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal
+            chats::ChatView, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal
         }, 
         DisplayModal, ModalType, ModalTypes, TaskUiActions
     }
@@ -132,9 +132,7 @@ pub struct MtechServerContext{
     pub task_modal_handler: ModalHandler<TaskModal>,
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
     #[serde(skip)]
-    pub chat_modal_handler: ModalHandler<ChatModal>,
-    #[serde(skip)]
-    pub chat_modal: Option<ChatModal>,
+    pub chat_modal: Option<ChatView>,
     /// collection of all open tabs in ui
     pub open_tabs: HashSet<String>,
     /// egui dock styling
@@ -231,7 +229,6 @@ impl NewCC for MtechServer{
             current_modal: ModalType::Null,
             task_modal_handler: ModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
-            chat_modal_handler: ModalHandler::default(),
             chat_modal: None,
 
             // TERMINAL STUFF
@@ -281,7 +278,7 @@ impl MtechServerContext{
             ModalType::TaskModal(task_modal) => {
                 let modal = if let Some(task) = &task_modal.task{
                     if let Some(notes) = &task.task_note{
-                        let chat_modal = ChatModal::new(notes.clone(), self.current_user.as_ref().unwrap());
+                        let chat_modal = ChatView::new(notes.clone(), self.current_user.as_ref().unwrap().clone());
                         // info!("We have notes! {:?}", notes);
                         TaskModal::new(chat_modal).title(task_modal.task.as_ref().unwrap().task_name.clone())
                     }else{
@@ -315,12 +312,12 @@ impl MtechServerContext{
                     }
                 }
             }
-            // ModalType::ChatModal(task_notes) => {
+            // ModalType::ChatView(task_notes) => {
             //     let notes = task_notes.clone();
             //     if let Some(current_user) = self.current_user.as_ref(){
             //         self.chat_modal_handler.ui(
             //             ctx, 
-            //             || ChatModal::new(notes, current_user),
+            //             || ChatView::new(notes, current_user),
             //             move |ui, _stay_open, _page_state| chat_modal.ui(ui));
             //         }
 

@@ -1,178 +1,76 @@
-use std::iter::repeat;
-use std::sync::Arc;
-use std::time::Duration;
-use std::usize;
 use database::schema::{TaskNotePayload, User};
 use eframe::emath::Vec2;
 use egui::{
-    Align, Frame, Label, Layout, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, TextEdit, Ui, Widget
+    Align, Color32, Frame, Label, Layout, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, TextEdit, Ui, Widget
 };
-use egui_animation::animate_continuous;
-use egui_inbox::UiInbox;
-use egui_infinite_scroll::InfiniteScroll;
-use log::info;
-use wasm_bindgen_futures::spawn_local;
-
-use crate::utilities::ModalTypes;
-
 use super::modals::ModalState;
 
-#[derive(Debug, Default)]
-pub struct HistoryLoader {
-    pub history: Vec<ChatMessage>,
-    pub messages: Vec<ChatMessage>,
-}
-
-impl HistoryLoader {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: &User) -> Self {
-        let history: Vec<_> = messages.clone()
-            .into_iter()
-            .map(|chat_message|
-                ChatMessage {
-                    note: chat_message.note,
-                    from: if chat_message.everest_initials == current_user.everest_initials {
-                        None
-                    } else {
-                        Some(chat_message.everest_initials)
-                    },
-                })
-            .rev()
-            .collect();
-
-        // Repeat the history 5 times to make it longer.
-        let history = repeat(history)
-            .take(5)
-            .flat_map(|history| history.clone())
-            .collect();
-
-            let messages = messages
-            .into_iter()
-            .map(|chat_message| 
-                ChatMessage {
-                    note: chat_message.note,
-                    from: if chat_message.everest_initials == current_user.everest_initials {
-                        None
-                    } else {
-                        Some(chat_message.everest_initials)
-                    },
-                }
-            )
-            .collect();
-        Self {
-            history,
-            messages
-        }
-    }
-
-    pub async fn load(&self, page: Option<usize>) -> (Vec<ChatMessage>, Option<usize>) {
-        let page = page.unwrap_or(0);
-        let page_size = 10;
-        let start = page * page_size;
-        let end = usize::min(start + page_size, self.history.len());
-
-        let has_more = end < self.history.len();
-
-        let messages = self.history[start..end].iter().cloned().rev().collect();
-
-        (messages, if has_more { Some(page + 1) } else { None })
-    }
+#[derive(Debug, Clone, Default)]
+pub struct ChatMessage {
+    pub note: String,
+    pub from: String,
 }
 
 #[derive(Debug, Clone)]
-pub struct ChatMessage {
-    pub note: String,
-    pub from: Option<String>,
-}
-
-#[derive(Default, Debug)]
-pub struct ChatModal{
+pub struct ChatView{
     pub state: ModalState,
     pub title: String,
-    pub messages: InfiniteScroll<ChatMessage, usize>,
-    pub inbox: UiInbox<ChatMessage>,
-    pub history_loader: Arc<HistoryLoader>,
-    pub shown: bool,
-    pub msgs_received: usize,  
+    pub messages: Vec<ChatMessage>,
+    pub current_user: User
 }
 
-impl ModalTypes for ChatModal{
-    fn modal_state(&mut self) -> &mut ModalState {
-        &mut self.state
-    }
-    fn title(mut self, title: String) -> Self {
-        self.modal_state().title = Some(title);
-        self
-    }
-}
-
-impl ChatModal {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: &User) -> Self {
-        let history_loader = Arc::new(HistoryLoader::new(messages, current_user));
-
-        let inbox = UiInbox::new();
-
-        let history_loader_clone = history_loader.clone();
-
-        ChatModal {
-            messages: InfiniteScroll::new().start_loader(move |cursor, cb| {
-                info!("Loading messages...");
-                let history_loader = history_loader_clone.clone();
-                spawn_local(async move {
-                    let (messages, cursor) = history_loader.load(cursor).await;
-                    cb(Ok((messages, cursor)));
-                });
-            }),
-            inbox,
-            history_loader,
-            shown: false,
-            msgs_received: 0,
+impl ChatView {
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: User) -> Self {
+        let messages = messages
+        .into_iter()
+        .map(|chat_message| 
+            ChatMessage {
+                note: chat_message.note,
+                from: chat_message.everest_initials
+            }
+        )
+        .collect();
+    
+        ChatView {
+            current_user,
+            messages,
             state: ModalState::default(),
             title: "Chats".to_string()
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui) {
+    pub fn ui(&self, ui: &mut Ui) {
+        ui.style_mut().visuals.widgets.inactive.bg_fill =  Color32::from_rgb(120, 10, 120);
+        ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
+        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+        ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+        ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+        ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+        ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
         
-        if !self.shown {
-            self.shown = true;
-
-            let tx = self.inbox.sender();
-            self.history_loader
-                .messages
-                .iter()
-                .for_each(|message| {
-                    let tx = tx.clone();
-                    let message = message.clone();
-                    tx.send(message).ok();
-                });
-        }
-
-        self.inbox.read(ui).for_each(|message| {
-            info!("In chat modal: {:?}", message);
-            self.messages.items.push(message);
-            self.msgs_received += 1;
-        });
 
         ScrollArea::vertical()
             .animated(false)
-            .max_height(400.0)
-            // .auto_shrink([false, false])
+            .max_height(600.0)
+            .auto_shrink([false, false])
             .stick_to_bottom(true)
             .show(ui, |ui| {
                 
-                ui.set_width(ui.available_width());
+                ui.set_width(550.0);
 
-                ui.vertical_centered(|ui| {
-                    ui.set_visible(self.messages.top_loading_state().loading());
-                    ui.spinner();
-                });
+                let max_msg_width = ui.available_width() / 2.5;
 
-                let max_msg_width = ui.available_width() - 40.0;
-                let inner_margin = 8.0;
-                let outer_margin = 8.0;
-
-                self.messages.ui(ui, 5, |ui, _index, item| {
-                    let is_message_from_myself = item.from.is_none();
+                for item in self.messages.iter(){
+                    let is_message_from_myself = if item.from == self.current_user.everest_initials{
+                        true
+                    }else{
+                        false
+                    };
 
                     // Messages from the user are right-aligned.
                     let layout = if is_message_from_myself {
@@ -195,21 +93,16 @@ impl ChatModal {
                             // Calculate the width of the frame based on the width of
                             // the text and add 0.1 to account for floating point errors.
                             f32::min(
-                                rect.width() + inner_margin * 2.0 + outer_margin * 2.0 + 0.1,
+                                rect.width() / 2.5,// + inner_margin * 2.0 + outer_margin * 2.0 + 0.1,
                                 max_msg_width,
                             )
                         };
 
                         let content = RichText::new(&item.note);
                         let mut msg_width = measure(content.clone());
-                        let name = if let Some(from) = &item.from {
-                            let name = RichText::new(from).strong();
-                            let width = measure(name.clone());
-                            msg_width = f32::max(msg_width, width);
-                            Some(name)
-                        } else {
-                            None
-                        };
+                        let name = RichText::new(&item.from).strong();
+                        let width = measure(name.clone());
+                        msg_width = f32::max(msg_width, width);
 
                         // Set the width of the ui to the width of the message.
                         ui.set_min_width(msg_width);
@@ -217,7 +110,7 @@ impl ChatModal {
                         let msg_color = if is_message_from_myself {
                             ui.style().visuals.widgets.inactive.bg_fill
                         } else {
-                            ui.style().visuals.extreme_bg_color
+                            ui.style().visuals.widgets.active.weak_bg_fill
                         };
 
                         let rounding = 8.0;
@@ -242,9 +135,7 @@ impl ChatModal {
                             .fill(msg_color)
                             .show(ui, |ui| {
                                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                                    if let Some(from) = name {
-                                        Label::new(from).ui(ui);
-                                    }
+                                    Label::new(name).ui(ui);
 
                                     ui.label(&item.note);
                                 });
@@ -276,52 +167,26 @@ impl ChatModal {
                         ui.painter()
                             .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
 
-                        let _text_edit = TextEdit::multiline(&mut "Enter a message")
-                        .desired_rows(5)
-                        .desired_width(ui.available_width())
-                        .horizontal_align(egui::Align::Center)
-                        .ui(ui);
                     });
-                });
+                };
 
-                if self.msgs_received < self.history_loader.messages.len()
-                    && !self.messages.initial_loading()
-                {
-                    Frame::none()
-                        .rounding(8.0)
-                        .inner_margin(8.0)
-                        .outer_margin(8.0)
-                        .fill(ui.style().visuals.faint_bg_color)
-                        .show(ui, |ui| {
-                            ui.horizontal_top(|ui| {
-                                let mut dot = |offset| {
-                                    let t = animate_continuous(
-                                        ui,
-                                        egui_animation::easing::sine_in_out,
-                                        Duration::from_secs_f32(1.0),
-                                        offset,
-                                    );
-
-                                    let res = ui.allocate_response(
-                                        Vec2::splat(4.0),
-                                        egui::Sense::hover(),
-                                    );
-
-                                    ui.painter().circle_filled(
-                                        res.rect.center() + Vec2::Y * t * 4.0,
-                                        res.rect.width() / 2.0,
-                                        ui.style().visuals.text_color(),
-                                    )
-                                };
-
-                                dot(0.0);
-                                dot(0.3);
-                                dot(8.6);
-                            });
-                        });
-                }
+                // ui.all
             });
+        
+        ui.visuals_mut().extreme_bg_color= Color32::BLACK;
+        ui.visuals_mut().code_bg_color = Color32::BLACK;
+        ui.visuals_mut().extreme_bg_color= Color32::BLACK;
+        ui.visuals_mut().code_bg_color = Color32::BLACK;
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
+        ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::BLACK;
+        let _text_edit = TextEdit::singleline(&mut "Enter a message")
+            .desired_rows(4)
+            .desired_width(ui.available_width())
+            .code_editor()
+            .horizontal_align(egui::Align::Center)
+            .show(ui);
 
-        ui.add_space(8.0);
+        ui.shrink_width_to_current();
     }
 }

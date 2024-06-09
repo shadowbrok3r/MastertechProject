@@ -3,7 +3,7 @@ use app_state::{check_authentication, AppState, MainPages, MtechServer};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
-use utilities::{displays::{chats::ChatModal, create_task_modal::CreateTaskModal, task_modal::TaskModal}, get_other::get_store_users, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, create_task_modal::CreateTaskModal, task_modal::TaskModal}, get_other::get_store_users, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}, ModalType, TaskUiActions};
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{FontId, Style, Vec2};
@@ -153,7 +153,7 @@ impl eframe::App for MtechServer {
             match action{
                 TaskUiActions::OpenTaskModal(task) => {
                     let mut task_modal = if let Some(notes) = &task.task_note{
-                        let chat_modal = ChatModal::new(notes.clone(), self.context.current_user.as_ref().unwrap());
+                        let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone());
                         TaskModal::new(chat_modal)
                     }else{
                         TaskModal::default()
@@ -277,7 +277,8 @@ fn set_style() -> Arc<Style>{
     custom_style.interaction.interact_radius = 15.0;
     custom_style.interaction.resize_grab_radius_side = 15.0;
     custom_style.interaction.resize_grab_radius_corner = 18.0;
-    
+    custom_style.visuals.window_shadow.spread = 8.0;
+    custom_style.visuals.window_shadow.blur = 10.0;
     let arc_style = Arc::new(custom_style);
     arc_style
 }
