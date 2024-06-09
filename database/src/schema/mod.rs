@@ -32,7 +32,7 @@ pub struct CustomerId(pub RecordId);
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TicketId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UserId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -44,7 +44,7 @@ pub struct TaskNoteId(pub RecordId);
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SebId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct NotificationId(pub RecordId);
 
 #[derive(Serialize, Debug)]
@@ -353,7 +353,7 @@ pub enum Store{
 }
 
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct User {
     pub id: UserId,
     pub name: String,

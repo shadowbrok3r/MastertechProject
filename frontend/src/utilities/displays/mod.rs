@@ -116,25 +116,40 @@ impl Displayable for TaskPayload{
                 strip.empty();
                 strip.strip(|strip| 
                 {
-                    strip
-                        .cell_layout(Layout::left_to_right(Align::Min))
-                        .size(Size::remainder())
-                        .size(Size::remainder())
-                        .horizontal( |mut s| 
-                    {
-                        s.cell(|ui|
+                    if let Some(description) = &self.task_description{
+                        strip
+                            .cell_layout(Layout::top_down(Align::Center))
+                            .size(Size::remainder())
+                            .horizontal( |mut s| 
                         {
-                            let checkin_header = ui.make_persistent_id(format!("checkin_notes {:?}", self.id.as_ref().unwrap().0.id));
-                            let checkin_head = CollapsingHeader::new("Checkin Notes").id_source(checkin_header);
-                            checkin_head.show_unindented(ui, |ui| self.interact_checkin_notes(ui, database.clone()));
+                            s.cell(|ui|
+                            {
+                                let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}", self.id.as_ref().unwrap().0.id));
+                                let task_descrip_head = CollapsingHeader::new("Task Description").id_source(task_descrip_header);
+                                task_descrip_head.show_unindented(ui, |ui| self.interact_task_description(ui, database.clone()));
+                            });
                         });
-                        s.cell(|ui| 
+                    }else{
+                        strip
+                            .cell_layout(Layout::left_to_right(Align::Min))
+                            .size(Size::remainder())
+                            .size(Size::remainder())
+                            .horizontal( |mut s| 
                         {
-                            let rec_header = ui.make_persistent_id(format!("recommendations {:?}", self.id.as_ref().unwrap().0.id));
-                            let rec_head = CollapsingHeader::new("Recommendations").id_source(rec_header);
-                            rec_head.show_unindented(ui, |ui| self.interact_recommendations(ui, database.clone()));
-                        });
-                    });
+                            s.cell(|ui|
+                            {
+                                let checkin_header = ui.make_persistent_id(format!("checkin_notes {:?}", self.id.as_ref().unwrap().0.id));
+                                let checkin_head = CollapsingHeader::new("Checkin Notes").id_source(checkin_header);
+                                checkin_head.show_unindented(ui, |ui| self.interact_checkin_notes(ui, database.clone()));
+                            });
+                            s.cell(|ui| 
+                            {
+                                let rec_header = ui.make_persistent_id(format!("recommendations {:?}", self.id.as_ref().unwrap().0.id));
+                                let rec_head = CollapsingHeader::new("Recommendations").id_source(rec_header);
+                                rec_head.show_unindented(ui, |ui| self.interact_recommendations(ui, database.clone()));
+                            });
+                        });  
+                    }
                 });
             });
         });

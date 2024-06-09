@@ -303,7 +303,7 @@ impl MtechServerContext{
             ModalType::CreateTaskModal(create_task_modal) => {
                 let response = self.create_task_modal_handler.ui(
                     ctx, 
-                    || CreateTaskModal::default().title("Create Task".to_string()),
+                    || CreateTaskModal::new("Create Task", self.database.clone(), self.store_users.clone()),
                     |ui, _stay_open, page_state| create_task_modal.display(ui, page_state.to_owned()));
 
                 if let Some(response) = response{
