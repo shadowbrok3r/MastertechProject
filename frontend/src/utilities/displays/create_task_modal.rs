@@ -1,5 +1,5 @@
-use chrono::{DateTime, NaiveDate, Utc, Datelike};
-use database::{schema::{Priority, Record, Status, Store, TaskPayload, UserId, TASK_TABLE}, Database};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use database::{schema::{Priority, Record, Status, TaskPayload, User, UserId, TASK_TABLE}, Database};
 use egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use log::info;
@@ -17,20 +17,22 @@ pub struct CreateTaskModal{
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
     pub full_span_content: bool,  
+    #[serde(skip)]
+    pub database: Option<Database>,
+    pub store_users: Option<Vec<User>>,
 
     pub task_name: String,
-    pub task_status: Status,
     pub task_priority: Priority,
     pub due_date: NaiveDate,
     pub description: String,
-    pub assignee: Option<UserId>,
+    pub assignee: Option<User>,
     #[serde(skip)]
     pub state: ModalState
 }
 
 impl CreateTaskModal{
     /// Create a new modal with the given title.
-    pub fn new(title: &str, database: Database) -> Self {
+    pub fn new(title: &str, database: Option<Database>, store_users: Option<Vec<User>>) -> Self {
         Self {
             title: title.to_owned(),
             min_width: Some(600.0),
@@ -39,6 +41,8 @@ impl CreateTaskModal{
             full_span_content: false,
             state: ModalState::default(),
             due_date: NaiveDate::default(),
+            database,
+            store_users,
             ..Default::default()
         }
     }
@@ -97,41 +101,23 @@ impl DisplayModal for CreateTaskModal {
                                 .desired_width(130.0)
                                 .ui(ui);
                         
-
                             ComboBox::new("PriorityComboBox", "")
                                 .selected_text(RichText::new(format!("{}", &self.task_priority.as_str())))
                                 .show_ui(ui, |ui| 
                             {
                                 for mut priority in Priority::VALUES{
-                                    let priority_change = ui.selectable_value(&mut self.task_priority, priority.to_owned(), priority.as_str());
-                                    if priority_change.clicked(){
-                                        // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, everest_initials);
-                                        // self.update_priority(Some(priority.clone()), database.clone());
-                                    }
+                                    ui.selectable_value(&mut self.task_priority, priority.to_owned(), priority.as_str());
                                 }
                             });
-                            // let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
-                            // let id = self.id.clone().unwrap().0.id.to_string();
-                            let date_picker = DatePickerButton::new(&mut self.due_date)
+
+                            DatePickerButton::new(&mut self.due_date)
                                 .calendar(true)
                                 .calendar_week(false)
                                 .combo_boxes(true)
                                 .format("%m/%d/%y")
                                 .ui(ui);
-                            if date_picker.changed(){
-                                // Combine the NaiveDate with a default time to create a DateTime<Utc>
-                                // let date_time = NaiveDate::from_ymd_opt(due_date.year(), due_date.month(), due_date.day())
-                                //     .unwrap()
-                                //     .and_hms_opt(0, 0, 0)
-                                //     .unwrap()
-                                //     .and_local_timezone(Utc)
-                                //     .unwrap();
-                                // let rfc3339_date = date_time.to_rfc3339();
-                                // let date = due_date.clone().to_string();
-                                // // self.update_due_date(rfc3339_date.clone(), database);
-                                // info!("date_widget changed: {:?}// {:?} ", self.task_name,  date);
-                            }
                         });
+                        // let x = DateTime
 
                         TextEdit::multiline(&mut self.description)
                             .hint_text("Task Description")
@@ -141,50 +127,59 @@ impl DisplayModal for CreateTaskModal {
                             .ui(ui);
 
                         ui.horizontal_top(|ui| {
-                            ComboBox::new("AssigneeComboBox", "")
-                                .selected_text(RichText::new(format!("{}", &self.task_status.as_str())))
-                                // .width(ui.available_width())
-                                .show_ui(ui, |ui| 
-                            {
-                                for mut status in Status::VALUES{
-                                    let status_change = ui.selectable_value(&mut self.task_status, status.to_owned(), status.as_str());
-                                    if status_change.clicked(){
-                                        
+
+                            if let Some(users) = &mut self.store_users{
+                                ComboBox::new("AssigneeComboBox", "")
+                                    .selected_text(self.assignee.as_ref().unwrap_or(users.get(0).as_ref().unwrap()).everest_initials.clone())
+                                    .show_ui(ui, |ui| 
+                                {
+                                    for user in users.iter_mut(){
+                                        let initials = user.everest_initials.clone();
+                                        let x = ui.selectable_value(&mut self.assignee, Some(user.to_owned()), &initials.clone());
+                                        if x.changed(){
+                                            info!("x changed: {:?}", self.assignee);
+                                        }
                                     }
-                                }
-                            });
-                            if Button::new("Create Task")
+                                });
+                            }
+
+                            if Button::new("Submit")
                                 .min_size(Vec2::new(120.0, 20.0))
                                 .fill(Color32::from_rgb(30, 30, 35))
                                 .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
                                 .ui(ui)
                                 .clicked()
                             {
+                                let db = self.database.clone();
+                                let time = NaiveTime::from_hms_milli_opt(0,0,0,0).unwrap();
+                                let date = NaiveDateTime::new(self.due_date, time);
+                                let y = date.and_utc().to_rfc3339();
                                 let task_payload = TaskPayload{
                                     task_name: self.task_name.clone(),
-                                    everest_initials: "".to_string(),
+                                    everest_initials: self.assignee.as_ref().unwrap().everest_initials.clone(),
                                     task_description: Some(self.description.clone()),
-                                    assignee: Some(self.assignee.as_ref().unwrap().clone()),
-                                    due_date: self.due_date.to_string(),
+                                    assignee: Some(self.assignee.as_ref().unwrap().id.clone()),
+                                    due_date: y,
                                     priority: self.task_priority.clone(),
                                     task_note: None,
                                     completed: false,
                                     status: Status::Todo,
-                                    dep: Some("RIV".to_string()),
+                                    dep: Some(format!("{:?}", self.assignee.as_ref().unwrap().store)),
                                     ..Default::default()
                                 };
 
-                                // spawn_local(async move{
-
-                                //     let create_record: Vec<Record>= database
-                                //         .database
-                                //         .create(TASK_TABLE)
-                                //         .content(task_payload)
-                                //         .await
-                                //         .unwrap();
+                                spawn_local(async move{
+                                    if let Some(db) = db{
+                                        let _: Vec<Record> = db
+                                           .database
+                                           .create(TASK_TABLE)
+                                           .content(task_payload)
+                                           .await
+                                           .unwrap();
+                                    }
                             
-                                // });
-                            }// ui.vertical_centered(|ui| {});
+                                });
+                            }
                         });
                     });
                     s.empty()

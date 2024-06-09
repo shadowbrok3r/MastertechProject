@@ -41,10 +41,10 @@ struct Auth {
 
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = "surreal.master-tech.app".to_string(); // surreal.
+        let db_url = "localhost:8000".to_string(); //surreal.master-tech.app
         match jwt{
             Some(jwt) => {
-                let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url) // localhost:8000
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url) // localhost:8000
                     .await?;
 
                 info!("auth: {:?}", jwt.clone());
@@ -77,7 +77,7 @@ impl Database{
             },
             None => {
                 
-                let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url) // localhost:8000
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url) // localhost:8000
                     .await?;
         
                 // Select a specific namespace / database
