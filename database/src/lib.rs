@@ -41,7 +41,7 @@ struct Auth {
 
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = "surrealdb.shadowbroker.app".to_string(); 
+        let db_url = "surreal.master-tech.app".to_string(); // surreal.
         match jwt{
             Some(jwt) => {
                 let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url) // localhost:8000

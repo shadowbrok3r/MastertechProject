@@ -148,38 +148,55 @@ impl DisplayModal for TaskModal {
                 .strip(|strip| 
             {
                 strip
-                    .size(Size::exact(500.0))
+                    .size(Size::exact(600.0))
                     .horizontal( |mut strip| 
                 {
-                    strip.cell(|ui|
+                    strip
+                        .strip(|s| 
                     {
-                        match current_page_state{
-                            ModalAction::TicketInfoPage => {
-                                ui.horizontal_centered(|ui|{
-                                    display_task_page(ui, self.task.as_ref())
-                                });
-                            },
-                            ModalAction::ComputerInfoPage => {
-                                ui.horizontal_centered(|ui|{
-                                    display_computer_page(ui, self.task.as_ref())
-                                });
-                            },
-                            ModalAction::PartOrderPage => {
-                                ui.horizontal_centered(|ui|{
-                                    display_part_order_page(ui)
-                                });
-                            },
-                            ModalAction::TaskNotePage => {
-                                if let Some(chat_view) = &self.chat_view{
-                                    info!("Got chat_view");
-                                    display_chat_page(ui, &mut chat_view.take());
-                                }
-                            },
-                            _ => display_task_page(ui, self.task.as_ref())
-                        };
-                        ui.shrink_width_to_current();
-                        ui.shrink_height_to_current();
-                    });
+                        s
+                            .size(Size::exact(30.0))
+                            .size(Size::exact(530.0))
+                            .size(Size::exact(30.0))
+                            .cell_layout(Layout::top_down(Align::Center))
+                            .cell_layout(Layout::top_down(Align::Center))
+                            .cell_layout(Layout::top_down(Align::Center))
+                            .vertical(|mut s|
+                        {
+                            s.empty();
+                            s.cell(|ui| {
+                                match current_page_state{
+                                    ModalAction::TicketInfoPage => {
+                                        ui.horizontal_centered(|ui|{
+                                            display_task_page(ui, self.task.as_ref())
+                                        });
+                                    },
+                                    ModalAction::ComputerInfoPage => {
+                                        ui.horizontal_centered(|ui|{
+                                            display_computer_page(ui, self.task.as_ref())
+                                        });
+                                    },
+                                    ModalAction::PartOrderPage => {
+                                        ui.horizontal_centered(|ui|{
+                                            display_part_order_page(ui)
+                                        });
+                                    },
+                                    ModalAction::TaskNotePage => {
+                                        if let Some(chat_view) = &self.chat_view{
+                                            info!("Got chat_view");
+                                            display_chat_page(ui, &mut chat_view.take());
+                                        }
+                                    },
+                                    _ => {
+                                        ui.horizontal_centered(|ui|{
+                                            display_task_page(ui, self.task.as_ref())
+                                        });
+                                    }
+                                };
+                            });
+                            s.empty();
+                        });
+                    });// strip.cell(|ui|{ ui.shrink_width_to_current();ui.shrink_height_to_current(); });
                 });
             });
         });
@@ -206,7 +223,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>){
         StripBuilder::new(ui)
             .size(Size::exact(100.0))
             .size(Size::exact(115.0))
-            .size(Size::exact(20.0))
+            .size(Size::exact(60.0))
             .size(Size::exact(100.0))
             .vertical(|mut strip| 
         {
@@ -338,37 +355,39 @@ fn display_task_page(ui: &mut Ui, task: Option<&TaskPayload>){
             strip.empty();
             strip.strip(|s|{
                 s
-                    .size(Size::exact(150.0))
-                    .vertical(|mut s|
+                    .size(Size::exact(640.0))
+                    .horizontal(|mut s|
                 {
                     s.strip(|s|{
                         s
-                            .size(Size::exact(300.0))
-                            .size(Size::exact(10.0))
-                            .size(Size::exact(300.0))
+                            .size(Size::remainder())
+                            .size(Size::exact(5.0))
+                            .size(Size::remainder())
                             .horizontal(|mut s|
                         {
                             s.cell(|ui|{
-                                ui.label("Recommendations:");
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.label("Recommendations:");
                                     TextEdit::multiline(&mut ticket.recommendations.to_string())
-                                    .margin(Margin::same(5.0))
-                                    .desired_rows(8)
-                                    .desired_width(ui.available_width())
-                                    .code_editor()
-                                    .ui(ui);
+                                        .margin(Margin::same(5.0))
+                                        .desired_rows(8)
+                                        .desired_width(ui.available_width())
+                                        .code_editor()
+                                        .ui(ui);
+                                });
                             });
                             s.empty();
                             s.cell(|ui|{
-                                ui.label("Checkin Notes:");
-                                TextEdit::multiline(&mut ticket.checkin_notes.to_string())
-                                .margin(Margin::same(5.0))
-                                .desired_rows(8)
-                                .desired_width(ui.available_width())
-                                .frame(true)
-                                .code_editor()
-                                .ui(ui);
-                                
-                            });    
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.label("Checkin Notes:");
+                                    TextEdit::multiline(&mut ticket.checkin_notes.to_string())
+                                        .margin(Margin::same(5.0))
+                                        .desired_rows(8)
+                                        .desired_width(ui.available_width())
+                                        .code_editor()
+                                        .ui(ui);
+                                });
+                            });
                         });
                     });
                 });
@@ -554,7 +573,9 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
                                             });
                                         });
                                     }else{
-                                        ui.label("SEB information was sent with ticket, but we didnt get the extended SEB info");
+                                        ui.horizontal(|ui|{
+                                            ui.label("SEB information was sent with ticket, but we didnt get the extended SEB info");
+                                        });
                                     }
                                 }
                             });
@@ -569,123 +590,125 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>){
 }
 
 fn display_part_order_page(ui: &mut Ui){
-    StripBuilder::new(ui)
-        .size(Size::exact(50.0))
-        .size(Size::exact(50.0))
-        .size(Size::exact(120.0))
-        .size(Size::exact(50.0))
-        .vertical(|mut strip| 
-    {
+    ui.vertical_centered(|ui| {
+        StripBuilder::new(ui)
+            .size(Size::exact(50.0))
+            .size(Size::exact(50.0))
+            .size(Size::exact(120.0))
+            .size(Size::exact(50.0))
+            .vertical(|mut strip| 
+        {
 
-        strip.strip(|s|{
-            s
-                .size(Size::exact(170.0))
-                .size(Size::exact(10.0))
-                .size(Size::exact(170.0))
-                .horizontal(|mut s|
-            {
-                s.cell(|ui|{
-                    ComboBox::new("AwaitingQuoteCombo", "")
-                        .width(ui.available_width())
-                        .selected_text("Awaiting Quote")
-                        .show_ui(ui, |ui| 
-                    {
-                        ui.selectable_value(&mut "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval");
-                        ui.selectable_value(&mut "Quote Fullfilled".to_string(), "Quote Fullfilled".to_string(), "Quote Fullfilled");
-                        ui.selectable_value(&mut "Awaiting Quote".to_string(), "Awaiting Quote".to_string(), "Awaiting Quote");
-                    });
-                });
-                s.empty();
-                s.cell(|ui|{
-                    ComboBox::new("ManufacturerCombo", "")
-                        .selected_text("PCL")
-                        .width(ui.available_width())
-                        .show_ui(ui, |ui| 
-                    {
-                        ui.selectable_value(&mut "PCL".to_string(), "PCL".to_string(), "PCL");
-                        ui.selectable_value(&mut "Other".to_string(), "Other".to_string(), "Other");
-                    });
-                });
-            });
-        });
-        strip.strip(|s|{
-            s
-                .size(Size::exact(170.0))
-                .size(Size::exact(10.0))
-                .size(Size::exact(170.0))
-                .horizontal(|mut s|
-            {
-                s.cell(|ui|{
-                    TextEdit::singleline(&mut "MFG Model #".to_string())
-                        .margin(Margin::same(5.0))
-                        .desired_width(ui.available_width())
-                        .code_editor()
-                        .ui(ui);
-                });
-                s.empty();
-                s.cell(|ui|{
-                    TextEdit::singleline(&mut "MFG P/N".to_string())
-                        .margin(Margin::same(5.0))
-                        .desired_width(ui.available_width())
-                        .frame(true)
-                        .code_editor()
-                        .ui(ui);
-                });  
-            });
-        });
-        strip.strip(|s|{
-            s
-                .size(Size::exact(170.0))
-                .vertical(|mut s|
-            {
-                s.strip(|s|{
-                    s
-                        .size(Size::exact(170.0))
-                        .size(Size::exact(10.0))
-                        .size(Size::exact(170.0))
-                        .horizontal(|mut s|
-                    {
-                        s.cell(|ui|{
-                            TextEdit::multiline(&mut "Part Description".to_string())
-                                .margin(Margin::same(5.0))
-                                .desired_rows(6)
-                                .desired_width(ui.available_width())
-                                .code_editor()
-                                .ui(ui);
+            strip.strip(|s|{
+                s
+                    .size(Size::exact(170.0))
+                    .size(Size::exact(10.0))
+                    .size(Size::exact(170.0))
+                    .horizontal(|mut s|
+                {
+                    s.cell(|ui|{
+                        ComboBox::new("AwaitingQuoteCombo", "")
+                            .width(ui.available_width())
+                            .selected_text("Awaiting Quote")
+                            .show_ui(ui, |ui| 
+                        {
+                            ui.selectable_value(&mut "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval");
+                            ui.selectable_value(&mut "Quote Fullfilled".to_string(), "Quote Fullfilled".to_string(), "Quote Fullfilled");
+                            ui.selectable_value(&mut "Awaiting Quote".to_string(), "Awaiting Quote".to_string(), "Awaiting Quote");
                         });
-                        s.empty();
-                        s.cell(|ui|{
-                            TextEdit::multiline(&mut "Notes".to_string())
-                                .margin(Margin::same(5.0))
-                                .desired_rows(6)
-                                .desired_width(ui.available_width())
-                                .code_editor()
-                                .ui(ui);
-                            
-                        });    
+                    });
+                    s.empty();
+                    s.cell(|ui|{
+                        ComboBox::new("ManufacturerCombo", "")
+                            .selected_text("PCL")
+                            .width(ui.available_width())
+                            .show_ui(ui, |ui| 
+                        {
+                            ui.selectable_value(&mut "PCL".to_string(), "PCL".to_string(), "PCL");
+                            ui.selectable_value(&mut "Other".to_string(), "Other".to_string(), "Other");
+                        });
                     });
                 });
             });
-        });
-        strip.strip(|s|{
-            s
-                .size(Size::exact(170.0))
-                .vertical(|mut s|
-            {
-                s.strip(|s|{
-                    s
-                        .size(Size::exact(170.0))
-                        .size(Size::exact(10.0))
-                        .size(Size::exact(170.0))
-                        .horizontal(|mut s|
-                    {
-                        s.cell(|ui|{
-                            let _ = ui.radio(false, "LCD?");
+            strip.strip(|s|{
+                s
+                    .size(Size::exact(170.0))
+                    .size(Size::exact(10.0))
+                    .size(Size::exact(170.0))
+                    .horizontal(|mut s|
+                {
+                    s.cell(|ui|{
+                        TextEdit::singleline(&mut "MFG Model #".to_string())
+                            .margin(Margin::same(5.0))
+                            .desired_width(ui.available_width())
+                            .code_editor()
+                            .ui(ui);
+                    });
+                    s.empty();
+                    s.cell(|ui|{
+                        TextEdit::singleline(&mut "MFG P/N".to_string())
+                            .margin(Margin::same(5.0))
+                            .desired_width(ui.available_width())
+                            .frame(true)
+                            .code_editor()
+                            .ui(ui);
+                    });  
+                });
+            });
+            strip.strip(|s|{
+                s
+                    .size(Size::exact(170.0))
+                    .vertical(|mut s|
+                {
+                    s.strip(|s|{
+                        s
+                            .size(Size::exact(170.0))
+                            .size(Size::exact(10.0))
+                            .size(Size::exact(170.0))
+                            .horizontal(|mut s|
+                        {
+                            s.cell(|ui|{
+                                TextEdit::multiline(&mut "Part Description".to_string())
+                                    .margin(Margin::same(5.0))
+                                    .desired_rows(6)
+                                    .desired_width(ui.available_width())
+                                    .code_editor()
+                                    .ui(ui);
+                            });
+                            s.empty();
+                            s.cell(|ui|{
+                                TextEdit::multiline(&mut "Notes".to_string())
+                                    .margin(Margin::same(5.0))
+                                    .desired_rows(6)
+                                    .desired_width(ui.available_width())
+                                    .code_editor()
+                                    .ui(ui);
+                                
+                            });    
                         });
-                        s.empty();
-                        s.cell(|ui|{
-                            ui.label("Upload Picture");
-                        });    
+                    });
+                });
+            });
+            strip.strip(|s|{
+                s
+                    .size(Size::exact(170.0))
+                    .vertical(|mut s|
+                {
+                    s.strip(|s|{
+                        s
+                            .size(Size::exact(170.0))
+                            .size(Size::exact(10.0))
+                            .size(Size::exact(170.0))
+                            .horizontal(|mut s|
+                        {
+                            s.cell(|ui|{
+                                let _ = ui.radio(false, "LCD?");
+                            });
+                            s.empty();
+                            s.cell(|ui|{
+                                ui.label("Upload Picture");
+                            });    
+                        });
                     });
                 });
             });
