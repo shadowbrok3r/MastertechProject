@@ -47,8 +47,8 @@ jobs:
 
     - uses: actions/upload-artifact@master
       with:
-        name: Mastertech-${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
-        path: Mastertech-${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
+        name: Mastertech${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
+        path: Mastertech${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
 
 
     - uses: svenstaro/upload-release-action@v2
