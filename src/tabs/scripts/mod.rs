@@ -8,6 +8,14 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
 use crate::{app_state::MastertechContext, database::GetKeysResponse, handle_api::api_request::SendRequest};
+use rust_embed::Embed;
+// use quick_xml::de::from_file;
+use quick_xml::reader::Reader;
+use quick_xml::events::Event;
+
+#[derive(Embed)]
+#[folder = "src/assets/superanti/"]
+pub struct SasAsset;
 
 #[cfg(target_os="windows")]
 use wmi::{COMLibrary, WMIConnection, WMIError};
@@ -61,7 +69,27 @@ impl MastertechContext{
         
                         if ui.add(button).clicked(){
                             info!("Clicked button: {}", *key);
-        
+                            // let index_html = SasAsset::get("SuperAntiScheduledTask.xml").unwrap();
+                            // let mut reader = Reader::from_file(index_html.data.as_ref()).unwrap();
+
+                            // let mut count = 0;
+                            // let mut txt = Vec::new();
+                            // loop {
+                            //     match reader.read_event_into(&mut buf) {
+                            //         Ok(Event::Start(ref e)) => {
+                            //             let name = e.name();
+                            //             let name = reader.decoder().decode(name.as_ref()).unwrap();
+                            //             println!("read start event {:?}", name.as_ref());
+                            //             count += 1;
+                            //         }
+                            //         Ok(Event::Eof) => break, // exits the loop when reaching end of file
+                            //         Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
+                            //         _ => (), // There are several other `Event`s we do not consider here
+                            //     }
+                            // }
+                            // println!("txt: {:?}", txt);
+                            // println!("{:?}", reader.read_event());
+
                             let action_clone = action.clone();
                             let so_num = Arc::new(self.so_number.clone());
                             let scripts = scripts.clone();
@@ -178,7 +206,7 @@ impl Scripts{
     }
     
     pub async fn install_sas(&self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("running install_sas!");
+
 
         if let Some(service_number) = &self.service_number{
             let response = self.client.get(

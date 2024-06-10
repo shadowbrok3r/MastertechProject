@@ -90,9 +90,11 @@ impl eframe::App for MasterTechApp {
                     Err(e) => info!("Error sending computer data: {e:?}"),
                 };
 
-                match db_tx.send(database){
-                    Ok(_) => info!("Sent db connection across thread"),
-                    Err(err) => debug!("Error sending db connection: {err:?}"),
+                if let Ok(database) = database{
+                    match db_tx.send(database){
+                        Ok(_) => info!("Sent db connection across thread"),
+                        Err(err) => debug!("Error sending db connection: {err:?}"),
+                    }
                 }
             });
 

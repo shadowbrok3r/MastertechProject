@@ -1,7 +1,7 @@
 use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Wss}, sql::Thing, Error, Surreal
+    engine::remote::ws::{Client as WsClient, Wss, Ws}, sql::Thing, Error, Surreal
     
 };
 
@@ -33,18 +33,13 @@ pub struct Record {
 }
 
 impl Database{
-    pub async fn new() -> Self {
-        let database: Surreal<WsClient> = Surreal::new::<Wss>("surreal.master-tech.app/rpc") // localhost:8000
-            .await.unwrap();
+    pub async fn new() -> anyhow::Result<Self, anyhow::Error> {
+        let database: Surreal<WsClient> = Surreal::new::<Ws>("localhost:8000").await?; // localhost:8000 // surreal.shadowbroker.app
 
         // Select a specific namespace / database
-        database
-            .use_ns("Mastertech")
-            .use_db("MastertechDB")
-            .await
-            .expect("Could not use ns or db name");
+        database.use_ns("Mastertech").use_db("MastertechDB").await?;
 
-        Database { database }
+        Ok( Self { database } )
     }
 
     pub async fn insert<T: Serialize>(&self, table: &str, record: T) -> Result<Vec<Record>, Error> {
