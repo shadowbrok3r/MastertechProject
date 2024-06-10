@@ -5,7 +5,7 @@ use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::{Serialize, Deserialize};
 use serde_json::json;
 use crate::{database::schema::{CustomerData, TicketData, TicketPayload}, handle_api::Store};
-
+use self::database::Database;
 use self::schema::{ComputerData, HardwareTests};
 
 pub mod database;
@@ -155,7 +155,7 @@ impl TicketPayload{
 
  }
 
-pub async fn send_payload(payload: TicketPayload, client: reqwest::Client, cookie_store: Arc<CookieStoreMutex>)  
+pub async fn send_payload(payload: TicketPayload, client: reqwest::Client, cookie_store: Arc<CookieStoreMutex>, db: Database)  
 -> anyhow::Result<String, anyhow::Error> {
 
     // let api_url = dotenv::var("API_URL").unwrap();

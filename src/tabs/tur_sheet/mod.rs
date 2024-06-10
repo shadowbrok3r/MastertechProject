@@ -810,17 +810,20 @@ impl MastertechContext {
                                         match client_build{
                                             Ok(client) => {
                                                 debug!("Sending reqwest");
+                                                let db = self.database.clone();
                                                 spawn(async move {
                                                     
                                                     let mut output = String::new();
-                                                    let x = send_payload(payload, client, cookie_store).await;
-                                                    match x{
-                                                        Ok(o) => {
-                                                            output = o;
-                                                        },
-                                                        Err(e) => debug!("Error {e:?}"),
+                                                    if let Some(db) = db{
+                                                        let x = send_payload(payload, client, cookie_store, db.clone()).await;
+                                                        match x{
+                                                            Ok(o) => {
+                                                                output = o;
+                                                            },
+                                                            Err(e) => debug!("Error {e:?}"),
+                                                        }
+                                                        info!("output: {output}");
                                                     }
-                                                    info!("output: {output}");
                                                 });
                                             }, Err(err) => debug!("Error with client_build => {err:?}"),
                                         };

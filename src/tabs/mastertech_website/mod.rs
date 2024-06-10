@@ -19,22 +19,22 @@ impl MastertechContext {
 
         let sender = self.db_data_sender.clone();
 
-        if self.query_tasks_first_run{
-            self.query_tasks_first_run = false;
-            if let Some(db) = &self.database{
-                let database = db.clone();
-                spawn(async move {
-                    let task_data = database.query("SELECT * FROM task").await.unwrap();
+        // if self.query_tasks_first_run{
+        //     self.query_tasks_first_run = false;
+        //     if let Some(db) = &self.database{
+        //         let database = db.clone();
+        //         spawn(async move {
+        //             let task_data = database.query("SELECT * FROM task").await.unwrap();
                 
-                    match sender.try_send(task_data){
-                        Ok(_) => {
-                            debug!("Sent task data");
-                        },
-                        Err(err) => debug!("Send error: {:?}", err.to_string()),
-                    }
-                });
-            }
-        }
+        //             match sender.try_send(task_data){
+        //                 Ok(_) => {
+        //                     debug!("Sent task data");
+        //                 },
+        //                 Err(err) => debug!("Send error: {:?}", err.to_string()),
+        //             }
+        //         });
+        //     }
+        // }
 
         if let Ok(data) = self.db_data_receiver.try_recv(){
             self.ticket_data = Some(data);
