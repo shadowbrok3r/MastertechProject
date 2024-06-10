@@ -203,10 +203,12 @@ impl Updatable for TaskPayload {
     
     fn update_recommendations(&self, recommendations: Option<String>, db: Database) {
         let id: RecordId = self.id.clone().unwrap().0;
+        let so =  self.service_ticket.as_ref().unwrap().service_number;
         spawn_local(async move {
             let query = format!(
-                "UPDATE service_order SET recommendations='{}' WHERE id={id}", recommendations.unwrap()
+                "UPDATE task.service_ticket SET recommendations='{}' WHERE id={id}", recommendations.as_ref().unwrap()
             );
+            info!("Recommendations changed: {}", recommendations.clone().unwrap());
             let _update_task: Vec<Record> = db
                 .database
                 .query(query)
@@ -214,6 +216,7 @@ impl Updatable for TaskPayload {
                 .unwrap()
                 .take(0)
                 .unwrap();
+            info!("update_task: {:?}", _update_task);
         })
     }
     

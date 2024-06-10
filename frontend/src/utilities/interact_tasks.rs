@@ -1,5 +1,7 @@
+use std::{borrow::BorrowMut, cell::RefCell};
+
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
-use egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
+use egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextBuffer, TextEdit, Ui, Widget};
 
 use database::{schema::{Priority, User, Status, TaskPayload}, Database};
 use egui_extras::DatePickerButton;
@@ -20,75 +22,60 @@ impl Interaction for TaskPayload {
         Some(text_edit)
     }
 
-    fn interact_checkin_notes(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
+    fn interact_checkin_notes(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
-        if let Some(ref mut ticket) = self.service_ticket{
-            let text_edit = TextEdit::multiline(&mut ticket.checkin_notes)
-                .desired_rows(5)
-                .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
-                .ui(ui);
 
-            if text_edit.changed(){
-                info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
-            }
-            None
-        }else{
-            let text_edit = TextEdit::multiline(&mut "No task description")
-                .desired_rows(5)
-                .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
-                .ui(ui);
+        let mut checkin_notes = self.service_ticket.take().unwrap().checkin_notes;
+        let text_edit = TextEdit::multiline(&mut checkin_notes)
+            .desired_rows(5)
+            .desired_width(ui.available_width())
+            .horizontal_align(egui::Align::Center)
+            .ui(ui);
 
-            if text_edit.changed(){
-                info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
-            }
-            Some(text_edit)
+        if text_edit.changed() {
+            self.update_checkin_notes(Some(checkin_notes), database.clone());
+            info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
         }
+        None
     }
 
-    fn interact_task_description(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
+    fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
-        if let Some(ref mut description) = self.task_description{
-            let text_edit = TextEdit::multiline(description)
-                .desired_rows(5)
-                .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
-                .ui(ui);
 
-            if text_edit.changed(){
-                info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
-            }
-            None
-        }else{
-            let text_edit = TextEdit::multiline(&mut "No task description")
-                .desired_rows(5)
-                .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
-                .ui(ui);
+        let mut description = self.task_description.take().unwrap_or_else(String::new);
 
-            if text_edit.changed(){
-                info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
-            }
-            Some(text_edit)
-        }
-    }
-
-    fn interact_recommendations(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
-        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
-        let text_edit = TextEdit::multiline(&mut self.service_ticket.as_mut().unwrap().recommendations)
+        let text_edit = TextEdit::multiline(&mut description)
             .desired_rows(6)
             .desired_width(ui.available_width())
             .horizontal_align(egui::Align::Center)
-            .show(ui);
+            .ui(ui);
 
-        if text_edit.response.changed(){
-            info!("recommendations changed: {:?}// {:?}", self.id, self.task_name);
+        if text_edit.changed() {
+            self.update_task_description(Some(description), database.clone());
         }
-        Some(text_edit.response)
+        None
+    }
+
+    fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
+        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
+
+        if self.service_ticket.is_some(){
+
+            let text_edit = TextEdit::multiline(&mut self.service_ticket.as_mut().unwrap().recommendations)
+                .desired_rows(6)
+                .desired_width(ui.available_width())
+                .horizontal_align(egui::Align::Center)
+                .ui(ui);
+
+            if text_edit.changed() {
+                // let rec = recommendations.clone();
+                self.update_recommendations(Some(self.service_ticket.as_ref().unwrap().recommendations.to_owned()), database.clone());
+            }
+        }
+        None
     }
 
     fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
