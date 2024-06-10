@@ -1,41 +1,54 @@
-use egui::{TextEdit, Ui};
-use egui_form::{validator::validator::Validate, Form, FormField, _validator_field_path};
-use egui_form::validator::field_path;
-use crate::app_state::MtechServer;
+use serde::Serialize;
+use crate::app_state::{AppState, MtechServer};
 use crossbeam::channel::Sender;
-use database::Database;
-use egui::{Align, Button, CentralPanel, Direction, Frame, Layout, RichText, TextEdit, Vec2, Widget};
+use database::{schema::Store, Database};
+use egui::{Align, Button, CentralPanel, Color32, ComboBox, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
 use wasm_cookies::CookieOptions;
+// use egui_form::{validator::validator::Validate, Form, FormField, _validator_field_path};
+// use egui_form::validator::field_path;
 
-use crate::app_state::MtechServer;
-
-
-#[derive(Validate, Debug)]
-struct Signup {
+#[derive(Serialize, Debug, Default, Clone)]
+pub struct Signup {
     // #[validate(length(min = 3, max = 10))]
-    pub user_name: String,
-    // #[validate(email)]
+    #[serde(skip)]
+    pub first_name: String,
+    #[serde(skip)]
+    pub last_name: String,
+    pub name: String,
+    pub store: Store,
+    pub everest_initials: String,
     pub email: String,
-    // #[validate(nested)]
-    pub nested: Nested,
-    // #[validate(nested)]
-    pub vec: Vec<Nested>,
+    pub password: String,
 }
 
 impl Signup{
-    pub fn signup(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>){
-        let user = self.username.clone();
-        let pass = self.password.clone();
+    pub fn signup(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, _appstate_tx: Sender<AppState>){
+        let first_initial = self.first_name.chars().nth(0).unwrap();
+        let last_initial = self.last_name.chars().nth(0).unwrap();
+
+        let initials = format!("{first_initial}{last_initial}").to_uppercase();
+
+
+        let signup: Signup = Self { // serde_json::json!(
+            name: format!("{} {}", self.first_name.clone(), self.last_name.clone()),
+            email: self.email.clone(),
+            password: self.password.clone(),
+            everest_initials: initials,
+            store: self.store.clone(),
+            ..Default::default()
+        };
+
+        let email = signup.email.clone();
         spawn_local(async move {
-            let database = Database::new(user, pass, None).await;
+            let database = Database::signup(signup.clone(), email).await;
 
             // #[cfg(target_arch="wasm32-unknown-unknown")]
             match database{
                 Ok(db) => {
-                    let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::Strict);
+                    let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None);
                     if let Some(ref cookie) = db.jwt{
                         if let Some(ref usr) = db.user{
                             wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
@@ -61,7 +74,7 @@ impl Signup{
 }
 
 impl MtechServer{
-    pub fn signup_page(&mut self, ctx: &egui::Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>) {
+    pub fn signup_page(&mut self, ctx: &egui::Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
         // wasm_cookies::delete("user");
         // wasm_cookies::delete("jwt");
         CentralPanel::default()
@@ -90,57 +103,82 @@ impl MtechServer{
                                 { 
                                     ui.add_space(ui.available_height() / 2.5);
 
-                                    ui.label(RichText::new("Create Account").heading());
+                                    ui.label(RichText::new("Signup").heading());
+                                    let font = FontId::proportional(18.0);
+                                    ui.style_mut().override_font_id = Some(font);
+    
+                                    // ui.label("Please Login");
                                     ui.add_space(20.0);
-                                    if let Some(login) = self.login_mut(){
+                                    if let Some(signup) = self.signup_mut(){
 
-                                        let mut bo = false;
-                                        if ui.toggle_value(&mut  bo, RichText::new("Login").small_raised())
-                                            .clicked()
-                                        {
-                                            // self.state = AppState::CreateAccount;
-                                        }
+                                    
 
-                                        TextEdit::singleline(&mut login.username)
+                                        TextEdit::singleline(&mut signup.first_name)
                                             .hint_text("First Name")
-                                            .desired_width(70.0)
+                                            .desired_width(180.0)
                                             .ui(ui);
 
                                         ui.add_space(5.0);
 
-                                        TextEdit::singleline(&mut login.password)
+                                        TextEdit::singleline(&mut signup.last_name)
                                             .hint_text("Last Name")
-                                            .desired_width(70.0)
-                                            .password(true)
-                                            .ui(ui);
-
-                                            
-
-                                        TextEdit::singleline(&mut login.username)
-                                            .hint_text("Email")
-                                            .desired_width(130.0)
+                                            .desired_width(180.0)
                                             .ui(ui);
 
                                         ui.add_space(5.0);
 
-                                        TextEdit::singleline(&mut login.password)
+                                        TextEdit::singleline(&mut signup.email)
+                                            .hint_text("Email")
+                                            .desired_width(180.0)
+                                            .ui(ui);
+
+                                        ui.add_space(5.0);
+
+                                        TextEdit::singleline(&mut signup.password)
                                             .hint_text("Password")
-                                            .desired_width(130.0)
+                                            .desired_width(180.0)
                                             .password(true)
                                             .ui(ui);
 
-                                        ComboBox::new("Store");
-                                            
+                                        ui.add_space(5.0);
+
+                                        ui.horizontal_centered(|ui| {
+
+                                            ComboBox::new("StoreComboBox", "")
+                                                .selected_text("RIV")
+                                                .width(180.0)
+                                                .show_ui(ui, |ui| 
+                                            {
+                                                for mut store in Store::VALUES{
+                                                    ui.selectable_value(&mut signup.store, store.to_owned(), store.as_str());
+                                                }
+                                            });
+                                        });
+                                                
                                         ui.add_space(10.0);
 
-                                        if Button::new("Submit")
-                                            .min_size(Vec2::new(100.0, 16.0))
+                                        if Button::new("Login")
+                                            .fill(Color32::from_rgb(30, 30, 35))
+                                            .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
+                                            .min_size(Vec2::new(140.0, 15.0))
                                             .ui(ui)
                                             .clicked()
                                         {
-                                            login.login(db_tx);
+                                            match appstate_tx.send(AppState::NoAuth("Login".to_string())){
+                                                Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
+                                                Err(e) => info!("Error {e:?}"),
+                                            }
                                         }
 
+                                        if Button::new("Create Account")
+                                            .fill(Color32::from_rgb(30, 30, 35))
+                                            .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
+                                            .min_size(Vec2::new(180.0, 40.0))
+                                            .ui(ui)
+                                            .clicked()
+                                        {
+                                            signup.signup(db_tx.clone(), appstate_tx.clone());
+                                        }
                                     }
                                 });
                             });
@@ -151,5 +189,7 @@ impl MtechServer{
                 });
         });
     }
+
+
 
 }

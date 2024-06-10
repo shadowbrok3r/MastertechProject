@@ -1,5 +1,5 @@
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use database::{schema::{Priority, Record, Status, TaskPayload, User, UserId, TASK_TABLE}, Database};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use database::{schema::{Priority, Record, Status, TaskPayload, User, TASK_TABLE}, Database};
 use egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use log::info;

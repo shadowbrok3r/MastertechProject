@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use database::Database;
-use egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, RichText, Stroke, TextEdit, Vec2, Widget};
+use egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
@@ -12,6 +12,7 @@ pub struct Login {
     pub username: String,
     pub password: String,
 }
+
 impl Default for Login{
     fn default() -> Self {
         Self { 
@@ -31,7 +32,7 @@ impl Login{
             // #[cfg(target_arch="wasm32-unknown-unknown")]
             match database{
                 Ok(db) => {
-                    let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::Strict);
+                    let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None);
                     if let Some(ref cookie) = db.jwt{
                         if let Some(ref usr) = db.user{
                             wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
@@ -40,14 +41,16 @@ impl Login{
                             info!("set cookies");
                         }else{ 
                             info!("no usr"); 
-                            match appstate_tx.send(AppState::NoAuth){
+                            let _ = db.database.invalidate();
+                            match appstate_tx.send(AppState::NoAuth("No user was found".to_string())){
                                 Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                 Err(e) => info!("Error {e:?}"),
                             }
                         }
                     }else{ 
                         info!("no cookie"); 
-                        match appstate_tx.send(AppState::NoAuth){
+                        let _ = db.database.invalidate();
+                        match appstate_tx.send(AppState::NoAuth("No cookie was found".to_string())){
                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                             Err(e) => info!("Error {e:?}"),
                         }
@@ -67,7 +70,7 @@ impl Login{
                 },
                 Err(e) => {
                     info!("Error with db: {e:?}");
-                    match appstate_tx.send(AppState::NoAuth){
+                    match appstate_tx.send(AppState::NoAuth(e.to_string())){
                         Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                         Err(e) => info!("Error {e:?}"),
                     }

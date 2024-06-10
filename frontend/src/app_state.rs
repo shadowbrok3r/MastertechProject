@@ -16,7 +16,7 @@ use web_time::{Duration, Instant};
 use database::{schema::{LiveTaskPayload, TaskPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
-    pages::login_page::Login, tabs::terminal::chart::App, 
+    pages::{login_page::Login, signup_page::Signup}, tabs::terminal::chart::App, 
     utilities::{
         displays::{
             chats::ChatView, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal
@@ -29,6 +29,8 @@ use crate::{
 pub struct MtechServer{
     #[serde(skip)]
     login: Login,
+    #[serde(skip)]
+    signup: Signup,
     pub context: MtechServerContext,
     pub state: AppState,
     #[serde(skip)]
@@ -44,14 +46,17 @@ pub enum MainPages{
     WebConsole,
 }
 
-#[derive(Default, Serialize, Debug, PartialEq)]
+#[derive(Serialize, Debug, PartialEq)]
 pub enum AppState{
     Authenticated(MainPages),
     CreateAccount,
-    #[default]
-    NoAuth,
+    NoAuth(String),
 }
-
+impl Default for AppState{
+    fn default() -> Self {
+        Self::NoAuth("Not Authenticated".to_string())
+    }
+}
 #[derive(Serialize)]
 pub struct MtechServerContext{
     pub current_user: Option<User>,
@@ -251,6 +256,7 @@ impl NewCC for MtechServer{
         
         Self {
             login: Login::default(),
+            signup: Signup::default(),
             context,
             tree,
             state: AppState::default()
@@ -331,12 +337,17 @@ impl MtechServerContext{
 impl MtechServer{
     pub fn login_mut(&mut self) -> Option<&mut Login> {
         match self.state{
-            AppState::NoAuth => Some(&mut self.login),
+            AppState::NoAuth(_) => Some(&mut self.login),
             AppState::Authenticated(MainPages::Tasks) => None,
             _ => None
         }
     }
-
+    pub fn signup_mut(&mut self) -> Option<&mut Signup> {
+        match self.state{
+            AppState::CreateAccount => Some(&mut self.signup),
+            _ => None
+        }
+    }
 }
 
 pub fn check_authentication(

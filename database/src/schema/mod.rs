@@ -1,5 +1,3 @@
-use std::default;
-
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
 
@@ -352,6 +350,20 @@ pub enum Store{
     SAN
 }
 
+impl Store{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            Store::RIV => "RIV",
+            Store::LTN => "LTN",
+            Store::MUR => "MUR",
+            Store::AF => "AF",
+            Store::WJ => "WJ",
+            Store::ORE => "ORE",
+            Store::SAN => "SAN",
+        }
+    }
+    pub const VALUES: [Self; 7] = [Self::RIV, Self::LTN, Self::MUR, Self::AF, Self::WJ, Self::ORE, Self::SAN];
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct User {
