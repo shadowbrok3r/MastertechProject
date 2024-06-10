@@ -116,7 +116,7 @@ impl Displayable for TaskPayload{
                 strip.empty();
                 strip.strip(|strip| 
                 {
-                    if let Some(description) = &self.task_description{
+                    if self.service_ticket.is_none(){
                         strip
                             .cell_layout(Layout::top_down(Align::Center))
                             .size(Size::remainder())
