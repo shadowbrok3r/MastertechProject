@@ -26,17 +26,28 @@ impl Interaction for TaskPayload {
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
 
-        let mut checkin_notes = self.service_ticket.take().unwrap().checkin_notes;
-        let text_edit = TextEdit::multiline(&mut checkin_notes)
-            .desired_rows(5)
-            .desired_width(ui.available_width())
-            .horizontal_align(egui::Align::Center)
-            .ui(ui);
+        
+        if let Some(service_ticket) = &mut self.service_ticket{
 
-        if text_edit.changed() {
-            self.update_checkin_notes(Some(checkin_notes), database.clone());
-            info!("task_description changed: {:?}// {:?}", self.id, self.task_name);
+            let text_edit = TextEdit::multiline(&mut service_ticket.checkin_notes)
+                .desired_rows(5)
+                .desired_width(ui.available_width())
+                .horizontal_align(egui::Align::Center)
+                .ui(ui);
+            if text_edit.changed() {
+                let notes = service_ticket.checkin_notes.clone();
+                self.update_checkin_notes(Some(notes), database.clone());
+                info!("checkin_notes changed: {:?}// {:?}", self.id, self.task_name);
+            }
+        }else{
+            TextEdit::multiline(&mut "No checkin notes")
+                .desired_rows(5)
+                .desired_width(ui.available_width())
+                .horizontal_align(egui::Align::Center)
+                .ui(ui);
         }
+
+
         None
     }
 
@@ -62,18 +73,23 @@ impl Interaction for TaskPayload {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
 
-        if self.service_ticket.is_some(){
-
-            let text_edit = TextEdit::multiline(&mut self.service_ticket.as_mut().unwrap().recommendations)
+        if let Some(service_ticket) = &mut self.service_ticket{
+            let text_edit = TextEdit::multiline(&mut service_ticket.recommendations)
                 .desired_rows(6)
                 .desired_width(ui.available_width())
                 .horizontal_align(egui::Align::Center)
                 .ui(ui);
 
             if text_edit.changed() {
-                // let rec = recommendations.clone();
-                self.update_recommendations(Some(self.service_ticket.as_ref().unwrap().recommendations.to_owned()), database.clone());
+                let rec = service_ticket.recommendations.clone();
+                self.update_recommendations(Some(rec), database.clone());
             }
+        }else{
+            let text_edit = TextEdit::multiline(&mut "No recommendations")
+            .desired_rows(5)
+            .desired_width(ui.available_width())
+            .horizontal_align(egui::Align::Center)
+            .ui(ui);
         }
         None
     }

@@ -12,31 +12,16 @@ impl Updatable for TaskPayload {
         // self.completed = completed;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
-            let query = format!(
-                "UPDATE task SET completed={completed}, status='{:?}' WHERE id={id}",
-                Status::Complete
-            );
-            info!("ID: {id:?}");
-            let update_task: Vec<Record> = db
-                .database
-                .query(query)
-                .await
-                .unwrap()
-                .take(0)
-                .unwrap();
+            let query = format!("UPDATE task SET completed=$completed, status=$status WHERE id=$id");
+            db.database.set("id", id).await.unwrap();
+            db.database.set("completed", completed).await.unwrap();
 
+            if completed{
+                db.database.set("status", Status::Complete).await.unwrap();
+            }else{
+                db.database.set("status", Status::InRepair).await.unwrap();
+            }
 
-                info!("Updated task: {update_task:#?}");
-        })
-    }
-
-    fn update_due_date(&self, due_date: String, db: Database) {
-        info!("Changing due date to {due_date:?}");
-        let id: RecordId = self.id.clone().unwrap().0;
-        spawn_local(async move {
-            let query = format!(
-                "UPDATE task SET due_date='{}' WHERE id={id}", due_date
-            );
             let _update_task: Vec<Record> = db
                 .database
                 .query(query)
@@ -44,21 +29,35 @@ impl Updatable for TaskPayload {
                 .unwrap()
                 .take(0)
                 .unwrap();
+        })
+    }
 
+    fn update_due_date(&self, due_date: String, db: Database) {
+        let id: RecordId = self.id.clone().unwrap().0;
+        spawn_local(async move {
+            let query = format!("UPDATE task SET due_date=$date WHERE id=$id");
 
-            // info!("Updated task: {update_task:#?}");
+            db.database.set("id", id).await.unwrap();
+            db.database.set("date", due_date).await.unwrap();
+
+            let _update_task: Vec<Record> = db
+                .database
+                .query(query)
+                .await
+                .unwrap()
+                .take(0)
+                .unwrap();
         })
     }
 
     fn update_assignee_initials(&self, initials: String, db: Database) {
-        // self.everest_initials = Some(initials);
-        info!("User initials: {:?}", initials.clone());
-
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
-            let user_query = format!(
-                "SELECT id FROM user WHERE everest_initials='{initials}'"
-            );
+            let user_query = format!("SELECT id FROM user WHERE everest_initials=$initials");
+
+            db.database.set("id", id).await.unwrap();
+            db.database.set("initials", initials).await.unwrap();
+            
             let selected_user: Option<Record> = db
                 .database
                 .query(user_query)
@@ -67,130 +66,116 @@ impl Updatable for TaskPayload {
                 .take(0)
                 .unwrap();
 
-            info!("User: {selected_user:?}");
 
-            let query = format!(
-                "UPDATE task SET assignee={}, everest_initials='{initials}' WHERE id={id}", selected_user.unwrap().id
-            );
-            let update_task: Vec<Record> = db
+            let query = format!("UPDATE task SET assignee=$assignee, everest_initials=$initials WHERE id=$id");
+
+            db.database.set("assignee", selected_user.unwrap().id).await.unwrap();
+            // db.database.set("initials", initials).await.unwrap();
+
+            let _update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
                 .unwrap()
                 .take(0)
                 .unwrap();
-
-
-                info!("Updated task: {update_task:#?}");
         })
     }
 
     fn update_task_name(&self, name: String, db: Database) {
-        // self.task_name = name;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
-            let query = format!(
-                "UPDATE task SET task_name='{name}' WHERE id={id}", 
-            );
-            let update_task: Vec<Record> = db
+            let query = format!("UPDATE task SET task_name=$name WHERE id=$id");
+
+            db.database.set("id", id).await.unwrap();
+            db.database.set("name", name).await.unwrap();
+
+            let _update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
                 .unwrap()
                 .take(0)
                 .unwrap();
-
-
-                info!("Updated task: {update_task:#?}");
         })
     }
 
     fn update_status(&self, status: Status, db: Database) {
-        // self.status = status;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let mut _query = String::new();
+
+            db.database.set("id", id).await.unwrap();
+
             match status{
                 Status::Todo => {
-                    _query = format!(
-                        "UPDATE task SET status='{:?}' WHERE id={id}",
-                        Status::Todo
-                    );
+                    _query = format!("UPDATE task SET status=$status WHERE id=$id");
+                    db.database.set("status", Status::Todo).await.unwrap();
                 },
                 Status::InRepair => {
-                    _query = format!(
-                        "UPDATE task SET status='{:?}' WHERE id={id}",
-                        Status::InRepair
-                    );
+                    _query = format!("UPDATE task SET status=$status WHERE id=$id");
+                    db.database.set("status", Status::InRepair).await.unwrap();
                 },
                 Status::Complete => {
-                    _query = format!(
-                        "UPDATE task SET status='{:?}' WHERE id={id}",
-                        Status::Complete
-                    );
+                    _query = format!("UPDATE task SET status=$status WHERE id=$id");
+                    db.database.set("status", Status::Complete).await.unwrap();
                 },
             }
 
-            let update_task: Vec<Record> = db
+            let _update_task: Vec<Record> = db
                 .database
                 .query(_query)
                 .await
                 .unwrap()
                 .take(0)
                 .unwrap();
-
-
-                info!("Updated task: {update_task:#?}");
         })
     }
 
     fn update_dep(&self, dep: Store, db: Database) {
-        // self.dep = Some(dep);
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
-            let query = format!(
-                "UPDATE task SET dep='{:?}' WHERE id={id}", dep
-            );
-            let update_task: Vec<Record> = db
+            let query = format!("UPDATE task SET dep=$dep WHERE id=$id");
+
+            db.database.set("id", id).await.unwrap();
+            db.database.set("dep", dep).await.unwrap();
+
+            let _update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
                 .unwrap()
                 .take(0)
                 .unwrap();
-
-
-                info!("Updated task: {update_task:#?}");
         })
     }
 
     fn update_priority(&self, priority: Option<Priority>, db: Database) {
-        // self.priority = priority;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
-            let query = format!(
-                "UPDATE task SET priority='{:?}' WHERE id={id}", priority.unwrap()
-            );
-            let update_task: Vec<Record> = db
+            let query = format!("UPDATE task SET priority=$priority WHERE id=$id");
+
+            db.database.set("id", id).await.unwrap();
+            db.database.set("priority", priority.unwrap()).await.unwrap();
+
+            let _update_task: Vec<Record> = db
                 .database
                 .query(query)
                 .await
                 .unwrap()
                 .take(0)
                 .unwrap();
-
-
-                info!("Updated task: {update_task:#?}");
         })
     }
 
     fn update_task_description(&self, description: Option<String>, db: Database) {
-        // self.task_description = description;
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
-            let query = format!(
-                "UPDATE task SET task_description='{}' WHERE id={id}", description.unwrap()
-            );
+            let query = format!("UPDATE task SET task_description=$description WHERE id=$id");
+
+            db.database.set("id", id).await.unwrap();
+            db.database.set("description", description.unwrap()).await.unwrap();
+
             let _update_task: Vec<Record> = db
                 .database
                 .query(query)
@@ -202,13 +187,15 @@ impl Updatable for TaskPayload {
     }
     
     fn update_recommendations(&self, recommendations: Option<String>, db: Database) {
-        let id: RecordId = self.service_ticket.as_ref().unwrap().id.clone().unwrap().0;
-        todo!();
+        let id = self.service_ticket.as_ref();
+        let x = id.unwrap().id.clone().unwrap().0;
         spawn_local(async move {
-            let query = format!(
-                "UPDATE service_order SET recommendations='{}' WHERE id={id}", recommendations.unwrap()
-            );
-            // info!("Recommendations changed: {}", recommendations.unwrap());
+            let query = format!("UPDATE service_order SET recommendations=$recommendations WHERE id=$id");
+            info!("Recommendations changed: {}", query);
+
+            db.database.set("recommendations", recommendations.unwrap()).await.unwrap();
+            db.database.set("id", x).await.unwrap();
+
             let _update_task: Vec<Record> = db
                 .database
                 .query(query)
@@ -221,12 +208,14 @@ impl Updatable for TaskPayload {
     }
     
     fn update_checkin_notes(&self, checkin_notes: Option<String>, db: Database) {
-        let id: RecordId = self.service_ticket.as_ref().unwrap().id.clone().unwrap().0; // TODO
-        todo!();
+        let id = self.service_ticket.as_ref();
+        let x = id.unwrap().id.clone().unwrap().0;
         spawn_local(async move {
-            let query = format!(
-                "UPDATE service_order SET checkin_notes='{}' WHERE id={id}", checkin_notes.unwrap()
-            );
+            let query = format!("UPDATE service_order SET checkin_notes=$notes WHERE id=$id");
+
+            db.database.set("id", checkin_notes.unwrap()).await.unwrap();
+            db.database.set("notes", x).await.unwrap();
+
             let _update_task: Vec<Record> = db
                 .database
                 .query(query)
