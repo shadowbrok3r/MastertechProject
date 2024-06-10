@@ -6,6 +6,7 @@ fn main() {
     {
         static_vcruntime::metabuild();
         println!("cargo:rerun-if-changed=MasterTech.rc");
+        println!("cargo:rerun-if-changed=build.rs");
         embed_resource::compile("src/assets/MasterTech.rc", embed_resource::NONE);
         // println!("cargo rustc -- -Ctarget-feature=+crt-static");
         // println!("cargo:rustc-link-lib=static=stdc++");
