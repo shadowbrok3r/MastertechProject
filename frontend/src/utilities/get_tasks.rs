@@ -50,12 +50,9 @@ pub fn get_store_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: Store)
 pub fn get_completed_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: Store)
 {
     spawn_local(async move {
-        let query = format!(
-            "SELECT * FROM task \
-            WHERE dep == '{store:?}' && task.completed == true"
-        );
+        let query = format!("SELECT * FROM task WHERE dep == $store && task.completed == true");
+        db.database.set("store", store).await.unwrap();
         let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
-        info!("get_completed_tasks: {query_results:?}");
         match query_results{
             Ok(data) => {
                 match tx.send(data){
