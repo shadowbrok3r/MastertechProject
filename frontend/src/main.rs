@@ -59,7 +59,7 @@ impl eframe::App for MtechServer {
                 },
                 Err(e) => {
                     info!("Error with auth: {e:?}");
-                    self.state = AppState::NoAuth;
+                    self.state = AppState::NoAuth(e.to_string());
                     self.context.current_user = None;
                 },
             };
@@ -116,7 +116,7 @@ impl eframe::App for MtechServer {
                             },
                             Err(e) => {
                                 info!("Error with auth: {e:?}");
-                                self.state = AppState::NoAuth;
+                                self.state = AppState::NoAuth(e.to_string());
                                 self.context.current_user = None;
                             },
                         };
@@ -134,7 +134,7 @@ impl eframe::App for MtechServer {
                             .duration_in_seconds(6.0)
                     };
                     toast.add(auth_toast);
-                    self.state = AppState::NoAuth;
+                    self.state = AppState::NoAuth("Needs login".to_string());
                 }
             }
         }
@@ -187,14 +187,14 @@ impl eframe::App for MtechServer {
         }
 
         // Always checking authentication.
-        match self.state{
+        match &self.state{
             //if auth'd, user shall be allowed
             AppState::Authenticated(MainPages::Tasks) => {
                 // info!("Main page state");
                 self.main_page(ctx);
             },
             // if no auth, appstate will be login_page
-            AppState::NoAuth => {
+            AppState::NoAuth(_reason) => {
                 self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
 
                 // info!("Login page state");
@@ -205,6 +205,7 @@ impl eframe::App for MtechServer {
             },
             AppState::CreateAccount => {
                 // info!("Create Account state");
+                self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             }
         }
 

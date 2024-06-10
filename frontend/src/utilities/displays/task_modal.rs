@@ -1,10 +1,7 @@
-use std::{borrow::BorrowMut, cell::RefCell, rc::Rc};
-
 use chrono::{DateTime, Utc};
 use database::{schema::TaskPayload, Database};
 use egui::{epaint::Shadow, Align, Color32, ComboBox, Direction, FontId, Frame, Grid, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
-use log::info;
 use serde::Serialize;
 
 use crate::utilities::{DisplayModal, ModalTypes};

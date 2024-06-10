@@ -1,7 +1,5 @@
-use std::{borrow::BorrowMut, cell::RefCell};
-
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
-use egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextBuffer, TextEdit, Ui, Widget};
+use egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
 
 use database::{schema::{Priority, User, Status, TaskPayload}, Database};
 use egui_extras::DatePickerButton;
@@ -85,7 +83,7 @@ impl Interaction for TaskPayload {
                 self.update_recommendations(Some(rec), database.clone());
             }
         }else{
-            let text_edit = TextEdit::multiline(&mut "No recommendations")
+            let _text_edit = TextEdit::multiline(&mut "No recommendations")
             .desired_rows(5)
             .desired_width(ui.available_width())
             .horizontal_align(egui::Align::Center)

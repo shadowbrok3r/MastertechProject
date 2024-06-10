@@ -22,9 +22,9 @@ impl MtechServer{
                         if ui.add(Button::new("Logout")).clicked(){
                             wasm_cookies::delete("user");
                             wasm_cookies::delete("jwt");
-                            
-                            self.state = AppState::NoAuth;
-                            match self.context.app_state_tx.send(AppState::NoAuth){
+                            let logout_msg = "Logged out".to_string();
+                            self.state = AppState::NoAuth(logout_msg.clone());
+                            match self.context.app_state_tx.send(AppState::NoAuth(logout_msg)){
                                 Ok(_) => info!("Logged out"),
                                 Err(e) => info!("Error: {e:?}"),
                             }
