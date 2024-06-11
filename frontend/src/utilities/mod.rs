@@ -73,7 +73,14 @@ pub trait FilterTasks{
     fn filter_by_completion(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
-    
+    /// Filters a list of tasks by their name based on a fuzzy search input.
+    /// # Parameters
+    /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.
+    /// - `search_input`: A string representing the search input to filter tasks by.
+    ///
+    /// # Returns
+    /// A vector of `TaskPayload` containing the filtered tasks.
+    fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(&self, name: T, search_input: String) -> Vec<TaskPayload>;
 }
 
 pub trait Sortable{

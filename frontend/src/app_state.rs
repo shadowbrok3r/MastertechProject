@@ -131,6 +131,7 @@ pub struct MtechServerContext{
     pub my_tasks_opened: bool,
     pub store_tasks_opened: bool,
     pub completed_tasks_opened: bool,
+    pub search_input: String,
     pub task_layouts: HashMap<String, TaskLayout>,
     #[serde(skip)]
     pub current_modal: ModalType,
@@ -245,6 +246,7 @@ impl NewCC for MtechServer{
             // MISC / EVERYTHING ELSE
             bridge: Some(bridge),
             data_update: Some(data_update),
+            search_input: String::new(),
             open_tabs,
             style: None,
             added_nodes: Vec::new(),
@@ -362,30 +364,27 @@ pub fn check_authentication(
     let mut current_user = None;
 
     // #[cfg(target_arch="wasm32-unknown-unknown")]
-    if let Some(cookie) = cookie{
-
-        if let Some(usr) = user_cookie{
-            current_user = Some(serde_json::from_str(usr?.as_str())?);
-            let db_tx = db_tx.clone();
-                    
-
-            spawn_local(async move {
-                let database = Database::new(
-                    "".to_string(), 
-                    "".to_string(), 
-                    Some(cookie.unwrap())
-                ).await;
+    if let (Some(cookie), Some(usr)) = (cookie, user_cookie){
+        current_user = Some(serde_json::from_str(usr?.as_str())?);
+        let db_tx = db_tx.clone();
                 
-                match db_tx.send(database){
-                    Ok(_) => {
-                        info!("Sent DB");
-                        drop(db_tx);
-                    },
-                    Err(err) => info!("Error sending db connection: {err:?}"),
-                }
-            });
-            state = AppState::Authenticated(MainPages::Tasks);
-        }
+
+        spawn_local(async move {
+            let database = Database::new(
+                "".to_string(), 
+                "".to_string(), 
+                Some(cookie.unwrap())
+            ).await;
+            
+            match db_tx.send(database){
+                Ok(_) => {
+                    info!("Sent DB");
+                    drop(db_tx);
+                },
+                Err(err) => info!("Error sending db connection: {err:?}"),
+            }
+        });
+        state = AppState::Authenticated(MainPages::Tasks);
     }
     info!("State // user   {:?} // {:?}", state, current_user);
     Ok((state, current_user))
