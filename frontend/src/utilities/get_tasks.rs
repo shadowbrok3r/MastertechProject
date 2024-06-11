@@ -89,13 +89,3 @@ pub fn get_tasks(db: Database, tx: Sender<Vec<TaskPayload>>){
         }
     });
 }
-
-
-// pub fn find_task_by_id(&mut self, id: &String) -> Option<&mut TaskPayload> {
-//     for task_layout in self.task_layouts.values_mut() {
-//         if let Some(task) = task_layout.tasks.iter_mut().find(|task| task.id.as_ref().map(|t_id| t_id.0.id.to_string()) == Some(id.to_string())) {
-//             return Some(task);
-//         }
-//     }
-//     None
-// }

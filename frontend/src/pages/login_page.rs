@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use database::Database;
-use egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Stroke, TextEdit, Vec2, Widget};
+use egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Spinner, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
@@ -142,18 +142,28 @@ impl MtechServer{
 
                                     ui.add_space(30.0);
 
-                                    if Button::new("Create Account")
-                                    .fill(Color32::from_rgb(30, 30, 35))
-                                    .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
-                                    .min_size(Vec2::new(140.0, 15.0))
-                                    .ui(ui)
-                                    .clicked()
+                                    
+                                    let button = Button::new("Create Account")
+                                        .fill(Color32::from_rgb(30, 30, 35))
+                                        .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
+                                        .min_size(Vec2::new(140.0, 15.0))
+                                        .ui(ui);
+                                    
+                                    // ui.add_enabled(enabled, button);
+
+                                    if button.clicked()
                                     {
+                                        Spinner::new()
+                                            .size(30.0)
+                                            .color(Color32::from_rgb(100, 10, 80))
+                                            .ui(ui);
+
                                         match appstate_tx.send(AppState::CreateAccount){
                                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                             Err(e) => info!("Error {e:?}"),
                                         }
                                     }
+
                                     ui.add_space(3.0);
 
                                     if Button::new("Submit")

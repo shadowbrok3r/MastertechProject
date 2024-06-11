@@ -223,9 +223,13 @@ impl eframe::App for MtechServer {
 // When compiling to web using trunk:
 #[cfg(target_arch = "wasm32")]
 fn main() {
+    use eframe::wgpu::{Backends, PowerPreference};
     use log::LevelFilter;
     eframe::WebLogger::init(LevelFilter::Debug).ok();
-    let web_options = eframe::WebOptions::default();
+    let mut web_options = eframe::WebOptions::default();
+    web_options.wgpu_options.power_preference = PowerPreference::HighPerformance;
+    web_options.wgpu_options.supported_backends = Backends::METAL;
+    // web_options.wgpu_options.supported_backends = eframe::wgpu::Instance::
 
     wasm_bindgen_futures::spawn_local(async {
         eframe::WebRunner::new()

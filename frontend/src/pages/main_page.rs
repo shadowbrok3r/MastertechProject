@@ -1,8 +1,11 @@
+use std::collections::BTreeSet;
+
 use eframe::egui::menu;
-use egui::{Button, CentralPanel, Color32, Frame, Layout, RichText, TopBottomPanel};
+use egui::{Button, CentralPanel, Color32, FontId, Frame, Layout, RichText, Stroke, TopBottomPanel, Widget};
+use egui_autocomplete::AutoCompleteTextEdit;
 use egui_dock::{DockArea, Style as DockStyle};
 use log::info;
-use crate::app_state::{AppState, MainPages, MtechServer};
+use crate::{app_state::{AppState, MainPages, MtechServer}, utilities::TaskUiActions};
 
 impl MtechServer{
     pub fn main_page(&mut self, ctx: &egui::Context){
@@ -78,6 +81,49 @@ impl MtechServer{
                                 self.tree.push_to_focused_leaf(tab.to_string());
                             }
                             ui.close_menu();
+                        }
+                    }
+                });
+                ui.with_layout(Layout::top_down(egui::Align::Center), |ui|{
+
+                
+                    let mut inputs = BTreeSet::new();
+                    
+                    if let Some(tasks) = &self.context.tasks{
+                        for task in tasks.iter(){
+                            inputs.insert(task.task_name.clone());
+                            inputs.insert(format!("{}",task.service_number.unwrap_or(0)));
+                        }
+                        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_rgb(50, 2, 43));
+                        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
+                        ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(100);
+                        let result = AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
+                            .highlight_matches(true)
+                            .max_suggestions(10)
+                            .set_text_edit_properties(|text_edit: egui::TextEdit<'_>| 
+                        {
+                            
+                            text_edit
+                                .hint_text("Search for task")
+                                .desired_width(150.0)
+                                .font(FontId::proportional(12.0))
+                                .frame(true)
+                                .horizontal_align(egui::Align::Center)
+                        })
+                        .ui(ui);
+                    
+                        // result.
+                        if result.clicked(){
+                            info!("selected? {}", self.context.search_input.clone());
+                            if let Some(input) = inputs.get(&self.context.search_input){
+                                let task = tasks.iter().find(|&x| 
+                                    x.task_name == *input || format!("{}",x.service_number.unwrap_or(0)) == format!("{}",*input)
+                                );
+
+                                if let Some(task) = task{
+                                    let _ = self.context.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task.clone()));
+                                }
+                            }
                         }
                     }
                 });

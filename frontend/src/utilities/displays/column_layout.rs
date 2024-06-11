@@ -2,13 +2,13 @@ use std::borrow::BorrowMut;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use database::Database;
-use egui::{Align, Button, FontId, RichText, ScrollArea, Vec2, Widget};
+use egui::{Align, Button, FontId, RichText, ScrollArea, TextEdit, Vec2, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_autocomplete::AutoCompleteTextEdit;
 use egui_extras::{Size, Strip, StripBuilder};
 use database::schema::{TaskPayload, User};
 use log::info;
-use crate::utilities::{ColumnLayout, Displayable, Sortable, TaskUiActions};
+use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
 use super::task_layout::TaskLayout;
 
 
@@ -26,8 +26,6 @@ impl ColumnLayout for TaskLayout {
         let column_width = Size::exact(450.0);
     
         ScrollArea::horizontal()
-            // .hscroll(false)
-            // .min_scrolled_height(250.0)
             .show_viewport(ui, |ui, _|
         {
             let x: f32 = ui.available_height() - 40.0;
@@ -78,8 +76,16 @@ impl ColumnLayout for TaskLayout {
             .rounding(Rounding::same(10.0))
             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
-        for (_, mut tasks) in filter_items {
+        let mut inputs = BTreeSet::new();
+
+
+
+        for (name, mut tasks) in filter_items {
             tasks.sort_task_payloads();
+            for task in tasks.iter(){
+                inputs.insert(task.task_name.clone());
+                inputs.insert(format!("{}",task.service_number.unwrap_or(0)));
+            }
             s.cell(|ui| {
                 column_frame.show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
@@ -87,15 +93,32 @@ impl ColumnLayout for TaskLayout {
                             .auto_shrink(false)
                             .show_viewport(ui, |ui, _| 
                         {
-                            for mut task in tasks {
-                                if let Some(store_users) = &assignees {
-                                    let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
-                                    if let Some(action) = action{
-                                        match action{
-                                            TaskUiActions::OpenTaskModal(task) => {
-                                                let _ = self.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task));
-                                            },
-                                            _ => ()
+                            let search_input = self.search_inputs.get(&name).cloned().unwrap_or_default();
+                            if !search_input.is_empty(){
+                                for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
+                                    if let Some(store_users) = &assignees {
+                                        let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
+                                        if let Some(action) = action{
+                                            match action{
+                                                TaskUiActions::OpenTaskModal(task) => {
+                                                    let _ = self.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task));
+                                                },
+                                                _ => ()
+                                            }
+                                        }
+                                    }
+                                }
+                            }else{
+                                for mut task in tasks {
+                                    if let Some(store_users) = &assignees {
+                                        let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
+                                        if let Some(action) = action{
+                                            match action{
+                                                TaskUiActions::OpenTaskModal(task) => {
+                                                    let _ = self.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task));
+                                                },
+                                                _ => ()
+                                            }
                                         }
                                     }
                                 }
@@ -116,7 +139,7 @@ impl ColumnLayout for TaskLayout {
             .rounding(Rounding::same(5.0))
             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
-        for (name, tasks) in items.iter(){
+        for (name, _) in items.iter(){
             s.cell(|ui|{
                 header_frame.show(ui, |ui|
                 {
@@ -124,46 +147,15 @@ impl ColumnLayout for TaskLayout {
                     {
                         ui.with_layout(Layout::left_to_right(Align::Min), |ui| 
                         {
-
-                            let mut inputs = BTreeSet::new();
-                            for task in tasks.iter(){
-                                inputs.insert(task.task_name.clone());
-                                inputs.insert(format!("{}",task.service_number.unwrap_or(0)));
-                            }
-                            let result = AutoCompleteTextEdit::new(&mut self.search_input, inputs.clone())
-                                .highlight_matches(true)
-                                .max_suggestions(10)
-                                .set_text_edit_properties(|text_edit: egui::TextEdit<'_>| 
-                            {
-                                text_edit
+                            let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
+                            TextEdit::singleline(search_input)
                                 .hint_text("Search for task")
                                 .desired_width(100.0)
                                 .font(FontId::proportional(14.0))
-                            })
-                            .ui(ui);
-                            // result.
-                            if result.clicked(){
-                                info!("selected? {}", self.search_input.clone());
-                                if let Some(input) = inputs.get(&self.search_input){
-                                    let task = tasks.iter().find(|&x| 
-                                        x.task_name == *input || format!("{}",x.service_number.unwrap_or(0)) == format!("{}",*input)
-                                    );
+                                .ui(ui);
 
-                                    if let Some(task) = task{
-                                        let _ = self.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task.clone()));
-                                    }
-                                }
-                                // let input_clone = inputs;
-                                // let task_name = input_clone.get(&self.search_input).unwrap();
-                                // for task in tasks{
-                                //     if task.task_name == *task_name{
-                                //         let _ = self.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task.clone()));
-                                //     }
-                                // }
-                            }
                             ui.add_space(ui.available_width() / 3.4);
                             ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading());
-                            
                         });
     
                         

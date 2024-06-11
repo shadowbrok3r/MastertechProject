@@ -12,7 +12,7 @@ use super::ColumnLayout;
 
 #[derive(Serialize)]
 pub struct TaskLayout{
-    pub search_input: String, 
+    pub search_inputs: HashMap<String, String>,
     pub task_map: HashMap<String, Vec<TaskPayload>>,
     pub style_options: TaskStyles,
     pub column_names: Vec<String>,
@@ -42,7 +42,7 @@ impl TaskLayout {
             column_names,
             database,
             ui_actions_tx,
-            search_input: String::new()
+            search_inputs: HashMap::new()
         }
     }
 
