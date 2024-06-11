@@ -1,12 +1,10 @@
 use std::collections::HashMap;
-
 use crossbeam::channel::Sender;
 use database::Database;
 use eframe::egui::Ui;
 use egui::{Color32, Stroke};
 use database::schema::{Priority, TaskPayload, User};
 use serde::Serialize;
-
 use crate::utilities::TaskUiActions;
 
 use super::ColumnLayout;
@@ -14,6 +12,7 @@ use super::ColumnLayout;
 
 #[derive(Serialize)]
 pub struct TaskLayout{
+    pub search_input: String, 
     pub task_map: HashMap<String, Vec<TaskPayload>>,
     pub style_options: TaskStyles,
     pub column_names: Vec<String>,
@@ -22,6 +21,7 @@ pub struct TaskLayout{
     #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>
 }
+
 pub struct SortTasks{
     pub sort_by_status: bool,
     pub sort_by_priority: Option<Priority>,
@@ -41,7 +41,8 @@ impl TaskLayout {
             style_options: TaskStyles::default(),
             column_names,
             database,
-            ui_actions_tx
+            ui_actions_tx,
+            search_input: String::new()
         }
     }
 
