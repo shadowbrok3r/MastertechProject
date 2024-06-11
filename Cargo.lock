@@ -1667,6 +1667,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_autocomplete"
+version = "6.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "800dda9f0980d3a16f91e277387cea9b7083ddfdebf82dc2944b60568bb1b957"
+dependencies = [
+ "eframe",
+ "egui",
+ "fuzzy-matcher",
+ "serde",
+]
+
+[[package]]
 name = "egui_dock"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3232,6 +3244,7 @@ dependencies = [
  "egui-aesthetix",
  "egui-toast",
  "egui_animation",
+ "egui_autocomplete",
  "egui_dock",
  "egui_extras",
  "egui_form",

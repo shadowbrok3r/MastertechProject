@@ -43,16 +43,16 @@ impl eframe::App for MtechServer {
                 Ok(d) => {
                     self.state = d.0;
                     if let Some(ref usr) = d.1{
-                        let toast = &mut self.context.toasts;
+                        // let toast = &mut self.context.toasts;
                         
-                        let auth_toast = Toast{
-                            kind: ToastKind::Success,
-                            text: format!("Welcome, {}", usr.name).into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(6.0)
-                        };
-                        toast.add(auth_toast);
+                        // let auth_toast = Toast{
+                        //     kind: ToastKind::Success,
+                        //     text: format!("Welcome, {}", usr.name).into(),
+                        //     options: ToastOptions::default()
+                        //         .show_progress(true)
+                        //         .duration_in_seconds(6.0)
+                        // };
+                        // toast.add(auth_toast);
 
                         self.context.current_user = d.1;
                     }

@@ -39,7 +39,7 @@ pub trait Displayable{
 pub trait ColumnLayout{
     fn layout_task_cols(&mut self, ui: &mut Ui,  column_names: Vec<String>,  database: Database, assignees: &Option<Vec<User>>, filter_items: HashMap<String, Vec<TaskPayload>>);
     fn task_columns(&self,s: &mut Strip, assignees: &Option<Vec<User>>,database: Database,filter_items: HashMap<String, Vec<TaskPayload>>);
-    fn task_headers(&self, s: Strip, items: &HashMap<String, Vec<TaskPayload>>);
+    fn task_headers(&mut self, s: Strip, items: &HashMap<String, Vec<TaskPayload>>);
 }
 
 pub trait Updatable { // This is correctly implemented
