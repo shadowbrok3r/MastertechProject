@@ -28,6 +28,9 @@ jobs:
     steps:
     - name: Building ${{ matrix.TARGET }}
       run: echo "${{ matrix.TARGET }}"
+      
+    - name: Set Env
+      run: echo "{name}={value}" >> $GITHUB_ENV
 
     - uses: actions/checkout@master
     - uses: actions-rs/toolchain@v1.0.1
