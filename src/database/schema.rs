@@ -1,20 +1,22 @@
-#[allow(dead_code)]
+
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
-pub const NS: &str = "Mastertech";
-pub const DB: &str = "MastertechDB";
-pub const USER_SCOPE: &str = "user";
+
+pub const _NS: &str = "Mastertech";
+pub const _DB: &str = "MastertechDB";
+pub const _USER_SCOPE: &str = "user";
+
 pub const TICKET_TABLE: &str = "service_order";
 pub const CUSTOMER_TABLE: &str = "customer";
 pub const COMPUTER_TABLE: &str = "computer";
 pub const TASK_TABLE: &str = "task";
-pub const TASK_NOTE_TABLE: &str = "task_note";
-pub const SEB_TABLE: &str = "seb_data";
-pub const USER_TABLE: &str = "user";
-pub const NOTIFICATION_TABLE: &str = "notification";
+pub const _TASK_NOTE_TABLE: &str = "task_note";
+pub const _SEB_TABLE: &str = "seb_data";
+pub const _USER_TABLE: &str = "user";
+pub const _NOTIFICATION_TABLE: &str = "notification";
 
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Record {
     #[allow(dead_code)]
     pub id: Thing,
@@ -29,10 +31,10 @@ pub struct CustomerId(pub RecordId);
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TicketId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct UserId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TaskId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -41,7 +43,7 @@ pub struct TaskNoteId(pub RecordId);
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SebId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct NotificationId(pub RecordId);
 
 #[derive(Serialize, Debug)]
@@ -50,37 +52,85 @@ pub struct RecordResult {
     pub record: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RecordSuccess{
+    pub success: bool
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
-    pub service_ticket: Option<TicketId>,
-    // pub assignee_name: Option<String>,
-    pub assignee_email: Option<String>,
-    pub assignee_initials: Option<String>,
+    pub service_ticket: Option<TicketPayload>,
+    pub everest_initials: String,
     pub task_description: Option<String>, 
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<i32>,
     pub due_date: String, // optional because if not provided, set due date to creation date
-    pub priority: Option<i32>,
-    pub task_note: Option<Vec<TaskNoteId>>,
+    pub priority: Priority,
+    pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
     pub completed: bool,
     pub status: Status,
     pub dep: Option<String>
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TicketPayload{
-    pub ticket_data: TicketData,
-    pub customer_data: CustomerData,
-    pub computer_data: ComputerData
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct LiveTaskPayload{
+    pub id: Option<TaskId>,
+    pub task_name: String,
+    pub service_ticket: Option<TicketId>,
+    // #[serde(skip)]
+    pub everest_initials: String,
+    pub task_description: Option<String>, 
+    pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
+    pub service_number: Option<i32>,
+    pub due_date: String, // optional because if not provided, set due date to creation date
+    pub priority: Priority,
+    pub task_note: Option<Vec<TaskNoteId>>, // 
+    pub completed: bool,
+    pub status: Status,
+    pub dep: Option<String>
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct TicketData{
-    pub created_at: Option<String>,
+
+// #[derive(Serialize, Deserialize, Debug)]
+// pub struct TicketPayload{
+//     pub service_ticket: TicketData,
+//     pub customer_data: CustomerData,
+//     pub computer_data: ComputerData
+// }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct TicketPayload{
     pub id: Option<TicketId>,
-    pub due_date: String,
+    pub created_at: Option<String>,
+    // pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
+    pub customer: Option<CustomerData>,
+    pub computer: Option<ComputerData>,
+    pub service_task: Option<TaskId>,
+    pub service_number: i32,
+    /// Person that checked computer in
+    pub checkin_rep: String,
+    /// This is main initials on ticket
+    pub sales_rep: String,
+    pub checkin_notes: String,
+    pub recommendations: String,
+    pub tech: String,
+    pub salesman: String,
+    pub dep: String, // Store
+    pub terms: String,
+    pub ticket_total: String,
+    pub doc_alias: String, // type of order (service,sales,transfer)
+    pub current_antivirus: Option<Vec<String>>,
+    pub hardware_test_results: HardwareTests,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct TicketData{
+    pub id: Option<TicketId>,
+    pub created_at: Option<String>,
+    // pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
     pub customer: Option<CustomerId>,
     pub computer: Option<ComputerId>,
     pub service_task: Option<TaskId>,
@@ -101,12 +151,13 @@ pub struct TicketData{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
-    pub cust_code: i32,
+    pub part_order_links: Option<Vec<String>>,
     pub computers: Option<Vec<ComputerId>>,
     pub services: Option<Vec<TicketId>>,
+    pub cust_code: i32,
     pub name: String,
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>
@@ -116,7 +167,7 @@ pub struct CustomerData{
     pub num_inv: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ComputerData{
     pub id: Option<ComputerId>,
     pub customer: Option<CustomerId>,
@@ -179,20 +230,7 @@ pub struct DriveData{
     pub space_left: String,
 }
 
-impl ComputerData{
-    pub fn new() -> Self{
-        ComputerData{
-            drives: Vec::new(),
-            ..Default::default()
-        }
-    }
-
-    pub fn add_disk(&mut self, disk: DriveData){
-        self.drives.push(disk);
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct HardwareTests{
     pub hdd_test: String,
     pub ssd_test: String,
@@ -216,15 +254,13 @@ pub struct ModifyTask{
     /// ability to change store
     // pub dep: Option<String>, 
     /// change priority
-    pub priority: Option<i32>, 
+    pub priority: Option<Priority>, 
     /// change which status task is part of
     pub status: Option<Status>, 
     /// change completed / incomplete
     pub completed: Option<bool>, 
     /// update due_date 
     pub due_date: Option<String>, 
-    /// update assignee 
-    pub assignee_initials: Option<String>, 
     /// update task name 
     pub task_name: Option<String>, 
     /// modify description of task
@@ -271,11 +307,22 @@ pub struct ModifyNotification{
     pub archive: Option<bool>
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub enum Status{
+    #[default]
     Todo,
     InRepair,
     Complete
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub enum Priority{
+    Express,
+    Rfs,
+    CustomerFire,
+    Qc,
+    #[default]
+    Normal,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -291,20 +338,76 @@ struct CommandRequest {
     _command: String,
 }
 
-#[derive(Serialize)]
-struct CommandResponse {
-    status: String,
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default)]
+pub enum Store{
+    #[default]
+    RIV,
+    LTN,
+    MUR,
+    AF,
+    WJ, 
+    ORE,
+    SAN
 }
 
+impl Store{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            Store::RIV => "RIV",
+            Store::LTN => "LTN",
+            Store::MUR => "MUR",
+            Store::AF => "AF",
+            Store::WJ => "WJ",
+            Store::ORE => "ORE",
+            Store::SAN => "SAN",
+        }
+    }
+    pub const _VALUES: [Self; 7] = [Self::RIV, Self::LTN, Self::MUR, Self::AF, Self::WJ, Self::ORE, Self::SAN];
+}
 
-// impl Display for Status{
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "{}", self)
-//     }
-// }
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct User {
+    pub id: UserId,
+    pub name: String,
+    pub everest_initials: String,
+    // #[serde(skip)]
+    pub email: String,
+    pub store: Store,
+    pub notifications: Option<Vec<NotificationId>>
+}
 
-// impl Display for Category{
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "{}", self)
-//     }
-// }
+impl Priority{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            Priority::Normal => "Normal",
+            Priority::Rfs => "Rfs",
+            Priority::Qc => "Qc",
+            Priority::Express => "Express",
+            Priority::CustomerFire => "CustomerFire",
+        }
+    }
+    pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::CustomerFire];
+}
+
+impl Status{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            Status::Todo => "Todo",
+            Status::InRepair => "In Repair",
+            Status::Complete => "Complete",
+        }
+    }
+    pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
+}
+impl ComputerData{
+    pub fn new() -> Self{
+        ComputerData{
+            drives: Vec::new(),
+            ..Default::default()
+        }
+    }
+
+    pub fn add_disk(&mut self, disk: DriveData){
+        self.drives.push(disk);
+    }
+}

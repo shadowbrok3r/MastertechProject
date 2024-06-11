@@ -54,7 +54,7 @@ impl Prestashop {
         Self { client, display, filter, limit, schema }
     }
 
-    pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, get_subresource: Option<String>) 
+    pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, _get_subresource: Option<String>) 
         -> anyhow::Result<T, anyhow::Error>
     {
         let response = self.client // 2063620

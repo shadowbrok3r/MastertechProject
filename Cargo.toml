@@ -6,62 +6,61 @@ description = "Mastertech"
 build = "build.rs"
 
 [dependencies]
-wasm-bindgen = "0.2.92"
-eframe = { version="0.27.2", features=["persistence", "puffin", "wgpu"] } # "deadlock_detection", "callstack"
-egui_dock = "0.12.0"
-egui_extras = { version = "0.27.2", features = ["datepicker"]}
-reqwest = { version = "0.12.4", features = ["json", "stream", "cookies"] } # "blocking",
-sysinfo = "0.30.12"
-tokio = { version = "1.37.0", features = ["full"] }
-serde = { version = "1.0.201", features = ["derive"] }
-chrono = "0.4.38"
-serde_json = "1.0.117"
-futures-util = "0.3.30"
-walkdir = "2.5.0"
-pollster = "0.3.0"
-crossbeam = "0.8.4"
-regex = "1.10.4"
-image = "0.25.1"
-egui_file = "0.17.0"
-self_update = "0.40.0"
-puffin = { version = "0.19.0", features = ["packing"] }
-puffin_egui = "0.27.0"
-uuid = { version = "1.8.0", features = ["v4"] }
-futures = "0.3.30"
-num-format = "0.4.4"
-fs_extra = "1.3.0"
-simplelog = "0.12.1"
-log = "0.4.20"
-rayon = "1.10.0"
-quick-xml = { version="0.31.0", features = ["serialize"]}
-serde-xml-rs = "0.6.0"
-num-traits = "0.2.16"
-rfd = "0.14.1"
-tracing = { version = "0.1.37", features = ["log"] }
-tracing-subscriber = "0.3.14"
-rust-embed="8.4.0"
-clap = { version = "4.5.4", features = ["derive"] }
-dotenv = "0.15.0"
-lettre = "0.11.7"
-async-trait = "0.1.80"
-egui-aesthetix = { version = "0.2.3", features = ["carl"] }
-shell-words = "1.1.0"
-rust_socketio = { version = "0.6.0", features = ["async"] }
-reqwest_cookie_store = "0.7.0"
-anyhow = "1.0.83"
-surrealdb = { version = "1.5.0", features = ["default"] }
-sha2 = { version = "0.10.8", features = ["std"] }
-wmi = "0.13.3"
+eframe = { version="0.27", features=["persistence", "puffin", "wgpu"] } # "deadlock_detection", "callstack"
+egui_dock = "0.12"
+egui_extras = { version = "0.27", features = ["datepicker"]}
+reqwest = { version = "0.12", features = ["json", "stream", "cookies"] } # "blocking",
+sysinfo = "0.30"
+tokio = { version = "1.38", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+chrono = "0.4"
+serde_json = "1"
+futures-util = "0.3"
+walkdir = "2.5"
+pollster = "0.3"
+crossbeam = "0.8"
+regex = "1.10"
+image = "0.25"
+egui_file = "0.17"
+self_update = "0.40"
+puffin = { version = "0.19", features = ["packing"] }
+puffin_egui = "0.27"
+uuid = { version = "1.8", features = ["v4"] }
+futures = "0.3"
+num-format = "0.4"
+fs_extra = "1.3"
+simplelog = "0.12"
+log = "0.4"
+rayon = "1.10"
+quick-xml = { version="0.32", features = ["serialize"]}
+serde-xml-rs = "0.6"
+num-traits = "0.2"
+rfd = "0.14"
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = "0.3"
+rust-embed="8.4"
+clap = { version = "4.5", features = ["derive"] }
+dotenv = "0.15"
+lettre = "0.11"
+async-trait = "0.1"
+egui-aesthetix = { version = "0.2", features = ["carl"] }
+shell-words = "1"
+rust_socketio = { version = "0.6", features = ["async"] }
+reqwest_cookie_store = "0.8"
+anyhow = "1"
+surrealdb = { version = "1.5", features = ["default"] }
+sha2 = { version = "0.10", features = ["std"] }
+wmi = "0.13"
 
-quickxml_to_serde = "0.6.0"
+quickxml_to_serde = "0.6"
 
-memmap2 = "0.9.4"
-breakpad-symbols = { version = "0.21.1" }
-minidump = { version = "0.21.1" }
-minidump-common = { version = "0.21.1" }
-minidump-processor = { version = "0.21.1", features = ["http"] }
-minidump-unwind = "0.21.1"
-linked-hash-map = "0.5.6"
+memmap2 = "0.9"
+breakpad-symbols = { version = "0.21" }
+minidump = { version = "0.21" }
+minidump-common = { version = "0.21" }
+minidump-processor = { version = "0.21", features = ["http"] }
+minidump-unwind = "0.21"
+linked-hash-map = "0.5"
 
 # bytes = "1.6.0"
 # catppuccin-egui = "5.1.1"
@@ -75,7 +74,7 @@ linked-hash-map = "0.5.6"
 # tui-term = "0.1.11"
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["async_tokio"]}
+criterion = { version = "0.5", features = ["async_tokio"]}
 
 [[bench]]
 name = "file_copy_benchmark"
@@ -83,7 +82,7 @@ harness = false
 
 
 # [target.'cfg(target_os = "linux")'.dependencies]
-openssl = { version = "0.10.64", features = ["vendored"] }
+openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "0.9"
 # libatasmart = "0.3.1"
 
@@ -104,8 +103,8 @@ lto = false
 strip = false
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-static_vcruntime = "2.0"
-embed-resource = "2.4.2"
+static_vcruntime = "2"
+embed-resource = "2.4"
 
 [package.metadata]
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]

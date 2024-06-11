@@ -2,7 +2,7 @@ use log::*;
 // use rayon::prelude::*;
 #[cfg(feature = "jwalk")]
 use jwalk::WalkDir as JWalkDir;
-use std::fs::{copy, read_link};
+use std::fs::copy;
 use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -304,9 +304,12 @@ impl CopyBuilder {
                         entry.path().display(),
                         dest_entry.display()
                     );
-                    let target = read_link(entry.path())?;
                     #[cfg(unix)]
-                    std::os::unix::fs::symlink(target, dest_entry)?
+                    {
+                        use std::fs::read_link;
+                        let target = read_link(entry.path())?;
+                        std::os::unix::fs::symlink(target, dest_entry)?
+                    }
                 } else {
                     unimplemented!(
                         "File {} has unhandled type {:?}",

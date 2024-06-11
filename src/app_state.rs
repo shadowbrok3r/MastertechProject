@@ -162,7 +162,6 @@ impl Default for MasterTechApp {
                 "TUR Sheet".to_owned(), 
                 "Minidump Analysis".to_owned(), 
                 "Prestashop API".to_owned(),
-                "Bug Tracker".to_owned(),
             ]
         );
 
@@ -195,7 +194,10 @@ impl Default for MasterTechApp {
             .split_left(
             b,
             0.45,
-            vec!["System Information".to_owned()],
+            vec![
+                "System Information".to_owned(),
+                "Bug Tracker".to_owned()
+            ],
         );
 
         let [_, _] = tree

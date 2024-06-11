@@ -1,4 +1,4 @@
-use serde::{de::Deserializer, Deserialize, Serialize};
+use serde::{de::Deserializer, Deserialize};
 use serde_json::Value;
 use serde::de::DeserializeOwned;
 

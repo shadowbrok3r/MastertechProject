@@ -7,18 +7,6 @@ pub trait _SendReq<T>{
     async fn retrieve_data(&self, so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Salesman {
-    Jake,
-    Danny
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum Techs{
-    Logan,
-    Bread,
-    Taco
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub enum HardwareTest{
