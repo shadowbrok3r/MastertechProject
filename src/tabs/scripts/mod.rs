@@ -1,5 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
-use eframe::egui::{Align, Button, Grid, Layout, RichText, Ui};
+use eframe::egui::{Align, Button, Color32, Grid, Layout, RichText, Stroke, Ui};
 use futures::StreamExt;
 use log::info;
 use reqwest::Client;
@@ -36,6 +36,18 @@ pub struct QueryAntivirus;
 
 impl MastertechContext{
     pub fn scripts(&mut self, ui: &mut Ui){
+        ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
+        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+        ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+        ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+        ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+
         ui.style_mut().spacing.button_padding = (4.0, 6.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
@@ -108,8 +120,8 @@ impl Scripts{
         let mut m = HashMap::new();
         let install_webroot: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallWebroot {});
         let install_sas: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallSAS {});
-        let check_drivers: Arc<dyn ScriptAction + Send + Sync> = Arc::new(CheckDriverIssues {});
-        let running_tasks: Arc<dyn ScriptAction + Send + Sync> = Arc::new(RunningTasks{});
+        let _check_drivers: Arc<dyn ScriptAction + Send + Sync> = Arc::new(CheckDriverIssues {});
+        let _running_tasks: Arc<dyn ScriptAction + Send + Sync> = Arc::new(RunningTasks{});
 
         m.insert("Install Webroot", install_webroot);
         m.insert("Install SAS", install_sas);

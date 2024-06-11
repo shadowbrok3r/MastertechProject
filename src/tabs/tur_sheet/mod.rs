@@ -1,8 +1,7 @@
-use crate::{app_state::MastertechContext, database::{schema::{HardwareTests, TicketPayload}, send_payload, PreTicketData}, handle_api::{api_request::SendRequest, email_builder::email_builder, scaffold::{self, Salesman, Techs}, Store}};
+use crate::{app_state::MastertechContext, database::{schema::HardwareTests, send_payload, PreTicketData}, handle_api::{api_request::SendRequest, email_builder::email_builder, scaffold, Store}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, Grid, Id, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui };
-use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use crate::{database::GetKeysResponse, handle_api::email_builder::{AsanaTask, Info, TaskAssignee}};
-use std::{collections::HashMap, path::PathBuf, sync::Arc}; 
+use std::{collections::HashMap, path::PathBuf}; 
 use chrono::{DateTime, SecondsFormat};
 use log::{debug, info};
 use serde_json::Value;
@@ -16,6 +15,18 @@ impl MastertechContext {
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
+        ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
+        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+        ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+        ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+        ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+
         ui.vertical(|ui|{ui.add_space(8.0);});
         
         ui.with_layout(
@@ -406,7 +417,7 @@ impl MastertechContext {
                                                 _attached_file = Some(file.to_path_buf());
                                             }
 
-                                            let mut specs = String::new();
+                                            let mut _specs = String::new();
                                             let cps = self.current_antivirus.clone();
                                             let seb_info = self.seb_info.clone().unwrap_or_default();
 
@@ -507,7 +518,7 @@ impl MastertechContext {
                                                     }
                                                 }
 
-                                                specs = format!("
+                                                _specs = format!("
                                                 <table>
                                                     <tr>
                                                         <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,200,200\" width=\"450\"
@@ -550,7 +561,7 @@ impl MastertechContext {
                                                     </table>
                                                 ").trim().to_string();
                                             }else{
-                                                specs = "Computer information was not sent with ticket".to_string();
+                                                _specs = "Computer information was not sent with ticket".to_string();
                                             }
                                             
                                             let html_notes = format!(
@@ -578,7 +589,7 @@ impl MastertechContext {
                                                         </tr>
                                                         {extra_customer_info}
                                                     </table>
-                                                    {specs}
+                                                    {_specs}
                                                     <ul>
                                                         <li><strong>SSD test:</strong>     {ssd_test}</li>
                                                         <li><strong>HDD test:</strong>     {hdd_test}</li>
@@ -659,7 +670,7 @@ impl MastertechContext {
                                                     }
                                                 }
 
-                                                specs = format!("
+                                                _specs = format!("
                                                 <tr>
                                                     <td style=\"color: #ffffff;\"><strong>CPU</strong></td>
                                                     <td style=\"text-align: center; color: #ffffff;\">{cpu_name}</td>
@@ -696,7 +707,7 @@ impl MastertechContext {
                                                     ssd_test: ssd_test.to_string(),
                                                     checkin_notes: checkin_notes.to_string(),
                                                     recommendations: recommendations.to_string(),
-                                                    specs,
+                                                    specs: _specs,
                                                     cps,
                                                     cust_code: cust_code.to_string(),
                                                     doc_alias: doc_alias.to_string(),
@@ -782,47 +793,51 @@ impl MastertechContext {
                                             ).to_rfc3339_opts(SecondsFormat::Secs,  true)
                                         );
                                         
-                                        let payload = TicketPayload::serialize_payload(
-                                            &pre_ticket,
-                                            &self.system_info,
-                                            &self.so_number,
-                                            &self.current_antivirus,
-                                            &self.recommendations,
-                                            self.technician.clone(),
-                                            self.salesman.clone(), 
-                                            HardwareTests{
-                                                hdd_test,
-                                                ssd_test,
-                                                ram_test,
-                                            } // example
-                                        );
-                                        // let client = self.client.clone();
-                            
+                                        // let payload = TicketPayload::serialize_payload(
+                                        //     &pre_ticket,
+                                        //     &self.system_info,
+                                        //     &self.so_number,
+                                        //     &self.current_antivirus,
+                                        //     &self.recommendations,
+                                        //     self.technician.clone(),
+                                        //     self.salesman.clone(), 
+                                        //     HardwareTests{
+                                        //         hdd_test,
+                                        //         ssd_test,
+                                        //         ram_test,
+                                        //     } // example
+                                        // );
+                                        let system_info = self.system_info.clone();
+                                        let so_number = self.so_number.clone();
+                                        let current_antivirus = self.current_antivirus.clone();
+                                        let recommendations = self.recommendations.clone();
+                                        let technician = self.technician.clone();
+                                        let salesman = self.salesman.clone();
+                                        let hw_tests = HardwareTests{
+                                            hdd_test,
+                                            ssd_test,
+                                            ram_test,
+                                        };
                                         
-                                        let cookies = CookieStore::default();
-                                        let cookie_store = CookieStoreMutex::new(cookies);
-                                        let cookie_store  = Arc::new(cookie_store);
-                            
-                                        let client_build = reqwest::Client::builder()
-                                            .cookie_provider(std::sync::Arc::clone(&cookie_store))
-                                            .build();
-                                        
-                                        match client_build{
-                                            Ok(client) => {
+                                        match self.database{
+                                            Some(ref database) => {
                                                 debug!("Sending reqwest");
+                                                let database = database.clone();
                                                 spawn(async move {
-                                                    
-                                                    let mut output = String::new();
-                                                    let x = send_payload(payload, client, cookie_store).await;
-                                                    match x{
-                                                        Ok(o) => {
-                                                            output = o;
-                                                        },
-                                                        Err(e) => debug!("Error {e:?}"),
-                                                    }
-                                                    info!("output: {output}");
+                                                    let x = send_payload(
+                                                        pre_ticket.clone(), 
+                                                        system_info,
+                                                        so_number,
+                                                        current_antivirus,
+                                                        recommendations,
+                                                        technician,
+                                                        salesman,
+                                                        hw_tests,
+                                                        database
+                                                    ).await;
+                                                    info!("output: {:?}", x);
                                                 });
-                                            }, Err(err) => debug!("Error with client_build => {err:?}"),
+                                            }, None => debug!("No database connection"),
                                         };
                                         
                                     }

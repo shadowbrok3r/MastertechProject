@@ -22,7 +22,7 @@ use rust_socketio::{
     Payload
 };
 use uuid::Uuid;
-use crate::{database::{get_cookie, schema::{ComputerData, DriveData, LocalSebData}, SystemInformation}, handle_api::{api_request::request_seb_info, Store}};
+use crate::{database::{schema::{ComputerData, DriveData, LocalSebData}, SystemInformation}, handle_api::{api_request::request_seb_info, Store}};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 impl ComputerData{

@@ -1,7 +1,7 @@
 use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Wss}, sql::Thing, Error, Surreal
+    engine::remote::ws::{Client as WsClient, Wss, Ws}, sql::Thing, Error, Surreal
     
 };
 
@@ -34,7 +34,7 @@ pub struct Record {
 
 impl Database{
     pub async fn new() -> Self {
-        let database: Surreal<WsClient> = Surreal::new::<Wss>("surreal.master-tech.app/rpc") // localhost:8000
+        let database: Surreal<WsClient> = Surreal::new::<Ws>("localhost:8000") // localhost:8000 // surreal.master-tech.app/rpc
             .await.unwrap();
 
         // Select a specific namespace / database
@@ -78,7 +78,7 @@ impl Database{
 }
 
 
-pub async fn handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: Database, tx: crossbeam::channel::Sender<T>) 
+pub async fn _handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: Database, tx: crossbeam::channel::Sender<T>) 
     -> anyhow::Result<(), anyhow::Error>
 {
     let task_data: Vec<T> = database.select("task").await?;

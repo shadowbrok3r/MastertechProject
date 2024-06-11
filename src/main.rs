@@ -3,7 +3,7 @@ use std::{fs::File, sync::{atomic::Ordering, Arc}};
 use log::{debug, info};
 use app_state::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{style::Style, CentralPanel, Color32, Context, FontId, Frame, IconData, TopBottomPanel, Vec2, ViewportBuilder, ViewportId};
+use eframe::egui::{style::Style, CentralPanel, Color32, Context, FontId, Frame, IconData, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId};
 use egui_dock::{DockArea, Style as DockStyle};
 use self_update::cargo_crate_version;
 use database::{database::Database, schema::ComputerData};
@@ -59,6 +59,18 @@ impl eframe::App for MasterTechApp {
         custom_style.override_font_id = Some(font);
         custom_style.spacing.combo_height = 60.0; 
         custom_style.spacing.combo_width = 135.0;
+        custom_style.visuals.selection.stroke.color =  Color32::BLACK;
+        custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+        custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
+        custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
+        custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+        custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
+        custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+        custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+        custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+        custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+        custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+
         let arc_style = Arc::new(custom_style);
         ctx.set_style(arc_style);
         

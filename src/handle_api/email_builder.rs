@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use serde::Serialize;
-use super::scaffold::{Salesman, Techs};
 
 #[derive(Serialize)]
 pub struct Info{

@@ -3,7 +3,7 @@ use log::info;
 
 use crate::app_state::MastertechContext;
 
-use self::{api::PrestashopData, resources::{Employees, Orders, Resources}};
+use self::{api::PrestashopData, resources::Employees};
 pub mod api;
 pub mod resources;
 pub mod deserializer;

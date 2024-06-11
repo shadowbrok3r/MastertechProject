@@ -22,7 +22,7 @@ use rust_socketio::{
     Payload
 };
 use uuid::Uuid;
-use crate::{database::{get_cookie, schema::{ComputerData, DriveData, LocalSebData}, SystemInformation}, handle_api::{api_request::request_seb_info, Store}};
+use crate::{database::{schema::{ComputerData, DriveData, LocalSebData}, SystemInformation}, handle_api::{api_request::request_seb_info, Store}};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct WebSocket {
@@ -47,19 +47,14 @@ impl WebSocket {
         self.finish = true;
     }
     
-    pub async fn new_websocket_connection(client_uuid: Uuid, disconnect: bool)-> anyhow::Result<String, anyhow::Error>{
+    pub async fn new_websocket_connection(client_uuid: Uuid, _disconnect: bool)-> anyhow::Result<String, anyhow::Error>{
         let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::default()));
         let event_app: Arc<Mutex<WebSocket>> = app.clone();  
-
-        let socket_io_url = "wss://axum.master-tech.app";// "ws://localhost:4000";// "wss://axum.master-tech.app";
-
-        let cookie = get_auth().await?;
-        let cookie_clone = cookie.clone();
-
-
+        let socket_io_url = "".to_string();
+        
         let socket = ClientBuilder::new(socket_io_url)
             .transport_type(rust_socketio::TransportType::Websocket)
-            .opening_header("cookie", cookie_clone)
+            // .opening_header("cookie", cookie_clone)
             .namespace("/ws") 
             .on("open", |_, client| async move{
                 info!("open => socket opened");
@@ -266,49 +261,7 @@ impl WebSocket {
 
 
 
-async fn get_auth() -> anyhow::Result<String, anyhow::Error>{
-    let api_url = "https://axum.master-tech.app"; // "http://localhost:4000";// "https://axum.master-tech.app";
 
-
-    let params = json!({
-        "name": "Logan",
-        "email": "logan.lees@pclaptops.com",
-        "password": "Poolparty10!9",
-        "store": "RIV",
-        "everest_initials": "LL"
-    });
-
-    info!("Sending signin req");
-
-    let cookies = CookieStore::default();
-    let cookie_store = CookieStoreMutex::new(cookies);
-    let cookie_store  = Arc::new(cookie_store);
-
-    let client_build = reqwest::Client::builder()
-        .cookie_provider(std::sync::Arc::clone(&cookie_store))
-        .build();
-
-    let client = match client_build{
-        Ok(client) => {
-            info!("Sending reqwest");
-            Ok(client)
-        }, Err(err) => {info!("Error with client_build => {err:?}"); Err(err)},
-    };
-
-    client?.post(format!("{api_url}/login")) 
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(&params)
-        .send()
-        .await?;
-
-    info!("Sent signin req");
-
-    let cookie = get_cookie(cookie_store.lock().unwrap());
-
-    Ok(cookie)
-
-}
 
 impl Display for SystemInformation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

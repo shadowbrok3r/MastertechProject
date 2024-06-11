@@ -87,7 +87,7 @@ impl FileBrowser{
 
             Command::Delete(path) => {
                 println!("Command::Delete");
-                if let Err(err) = fs::remove_dir_all(&path).await {
+                if let Err(_err) = fs::remove_dir_all(&path).await {
                     //let _ = response_sender.try_send(Response::Error(FileBrowserError::Io(err)));
                 } else {
                     //let _ = response_sender.try_send(Response::Success(format!("Successfully deleted {:?}", path)));
