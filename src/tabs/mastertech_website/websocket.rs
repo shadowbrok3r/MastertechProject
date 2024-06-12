@@ -27,12 +27,18 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub struct WebSocket {
     pub finish: bool,
+    pub url: String,
+    pub error: String,
+    // pub frontend: Option<FrontEnd>,
 }
 
 impl Default for WebSocket{
     fn default() -> Self {
         Self {
-            finish: false 
+            finish: false,
+            url: String::new(),
+            error: String::new(),
+            // frontend: None,
         }
     }
 }
@@ -47,74 +53,7 @@ impl WebSocket {
         self.finish = true;
     }
     
-    pub async fn new_websocket_connection(client_uuid: Uuid, _disconnect: bool)-> anyhow::Result<String, anyhow::Error>{
-        let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::default()));
-        let event_app: Arc<Mutex<WebSocket>> = app.clone();  
-        let socket_io_url = "".to_string();
-        
-        let socket = ClientBuilder::new(socket_io_url)
-            .transport_type(rust_socketio::TransportType::Websocket)
-            // .opening_header("cookie", cookie_clone)
-            .namespace("/ws") 
-            .on("open", |_, client| async move{
-                info!("open => socket opened");
-                client.emit("join", json!({"room": "RIV"})).await.unwrap_or(());
-                info!("connect => sent join event");
-            }.boxed())
-            .on("connect", |_, client| async move{
-                info!("connect => client connected");
-                client.emit("join", json!({"room": "RIV"})).await.unwrap_or(());
-            }.boxed())
-            .on("close", |_, client| async move { 
-                info!("close => attempting reconnect");
-                sleep(Duration::from_secs(3)).await;
-                client.emit("join", json!({"room": "RIV"})).await.unwrap_or(());
-                info!("Disconnected");
-            }.boxed())
-            .on("join", |_msg, _| async move { info!("Joined") }.boxed())
-            .on("command", | payload: Payload, client: SocketClient | async move {
-                match payload{
-                    Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
-                    Payload::Text(text_payload) => { info!("Got a Text payload: {:?}", text_payload.clone()); /* Self::handle_command_payload(string_payload, client).await; */ },
-                    Payload::String(string_payload) => { Self::handle_command_payload(string_payload, client).await.unwrap_or(()); },
-                }
-            }.boxed())
-            .on("error", move|err, client| {
-                let x = event_app.clone();
-                async move { x.lock().await.on_message(err, client).await }.boxed()
-            })
-            .on("message", |msg, _| {
-                async move { info!("Received message: {:#?}", msg) }.boxed()
-            })
-            .connect()
-            .await?;
 
-        socket.emit("join", json!({"room": "RIV"})).await?;
-
-        loop{ // constantly send information as well as wait for shutdown signal
-            sleep(Duration::from_secs(2)).await;
-
-            let systeminfo: SystemInformation = Self::get_sysinfo().await?;
-
-            let json_payload = json!({
-                "room": "RIV",
-                "sysinfo": systeminfo,
-                "client_uuid": client_uuid.to_string()
-            }); 
-
-            let _ = socket.emit("clientSysInfo", json_payload.clone())
-                .await?;
-
-            info!("in loop");
-
-            if app.lock().await.finish{
-                break;
-            }
-        }
-        socket.disconnect().await?;
-    
-    Ok(format!("Socket connected"))
-    }
 
     async fn handle_command_payload(string_payload: String, client: SocketClient) -> anyhow::Result<(), anyhow::Error>  { 
         println!("string_payload: {}", string_payload.clone());
@@ -259,7 +198,47 @@ impl WebSocket {
     }
 }
 
+// struct FrontEnd {
+//     ws_sender: WsSender,
+//     ws_receiver: WsReceiver,
+//     events: Vec<WsEvent>,
+//     text_to_send: String,
+// }
 
+// impl FrontEnd {
+//     fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
+//         Self {
+//             ws_sender,
+//             ws_receiver,
+//             events: Default::default(),
+//             text_to_send: Default::default(),
+//         }
+//     }
+
+//     fn ui(&mut self, ctx: &egui::Context) {
+//         while let Some(event) = self.ws_receiver.try_recv() {
+//             self.events.push(event);
+//         }
+
+//         egui::CentralPanel::default().show(ctx, |ui| {
+//             ui.horizontal(|ui| {
+//                 ui.label("Message to send:");
+//                 if ui.text_edit_singleline(&mut self.text_to_send).lost_focus()
+//                     && ui.input(|i| i.key_pressed(egui::Key::Enter))
+//                 {
+//                     self.ws_sender
+//                         .send(WsMessage::Text(std::mem::take(&mut self.text_to_send)));
+//                 }
+//             });
+
+//             ui.separator();
+//             ui.heading("Received events:");
+//             for event in &self.events {
+//                 ui.label(format!("{event:?}"));
+//             }
+//         });
+//     }
+// }
 
 
 
@@ -280,3 +259,75 @@ impl Display for SystemInformation {
         )
     }
 }
+
+
+/* 
+    pub async fn new_websocket_connection(client_uuid: Uuid, _disconnect: bool)-> anyhow::Result<String, anyhow::Error>{
+        let app: Arc<Mutex<WebSocket>> = Arc::new(Mutex::new(WebSocket::default()));
+        let event_app: Arc<Mutex<WebSocket>> = app.clone();  
+        let socket_io_url = "".to_string();
+        
+        let socket = ClientBuilder::new(socket_io_url)
+            .transport_type(rust_socketio::TransportType::Websocket)
+            // .opening_header("cookie", cookie_clone)
+            .namespace("/ws") 
+            .on("open", |_, client| async move{
+                info!("open => socket opened");
+                client.emit("join", json!({"room": "RIV"})).await.unwrap_or(());
+                info!("connect => sent join event");
+            }.boxed())
+            .on("connect", |_, client| async move{
+                info!("connect => client connected");
+                client.emit("join", json!({"room": "RIV"})).await.unwrap_or(());
+            }.boxed())
+            .on("close", |_, client| async move { 
+                info!("close => attempting reconnect");
+                sleep(Duration::from_secs(3)).await;
+                client.emit("join", json!({"room": "RIV"})).await.unwrap_or(());
+                info!("Disconnected");
+            }.boxed())
+            .on("join", |_msg, _| async move { info!("Joined") }.boxed())
+            .on("command", | payload: Payload, client: SocketClient | async move {
+                match payload{
+                    Payload::Binary(bin_payload) => { println!("bin_payload: {:#?}", bin_payload); },
+                    Payload::Text(text_payload) => { info!("Got a Text payload: {:?}", text_payload.clone()); /* Self::handle_command_payload(string_payload, client).await; */ },
+                    Payload::String(string_payload) => { Self::handle_command_payload(string_payload, client).await.unwrap_or(()); },
+                }
+            }.boxed())
+            .on("error", move|err, client| {
+                let x = event_app.clone();
+                async move { x.lock().await.on_message(err, client).await }.boxed()
+            })
+            .on("message", |msg, _| {
+                async move { info!("Received message: {:#?}", msg) }.boxed()
+            })
+            .connect()
+            .await?;
+
+        socket.emit("join", json!({"room": "RIV"})).await?;
+
+        loop{ // constantly send information as well as wait for shutdown signal
+            sleep(Duration::from_secs(2)).await;
+
+            let systeminfo: SystemInformation = Self::get_sysinfo().await?;
+
+            let json_payload = json!({
+                "room": "RIV",
+                "sysinfo": systeminfo,
+                "client_uuid": client_uuid.to_string()
+            }); 
+
+            let _ = socket.emit("clientSysInfo", json_payload.clone())
+                .await?;
+
+            info!("in loop");
+
+            if app.lock().await.finish{
+                break;
+            }
+        }
+        socket.disconnect().await?;
+    
+    Ok(format!("Socket connected"))
+    }
+*/

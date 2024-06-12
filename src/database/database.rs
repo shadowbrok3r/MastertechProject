@@ -1,7 +1,7 @@
 use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Wss, Ws}, sql::Thing, Error, Surreal
+    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::Scope, sql::Thing, Error, Surreal
     
 };
 
@@ -32,17 +32,28 @@ pub struct Record {
     pub id: Thing,
 }
 
+#[derive(Serialize)]
+struct Auth {
+    email: String,
+    password: String,
+}
+
 impl Database{
     pub async fn new() -> Self {
-        let database: Surreal<WsClient> = Surreal::new::<Ws>("localhost:8000") // localhost:8000 // surreal.master-tech.app/rpc
+        let database: Surreal<WsClient> = Surreal::new::<Wss>("surreal.master-tech.app") // localhost:8000 // surreal.master-tech.app/rpc
             .await.unwrap();
 
         // Select a specific namespace / database
-        database
-            .use_ns("Mastertech")
-            .use_db("MastertechDB")
-            .await
-            .expect("Could not use ns or db name");
+        let jwt = database.signin(
+            Scope { namespace: "Mastertech", database: "MastertechDB", scope: "user",
+                params: Auth{email: "t@t.com".to_string(), password: "toor".to_string()}
+            }).await.unwrap();
+        info!("JWT: {:?}", jwt.as_insecure_token());
+        // database
+        //     .use_ns("Mastertech")
+        //     .use_db("MastertechDB")
+        //     .await
+        //     .expect("Could not use ns or db name");
 
         Database { database }
     }

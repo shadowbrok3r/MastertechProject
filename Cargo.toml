@@ -61,6 +61,7 @@ minidump-common = { version = "0.21" }
 minidump-processor = { version = "0.21", features = ["http"] }
 minidump-unwind = "0.21"
 linked-hash-map = "0.5"
+ewebsock = "0.6.0"
 
 # bytes = "1.6.0"
 # catppuccin-egui = "5.1.1"
