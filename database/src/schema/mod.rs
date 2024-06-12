@@ -57,7 +57,7 @@ pub struct RecordSuccess{
 }
 
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
@@ -93,15 +93,7 @@ pub struct LiveTaskPayload{
     pub dep: Option<String>
 }
 
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct TicketPayload{
-//     pub service_ticket: TicketData,
-//     pub customer_data: CustomerData,
-//     pub computer_data: ComputerData
-// }
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TicketPayload{
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
@@ -126,11 +118,10 @@ pub struct TicketPayload{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct TicketData{
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
-    // pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
     pub customer: Option<CustomerId>,
     pub computer: Option<ComputerId>,
     pub service_task: Option<TaskId>,
@@ -151,7 +142,7 @@ pub struct TicketData{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
     pub part_order_links: Option<Vec<String>>,
@@ -167,7 +158,7 @@ pub struct CustomerData{
     pub num_inv: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ComputerData{
     pub id: Option<ComputerId>,
     pub customer: Option<CustomerId>,
@@ -230,7 +221,7 @@ pub struct DriveData{
     pub space_left: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct HardwareTests{
     pub hdd_test: String,
     pub ssd_test: String,
@@ -374,28 +365,6 @@ pub struct User {
     pub email: String,
     pub store: Store,
     pub notifications: Option<Vec<NotificationId>>
-}
-
-
-
-impl Default for TaskPayload{
-    fn default() -> Self {
-        Self { 
-            id: Default::default(), 
-            task_name: Default::default(), 
-            service_ticket: Default::default(), 
-            task_description: Default::default(), 
-            assignee: Default::default(), 
-            service_number: Default::default(), 
-            due_date: Default::default(), 
-            priority: Default::default(), 
-            task_note: Default::default(), 
-            completed: Default::default(), 
-            status: Default::default(), 
-            dep: Default::default(),
-            everest_initials: Default::default(), 
-        }
-    }
 }
 
 impl Priority{

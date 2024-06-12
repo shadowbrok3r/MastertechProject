@@ -34,6 +34,7 @@ egui_infinite_scroll = "0.3"
 egui_ratatui = "0.0.5"
 egui_autocomplete = { version = "6.0.1", features = ["serde"] }
 fuzzy-matcher = "0.3.7"
+socketioxide = "0.13.1"
 
 
 # native:
