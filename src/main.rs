@@ -78,9 +78,9 @@ impl eframe::App for MasterTechApp {
             let uuid = self.context.client_uuid;
             let socket_disconnect = self.context.disconnect_ws.clone();
             info!("Socket_disconnect: {:?}", socket_disconnect);
-            tokio::spawn(async move{
-                let _x = WebSocket::new_websocket_connection(uuid.clone(), socket_disconnect).await;
-            });
+            // tokio::spawn(async move{
+                // let _x = WebSocket::new_websocket_connection(uuid.clone(), socket_disconnect).await;
+            // });
 
             // self.context.output_text += &x;
             self.context.connect_to_ws = false;
