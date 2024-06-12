@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use database::{schema::TaskPayload, Database};
-use egui::{epaint::Shadow, Align, Color32, ComboBox, Direction, FontId, Frame, Grid, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
+use egui::{epaint::Shadow, Align, Button, Color32, ComboBox, Direction, FontId, Frame, Grid, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use serde::Serialize;
 
@@ -123,7 +123,12 @@ impl DisplayModal for TaskModal {
                                 ModalAction::TaskNotePage => { task_note_page = true },
                                 _ => {ticket_page = true},
                             };
-                            ui.add_space(avail_size.x / 2.2);
+
+                            if Button::new(RichText::new("Delete Task").color(Color32::RED)).ui(ui).double_clicked(){
+            
+                            }
+
+                            ui.add_space(250.0);
 
                             if ui.selectable_label(ticket_page, RichText::new("🖹").heading()).clicked(){
                                 response = Some(ModalAction::TicketInfoPage);
@@ -168,33 +173,19 @@ impl DisplayModal for TaskModal {
                         {
                             s.empty();
                             s.cell(|ui| {
-                                match current_page_state{
-                                    ModalAction::TicketInfoPage => {
-                                        ui.horizontal_centered(|ui|{
-                                            display_task_page(ui, self.task.as_mut(), avail_size)
-                                        });
-                                    },
-                                    ModalAction::ComputerInfoPage => {
-                                        ui.horizontal_centered(|ui|{
-                                            display_computer_page(ui, self.task.as_ref(), avail_size)
-                                        });
-                                    },
-                                    ModalAction::PartOrderPage => {
-                                        ui.horizontal_centered(|ui|{
-                                            display_part_order_page(ui, avail_size)
-                                        });
-                                    },
-                                    ModalAction::TaskNotePage => {
-                                        if let Some(chat_view) = &self.chat_view{
-                                            display_chat_page(ui, chat_view, avail_size);
-                                        }
-                                    },
-                                    _ => {
-                                        ui.horizontal_centered(|ui|{
-                                            display_task_page(ui, self.task.as_mut(), avail_size)
-                                        });
-                                    }
-                                };
+                                ui.horizontal_centered(|ui|{
+                                    match current_page_state{
+                                        ModalAction::TicketInfoPage => display_task_page(ui, self.task.as_mut(), avail_size),
+                                        ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref(), avail_size),
+                                        ModalAction::PartOrderPage => display_part_order_page(ui, avail_size),
+                                        ModalAction::TaskNotePage => {
+                                            if let Some(chat_view) = &self.chat_view{
+                                                display_chat_page(ui, chat_view, avail_size);
+                                            }
+                                        },
+                                        _ => display_task_page(ui, self.task.as_mut(), avail_size)
+                                    };
+                                });
                             });
                             s.empty();
                         });
@@ -220,8 +211,6 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
 
     if let Some(task) = task{
         let ticket = task.service_ticket.as_ref();
-        
-
         if let Some(ticket) = ticket{
             let customer = ticket.customer.as_ref();
             StripBuilder::new(ui)
@@ -231,7 +220,6 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                 .size(Size::exact(100.0))
                 .vertical(|mut strip| 
             {
-
                 strip.strip(|s|{
                     s
                         .size(Size::exact(300.0))
@@ -434,6 +422,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                 });   
             }   
         }
+
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
     }

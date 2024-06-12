@@ -6,7 +6,7 @@ use ratframe::NewCC;
 use utilities::{displays::{chats::ChatView, create_task_modal::CreateTaskModal, task_modal::TaskModal}, get_other::get_store_users, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}, ModalType, TaskUiActions};
 use web_time::Instant;
 use std::sync::Arc;
-use egui::{FontId, Style, Vec2};
+use egui::{Color32, FontId, Stroke, Style, Vec2};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 pub mod tabs;
@@ -214,10 +214,10 @@ impl eframe::App for MtechServer {
         self.context.toasts.show(ctx);
     }
 
-    /// Called by the frame work to save state before shutdown.
-    fn save(&mut self, storage: &mut dyn eframe::Storage) { 
-        eframe::set_value(storage, eframe::APP_KEY, self); 
-    }
+    // Called by the frame work to save state before shutdown.
+    // fn save(&mut self, storage: &mut dyn eframe::Storage) { 
+    //     eframe::set_value(storage, eframe::APP_KEY, self); 
+    // }
 }
 
 // When compiling to web using trunk:
@@ -284,6 +284,18 @@ fn set_style() -> Arc<Style>{
     custom_style.interaction.resize_grab_radius_corner = 18.0;
     custom_style.visuals.window_shadow.spread = 8.0;
     custom_style.visuals.window_shadow.blur = 10.0;
+    custom_style.visuals.selection.stroke.color =  Color32::BLACK;
+    custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+    custom_style.visuals.widgets.inactive.bg_fill =  Color32::GOLD;
+    custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
+    custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
+    custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+    custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
+    custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+    custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+    custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+    custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+    custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
     let arc_style = Arc::new(custom_style);
     arc_style
 }

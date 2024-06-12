@@ -16,7 +16,7 @@ use web_time::{Duration, Instant};
 use database::{schema::{LiveTaskPayload, TaskPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
-    pages::{login_page::Login, signup_page::Signup}, tabs::terminal::chart::App, 
+    pages::{login_page::Login, signup_page::Signup}, tabs::terminal::{chart::App, websocket::TerminalFrontend}, 
     utilities::{
         displays::{
             chats::ChatView, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal
@@ -126,6 +126,11 @@ pub struct MtechServerContext{
     /// last tick of example chart
     #[serde(skip)]
     pub last_tick: Instant,
+    pub url: String,
+    pub error: String,
+    #[serde(skip)]
+    pub terminal_frontend: Option<TerminalFrontend>,
+    pub text_to_send: String,
 
     /// Widgets / Modals / Ui for portions throughout the app
     pub my_tasks_opened: bool,
@@ -242,7 +247,10 @@ impl NewCC for MtechServer{
             tick_rate: Duration::from_millis(30),
             chart_app: App::new(),
             last_tick: Instant::now(),
-            
+            url: "ws://127.0.0.1:8081/websocket".to_owned(),
+            error: Default::default(),
+            terminal_frontend: None,
+            text_to_send: Default::default(),
             // MISC / EVERYTHING ELSE
             bridge: Some(bridge),
             data_update: Some(data_update),
