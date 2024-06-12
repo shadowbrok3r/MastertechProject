@@ -102,12 +102,11 @@ impl eframe::App for MasterTechApp {
                     Err(e) => info!("Error sending computer data: {e:?}"),
                 };
 
-                if let Ok(database) = database{
-                    match db_tx.send(database){
-                        Ok(_) => info!("Sent db connection across thread"),
-                        Err(err) => debug!("Error sending db connection: {err:?}"),
-                    }
+                match db_tx.send(database){
+                    Ok(_) => info!("Sent db connection across thread"),
+                    Err(err) => debug!("Error sending db connection: {err:?}"),
                 }
+                
             });
 
             if let Ok(db) = self.context.db_rx.recv(){
