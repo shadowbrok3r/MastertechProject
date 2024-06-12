@@ -30,10 +30,26 @@ jobs:
       run: echo "{name}={value}" >> $GITHUB_ENV
 
     - name: Extract version from Cargo.toml
-      id: foo
-      uses: dante-signal31/rust-app-version@v1.2.0
-      with:
-        cargo_toml_folder: ./
+      id: extract_version
+      run: |
+        # Read the content of the Cargo.toml file
+        $fileContent = Get-Content -Path Cargo.toml
+
+        # Initialize an empty variable to hold the version number
+        $versionNumber = ""
+
+        # Iterate through each line in the file content
+        foreach ($line in $fileContent) {
+            # Check if the line contains the version string
+            if ($line -match 'version\s*=\s*"(.*)"') {
+                # Extract the version number using a regular expression
+                $versionNumber = $matches[1]
+                break
+            }
+        }
+        echo "version=$versionNumber" >> $GITHUB_ENV
+        echo "VERSION=$versionNumber" > version.txt
+      shell: pwsh
          
       
     - uses: actions/checkout@master
