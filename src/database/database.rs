@@ -38,9 +38,13 @@ impl Database{
             .await.unwrap();
 
         // Select a specific namespace / database
-        database.use_ns("Mastertech").use_db("MastertechDB").await?;
+        database
+            .use_ns("Mastertech")
+            .use_db("MastertechDB")
+            .await
+            .expect("Could not use ns or db name");
 
-        Ok( Self { database } )
+        Database { database }
     }
 
     pub async fn insert<T: Serialize>(&self, table: &str, record: T) -> Result<Vec<Record>, Error> {
