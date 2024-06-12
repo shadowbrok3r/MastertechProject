@@ -50,7 +50,7 @@ jobs:
         args: --verbose --release --target=${{ matrix.TARGET }}
 
     - name: Rename
-      run: cp target/${{ matrix.TARGET }}/release/MasterTech${{ matrix.EXTENSION }} Mastertech-${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
+      run: cp target/${{ matrix.TARGET }}/release/MasterTech${{ matrix.EXTENSION }} Mastertech${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
 
     - uses: actions/upload-artifact@master
       with:
