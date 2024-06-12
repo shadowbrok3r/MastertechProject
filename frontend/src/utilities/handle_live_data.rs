@@ -26,8 +26,9 @@ pub fn handle_live_data(data: (Action, LiveTaskPayload), existing_tasks: &mut Ve
 }
 
 impl LiveUpdate for LiveTaskPayload {
-    fn handle_live_create(self, _existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         info!("Data was Created: {:?}", self);
+        update_or_insert(existing_tasks, self)?;
         Ok(())
     }
     
@@ -48,8 +49,8 @@ pub fn update_or_insert(
     tasks: &mut Vec<TaskPayload>, 
     new_task: LiveTaskPayload,
 ) -> anyhow::Result<(), anyhow::Error>{
+
     if let Some(ref id) = new_task.id {
-        
         let mut updated = false;
 
         for task in tasks.iter_mut() {
@@ -65,7 +66,8 @@ pub fn update_or_insert(
         }
 
         if !updated {
-            info!("data was NOT updated");
+            info!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
+            // todo!();
             let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default());    
             info!("new_task_converted: {new_task_converted:?}");
             // Insert the new task if it does not exist

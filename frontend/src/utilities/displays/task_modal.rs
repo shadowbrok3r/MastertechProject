@@ -271,10 +271,15 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                                     ui.label("SO#:");
                                     ui.label(format!("{}", ticket.service_number));
                                     ui.end_row();
-                                    
-                                    ui.label("Tur Sent:");
-                                    ui.label(ticket.created_at.as_ref().unwrap().parse::<DateTime<Utc>>().unwrap().date_naive().to_string());
-                                    ui.end_row();
+                                    let x = ticket.created_at.as_ref();
+                                    if let Some(x) = x{
+                                        let date = x.parse::<DateTime<Utc>>();
+                                        if let Ok(date) = date{
+                                            ui.label("Tur Sent:");
+                                            ui.label(date.date_naive().to_string());
+                                            ui.end_row();
+                                        }
+                                    }
 
                                     ui.label("Store:");
                                     ui.label(&ticket.dep);
@@ -371,8 +376,8 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                             {
                                 s.cell(|ui|{
                                     ui.vertical_centered_justified(|ui| {
-                                        ui.label("Recommendations:");
-                                        TextEdit::multiline(&mut ticket.recommendations.to_string())
+                                        ui.label("Checkin Notes:");
+                                        TextEdit::multiline(&mut ticket.checkin_notes.to_string())
                                             .margin(Margin::same(5.0))
                                             .desired_rows(8)
                                             .desired_width(ui.available_width())
@@ -383,8 +388,8 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                                 s.empty();
                                 s.cell(|ui|{
                                     ui.vertical_centered_justified(|ui| {
-                                        ui.label("Checkin Notes:");
-                                        TextEdit::multiline(&mut ticket.checkin_notes.to_string())
+                                        ui.label("Recommendations:");
+                                        TextEdit::multiline(&mut ticket.recommendations.to_string())
                                             .margin(Margin::same(5.0))
                                             .desired_rows(8)
                                             .desired_width(ui.available_width())
