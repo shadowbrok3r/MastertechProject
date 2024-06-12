@@ -1,13 +1,11 @@
 use std::borrow::BorrowMut;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 
 use database::Database;
 use egui::{Align, Button, FontId, RichText, ScrollArea, TextEdit, Vec2, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
-use egui_autocomplete::AutoCompleteTextEdit;
 use egui_extras::{Size, Strip, StripBuilder};
 use database::schema::{TaskPayload, User};
-use log::info;
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
 use super::task_layout::TaskLayout;
 

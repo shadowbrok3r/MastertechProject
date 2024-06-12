@@ -1,0 +1,9 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./Cargo.toml",
+        "./database/Cargo.toml",
+        // "./websocket_server/Cargo.toml",
+        "./frontend/Cargo.toml",
+    ],
+    "rust-analyzer.showUnlinkedFileNotification": true
+}

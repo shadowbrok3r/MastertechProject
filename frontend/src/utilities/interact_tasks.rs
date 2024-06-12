@@ -6,7 +6,7 @@ use egui_extras::DatePickerButton;
 use log::info;
 
 use crate::utilities::Updatable;
-
+use crate::utilities::displays::date_colors;
 use super::Interaction;
 
 impl Interaction for TaskPayload {
@@ -93,6 +93,9 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
+        let frame_color = date_colors(self.due_date.clone());
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, frame_color);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, frame_color);
         let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
         
         let id = self.id.clone().unwrap().0.id.to_string();
@@ -110,6 +113,7 @@ impl Interaction for TaskPayload {
                 .unwrap()
                 .and_local_timezone(Utc)
                 .unwrap();
+
             let rfc3339_date = date_time.to_rfc3339();
             let date = due_date.clone().to_string();
             self.update_due_date(rfc3339_date.clone(), database);

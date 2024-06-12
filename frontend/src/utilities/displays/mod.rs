@@ -1,9 +1,11 @@
+use chrono::{DateTime, Utc};
 use database::Database;
 use eframe::egui::Ui;
 use egui::{Align, Button, CollapsingHeader, Direction, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
+use log::info;
 
 use crate::utilities::{Displayable, Interaction};
 
@@ -26,13 +28,15 @@ impl Displayable for TaskPayload{
         setup_task_styling(ui);
 
         let mut res: Option<TaskUiActions> = None;
+        // let task_frame_color = if self.due_date.parse::<>
+        let frame_color = date_colors(self.due_date.clone());
 
         Frame::default()
             .fill(Color32::from_rgb(22,22,26))
             .inner_margin(Margin::same(8.0))
             .outer_margin(Margin::same(5.0))
             .rounding(Rounding::same(15.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(150)))
+            .stroke(Stroke::new(1.0, frame_color))
             .show(ui, |ui| 
         {
             ui.set_max_height(300.0);
@@ -154,6 +158,36 @@ impl Displayable for TaskPayload{
             });
         });
         res
+    }
+}
+
+pub fn date_colors(date: String) -> Color32{
+    let due_date = DateTime::parse_from_rfc3339(&date)
+        .expect("Invalid date format")
+        .with_timezone(&Utc);
+
+    let current_date = Utc::now().date_naive();
+
+    let mut yesterday: Option<String> = None;
+    let mut today: Option<String> = None;
+    let mut tomorrow: Option<String> = None;
+
+    if due_date.date_naive() == current_date.pred_opt().unwrap() {
+        yesterday = Some(date.clone());
+    } else if due_date.date_naive() == current_date {
+        today = Some(date.clone());
+    } else if due_date.date_naive() == current_date.succ_opt().unwrap() {
+        tomorrow = Some(date.clone());
+    } 
+
+    if let Some(_) = yesterday{
+        Color32::from_rgb(199, 48, 103)
+    }else if let Some(_) = today{
+        Color32::from_rgb(240, 200, 108)
+    }else if let Some(_) = tomorrow{
+        Color32::from_rgb(79, 232, 125)
+    }else{
+        Color32::from_rgb(31, 204, 178)
     }
 }
 

@@ -1,7 +1,10 @@
+# cargo-features = ["per-package-target"]
+
 [package]
 name = "mtechserver"
 version = "0.1.0"
 edition = "2021"
+# forced-target = "wasm32-unknown-unknown"
 
 [dependencies]
 database = { workspace=true }
@@ -9,6 +12,7 @@ anyhow = { workspace=true }
 log  = { workspace=true }
 serde = { workspace=true }
 surrealdb = { workspace=true }
+# surrealdb-alpha = { workspace=true }
 chrono = { workspace=true }
 
 egui ={ version="0.27", features = ["persistence"]} # "callstack", "log"
@@ -34,7 +38,8 @@ egui_infinite_scroll = "0.3"
 egui_ratatui = "0.0.5"
 egui_autocomplete = { version = "6.0.1", features = ["serde"] }
 fuzzy-matcher = "0.3.7"
-socketioxide = "0.13.1"
+ewebsock = "0.6"
+# crossterm = { version= "0.27", default-features = false }
 
 
 # native:
