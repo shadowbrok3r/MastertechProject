@@ -30,11 +30,11 @@ jobs:
       run: echo "{name}={value}" >> $GITHUB_ENV
 
     - name: Extract version from Cargo.toml
-      id: extract_version
-      run: |
-        version=$(grep '^version' Cargo.toml | head -1 | awk -F '"' '{print $2}')
-        echo "version=$version" >> $GITHUB_ENV
-        echo "VERSION=$version" > version.txt
+      id: foo
+      uses: dante-signal31/rust-app-version@v1.2.0
+      with:
+        cargo_toml_folder: ./
+         
       
     - uses: actions/checkout@master
     - uses: actions-rs/toolchain@v1.0.1
@@ -60,8 +60,8 @@ jobs:
     - name: Create tag
       if: ${{ github.event_name == 'push' }}
       run: |
-        git tag v${{ env.version }}
-        git push origin v${{ env.version }}
+        git tag v${{ steps.foo.outputs.app_version }}
+        git push origin v${{ steps.foo.outputs.app_version }}
 
     - uses: svenstaro/upload-release-action@v2
       name: Upload binaries to release
@@ -70,7 +70,7 @@ jobs:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: Mastertech-${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
         asset_name: Mastertech-${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
-        tag: v${{ env.version }}
+        tag: v${{ steps.foo.outputs.app_version }}
         # prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
         overwrite: true
 
@@ -80,8 +80,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ github.ref }}
-        release_name: Mastertech v${{ env.version }}
+        tag_name: ${{ steps.foo.outputs.app_version }}
+        release_name: Mastertech v${{ steps.foo.outputs.app_version }}
         body: |
           ${{ steps.Changelog.outputs.changelog }}
         draft: false
