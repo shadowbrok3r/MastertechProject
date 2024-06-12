@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.1.4"
+version = "4.1.3"
 edition = "2021"
 description = "Mastertech"
 build = "build.rs"
@@ -103,8 +103,8 @@ lto = false
 strip = false
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
-static_vcruntime = "2.0"
-embed-resource = "2.4.2"
+static_vcruntime = "2"
+embed-resource = "2.4"
 
 [package.metadata]
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
