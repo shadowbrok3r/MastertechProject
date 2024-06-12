@@ -13,9 +13,6 @@ jobs:
       matrix:
         include:
         # - os: macos-latest
-        #   TARGET: aarch64-apple-darwin
-
-        # - os: macos-latest
         #   TARGET: x86_64-apple-darwin
 
         # - os: ubuntu-latest
@@ -32,6 +29,13 @@ jobs:
     - name: Set Env
       run: echo "{name}={value}" >> $GITHUB_ENV
 
+    - name: Extract version from Cargo.toml
+      id: extract_version
+      run: |
+        version=$(grep '^version' Cargo.toml | head -1 | awk -F '"' '{print $2}')
+        echo "version=$version" >> $GITHUB_ENV
+        echo "VERSION=$version" > version.txt
+      
     - uses: actions/checkout@master
     - uses: actions-rs/toolchain@v1.0.1
       with:
@@ -53,6 +57,11 @@ jobs:
         name: Mastertech${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
         path: Mastertech${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
 
+    - name: Create tag
+      if: ${{ github.event_name == 'push' }}
+      run: |
+        git tag v${{ env.version }}
+        git push origin v${{ env.version }}
 
     - uses: svenstaro/upload-release-action@v2
       name: Upload binaries to release
@@ -61,7 +70,7 @@ jobs:
         repo_token: ${{ secrets.GITHUB_TOKEN }}
         file: Mastertech-${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
         asset_name: Mastertech-${{ matrix.EXTENSION }} # ${{ matrix.TARGET }}
-        tag: ${{ github.ref }}
+        tag: v${{ env.version }}
         # prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
         overwrite: true
 
@@ -72,7 +81,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ github.ref }}
-        release_name: Mastertech ${{ github.ref }}
+        release_name: Mastertech v${{ env.version }}
         body: |
           ${{ steps.Changelog.outputs.changelog }}
         draft: false
