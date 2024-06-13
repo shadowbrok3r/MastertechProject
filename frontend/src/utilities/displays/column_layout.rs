@@ -1,6 +1,7 @@
 use std::borrow::BorrowMut;
 use std::collections::{BTreeSet, HashMap};
 
+use chrono::{DateTime, Utc};
 use database::Database;
 use egui::{Align, Button, FontId, RichText, ScrollArea, TextEdit, Vec2, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
@@ -76,8 +77,6 @@ impl ColumnLayout for TaskLayout {
 
         let mut inputs = BTreeSet::new();
 
-
-
         for (name, mut tasks) in filter_items {
             tasks.sort_task_payloads();
             for task in tasks.iter(){
@@ -137,7 +136,7 @@ impl ColumnLayout for TaskLayout {
             .rounding(Rounding::same(5.0))
             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
-        for (name, _) in items.iter(){
+        for (name, tasks) in items.iter(){
             s.cell(|ui|{
                 header_frame.show(ui, |ui|
                 {
@@ -167,8 +166,29 @@ impl ColumnLayout for TaskLayout {
                                 .fill(Color32::TRANSPARENT)
                                 .min_size(Vec2::new(30.0, 20.0))
                                 .ui(ui);
+
+                            ui.add_space(30.0);
+
                             if button.clicked(){
                                 let _ = self.ui_actions_tx.send(TaskUiActions::CreateTaskModal);
+                            }
+
+                            let mut count = 0;
+                            let current_date = Utc::now().date_naive();
+                            for task in tasks{
+                                let due_date = DateTime::parse_from_rfc3339(&task.due_date)
+                                    .expect("Invalid date format")
+                                    .with_timezone(&Utc)
+                                    .date_naive();
+
+                                if due_date < current_date {
+                                    count += 1;
+                                }
+                            }
+                            if count > 0{
+                                ui.label("Overdue Tasks");
+                                ui.add_space(5.0);
+                                ui.colored_label(Color32::RED, format!("{count}"));
                             }
                         });
                     });

@@ -93,7 +93,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        let frame_color = date_colors(self.due_date.clone());
+        let frame_color = date_colors(self.due_date.clone(), self.completed);
         ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, frame_color);
         ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, frame_color);
         let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
