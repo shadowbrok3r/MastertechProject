@@ -45,6 +45,7 @@ impl ezsockets::ServerExt for ChatServer {
             id,
             socket,
         );
+        let echo_session = EchoSession::create(|handle| EchoSession { id, handle }, id, socket);
         self.sessions.insert(id, session.clone());
         Ok(session)
     }
@@ -106,6 +107,34 @@ impl ezsockets::SessionExt for ChatSession {
         Ok(())
     }
 }
+
+
+
+#[async_trait]
+impl ezsockets::SessionExt for EchoSession {
+    type ID = SessionID;
+    type Call = ();
+
+    fn id(&self) -> &Self::ID {
+        &self.id
+    }
+
+    async fn on_text(&mut self, text: String) -> Result<(), Error> {
+        self.handle.text(text).unwrap();
+        Ok(())
+    }
+
+    async fn on_binary(&mut self, _bytes: Vec<u8>) -> Result<(), Error> {
+        unimplemented!()
+    }
+
+    async fn on_call(&mut self, call: Self::Call) -> Result<(), Error> {
+        let () = call;
+        Ok(())
+    }
+}
+
+
 
 #[tokio::main]
 async fn main() {

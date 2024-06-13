@@ -124,11 +124,11 @@ impl DisplayModal for TaskModal {
                                 _ => {ticket_page = true},
                             };
 
-                            if Button::new(RichText::new("Delete Task").color(Color32::RED)).ui(ui).double_clicked(){
+                            if Button::new(RichText::new("Delete Task").color(Color32::DARK_RED)).ui(ui).double_clicked(){
             
                             }
 
-                            ui.add_space(250.0);
+                            ui.add_space(200.0);
 
                             if ui.selectable_label(ticket_page, RichText::new("🖹").heading()).clicked(){
                                 response = Some(ModalAction::TicketInfoPage);
@@ -189,12 +189,12 @@ impl DisplayModal for TaskModal {
                             });
                             s.empty();
                         });
-                    });// strip.cell(|ui|{ ui.shrink_width_to_current();ui.shrink_height_to_current(); });
+                    });// strip.cell(|ui|{  });
                 });
             });
         });
-        ui.shrink_width_to_current();
-        ui.shrink_height_to_current();
+        
+        
         response
     }
 }
@@ -223,7 +223,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                 strip.strip(|s|{
                     s
                         .size(Size::exact(300.0))
-                        .size(Size::exact(15.0))
+                        .size(Size::exact(12.0))
                         .size(Size::exact(300.0))
                         .horizontal(|mut s|
                     {
@@ -281,7 +281,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                 strip.strip(|s|{
                     s
                         .size(Size::exact(300.0))
-                        .size(Size::exact(10.0))
+                        .size(Size::exact(12.0))
                         .size(Size::exact(300.0))
                         .horizontal(|mut s|
                     {
@@ -422,9 +422,6 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                 });   
             }   
         }
-
-        ui.shrink_width_to_current();
-        ui.shrink_height_to_current();
     }
 }
 
@@ -625,8 +622,8 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
             });
         } else { ui.label("Computer information was not sent with ticket"); }
     }
-    ui.shrink_width_to_current();
-    ui.shrink_height_to_current();
+    
+    
 }
 
 fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
@@ -709,16 +706,16 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
             });
         });
     });
-    ui.shrink_width_to_current();
-    ui.shrink_height_to_current();
+    
+    
 }
 
-fn display_chat_page(ui: &mut Ui, chat_view: &ChatView, avail_size: Vec2){
+fn display_chat_page(ui: &mut Ui, chat_view: &ChatView, _avail_size: Vec2){
     let mut shadow = Shadow::default();
     shadow.blur = 10.0;
     shadow.spread = 5.0;
     shadow.color = Color32::from_rgb(40,36,40);
-    ui.shrink_width_to_current();
+    
     Frame::none()
         .fill(Color32::from_rgb(20,20,30))
         .inner_margin(Margin::same(5.0))
@@ -726,9 +723,10 @@ fn display_chat_page(ui: &mut Ui, chat_view: &ChatView, avail_size: Vec2){
         .stroke(ui.style().visuals.widgets.inactive.bg_stroke)
         .rounding(Rounding::same(10.0))
         .show(ui, |ui| {
-            ui.set_min_width(avail_size.x);
-            ui.shrink_width_to_current();
-            chat_view.ui(ui);
+            ui.horizontal_top(|ui| ui.add_space(15.0));
+            ui.vertical_centered_justified(|ui| {
+                chat_view.ui(ui);
+            });
         });
-    ui.shrink_width_to_current();
+    
 }

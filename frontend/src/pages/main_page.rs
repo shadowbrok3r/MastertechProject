@@ -108,7 +108,7 @@ impl MtechServer{
                                 .desired_width(150.0)
                                 .font(FontId::proportional(12.0))
                                 .frame(true)
-                                .horizontal_align(egui::Align::Center)
+                                // .horizontal_align(egui::Align::Center)
                         })
                         .ui(ui);
                     

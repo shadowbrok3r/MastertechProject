@@ -161,10 +161,8 @@ impl NewCC for MtechServer{
         setup_custom_fonts(&cc.egui_ctx);
 
         let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned()]);
-        // let [_a, _b] = tree.main_surface_mut().split_left(NodeIndex::root(), 0.10, vec!["Store Tasks".to_owned()]);
         let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned()]);
         let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned()]);
-        // let [_, _] = tree.main_surface_mut().split_left(b,0.20,vec!["Scripts".to_owned()]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
         let mut open_tabs = HashSet::new();
         for node in tree[SurfaceIndex::main()].iter() {
