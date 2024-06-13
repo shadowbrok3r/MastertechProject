@@ -163,10 +163,11 @@ pub trait ModalTypes: Default{
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(ctx.screen_rect().center_top() + vec2(0.0, modal_vertical_margins))
             .constrain_to(ctx.screen_rect())
-            .max_height(screen_height - 2.0 * modal_vertical_margins)
-            .max_width(screen_width - 50.0)
+            .max_height(570.0)
+            .max_width(650.0)
+            .default_width(600.0)
             .collapsible(false)
-            // .resizable(true)
+            .resizable(false)
             .title_bar(false);
 
         if let Some(min_width) = self.modal_state().min_width {

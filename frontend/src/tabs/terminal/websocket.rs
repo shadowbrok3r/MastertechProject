@@ -59,9 +59,24 @@ impl TerminalFrontend {
             self.events.push(event);
         }
 
-        let mut text = String::new();
+        let mut text: String = String::new();
         for event in &self.events {
-            text = format!("{event:?}");
+            match event{
+                WsEvent::Message(msg) => {
+                    match msg{
+                        WsMessage::Binary(bin) => {
+                            text = format!("{bin:?}");
+                        },
+                        WsMessage::Text(txt) => {
+                            text = txt.clone();
+                        },
+                        _ => {}
+                    }
+                },
+                // WsEvent::Error(_) => todo!(),
+                _ => {}
+            }
+            
         }
 
         let block = Block::default()
@@ -81,6 +96,9 @@ impl TerminalFrontend {
             .cyan()
             .on_black();
 
+        // for event in &self.events {
+        //     ui.label(format!("{event:?}"));
+        // }
         frame.render_widget(para, area);
     }
 }

@@ -274,7 +274,7 @@ fn set_style() -> Arc<Style>{
     font.size = 12.0;
     custom_style.override_font_id = Some(font);
     custom_style.spacing.combo_height = 60.0; 
-    custom_style.spacing.combo_width = 135.0;
+    custom_style.spacing.combo_width = 100.0;
     custom_style.interaction.multi_widget_text_select = false;
     custom_style.interaction.selectable_labels = false;
     custom_style.explanation_tooltips = false;

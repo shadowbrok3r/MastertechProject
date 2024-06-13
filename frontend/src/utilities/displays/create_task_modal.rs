@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use database::{schema::{Priority, Record, Status, TaskPayload, User, TASK_TABLE}, Database};
 use egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{DatePickerButton, Size, StripBuilder};
@@ -40,7 +40,7 @@ impl CreateTaskModal{
             default_height: Some(800.0),
             full_span_content: false,
             state: ModalState::default(),
-            due_date: NaiveDate::default(),
+            due_date: Utc::now().date_naive(),
             database,
             store_users,
             ..Default::default()
@@ -61,17 +61,6 @@ impl ModalTypes for CreateTaskModal{
 
 impl DisplayModal for CreateTaskModal {
     fn display(&mut self, ui: &mut Ui, _current_state: ModalAction) -> Option<ModalAction>{
-        ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
-        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-        ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
-        ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
         
         let mut _response: Option<ModalAction> = None;
         StripBuilder::new(ui)
@@ -111,15 +100,14 @@ impl DisplayModal for CreateTaskModal {
                             });
 
                             DatePickerButton::new(&mut self.due_date)
-                                .calendar(true)
                                 .calendar_week(false)
-                                .combo_boxes(true)
                                 .format("%m/%d/%y")
+                                .show_icon(true)
                                 .ui(ui);
                         });
                         // let x = DateTime
 
-                        TextEdit::multiline(&mut self.description)
+                        TextEdit::singleline(&mut self.description)
                             .hint_text("Task Description")
                             .desired_rows(3)
                             .code_editor()

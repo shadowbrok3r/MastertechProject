@@ -13,3 +13,5 @@ ezsockets = { version = "0.6", features = ["axum"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+[workspace]
