@@ -5,7 +5,9 @@ use serde_json::{from_value, Value};
 use std::fmt::Debug;
 use quickxml_to_serde::{xml_string_to_json, Config as xmlConfig};
 
-use super::resources::{Employees, Addresses, Orders};
+use crate::tabs::prestashop_api::resources::Employee;
+
+use super::resources::{Addresses, Employees, Orders, SubResource};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PrestashopData {
@@ -48,14 +50,12 @@ impl Default for Prestashop{
 
 impl Prestashop {
 
-    pub fn new<T: for<'a> Deserialize<'a> + std::fmt::Debug>(
+    pub fn new<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(
         client: Client, display: String, filter: Option<String>, limit: Option<i32>, schema: Option<String>,
-    ) -> Self{
-        Self { client, display, filter, limit, schema }
-    }
+    ) -> Self { Self { client, display, filter, limit, schema } }
 
-    pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, _get_subresource: Option<String>) 
-        -> anyhow::Result<T, anyhow::Error>
+    pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: String, get_subresource: Option<String>) 
+        -> anyhow::Result<Vec<T>, anyhow::Error>
     {
         let response = self.client // 2063620
             .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}{}", self.display)) // ?output_format=JSON
@@ -65,30 +65,48 @@ impl Prestashop {
             .text()
             .await?;
         
-        // let y: T = serde_xml_rs::from_str(response.as_str())?; // ::<PrestaResource::<T>>
-        
-        let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults())?;
-        // info!("xml: {:#?}", xml.clone());
-        
-        let typed_value = from_value(xml.clone()); 
+        let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
 
-        if let Ok(typed_value) = typed_value{
-            info!("OK: {typed_value:#?}");
-            return Ok(typed_value);
-        }else{
-            info!("{:#?}", xml["prestashop"][resource.as_str()].clone());
-            let x: T = from_value(xml["prestashop"][resource.as_str()].clone())?;
+        let x: Vec<T> = from_value(xml["prestashop"][resource.as_str()]["employee"].clone()).unwrap();
+
+        if let Some(subresource) = get_subresource{
+            for item in x.iter().take(10){
+                if let Some(field_value) = item.get_subresource(&subresource) {
+                    let _ = self.request_subresources_by_name(&resource, &field_value).await;
+                } else {
+                    info!("field {} not found in item: {:#?}", subresource, item);
+                }
+            }
             return Ok(x);
-        }
-        // if let Some(subresource) = get_subresource{
-        //     // for resources in &presta_info.prestashop.employees.employee[0..5]{
-        //         // request_subresources(client.clone(), resources).await?;
-        //     // }
-        // }
+        }else{ return Ok(x); }
+
     }
-    
-    pub async fn request_subresources(&self, resources: &Data) -> anyhow::Result<Value, anyhow::Error>{
-        let response: Value = self.client // 2063620
+
+    pub async fn request_subresources_by_name<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: &String, subresource: &String) 
+        -> anyhow::Result<T, anyhow::Error>
+    {
+        let response: String = self.client 
+            .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}/{subresource}"))   // .header(CONTENT_TYPE, "application/json") .header(ACCEPT, "application/json") // .json(&params)
+            .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        let xml_val = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
+        info!("RESOURCE: {xml_val:#?}");
+        let new: T = from_value(xml_val["prestashop"]["employee"].clone()).unwrap();
+        info!("new: Employee: {new:#?}");
+        Ok(())
+    }
+
+    pub async fn request_subresources_by_link(&self, resources: &Data) 
+        -> anyhow::Result<Value, anyhow::Error>
+    {
+
+        // 2063620
+
+        let response: Value = self.client 
             .get(resources.link.clone())   // .header(CONTENT_TYPE, "application/json") .header(ACCEPT, "application/json") // .json(&params)
             .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
             .send()
@@ -98,7 +116,7 @@ impl Prestashop {
     
         
 
-        debug!("RESOURCE: {:?}", response.clone());
+        info!("RESOURCE: {:?}", response.clone());
         Ok(response)
     }
 }

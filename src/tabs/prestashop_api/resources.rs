@@ -181,3 +181,25 @@ pub struct Order{
     /// ✔️
     total_paid: String, 
 }
+
+pub trait SubResource {
+    fn get_subresource(&self, field: &str) -> Option<String>;
+}
+
+
+impl SubResource for Employee {
+    fn get_subresource(&self, field: &str) -> Option<String> {
+        match field {
+            "id" => Some(self.id.to_string()),
+            "lastname" => Some(self.lastname.clone()),
+            "firstname" => Some(self.firstname.clone()),
+            "email" => Some(self.email.clone()),
+            "active" => Some(self.active.to_string()),
+            "id_profile" => Some(self.id_profile.to_string()),
+            "id_last_order" => Some(self.id_last_order.to_string()),
+            "id_last_customer_message" => Some(self.id_last_customer_message.to_string()),
+            "id_last_customer" => Some(self.id_last_customer.to_string()),
+            _ => None,
+        }
+    }
+}

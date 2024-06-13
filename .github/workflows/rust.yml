@@ -7,7 +7,7 @@ env:
 
 jobs:
   build:
-    runs-on: self-hosted
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
@@ -75,9 +75,11 @@ jobs:
 
     - name: Create tag
       if: ${{ github.event_name == 'push' }}
+      # ${{ steps.foo.outputs.app_version }}
+      # ${{ steps.foo.outputs.app_version }}
       run: |
-        git tag v${{ steps.foo.outputs.app_version }}
-        git push origin v${{ steps.foo.outputs.app_version }}
+        git tag v 
+        git push origin v
 
     - uses: svenstaro/upload-release-action@v2
       name: Upload binaries to release
