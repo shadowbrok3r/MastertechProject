@@ -252,6 +252,7 @@ impl eframe::App for MasterTechApp {
                         &"Profiler".to_string(),
                         &"QC".to_string(),
                         &"Tasks".to_string(),
+                        &"Websockets".to_string()
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)

@@ -84,7 +84,6 @@ pub struct SystemInformation {
 //         hardware_test_results: HardwareTests,
 //     ) -> Self{
 //         let pre_ticket_clone = pre_ticket.clone();
-
 //         let customer_data = CustomerData{
 //             id: None,
 //             computers: None,
@@ -99,12 +98,9 @@ pub struct SystemInformation {
 //             num_inv: pre_ticket_clone.total_invoice_count.parse::<i32>().unwrap_or(0),
 //             part_order_links: None,
 //         };
-
 //         let mut current_antivirus: Vec<String> = Vec::new();
 //         current_antivirus.push("webroot".to_string());
 //         current_antivirus.push("superantiSpyware".to_string());
-
-
 //         let service_ticket = TicketData {
 //             service_number: service_number.parse::<i32>().unwrap(),
 //             checkin_rep: pre_ticket_clone.checkin_rep,
@@ -120,8 +116,7 @@ pub struct SystemInformation {
 //             current_antivirus: Some(current_antivirus),
 //             hardware_test_results,
 //             ..Default::default()
-//         };
-        
+//         }; 
 //         // due_date: pre_ticket_clone.due_date.unwrap(),
 //         let _ticket_payload = TicketPayload { 
 //             id: None,
@@ -139,10 +134,8 @@ pub struct SystemInformation {
 //             doc_alias: todo!(), current_antivirus: todo!(), 
 //             hardware_test_results };
 //         info!("Ticket Response: {ticket_payload:#?}");
-        
 //         ticket_payload
 //     }
-
 //  }
 
 pub async fn send_payload(        
