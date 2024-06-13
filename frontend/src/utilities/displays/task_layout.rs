@@ -40,7 +40,7 @@ impl TaskLayout {
             column_names,
             database,
             ui_actions_tx,
-            search_inputs: HashMap::new()
+            search_inputs: HashMap::new(),
         }
     }
 

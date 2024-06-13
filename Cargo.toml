@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members=["frontend", "database"] #  , "websocket_server"
+members=[ "frontend", "database" ] #  , "websocket_server"
 
 
 [workspace.dependencies]
