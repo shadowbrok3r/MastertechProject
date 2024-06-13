@@ -5,7 +5,7 @@ use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload}, GetKeysResponse, PreTicketData}, handle_api::{api_request::SendRequest, scaffold::{self, HardwareTest}}, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, prestashop_api::api::PrestashopData}};
+use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload}, GetKeysResponse, PreTicketData}, handle_api::{api_request::SendRequest, scaffold::{self, HardwareTest}}, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, prestashop_api::api::PrestashopData, websockets::WebConsoleFrontend}};
 use egui_file::FileDialog;
 
 impl TabViewer for MastertechContext {
@@ -75,6 +75,9 @@ impl TabViewer for MastertechContext {
 pub struct MastertechContext { 
     pub so_number: String,
     pub recommendations: String,
+    pub url: String,
+    pub error: String,
+    pub frontend: Option<WebConsoleFrontend>,
 
     pub ticket_info: PreTicketData,
     pub keys: GetKeysResponse,
@@ -168,8 +171,7 @@ impl Default for MasterTechApp {
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
         
-        let [_a, _b] = tree
-            .main_surface_mut()
+        let [_a, _b] = tree.main_surface_mut()
             .split_left(
                 NodeIndex::root(),
                 0.30, 
@@ -177,20 +179,18 @@ impl Default for MasterTechApp {
                     "File Browser 📂".to_owned(),
         ]);
 
-        let [_a, b] = tree
-            .main_surface_mut()
+        let [_a, b] = tree.main_surface_mut()
             .split_below(
                 NodeIndex::root(),
                 0.65, 
                 vec![
                     "Console".to_owned(),
                     "Tasks".to_owned(),
-                    "Websocket Stuffs".to_owned()
+                    "Websockets".to_owned()
             ]
         );
 
-        let [_, _] = tree
-            .main_surface_mut()
+        let [_, _] = tree.main_surface_mut()
             .split_left(
             b,
             0.45,
@@ -200,8 +200,7 @@ impl Default for MasterTechApp {
             ],
         );
 
-        let [_, _] = tree
-            .main_surface_mut()
+        let [_, _] = tree.main_surface_mut()
             .split_left(
             b,
             0.20,
@@ -236,6 +235,10 @@ impl Default for MasterTechApp {
         let context = MastertechContext {
             so_number: "".to_string(),
             recommendations: "".to_string(),
+
+            url: "ws://127.0.0.1:8081/websocket".to_owned(),
+            error: Default::default(),
+            frontend: None,
 
             ticket_info: PreTicketData::default(),
 
