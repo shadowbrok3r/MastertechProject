@@ -54,7 +54,7 @@ impl Prestashop {
         client: Client, display: String, filter: Option<String>, limit: Option<i32>, schema: Option<String>,
     ) -> Self { Self { client, display, filter, limit, schema } }
 
-    pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: String, get_subresource: Option<String>) 
+    pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: String, name: String, get_subresource: Option<String>) 
         -> anyhow::Result<Vec<T>, anyhow::Error>
     {
         let response = self.client // 2063620
@@ -66,13 +66,13 @@ impl Prestashop {
             .await?;
         
         let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
-
-        let x: Vec<T> = from_value(xml["prestashop"][resource.as_str()]["employee"].clone()).unwrap();
+        info!("XML: {xml:#?}");
+        let x: Vec<T> = from_value(xml["prestashop"][resource.as_str()][name.clone()].clone()).unwrap();
 
         if let Some(subresource) = get_subresource{
             for item in x.iter().take(10){
                 if let Some(field_value) = item.get_subresource(&subresource) {
-                    let _ = self.request_subresources_by_name(&resource, &field_value).await;
+                    let _ = self.request_subresources_by_name::<T>(&resource, &name, &field_value).await;
                 } else {
                     info!("field {} not found in item: {:#?}", subresource, item);
                 }
@@ -82,7 +82,7 @@ impl Prestashop {
 
     }
 
-    pub async fn request_subresources_by_name<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: &String, subresource: &String) 
+    pub async fn request_subresources_by_name<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: &String, name: &String, subresource: &String) 
         -> anyhow::Result<T, anyhow::Error>
     {
         let response: String = self.client 
@@ -94,10 +94,9 @@ impl Prestashop {
             .await?;
 
         let xml_val = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
-        info!("RESOURCE: {xml_val:#?}");
-        let new: T = from_value(xml_val["prestashop"]["employee"].clone()).unwrap();
-        info!("new: Employee: {new:#?}");
-        Ok(())
+        let new: T = from_value(xml_val["prestashop"][name].clone()).unwrap();
+        info!("new: {new:#?}");
+        Ok(new)
     }
 
     pub async fn request_subresources_by_link(&self, resources: &Data) 

@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Button, Grid, Layout, RichText, Ui};
 use log::info;
-use resources::Employee;
+use resources::{Employee, Order};
 
 use crate::app_state::MastertechContext;
 
@@ -31,8 +31,10 @@ impl MastertechContext {
                     tokio::spawn(async move {
                         let api_call = self::api::Prestashop::default();
 
-                        let employees: Vec<Employee> = api_call.request_resource("employees".to_string(), Some("id".to_string())).await.unwrap();
-                        println!("employees: {:?}", employees);
+                        // let employees: Vec<Employee> = api_call.request_resource("employees".to_string(), "employee".to_string(), Some("id".to_string())).await.unwrap();
+                        let orders: Vec<Order> = api_call.request_resource("orders".to_string(), "order".to_string(), Some("id_cart".to_string())).await.unwrap();
+                        let orders_1: Vec<Order> = api_call.request_resource("orders".to_string(),"order".to_string(),  Some("id_customer".to_string())).await.unwrap();
+                        // println!("employees: {:?}", employees);
                         // match tx.try_send(PrestashopData::Orders(orders)){
                         //     Ok(_) => drop(tx),
                         //     Err(err) => info!("Error: {err:?}"),
