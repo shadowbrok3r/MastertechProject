@@ -2,10 +2,8 @@ use log::{debug, info};
 use reqwest::{header::AUTHORIZATION, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_value, Value};
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 use quickxml_to_serde::{xml_string_to_json, Config as xmlConfig};
-
-use crate::tabs::prestashop_api::resources::Employee;
 
 use super::resources::{Addresses, Employees, Orders, SubResource};
 
@@ -32,7 +30,7 @@ pub struct Prestashop{
     */ 
     filter: Option<String>,
     /// number, or starting index (limit from number to the index)
-    limit: Option<i32>,
+    limit: Option<(i32, i32)>,
     // data_channel: PrestaDataChannel
 }
 
@@ -41,7 +39,7 @@ impl Default for Prestashop{
         Self {
             client: Client::new(),
             schema: None,
-            display: "?display=full".to_string(),
+            display: "full".to_string(),
             filter: None,
             limit: None,
         }
@@ -51,8 +49,48 @@ impl Default for Prestashop{
 impl Prestashop {
 
     pub fn new<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(
-        client: Client, display: String, filter: Option<String>, limit: Option<i32>, schema: Option<String>,
+        client: Client, display: String, filter: Option<String>, limit: Option<(i32, i32)>, schema: Option<String>,
     ) -> Self { Self { client, display, filter, limit, schema } }
+
+    pub fn query_args(&self, resource_name: &str, url_params: HashMap<&str, &str>) -> String {
+        let base_url = format!("https://pclaptops-dev.mojo11.com/api/{}", resource_name);
+        
+        let mut query_params = vec![];
+
+        // Adding `display` parameter
+        // if !self.display.is_empty() {
+        //     query_params.push(format!("display={}", self.display));
+        // }
+
+        // Adding `schema` parameter if present
+        if let Some(ref schema) = self.schema {
+            query_params.push(format!("schema={}", schema));
+        }
+
+        // Adding `filter` parameter if present
+        if let Some(ref filter) = self.filter {
+            query_params.push(format!("filter[{}]={}", resource_name, filter));
+        }
+
+        // Adding `limit` parameter if present
+        if let Some((start, end)) = self.limit {
+            query_params.push(format!("limit={},{}", start, end));
+        }
+
+        // Adding other URL parameters
+        for (key, value) in url_params {
+            query_params.push(format!("{}={}", key, value));
+        }
+
+        // Constructing the final URL
+        let query_string = if !query_params.is_empty() {
+            format!("?{}", query_params.join("&"))
+        } else {
+            String::new()
+        };
+
+        format!("{}{}", base_url, query_string)
+    }
 
     pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: String, name: String, get_subresource: Option<String>) 
         -> anyhow::Result<Vec<T>, anyhow::Error>
@@ -82,6 +120,29 @@ impl Prestashop {
 
     }
 
+    pub async fn request_resource_test<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource_name: &str, url_params: HashMap<&str, &str>) 
+        -> anyhow::Result<Vec<T>, anyhow::Error>
+    {
+        info!("resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}", self.query_args(resource_name, url_params.clone()));
+        
+        let response = self.client // 2063620
+            .get(self.query_args(resource_name, url_params)) // ?output_format=JSON
+            .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
+            .send()
+            .await?
+            .text()
+            .await?;
+        
+        let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
+        info!("XML: {xml:#?}");
+        let x: Vec<T> = from_value(xml["prestashop"].clone()).unwrap(); // [resource_name.as_str()][name.clone()].clone()).unwrap();
+
+        Ok(x)
+
+    }
+
+
+
     pub async fn request_subresources_by_name<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: &String, name: &String, subresource: &String) 
         -> anyhow::Result<T, anyhow::Error>
     {
@@ -99,24 +160,49 @@ impl Prestashop {
         Ok(new)
     }
 
-    pub async fn request_subresources_by_link(&self, resources: &Data) 
-        -> anyhow::Result<Value, anyhow::Error>
+    pub async fn request_resource_link<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, name: String, get_subresource: Option<String>) 
+        -> anyhow::Result<Vec<T>, anyhow::Error>
     {
-
-        // 2063620
-
-        let response: Value = self.client 
-            .get(resources.link.clone())   // .header(CONTENT_TYPE, "application/json") .header(ACCEPT, "application/json") // .json(&params)
+        let response = self.client // 2063620
+            .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}{}", self.display)) // ?output_format=JSON
             .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
             .send()
             .await?
-            .json()
+            .text()
             .await?;
-    
         
+        let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
+        info!("XML: {xml:#?}");
+        let x: Vec<T> = from_value(xml["prestashop"][resource.as_str()][name.clone()].clone()).unwrap();
 
-        info!("RESOURCE: {:?}", response.clone());
-        Ok(response)
+        if let Some(subresource) = get_subresource{
+            info!("data: {subresource:#?}");
+            for item in x.iter().take(10){
+                info!("data: {item:#?}");
+                // let _ = self.request_subresources_by_link(&resource).await;
+            }
+            return Ok(x);
+        }else{ return Ok(x); }
+
+    }
+
+    pub async fn request_subresources_by_id<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, name: String, id: &i32) 
+        -> anyhow::Result<T, anyhow::Error>
+    {
+        let response: String = self.client 
+            .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}/{id}"))   // .header(CONTENT_TYPE, "application/json") .header(ACCEPT, "application/json") // .json(&params)
+            .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
+
+        info!("RESOURCE: {xml:#?}");
+        let x: T = from_value(xml["prestashop"][name.as_str()].clone()).unwrap();
+        info!("x: T: {x:#?}");
+        Ok(x)
     }
 }
 

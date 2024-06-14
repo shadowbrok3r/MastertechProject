@@ -45,7 +45,7 @@ impl Database{
 
         // Select a specific namespace / database
         let jwt = database.signin(
-            Scope { namespace: "Mastertech", database: "MastertechDB", scope: "user",
+            Scope { namespace: "Mastertech", database: "MastertechDB", scope: "user", // access
                 params: Auth{email: "t@t.com".to_string(), password: "toor".to_string()}
             }).await.unwrap();
         info!("JWT: {:?}", jwt.as_insecure_token());

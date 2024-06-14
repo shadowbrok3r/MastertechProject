@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use eframe::egui::{Align, Button, Grid, Layout, RichText, Ui};
 use log::info;
 use resources::{Employee, Order};
@@ -32,8 +34,14 @@ impl MastertechContext {
                         let api_call = self::api::Prestashop::default();
 
                         // let employees: Vec<Employee> = api_call.request_resource("employees".to_string(), "employee".to_string(), Some("id".to_string())).await.unwrap();
-                        let orders: Vec<Order> = api_call.request_resource("orders".to_string(), "order".to_string(), Some("id_cart".to_string())).await.unwrap();
-                        let orders_1: Vec<Order> = api_call.request_resource("orders".to_string(),"order".to_string(),  Some("id_customer".to_string())).await.unwrap();
+                        // let employees: Vec<Employee> = api_call.request_resource_link("employees".to_string(), "employee".to_string(), Some("id".to_string())).await.unwrap();
+                        // let orders: Vec<Order> = api_call.request_resource_link("orders".to_string(), "order".to_string(), Some("id".to_string())).await.unwrap();
+                        // let x: Order = api_call.request_subresources_by_id("orders".to_string(), "order".to_string(),&3).await.unwrap();
+                        let mut query = HashMap::new();
+                        query.insert("filter[id_employee]", "48");
+
+                        let y: Vec<Order> = api_call.request_resource_test("orders", query).await.unwrap();
+                        // let orders_1: Vec<Order> = api_call.request_resource("orders".to_string(),"order".to_string(),  Some("id_customer".to_string())).await.unwrap();
                         // println!("employees: {:?}", employees);
                         // match tx.try_send(PrestashopData::Orders(orders)){
                         //     Ok(_) => drop(tx),

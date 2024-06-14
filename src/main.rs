@@ -95,27 +95,27 @@ impl eframe::App for MasterTechApp {
 
             tokio::spawn(async move {
                 let system_info = ComputerData::get_computer_data().await;
-                let database = Database::new().await;
+                // let database = Database::new().await;
 
-                match sysinfo_tx.send(system_info.unwrap()){
+                match sysinfo_tx.try_send(system_info.unwrap()){
                     Ok(_) => info!("sent computer data"),
                     Err(e) => info!("Error sending computer data: {e:?}"),
                 };
 
-                match db_tx.send(database){
-                    Ok(_) => info!("Sent db connection across thread"),
-                    Err(err) => debug!("Error sending db connection: {err:?}"),
-                }
+                // match db_tx.try_send(database){
+                //     Ok(_) => info!("Sent db connection across thread"),
+                //     Err(err) => debug!("Error sending db connection: {err:?}"),
+                // }
                 
             });
 
-            if let Ok(db) = self.context.db_rx.recv(){
+            if let Ok(db) = self.context.db_rx.try_recv(){
                 info!("Received DB connection from thread");
                 self.context.database = Some(db);
             }
 
 
-            let specs = match self.context.computer_specs_rx.recv(){
+            let specs = match self.context.computer_specs_rx.try_recv(){
                 Ok(data) => Ok(data),
                 Err(e) => Err(e),
             };

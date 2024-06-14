@@ -69,6 +69,8 @@ pub struct Resources {
     pub tags: String,           
 }
 
+
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Addresses{
     ///❌     isNullOrUnsignedId  
@@ -150,18 +152,24 @@ pub struct Orders{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Order{
-    id_address_delivery: i32, // ✔️
-    id_cart: i32, // ✔️
-    id_customer: i32, // ✔️
-    current_state: String, // ❌
-    module: String, // ✔️
+    id_address_delivery: Data, // ✔️
+    id_customer: Data, // ✔️
+    id_cart: Data, // ✔️
     invoice_number: i32, // ❌		
     invoice_date: String, // ❌		
     date_add: String, // ❌
     date_upd: String, // ❌
-    shipping_number: String, // ❌
-    note: String, // ❌
-    total_paid: String, // ✔️
+    id_employee_sales_rep: i32,
+    id_employee_split_rep: i32,
+    id_employee_editing: i32,
+    id_order_everest: i32,
+    id_store: i32, // 1 = warehouse
+    total_paid: f32, // ✔️
+    reference: String, // what prestashop sees since order id and reference are different...
+    id_order_parent: i32, // no idea
+    shipping_number: String, // Tracking number
+    order_type: String, // Configurator / Sales Order
+    // note: String, // ❌
     associations: Associations
 }
 
@@ -177,6 +185,8 @@ pub struct OrderRow{
 
 pub trait SubResource {
     fn get_subresource(&self, field: &str) -> Option<String>;
+    fn get_name(&self) -> String;
+    fn get_resource_name(&self) -> String;
 }
 
 
@@ -195,24 +205,40 @@ impl SubResource for Employee {
             _ => None,
         }
     }
+
+    fn get_resource_name(&self) -> String {
+        "employees".to_string()
+    }
+
+    fn get_name(&self) -> String {
+        "employee".to_string()
+    }
 }
 
-impl SubResource for Order{
-    fn get_subresource(&self, field: &str) -> Option<String> {
-        match field {
-            "id_address_delivery" => Some(self.id_address_delivery.to_string()),
-            "id_cart" => Some(self.id_cart.to_string()),
-            "id_customer" => Some(self.id_customer.to_string()),
-            "current_state" => Some(self.current_state.to_string()),
-            "module" => Some(self.module.to_string()),
-            "invoice_number" => Some(self.invoice_number.to_string()),
-            "invoice_date" => Some(self.invoice_date.to_string()),
-            "date_add" => Some(self.date_add.to_string()),
-            "date_upd" => Some(self.date_upd.to_string()),
-            "shipping_number" => Some(self.shipping_number.to_string()),
-            "note" => Some(self.note.to_string()),
-            "total_paid" => Some(self.total_paid.to_string()),
-            _ => None,
-        }
-    }
+// impl SubResource for Order{
+//     fn get_subresource(&self, field: &str) -> Option<String> {
+//         match field {
+//             "id_address_delivery" => Some(self.id_address_delivery.to_string()),
+//             "id_cart" => Some(self.id_cart.to_string()),
+//             // "id_customer" => Some(self.id_customer.to_string()),
+//             // "current_state" => Some(self.current_state.to_string()),
+//             // "module" => Some(self.module.to_string()),
+//             // "invoice_number" => Some(self.invoice_number.to_string()),
+//             // "invoice_date" => Some(self.invoice_date.to_string()),
+//             // "date_add" => Some(self.date_add.to_string()),
+//             // "date_upd" => Some(self.date_upd.to_string()),
+//             // "shipping_number" => Some(self.shipping_number.to_string()),
+//             // "note" => Some(self.note.to_string()),
+//             // "total_paid" => Some(self.total_paid.to_string()),
+//             _ => None,
+//         }
+//     }
+// }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Data{
+    #[serde(rename="@id")]
+    id: Option<i32>,
+    #[serde(rename="@xlink:href")]
+    link: String
 }
