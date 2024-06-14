@@ -48,9 +48,10 @@ shell-words = "1"
 rust_socketio = { version = "0.6", features = ["async"] }
 reqwest_cookie_store = "0.8"
 anyhow = "1"
-surrealdb = { version = "1.5", features = ["default"] }
 sha2 = { version = "0.10", features = ["std"] }
 wmi = "0.13"
+surrealdb = { version = "1.5", features = ["default"] }
+# surrealdb-alpha = { version = "2", features = ["default"] }
 
 quickxml_to_serde = "0.6"
 
@@ -98,10 +99,10 @@ strip = "debuginfo"
 debug = false
 opt-level = 3
 
-[profile.dev]
-debug = true
-lto = false
-strip = false
+# [profile.dev]
+# debug = true
+# lto = false
+# strip = false
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "2"
