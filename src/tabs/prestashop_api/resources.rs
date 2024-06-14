@@ -150,36 +150,29 @@ pub struct Orders{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Order{
-    /// ✔️
-    id_address_delivery: i32, 
-    /// ✔️
-    id_cart: i32, 
-    /// ✔️
-    id_customer: i32, 
-    /// ❌
-    current_state: String, 
-    /// ✔️
-    module: String, 
-    /// ❌		
-    invoice_number: i32, 
-    /// ❌		
-    invoice_date: String, 
-    /// ❌		
-    valid: i32, 
-    /// ❌
-    date_add: String, 
-    /// ❌
-    date_upd: String, 
-    /// ❌
-    shipping_number: String, 
-    /// ❌
-    note: String, 
-    /// ❌
-    id_shop: i32, 
-    /// ❌
-    total_discounts: String,
-    /// ✔️
-    total_paid: String, 
+    id_address_delivery: i32, // ✔️
+    id_cart: i32, // ✔️
+    id_customer: i32, // ✔️
+    current_state: String, // ❌
+    module: String, // ✔️
+    invoice_number: i32, // ❌		
+    invoice_date: String, // ❌		
+    date_add: String, // ❌
+    date_upd: String, // ❌
+    shipping_number: String, // ❌
+    note: String, // ❌
+    total_paid: String, // ✔️
+    associations: Associations
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Associations{
+    order_rows: OrderRow
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct OrderRow{
+    
 }
 
 pub trait SubResource {
@@ -199,6 +192,26 @@ impl SubResource for Employee {
             "id_last_order" => Some(self.id_last_order.to_string()),
             "id_last_customer_message" => Some(self.id_last_customer_message.to_string()),
             "id_last_customer" => Some(self.id_last_customer.to_string()),
+            _ => None,
+        }
+    }
+}
+
+impl SubResource for Order{
+    fn get_subresource(&self, field: &str) -> Option<String> {
+        match field {
+            "id_address_delivery" => Some(self.id_address_delivery.to_string()),
+            "id_cart" => Some(self.id_cart.to_string()),
+            "id_customer" => Some(self.id_customer.to_string()),
+            "current_state" => Some(self.current_state.to_string()),
+            "module" => Some(self.module.to_string()),
+            "invoice_number" => Some(self.invoice_number.to_string()),
+            "invoice_date" => Some(self.invoice_date.to_string()),
+            "date_add" => Some(self.date_add.to_string()),
+            "date_upd" => Some(self.date_upd.to_string()),
+            "shipping_number" => Some(self.shipping_number.to_string()),
+            "note" => Some(self.note.to_string()),
+            "total_paid" => Some(self.total_paid.to_string()),
             _ => None,
         }
     }
