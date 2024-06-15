@@ -2,16 +2,17 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use database::{Database, Record};
 use log::info;
-use schema::{ComputerId, CustomerId, LiveTaskPayload, Status, TicketId, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE};
+use schema::{ComputerId, CustomerId, LiveTaskPayload, Status, Store, TicketId, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use surrealdb::sql::Thing;
-use crate::{database::schema::{CustomerData, TicketData}, handle_api::Store};
+use crate::database::schema::{CustomerData, TicketData};
 
 use self::schema::{ComputerData, HardwareTests};
 
 pub mod database;
 pub mod schema;
+pub mod prestashop_schema;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PreTicketData{
@@ -167,7 +168,7 @@ pub async fn send_payload(
         tech.clone(),
     ).await?;
 
-    let pre_ticket_clone = pre_ticket.clone();
+    let mut pre_ticket_clone = pre_ticket.clone();
 
     let mut current_antivirus: Vec<String> = Vec::new();
     current_antivirus.push("webroot".to_string());

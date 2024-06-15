@@ -5,7 +5,7 @@ use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, TaskPayload}, GetKeysResponse, PreTicketData}, handle_api::{api_request::SendRequest, scaffold::{self, HardwareTest}}, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, prestashop_api::api::PrestashopData, websockets::WebConsoleFrontend}};
+use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, PrestashopPayload, TaskPayload}, GetKeysResponse, PreTicketData}, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
 use egui_file::FileDialog;
 
 impl TabViewer for MastertechContext {
@@ -141,10 +141,11 @@ pub struct MastertechContext {
     pub db_data_receiver: Receiver<Vec<TaskPayload>>,
     pub db_data_sender: Sender<Vec<TaskPayload>>,
     // pub presta_data: PrestaDataChannel<T>,
-    pub prestashop_api_rx: Receiver<PrestashopData>,
-    pub prestashop_api_tx: Sender<PrestashopData>, 
+    pub prestashop_api_rx: Receiver<PrestashopPayload>,
+    pub prestashop_api_tx: Sender<PrestashopPayload>, 
     pub computer_specs_tx: Sender<ComputerData>,
     pub computer_specs_rx: Receiver<ComputerData>,
+
     pub db_tx: Sender<Database>,
     pub db_rx: Receiver<Database>,
     pub cps_keys_tx: Sender<GetKeysResponse>,

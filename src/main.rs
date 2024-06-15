@@ -1,77 +1,26 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{fs::File, sync::{atomic::Ordering, Arc}};
+use std::{fs::File, sync:: Arc};
 use log::{debug, info};
 use app_state::MasterTechApp;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{style::Style, CentralPanel, Color32, Context, FontId, Frame, IconData, Stroke, TopBottomPanel, Vec2, ViewportBuilder, ViewportId};
-use egui_dock::{DockArea, Style as DockStyle};
+use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use self_update::cargo_crate_version;
 use database::{database::Database, schema::ComputerData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
-use crate::handle_api::scaffold;
-use tabs::mastertech_website::websocket::WebSocket;
+use tabs::{mastertech_website::websocket::WebSocket, tur_sheet::scaffold::AsanaResponse};
 
 pub mod app_state;
 pub mod tabs;
 mod filesystem;
-mod handle_api;
 mod database;
-
-// #[cfg(not(feature = "compat_mode"))]
-#[tokio::main]
-async fn main() -> eframe::Result<()> {
-    puffin::set_scopes_on(true);
-    
-    // Configure log level and log file
-    let log_level = LevelFilter::Info; 
-    let log_file = File::create("output.log").unwrap();
-
-    // Init the logger
-    WriteLogger::init( 
-        log_level,
-        Config::default(),
-        log_file
-    ).unwrap();
-
-    eframe::run_native(
-        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
-        eframe::NativeOptions {
-            viewport: ViewportBuilder::default()
-                .with_inner_size([945.0, 750.0])
-                .with_drag_and_drop(true)
-                .with_icon(load_icon()),
-            ..Default::default()
-        },
-        Box::new(|_cc| Box::<MasterTechApp>::default()),
-    )
-}
+pub mod pages;
+pub mod viewports;
 
 // #[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        let theme = CarlDark;
-        let mut custom_style: Style = theme.custom_style();
-        let mut font = FontId::default();
-        custom_style.spacing.button_padding.x = 2.0;
-        custom_style.spacing.button_padding.y = 2.0;
-        custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
-        font.size = 12.0;
-        custom_style.override_font_id = Some(font);
-        custom_style.spacing.combo_height = 60.0; 
-        custom_style.spacing.combo_width = 135.0;
-        custom_style.visuals.selection.stroke.color =  Color32::BLACK;
-        custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
-        custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
-        custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-        custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
-        custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
-        custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
-        custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
-        custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
-        custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
-
-        let arc_style = Arc::new(custom_style);
+        // most important part of the whole app.. setting up our styling
+        let arc_style = set_style();
         ctx.set_style(arc_style);
         
         if self.context.connect_to_ws || self.context.disconnect_ws{
@@ -196,7 +145,7 @@ impl eframe::App for MasterTechApp {
                 }
                 self.context.spinner = false;
             }
-            else if let Ok(info) = serde_json::from_str::<crate::handle_api::AsanaResponse>(&message) { 
+            else if let Ok(info) = serde_json::from_str::<AsanaResponse>(&message) { 
                 if let Some(e) = info.status{
                     self.context.output_text = format!("Status Code: {e:#?}");
                 };
@@ -209,7 +158,6 @@ impl eframe::App for MasterTechApp {
         }
         
         if let Some(dialog) = &mut self.context.open_file_dialog {
-            
             if dialog.show(&ctx).selected() {
                 if let Some(file) = dialog.path() {
                     self.context.opened_file = Some(file.to_path_buf());
@@ -217,84 +165,82 @@ impl eframe::App for MasterTechApp {
             }
         }
     
-
-        if self.context.show_deferred_viewport.load(Ordering::Relaxed) {
-            let file_browser_clone = Arc::clone(&self.context.file_browser);
-            let show_deferred_viewport = self.context.show_deferred_viewport.clone();
-            let viewport_id = ViewportId::from_hash_of("deferred_viewport");
-            let viewport_builder = ViewportBuilder::default().with_title("File Browser").with_inner_size([400.0, 500.0]);
-            ctx.show_viewport_deferred(viewport_id,viewport_builder,move |ctx, _class| {
-                    CentralPanel::default().show(ctx, |ui| {
-                        let (command_tx, command_rx) = crossbeam::channel::unbounded();
-                        // Lock the Mutex and show the GUI
-                        let mut file_browser = file_browser_clone.lock().unwrap();
-                        file_browser.show(ui, command_tx, command_rx);
-                    });
-                    if ctx.input(|i| i.viewport().close_requested()) {
-                        // Tell parent to close us.
-                        show_deferred_viewport.store(false, Ordering::Relaxed);
-                    }
-                },
-            );
+        if let Ok(data) = self.context.prestashop_api_rx.try_recv(){
+            self.context.output_text += serde_json::to_string(&data).unwrap().as_str();
         }
 
-        TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
-            eframe::egui::menu::bar(ui, |ui| {
-                ui.menu_button("View", |ui| {
-                    // allow certain tabs to be toggled
-                    for tab in &[
-                        &"TUR Sheet".to_string(),
-                        &"Scripts".to_string(),
-                        &"Console".to_string(),
-                        &"System Information".to_string(),
-                        &"File Browser 📂".to_string(),
-                        &"Minidump Analysis".to_string(),
-                        &"Profiler".to_string(),
-                        &"QC".to_string(),
-                        &"Tasks".to_string(),
-                        &"Websockets".to_string()
-                    ] {
-                        if ui
-                            .selectable_label(self.context.open_tabs.contains(*tab), *tab)
-                            .clicked()
-                        {
-                            if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-                                self.tree.remove_tab(index);
-                                self.context.open_tabs.remove(*tab);
-                            } else {
-                                self.tree.push_to_focused_leaf(tab.to_string());
-                            }
-                            ui.close_menu();
-                        }
-                    }
-                });
-            })
-        });
-    
-        CentralPanel::default() // When displaying a DockArea in another UI, it looks better
-            .frame(Frame::central_panel(&ctx.style()).inner_margin(4.)) // to set inner margins to 0.
-            .show(ctx, |ui| {
-                let mut style = self.context.style.get_or_insert(DockStyle::from_egui(ui.style())).clone();
-                style.overlay.selection_color = Color32::from_rgb(92,0,87);
-                style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
-                style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
-                style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
-                style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
-                style.main_surface_border_rounding.nw = 15.0;
-                style.main_surface_border_rounding.ne = 15.0;
-                style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
-    
-                DockArea::new(&mut self.tree)
-                    .style(style)
-                    .show_close_buttons(self.context.show_close_buttons)
-                    .show_add_buttons(self.context.show_add_buttons)
-                    .show_add_popup(true)
-                    .draggable_tabs(self.context.draggable_tabs)
-                    .show_tab_name_on_hover(self.context.show_tab_name_on_hover)
-                    .show_inside(ui, &mut self.context);
-            });
+        self.main_page(ctx);
+        self.viewport_loader(ctx);
     }
 }
+
+// #[cfg(not(feature = "compat_mode"))]
+#[tokio::main]
+async fn main() -> eframe::Result<()> {
+    puffin::set_scopes_on(true);
+    
+    // Configure log level and log file
+    let log_level = LevelFilter::Info; 
+    let log_file = File::create("output.log").unwrap();
+
+    // Init the logger
+    WriteLogger::init( 
+        log_level,
+        Config::default(),
+        log_file
+    ).unwrap();
+
+    eframe::run_native(
+        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
+        eframe::NativeOptions {
+            viewport: ViewportBuilder::default()
+                .with_inner_size([945.0, 750.0])
+                .with_drag_and_drop(true)
+                .with_icon(load_icon()),
+            ..Default::default()
+        },
+        Box::new(|_cc| Box::<MasterTechApp>::default()),
+    )
+}
+
+
+fn set_style() -> Arc<Style>{
+    let theme = CarlDark;
+    let mut custom_style: Style = theme.custom_style();
+    let mut font = FontId::default();
+    custom_style.spacing.button_padding.x = 2.0;
+    custom_style.spacing.button_padding.y = 2.0;
+    custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
+    font.size = 12.0;
+    custom_style.override_font_id = Some(font);
+    custom_style.spacing.combo_height = 60.0; 
+    custom_style.spacing.combo_width = 100.0;
+    custom_style.interaction.multi_widget_text_select = false;
+    custom_style.interaction.selectable_labels = false;
+    custom_style.explanation_tooltips = false;
+    custom_style.url_in_tooltip = false;
+    custom_style.interaction.interact_radius = 15.0;
+    custom_style.interaction.resize_grab_radius_side = 15.0;
+    custom_style.interaction.resize_grab_radius_corner = 18.0;
+    custom_style.visuals.window_shadow.spread = 8.0;
+    custom_style.visuals.window_shadow.blur = 10.0;
+    custom_style.visuals.selection.stroke.color =  Color32::BLACK;
+    custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+    // custom_style.visuals.widgets.inactive.bg_fill =  Color32::GOLD;
+    custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
+    custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
+    custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+    custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
+    custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+    custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+    custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+    custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+    custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+    let arc_style = Arc::new(custom_style);
+    arc_style
+}
+
+
 
 // #[cfg(feature = "compat_mode")]
 // #[tokio::main]
