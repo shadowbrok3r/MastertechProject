@@ -6,6 +6,7 @@ use std::{collections::HashMap, fmt::Debug};
 use quickxml_to_serde::{xml_string_to_json, Config as xmlConfig};
 
 use super::resources::{Addresses, Employees, Orders, SubResource};
+const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PrestashopData {
@@ -58,9 +59,9 @@ impl Prestashop {
         let mut query_params = vec![];
 
         // Adding `display` parameter
-        // if !self.display.is_empty() {
-        //     query_params.push(format!("display={}", self.display));
-        // }
+        if !self.display.is_empty() {
+            query_params.push(format!("display={}", self.display));
+        }
 
         // Adding `schema` parameter if present
         if let Some(ref schema) = self.schema {
@@ -92,25 +93,35 @@ impl Prestashop {
         format!("{}{}", base_url, query_string)
     }
 
-    pub async fn request_resource<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: String, name: String, get_subresource: Option<String>) 
+    pub async fn request_resources<T>(
+        &self, 
+        resource_name: &str, 
+        name: &str, 
+        get_subresource: Option<&str>, 
+        url_params: HashMap<&str, &str>
+    ) 
         -> anyhow::Result<Vec<T>, anyhow::Error>
+        where T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource
     {
-        let response = self.client // 2063620
-            .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}{}", self.display)) // ?output_format=JSON
-            .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
+        info!(
+            "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}", 
+            self.query_args(resource_name, url_params.clone())
+        );
+
+        let response = self.client.get(self.query_args(resource_name, url_params))
+            .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .text()
             .await?;
         
         let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
-        info!("XML: {xml:#?}");
-        let x: Vec<T> = from_value(xml["prestashop"][resource.as_str()][name.clone()].clone()).unwrap();
+        let x: Vec<T> = from_value(xml["prestashop"][resource_name][name].clone()).unwrap();
 
         if let Some(subresource) = get_subresource{
             for item in x.iter().take(10){
                 if let Some(field_value) = item.get_subresource(&subresource) {
-                    let _ = self.request_subresources_by_name::<T>(&resource, &name, &field_value).await;
+                    let _ = self.request_subresources_by_name::<T>(&resource_name, &name, &field_value).await;
                 } else {
                     info!("field {} not found in item: {:#?}", subresource, item);
                 }
@@ -120,14 +131,19 @@ impl Prestashop {
 
     }
 
-    pub async fn request_resource_test<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource_name: &str, url_params: HashMap<&str, &str>) 
-        -> anyhow::Result<Vec<T>, anyhow::Error>
+    pub async fn request_resource_test<T>(
+        &self, 
+        resource_name: &str, 
+        name: &str, 
+        get_subresource: Option<&str>, 
+        url_params: HashMap<&str, &str>
+    ) 
+        -> anyhow::Result<T, anyhow::Error>
+        where T: for<'a> Deserialize<'a> + std::fmt::Debug
     {
-        info!("resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}", self.query_args(resource_name, url_params.clone()));
-        
         let response = self.client // 2063620
             .get(self.query_args(resource_name, url_params)) // ?output_format=JSON
-            .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
+            .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .text()
@@ -135,20 +151,18 @@ impl Prestashop {
         
         let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
         info!("XML: {xml:#?}");
-        let x: Vec<T> = from_value(xml["prestashop"].clone()).unwrap(); // [resource_name.as_str()][name.clone()].clone()).unwrap();
+        let x: T = from_value(xml["prestashop"][resource_name][name].clone()).unwrap(); // [resource_name.as_str()][name.clone()].clone()).unwrap();
 
         Ok(x)
 
     }
 
-
-
-    pub async fn request_subresources_by_name<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: &String, name: &String, subresource: &String) 
+    pub async fn request_subresources_by_name<T: for<'a> Deserialize<'a> + std::fmt::Debug + SubResource>(&self, resource: &str, name: &str, subresource: &str) 
         -> anyhow::Result<T, anyhow::Error>
     {
         let response: String = self.client 
             .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}/{subresource}"))   // .header(CONTENT_TYPE, "application/json") .header(ACCEPT, "application/json") // .json(&params)
-            .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
+            .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .text()
@@ -160,12 +174,12 @@ impl Prestashop {
         Ok(new)
     }
 
-    pub async fn request_resource_link<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, name: String, get_subresource: Option<String>) 
+    pub async fn request_resource_link<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: &str, name: &str, get_subresource: Option<&str>) 
         -> anyhow::Result<Vec<T>, anyhow::Error>
     {
         let response = self.client // 2063620
             .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}{}", self.display)) // ?output_format=JSON
-            .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
+            .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .text()
@@ -173,7 +187,7 @@ impl Prestashop {
         
         let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
         info!("XML: {xml:#?}");
-        let x: Vec<T> = from_value(xml["prestashop"][resource.as_str()][name.clone()].clone()).unwrap();
+        let x: Vec<T> = from_value(xml["prestashop"][resource][name.clone()].clone()).unwrap();
 
         if let Some(subresource) = get_subresource{
             info!("data: {subresource:#?}");
@@ -186,12 +200,12 @@ impl Prestashop {
 
     }
 
-    pub async fn request_subresources_by_id<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: String, name: String, id: &i32) 
+    pub async fn request_subresources_by_id<T: for<'a> Deserialize<'a> + std::fmt::Debug>(&self, resource: &str, name: &str, id: &i32) 
         -> anyhow::Result<T, anyhow::Error>
     {
         let response: String = self.client 
             .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}/{id}"))   // .header(CONTENT_TYPE, "application/json") .header(ACCEPT, "application/json") // .json(&params)
-            .header(AUTHORIZATION, "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
+            .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .text()
@@ -199,8 +213,7 @@ impl Prestashop {
 
         let xml = xml_string_to_json(response, &xmlConfig::new_with_defaults()).unwrap();
 
-        info!("RESOURCE: {xml:#?}");
-        let x: T = from_value(xml["prestashop"][name.as_str()].clone()).unwrap();
+        let x: T = from_value(xml["prestashop"][name].clone()).unwrap();
         info!("x: T: {x:#?}");
         Ok(x)
     }
