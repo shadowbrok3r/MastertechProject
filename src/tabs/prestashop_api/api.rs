@@ -5,14 +5,14 @@ use serde_json::{from_value, Value};
 use std::{collections::HashMap, fmt::Debug};
 use quickxml_to_serde::{xml_string_to_json, Config as xmlConfig};
 
-use super::resources::{Addresses, Employees, Orders, SubResource};
+use super::resources::{Address, Employees, Orders, SubResource};
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PrestashopData {
     Orders(Orders),
     Employees(Employees),
-    Addresses(Addresses),
+    Address(Address),
 }
 
 pub struct Prestashop{
