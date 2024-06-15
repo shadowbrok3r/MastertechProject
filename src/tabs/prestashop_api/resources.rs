@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-// use crate::tabs::prestashop_api::deserializer::deserialize_nested;
 
 #[derive(Serialize, Debug)]
 pub struct Resources {
@@ -68,8 +67,6 @@ pub struct Resources {
     /// 	The Products tags
     pub tags: String,           
 }
-
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Addresses{
@@ -152,35 +149,42 @@ pub struct Orders{
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Order{
-    id_address_delivery: Data, // ✔️
-    id_customer: Data, // ✔️
-    id_cart: Data, // ✔️
-    invoice_number: i32, // ❌		
-    invoice_date: String, // ❌		
-    date_add: String, // ❌
-    date_upd: String, // ❌
-    id_employee_sales_rep: i32,
-    id_employee_split_rep: i32,
-    id_employee_editing: i32,
-    id_order_everest: i32,
-    id_store: i32, // 1 = warehouse
-    total_paid: f32, // ✔️
-    reference: String, // what prestashop sees since order id and reference are different...
-    id_order_parent: i32, // no idea
-    shipping_number: String, // Tracking number
-    order_type: String, // Configurator / Sales Order
+    pub id_address_delivery: SubData, // ✔️
+    pub id_customer: SubData, // ✔️
+    pub id_cart: SubData, // ✔️
+    pub invoice_number: i32, // ❌		
+    pub invoice_date: String, // ❌		
+    pub date_add: String, // ❌
+    pub date_upd: String, // ❌
+    pub id_employee_sales_rep: i32,
+    pub id_employee_split_rep: i32,
+    pub id_employee_editing: i32,
+    pub id_order_everest: i32,
+    pub id_store: i32, // 1 = warehouse
+    pub total_paid: f32, // ✔️
+    pub reference: String, // what prestashop sees since order id and reference are different...
+    pub id_order_parent: i32, // no idea
+    // #[serde(flatten)]
+    pub shipping_number: Shipping, // Tracking number
+    pub order_type: String, // Configurator / Sales Order
     // note: String, // ❌
-    associations: Associations
+    // associations: Associations
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Associations{
-    order_rows: OrderRow
+    pub order_rows: OrderRow
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OrderRow{
-    
+    pub id: i32,
+    pub id_order_config: i32,
+    // pub product_id: String,
+    pub product_quantity: i32,
+    pub product_name: f32,
+    pub product_price: String,
+    // pub id_customization: String,
 }
 
 pub trait SubResource {
@@ -238,7 +242,23 @@ impl SubResource for Employee {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Data{
     #[serde(rename="@id")]
-    id: Option<i32>,
+    pub id: Option<i32>,
     #[serde(rename="@xlink:href")]
-    link: String
+    pub link: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SubData{
+    #[serde(rename="#text")]
+    pub id: i32,
+    #[serde(rename="@xlink:href")]
+    pub link: String
+}
+
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Shipping{
+    #[serde(rename="#text")]
+    shipping_number: String
 }
