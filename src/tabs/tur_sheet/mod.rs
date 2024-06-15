@@ -1,14 +1,19 @@
-use crate::{app_state::MastertechContext, database::{schema::HardwareTests, send_payload, PreTicketData}, handle_api::{api_request::SendRequest, email_builder::email_builder, scaffold, Store}};
-use eframe::egui::{vec2, Align, Button, Color32, ComboBox, Grid, Id, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui };
-use crate::{database::GetKeysResponse, handle_api::email_builder::{AsanaTask, Info, TaskAssignee}};
-use std::{collections::HashMap, path::PathBuf}; 
-use chrono::{DateTime, SecondsFormat};
+use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Id, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
+use get_ticket::SendRequest;
+use std::path::PathBuf; 
 use log::{debug, info};
-use serde_json::Value;
 use tokio::spawn;
 use egui_extras::{*, DatePickerButton};
 use egui_file::FileDialog;
-use lettre::{{Message, SmtpTransport, Transport}, transport::smtp::authentication::Credentials, message::header::ContentType};
+use crate::{database::GetKeysResponse, app_state::MastertechContext};
+
+
+pub mod get_ticket;
+pub mod submit_tur;
+pub mod submit_tur_mtech;
+pub mod submit_tur_email;
+pub mod email_builder;
+pub mod scaffold;
 
 impl MastertechContext {
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
@@ -60,14 +65,18 @@ impl MastertechContext {
                                 strip
                                 .cell(|ui| // get_ticket button
                                 {
-                                    ui.vertical_centered_justified(|ui|{
-                                        if ui.add(
-                                            Button::new(RichText::new("Get Ticket")
-                                                .color(Color32::from_rgb(255, 204, 255))
-                                                
-                                                
+                                    let check = !self.so_number.is_empty();
+
+                                    ui.horizontal_top(|ui|{
+                                        if ui.add_enabled(
+                                            check,
+                                            Button::new(
+                                                RichText::new("Get Ticket")
+                                                    .color(Color32::from_rgb(255, 204, 255))  
                                             )
-                                            .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
+                                            .stroke(
+                                                Stroke::new(1.0, Color32::from_rgb(191, 33, 101))
+                                            ).min_size(Vec2::new(145.0, 25.0))
                                         )
                                         .clicked()
                                         { 
@@ -83,7 +92,20 @@ impl MastertechContext {
                                             }
 
                                         } 
-                                    }); // v center justified
+                                    
+                                        ui.add_enabled(
+                                            check, 
+                                            Button::new( 
+                                                RichText::new("Get PrestaShop")
+                                                .color(Color32::from_rgb(255, 204, 255)) 
+                                            )
+                                            .stroke(
+                                                Stroke::new(1.0, Color32::from_rgb(191, 33, 101))
+                                            ).min_size(
+                                                Vec2::new(145.0, 25.0)
+                                            )
+                                        )
+                                    });// horizontal_top
                                 }); // strip cell
 
                                 strip
@@ -250,115 +272,101 @@ impl MastertechContext {
                             ui
                             .vertical_centered(|ui|
                             {
+                                ui.vertical(|ui| ui.add_space(30.0));
                                 ui
                                 .group(|ui|
                                 {
-                                    ui
-                                    .horizontal_top(|ui|
-                                    {
-                                        ui.add_space(self.widget_size/1.8);
-            
-                                        ComboBox::from_id_source("ram_cbox").width(self.widget_size - 5.0)
-                                        .selected_text(format!("{}", self.ram_test_cbox.as_str()))
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamFail, "RAM Fail");
-                                            ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamPass, "RAM Pass");
-                                            ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamNotTested, "RAM Not Tested");
-                                        }); // Combo Box
-                                    }); // H top
-                
-
                                     Grid::new("drive_tests")
-                                    .spacing(vec2(4.0, 3.0))
+                                    .spacing(vec2(4.0, 6.0))
                                     .min_col_width(self.widget_size)
                                     .num_columns(2)
                                     .show(ui, |ui| {
                                                             /*     ROW 1     */
-                                        ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 5.0)
-                                        .selected_text(format!("{}", self.ssd_test_cbox.as_str()))
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdFail, "SSD Fail");
-                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdPass, "SSD Pass");
-                                            ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdNotTested, "SSD Not Tested");
-                                        }); // Combo Box
-                
-                                                            /*     ROW 2     */
-                                        ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 5.0)
-                                        .selected_text(format!("{}", self.hdd_test_cbox.as_str()))
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddFail, "HDD Fail");
-                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddPass, "HDD Pass");
-                                            ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddNotTested, "HDD Not Tested");
-                                        }); // Combo Box
-                                        ui.end_row();
-                                    }); // Grid   
-                
-
-
-                                    ui.vertical(|ui|{ui.add_space(6.0);});
-
-                                    ui.horizontal_top(|ui|{
-                                        Grid::new("other_buttons")
-                                        .spacing(vec2(4.0, 3.0))
-                                        .min_col_width(self.widget_size)
-                                        .num_columns(2)
-                                        .show(ui, |ui| {
-                                            let date = self.date.get_or_insert_with(|| 
-                                                chrono::offset::Utc::now());
-                                                // 
-                                            ui.add(DatePickerButton::new(&mut date.date_naive()));
-
-                                            ui.checkbox(&mut self.send_specs, "Send System Info");
-
-                                            ui.end_row();
+                                        ui.vertical_centered(|ui|  {
+                                            ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 5.0)
+                                            .selected_text(format!("{}", self.ssd_test_cbox.as_str()))
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdFail, "SSD Fail");
+                                                ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdPass, "SSD Pass");
+                                                ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdNotTested, "SSD Not Tested");
+                                            }); // Combo Box
                                         });
-                                    });
 
-                                    ui.vertical(|ui|{ui.add_space(6.0);});
+                                        let date = self.date.get_or_insert_with(||chrono::offset::Utc::now());
+                                        ui.vertical_centered(|ui| DatePickerButton::new(&mut date.date_naive()).ui(ui));
+                                        ui.end_row();
+                                                            /*     ROW 2     */
+                                        ui.vertical_centered(|ui|  {
+                                            ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 5.0)
+                                            .selected_text(format!("{}", self.hdd_test_cbox.as_str()))
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddFail, "HDD Fail");
+                                                ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddPass, "HDD Pass");
+                                                ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddNotTested, "HDD Not Tested");
+                                            }); // Combo Box
+                                        });
 
-                                    let mut attached_file = PathBuf::new();
-                                    let mut _hovered_file_txt = "";
-                                    // let hovered_files = ui.input_mut(|i| i.raw.take().hovered_files);
-                                    // for hovered_file in hovered_files{
-                                    //     if let Some(files) = hovered_file.path{
-                                    //         hovered_file_txt = files.file_name().unwrap().to_str().unwrap();
-                                    //     }
-                                    // }
-                                    let dropped_files = ui.input_mut(|i| i.raw.take().dropped_files);
-                                    for dropped_file in dropped_files{
-                                        if let Some(dropped_files) = dropped_file.path{
-                                            self.opened_file = Some(dropped_files);
+                                        ui.checkbox(&mut self.send_specs, "Send System Info");
+                                        ui.end_row();
+
+                                        ui.vertical_centered(|ui|  {
+                                            ComboBox::from_id_source("ram_cbox").width(self.widget_size - 5.0)
+                                            .selected_text(format!("{}", self.ram_test_cbox.as_str()))
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamFail, "RAM Fail");
+                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamPass, "RAM Pass");
+                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamNotTested, "RAM Not Tested");
+                                            }); // Combo Box
+                                        });
+
+                                        let mut attached_file = PathBuf::new();
+                                        let mut _hovered_file_txt = "";
+                                        // let hovered_files = ui.input_mut(|i| i.raw.take().hovered_files);
+                                        // for hovered_file in hovered_files{
+                                        //     if let Some(files) = hovered_file.path{
+                                        //         hovered_file_txt = files.file_name().unwrap().to_str().unwrap();
+                                        //     }
+                                        // }
+                                        let dropped_files = ui.input_mut(|i| i.raw.take().dropped_files);
+                                        for dropped_file in dropped_files{
+                                            if let Some(dropped_files) = dropped_file.path{
+                                                self.opened_file = Some(dropped_files);
+                                            }
                                         }
-                                    }
-                                    
-                                    if let Some(file) = &self.opened_file{
-                                        attached_file = file.to_path_buf();
-                                    }
+                                        
+                                        if let Some(file) = &self.opened_file{
+                                            attached_file = file.to_path_buf();
+                                        }
+    
+                                        // Extract just the file name from the PathBuf
+                                        let file_name = attached_file.file_name()
+                                        .and_then(|name| name.to_str())
+                                        .unwrap_or("");
+    
+                                        ui.vertical_centered(|ui|  {
+                                            let upload_button = ui.add(Button::new(
+                                                RichText::new(
+                                                        format!("Upload 🗋 {{ {} }}", file_name)
+                                                    )
+                                                )
+                                                .min_size(vec2(self.widget_size, 8.0))
+                                            ); //.on_hover_text(format!("{}", &hovered_file_txt));
+        
+                                            if upload_button
+                                            .clicked()
+                                            {
+                                                let mut dialog = FileDialog::open_file(self.opened_file.clone())
+                                                .id(Id::new("File Dialog"));
+                                                dialog.open();
+                                                self.open_file_dialog = Some(dialog);
+                                            };
+                                        });
 
-                                    // Extract just the file name from the PathBuf
-                                    let file_name = attached_file.file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("");
-
-                                    let upload_button = ui.add(Button::new(
-                                        RichText::new(
-                                                format!("Upload 🗋 {{ {} }}", file_name)
-                                            )
-                                        )
-                                        .min_size(vec2(self.widget_size, 8.0))
-                                    ); //.on_hover_text(format!("{}", &hovered_file_txt));
-
-                                    if upload_button
-                                    .clicked()
-                                    {
-                                        let mut dialog = FileDialog::open_file(self.opened_file.clone())
-                                        .id(Id::new("File Dialog"));
-                                        dialog.open();
-                                        self.open_file_dialog = Some(dialog);
-                                    };
+                                        ui.end_row();
+                                    }); // Grid  
                                 }); // group
 
-                                ui.vertical(|ui|{ui.add_space(3.0);});
+                                ui.vertical(|ui| ui.add_space(15.0));
 
                                 ui
                                 .horizontal_top(|ui|
@@ -380,397 +388,10 @@ impl MastertechContext {
                                     )
                                     .clicked()
                                     {  
-                                        self.spinner = true;
-
-                                        let cust = &self.ticket_info.customer_name;
-                                        let so_num = &self.so_number;
-                
-                                        if !cust.is_empty() && !so_num.is_empty()
-                                        {
-
-                                            let mut salesman_map = HashMap::new();
-                                            let mut tech_map = HashMap::new();
-
-                                            let salesman = &self.salesman; // &format!("{:?}", &self.salesman_cbox);
-                                            let checkin_rep = &self.ticket_info.checkin_rep;
-                                            let technician = &self.technician; // &format!("{:?}", &self.techs_cbox);
-
-                                            salesman_map.insert("Jake", "1202792432658520");
-                                            salesman_map.insert("Danny", "1202791016369879");
-                                            tech_map.insert("Logan", "1199992640930465");
-                                            tech_map.insert("Bread", "1202792432421640");
-                                            tech_map.insert("Taco", "1202792432551073");
-
-                                            // let assigned_salesman = salesman_map.get(salesman.as_str()).unwrap_or(&"1202792432658520").to_string();
-                                            // let assigned_tech = tech_map.get(technician.as_str()).unwrap_or(&"1199992640930465").to_string();
-
-                                            let hdd_test = &format!("{:?}", &self.hdd_test_cbox);
-                                            let ram_test = &format!("{:?}", &self.ram_test_cbox);
-                                            let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
-
-                                            let checkin_notes = &self.ticket_info.checkin_notes;
-                                            let recommendations = &self.recommendations;   
-
-                                            let date = self.date.unwrap_or(DateTime::default());
-                                            let mut _attached_file: Option<PathBuf> = None;
-                                            if let Some(file) = &self.opened_file{
-                                                _attached_file = Some(file.to_path_buf());
-                                            }
-
-                                            let mut _specs = String::new();
-                                            let cps = self.current_antivirus.clone();
-                                            let seb_info = self.seb_info.clone().unwrap_or_default();
-
-                                            
-
-                                            let mut final_disk = String::new();
-                                            let mut each_disk = String::new();
-                                                                                    
-                                            let cust_code = &self.ticket_info.cust_code;
-                                            let doc_alias = &self.ticket_info.doc_alias;
-                                            let _department = &self.ticket_info.dep;
-                                            //let juris = &self.ticket_info.juris;
-                                            let ticket_total = &self.ticket_info.ticket_total;
-                                            let cust_email = &self.ticket_info.customer_email;
-                                            let last_inv_num = &self.ticket_info.last_invoice_number;
-                                            let last_inv_amt = &self.ticket_info.last_invoice_amount;
-                                            let total_inv_num = &self.ticket_info.total_invoice_count;
-                                            let phone1 = &self.ticket_info.customer_phone_1;
-                                            let phone2 = &self.ticket_info.customer_phone_2;
-                                            let mut phone_2 = String::new();
-                                            if !phone2.is_empty(){
-                                                phone_2 = format!("<tr>
-                                                <td style=\"padding:1px 1px\">Phone #2</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{phone2}</td>
-                                                </tr>");
-                                            }
-
-                                            let extra_customer_info = format!
-                                            ("
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Customer Code</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{cust_code}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Phone #</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\"><strong>{phone1}</strong></td>
-                                            </tr>
-                                            {phone_2}
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Customer Email</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{cust_email}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Current Total</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">${ticket_total}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Last SI#</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{last_inv_num}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\">Last Invoice Total</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{last_inv_amt}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style=\"padding:1px 1px\"># of SI's</td>
-                                                <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{total_inv_num}</td>
-                                            </tr>
-                                            ");
-                                            if self.send_specs == true{
-                                                self.output_text.clear();
-                                                self.output_text += "pulling system information. Please wait a moment..\n";
-                                                let system_name = &self.system_info.hostname;
-                                                let os = &self.system_info.operating_system;
-                                                let cpu_name = &self.system_info.cpu;
-                                                let total_ram = &self.system_info.ram;
-                                                let gpu = &self.system_info.gpu.clone();
-
-                                                for index in 0..self.disk_num
-                                                {
-                                                    if let Some(disk) = self.disks.get(index)
-                                                    {
-                                                        let drive_letter = format!("{}", disk.get("drive_letter").and_then(Value::as_str).unwrap_or(""));
-                                                        let drive_type = disk.get("drive_type").and_then(Value::as_str).unwrap_or("");
-                                                        let space_left = format!("{} Gb", disk.get("space_left").and_then(Value::as_str).unwrap_or(""));
-                                                        let total_size = format!("{} Gb", disk.get("total_size").and_then(Value::as_str).unwrap_or(""));
-
-                                                        each_disk += &format!("
-                                                        <tr>
-                                                        <td style=\"padding:1px 1px\">        {drive_letter}</td>
-                                                        <td style=\"padding:1px 1px\">        {drive_type}</td>
-                                                        <td style=\"padding:1px 1px\">        {space_left}</td>
-                                                        <td style=\"padding:1px 1px\">        {total_size}</td>
-                                                        </tr>
-                                                        ");
-
-                                                        final_disk = format!
-                                                            ("
-                                                            <tr>
-                                                                <td style=\"padding:1px 4px\">Letter</td>
-                                                                <td style=\"padding:1px 4px\">Drive Type</td>
-                                                                <td style=\"padding:1px 4px\">Avail Space</td>
-                                                                <td style=\"padding:1px 4px\">Total Space</td>
-                                                            </tr>
-                                                            {each_disk}
-                                                        ");
-
-                                                    }
-                                                }
-
-                                                _specs = format!("
-                                                <table>
-                                                    <tr>
-                                                        <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,200,200\" width=\"450\"
-                                                        >              <code>       Computer Info        </code></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>PC Name</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{system_name}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>OS</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{os}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>CPU</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{cpu_name}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>RAM</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{total_ram} Gb</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>GPU</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{gpu}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>Antivirus</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{cps}</td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td>SEB</td>
-                                                        <td colspan=\"2\" data-cell-widths=\"150,150\">{seb_info:#?}</td>
-                                                    </tr>
-                                                    <tr>
-                                                    <td colspan=
-                                                    \"3\" data-cell-widths=\"100,200,200\" width=\"400\" style=\"text-align:center;\"
-                                                    >                <code>        HDD/SSD info        </code></td>
-                                                    </tr>
-                                                    {final_disk}
-                                                    </table>
-                                                ").trim().to_string();
-                                            }else{
-                                                _specs = "Computer information was not sent with ticket".to_string();
-                                            }
-                                            
-                                            let html_notes = format!(
-                                                "<body>
-                                                    <table>
-                                                        <tr>
-                                                            <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,130,130\" width=\"390\"
-                                                            >                <code>        {doc_alias} Info        </code>
-                                                            </td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style=\"padding:1px 1px\">Salesman</td>
-                                                            <td style=\"padding:1px 1px\">Checkin Rep</td>
-                                                            <td style=\"padding:1px 1px\">Technician</td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style=\"padding:1px 4px\">     {salesman}</td>
-                                                            <td style=\"padding:1px 4px\">     {checkin_rep}</td>
-                                                            <td style=\"padding:1px 4px\">     {technician}</td>
-                                                        </tr>
-                                                        <tr>
-                                                            <td style=\"text-align:center;\" colspan=\"3\" data-cell-widths=\"130,130,130\" width=\"390\"
-                                                            >                <code>           Customer           </code>
-                                                            </td>
-                                                        </tr>
-                                                        {extra_customer_info}
-                                                    </table>
-                                                    {_specs}
-                                                    <ul>
-                                                        <li><strong>SSD test:</strong>     {ssd_test}</li>
-                                                        <li><strong>HDD test:</strong>     {hdd_test}</li>
-                                                        <li><strong>RAM test:</strong>     {ram_test}</li>
-                                                    </ul>
-                                                    <h2><strong><code>           Notes           </code></strong></h2>
-                                                    <ul><li><strong>        Checkin Notes:      </strong>     \n{checkin_notes}</li>
-                                                        <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",
-                                            );
-
-                                            let store: &Store = &self.ticket_info.dep;
-
-                                            if store.as_str() == "RIV"{
-
-                                                let task = AsanaTask { 
-                                                    task_name: format!("{cust} - {so_num}"), 
-                                                    html_notes,
-                                                    assignee: TaskAssignee { 
-                                                        salesman: self.salesman.clone(), 
-                                                        tech: self.technician.clone()
-                                                    }, 
-                                                    file_attachment: self.opened_file.clone() 
-                                                };
-                                                let tx = self.scaffold_request.tx.clone();
-                                                let client = self.client.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = SendRequest::send_ticket_request(
-                                                        tx, 
-                                                        client, 
-                                                        task,
-                                                        date,
-                                                    ).await.unwrap();
-                                                    info!("After tokio spawn in send_ticket_request");
-                                                });
-
-
-                                            }else{
-                                                let _mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
-                                                let _mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
-                                                let store_email = store.store_email();
-
-                                                let system_name = &self.system_info.hostname;
-                                                let cpu_name = &self.system_info.cpu;
-                                                let total_ram = &self.system_info.ram;
-                                                let gpu = &self.system_info.gpu.clone();
-                                                let mut final_disk = String::new();
-                                                let mut each_disk = String::new();
-
-                                                for index in 0..self.disk_num
-                                                {
-                                                    if let Some(disk) = self.disks.get(index)
-                                                    {
-                                                        let disk_letter = format!("{}", disk.get("letter").and_then(Value::as_str).unwrap_or(""));
-                                                        let drive_type = disk.get("drive_type").and_then(Value::as_str).unwrap_or("");
-                                                        let disk_available = format!("{} Gb", disk.get("space_left").and_then(Value::as_str).unwrap_or(""));
-                                                        let disk_total = format!("{} Gb", disk.get("total_size").and_then(Value::as_str).unwrap_or(""));
-
-                                                        each_disk += &format!("
-                                                        <tr>
-                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_letter}</td>
-                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{drive_type}</td>
-                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_available}</td>
-                                                            <td style=\"text-align: center; padding:1px 1px color: #ffffff\">{disk_total}</td>
-                                                        </tr>
-                                                        ");
-
-                                                        final_disk = format!
-                                                            ("
-                                                            <tr>
-                                                                <td style=\"padding:1px 4px; text-align: center; \">Letter</td>
-                                                                <td style=\"padding:1px 4px; text-align: center; \">Type</td>
-                                                                <td style=\"padding:1px 4px; text-align: center; \">Avail Space</td>
-                                                                <td style=\"padding:1px 4px; text-align: center; \">Total Space</td>
-                                                            </tr>
-                                                            {each_disk}
-                                                        ");
-
-                                                    }
-                                                }
-
-                                                _specs = format!("
-                                                <tr>
-                                                    <td style=\"color: #ffffff;\"><strong>CPU</strong></td>
-                                                    <td style=\"text-align: center; color: #ffffff;\">{cpu_name}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td style=\"color: #ffffff;\"><strong>GPU</strong></td>
-                                                    <td style=\"text-align: center; color: #ffffff;\">{gpu}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td style=\"color: #ffffff;\"><strong>RAM</strong></td>
-                                                    <td style=\"text-align: center; color: #ffffff;\">{total_ram} Gb</td>
-                                                </tr>
-                                                <tr>
-                                                    <td style=\"color: #ffffff;\"><b>System Name</b></td>
-                                                    <td>
-                                                        <p style=\"text-align: center; color: #ffffff;\">{system_name}</p>
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td style=\"color: #ffffff;\"><b>CPS</b></td>
-                                                    <td>
-                                                        <p style=\"text-align: center; color: #ffffff;\">{cps}</p>
-                                                    </td>
-                                                </tr>
-                                                ");
-
-
-
-                                                let info = Info{
-                                                    customer_name: cust.to_string(),
-                                                    so_num: so_num.to_string(),
-                                                    hdd_test: hdd_test.to_string(),
-                                                    ram_test: ram_test.to_string(),
-                                                    ssd_test: ssd_test.to_string(),
-                                                    checkin_notes: checkin_notes.to_string(),
-                                                    recommendations: recommendations.to_string(),
-                                                    specs: _specs,
-                                                    cps,
-                                                    cust_code: cust_code.to_string(),
-                                                    doc_alias: doc_alias.to_string(),
-                                                    inv_amt: ticket_total.to_string(),
-                                                    cust_email: cust_email.to_string(),
-                                                    last_inv_num: last_inv_num.to_string(),
-                                                    last_inv_amt: last_inv_amt.to_string(),
-                                                    total_inv_num: total_inv_num.to_string(),
-                                                    phone1: phone1.to_string(),
-                                                    phone2: phone2.to_string(),
-
-                                                    final_disk,
-
-                                                    salesman: salesman.to_string(),
-                                                    checkin_rep: checkin_rep.to_string(),
-                                                    technician: technician.to_string(),
-                                                    extra_customer_info,
-                                                };
-
-                                                let html = email_builder(info);
-                                                
-                                                let email = Message::builder()
-                                                    .from("TUR SHEET <pcl.mastertech@gmail.com>".parse().unwrap())
-                                                    .to(store_email.parse().unwrap())
-                                                    .subject(format!("{cust} - {so_num}"))
-                                                    .header(ContentType::TEXT_HTML)
-                                                    .body(html)
-                                                    .unwrap();
-
-                                                let creds = Credentials::new("pcl.mastertech@gmail.com".to_owned(), "pgumcgekyrcqadah".to_owned());
-
-                                                // Open a remote connection to gmail
-                                                let mailer = SmtpTransport::relay("smtp.gmail.com")
-                                                    .unwrap()
-                                                    .credentials(creds)
-                                                    .build();
-
-                                                self.output_text += format!("\n {store_email} {cust_email}").as_str();
-
-                                                // Send the email
-                                                match mailer.send(&email) {
-                                                    Ok(_) => println!("Email sent successfully!"),
-                                                    Err(e) => {
-                                                        self.output_text += format!("\n{e:?}").as_str();
-                                                        //println!("Could not send email: {e:?}")
-                                                    },
-                                                }
-                                            }
-
-                                            self.spinner = false;
-                                            
-                                            self.output_text += "\nSent Ticket";
-                                        }
-                                        else{
-                                            self.output_text.clear();
-                                            self.output_text = "You need to enter a customer name or Service number".to_string();
-                                        }
-                                    
-
-                                        self.spinner = false;
-                                        self.ctx.request_repaint();
+                                        self.submit_tur();
                                     }
-                                    ui.vertical(|ui| {ui.add_space(3.0);}); // leave some margin above the textEdits
+
+
                                     let check = !self.so_number.is_empty() 
                                         && !self.ticket_info.customer_name.is_empty() 
                                         && !self.ticket_info.customer_phone_1.is_empty() 
@@ -780,66 +401,7 @@ impl MastertechContext {
                                         .add_enabled(check, Button::new( RichText::new("Master-Tech.app")))
                                         .clicked()
                                     {  
-                                        
-                                        let hdd_test = format!("{:?}", &self.hdd_test_cbox);
-                                        let ram_test = format!("{:?}", &self.ram_test_cbox);
-                                        let ssd_test = format!("{:?}", &self.ssd_test_cbox);
-                            
-                                        let mut pre_ticket: PreTicketData = self.ticket_info.clone();
-                            
-                                        pre_ticket.due_date = Some(
-                                            self.date.unwrap_or(
-                                                DateTime::default()
-                                            ).to_rfc3339_opts(SecondsFormat::Secs,  true)
-                                        );
-                                        
-                                        // let payload = TicketPayload::serialize_payload(
-                                        //     &pre_ticket,
-                                        //     &self.system_info,
-                                        //     &self.so_number,
-                                        //     &self.current_antivirus,
-                                        //     &self.recommendations,
-                                        //     self.technician.clone(),
-                                        //     self.salesman.clone(), 
-                                        //     HardwareTests{
-                                        //         hdd_test,
-                                        //         ssd_test,
-                                        //         ram_test,
-                                        //     } // example
-                                        // );
-                                        let system_info = self.system_info.clone();
-                                        let so_number = self.so_number.clone();
-                                        let current_antivirus = self.current_antivirus.clone();
-                                        let recommendations = self.recommendations.clone();
-                                        let technician = self.technician.clone();
-                                        let salesman = self.salesman.clone();
-                                        let hw_tests = HardwareTests{
-                                            hdd_test,
-                                            ssd_test,
-                                            ram_test,
-                                        };
-                                        
-                                        match self.database{
-                                            Some(ref database) => {
-                                                debug!("Sending reqwest");
-                                                let database = database.clone();
-                                                spawn(async move {
-                                                    let x = send_payload(
-                                                        pre_ticket.clone(), 
-                                                        system_info,
-                                                        so_number,
-                                                        current_antivirus,
-                                                        recommendations,
-                                                        technician,
-                                                        salesman,
-                                                        hw_tests,
-                                                        database
-                                                    ).await;
-                                                    info!("output: {:?}", x);
-                                                });
-                                            }, None => debug!("No database connection"),
-                                        };
-                                        
+                                       self.submit_tur_mastertech(); 
                                     }
                                     
                                     let connect_to_websocket = ui.add(
@@ -855,7 +417,7 @@ impl MastertechContext {
                                         self.disconnect_ws = true;
                                         self.connect_to_ws = false;
                                     }
-                                }); // vertical center justified
+                                }); // horizontal_top
                             }); // vertical center
                         }); // cell
                     }); // strip.strip builder
@@ -881,6 +443,7 @@ impl MastertechContext {
                                     vec2(ui.available_width()-4.0, ui.available_height() - 80.0),
                                     TextEdit::multiline(&mut self.ticket_info.checkin_notes)
                                     .hint_text(RichText::new("Checkin Notes").weak())
+                                    .font(FontId::proportional(15.0))
                                     .desired_rows(4)
                                 );
                             });
@@ -897,8 +460,8 @@ impl MastertechContext {
                                 ui.add_sized(
                                     vec2(ui.available_width()-4.0, ui.available_height() - 80.0), 
                                     TextEdit::multiline(&mut self.recommendations)
-                                    .hint_text(RichText::new("Recommendations")
-                                    .weak())
+                                    .hint_text(RichText::new("Recommendations").weak())
+                                    .font(FontId::proportional(15.0))
                                     .desired_rows(4)
                                 );
                             });

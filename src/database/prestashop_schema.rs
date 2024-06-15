@@ -1,98 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Debug)]
-pub struct Resources {
-    /// 	The Customer, Manufacturer and Customer addresses
-    pub addresses: Address,          
-    /// 	The product Attachments
-    pub attachments: String,            
-    /// 	The product Attachments files
-    pub attachments_file: String,            
-    /// 	Customer’s carts
-    pub carts: String,          
-    /// 	The product categories
-    pub categories: String,             
-    /// 	The product combinations
-    pub combinations: String,
-    /// 	Customer services messages
-    pub customer_messages: String,          
-    /// 	Customer services threads
-    pub customer_threads: String,           
-    /// 	The e-shop’s customers
-    pub customers: String,
-    /// 	The Employees
-    pub employees: Employees,          
-    /// 	The guests (customers not logged in)
-    pub guests: String,             
-    /// 	The product manufacturers
-    pub manufacturers: String,          
-    /// 	The customers messages
-    pub messages: String,           
-    /// 	The order carriers
-    pub order_carriers: String,             
-    /// 	Details of an order
-    pub order_details: String,          
-    /// 	The Order histories
-    pub order_histories: String,            
-    /// 	The Order invoices
-    pub order_invoices: String,             
-    /// 	The Order payments
-    pub order_payments: String,   
-    /// 	The Order states (Waiting for transfer, Payment accepted, …)
-    pub order_states: String,           
-    /// 	The Customers orders
-    pub orders: String,    
-    /// 	The Product customization fields
-    pub product_customization_fields: String,           
-    /// 	The product feature values (Ceramic, Polyester, … - Removable cover, Short sleeves, …)
-    pub product_feature_values: String,             
-    /// 	The product features (Composition, Property, …)
-    pub product_features: String,           
-    /// 	The product options value (S, M, L, … - White, Camel, …)
-    pub product_option_values: String,          
-    /// 	The product options (Size, Color, …)
-    pub product_options: String,            
-    /// 	Product Suppliers
-    pub product_suppliers: String,          
-    /// 	The products
-    pub products: String,           
-    /// 	Search
-    pub search: String,             
-    /// 	Available quantities of products
-    pub stock_availables: String,  
-    /// 	Stocks for products
-    pub stocks: String,             
-    /// 	The stores
-    pub stores: String,
-    /// 	The Products tags
-    pub tags: String,           
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Address{
-    ///❌     isNullOrUnsignedId  
-    pub id_customer: i32,
-    ///✔️     isName  
-    pub lastname: String,
-    ///✔️     isName  
-    pub firstname: String,
-    ///✔️     isAddress   
-    pub address1: String,
-    ///❌     isAddress   
-    pub address2: String,
-    ///❌     isPostCode  
-    pub postcode: String,
-    ///✔️     isCityName  
-    pub city: String,
-    ///❌     isPhoneNumber   
-    pub phone: String,
-    ///❌     isPhoneNumber   
-    pub phone_mobile: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Employees{
-    pub employee: Vec<Employee>
+    pub id_customer: SubData,         // ❌     isNullOrUnsignedId  
+    pub lastname: String,             // ✔️     isName  
+    pub firstname: String,            // ✔️     isName  
+    pub address1: String,             // ✔️     isAddress   
+    pub address2: Option<String>,     // ❌     isAddress   
+    pub postcode: i32,                // ❌     isPostCode  
+    pub city: String,                 // ✔️     isCityName  
+    pub phone: i64,                   // ❌     isPhoneNumber   
+    // pub phone_mobile: Option<i64>,    // ❌     isPhoneNumber   
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -116,10 +34,6 @@ pub struct Employee{
     pub id_last_customer: i32, 
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Orders{
-    orders: Vec<Order>
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Order{
@@ -168,12 +82,101 @@ pub struct Customer {
     pub email: String, 	     //  	isEmail 	✔️ 	✔️ 	255
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Data{
+    #[serde(rename="@id")]
+    pub id: Option<i32>,
+    #[serde(rename="@xlink:href")]
+    pub link: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SubData{
+    #[serde(rename="#text")]
+    pub id: i32,
+    #[serde(rename="@xlink:href")]
+    pub link: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Shipping{
+    #[serde(rename="#text")]
+    shipping_number: Option<String>
+}
+
+#[derive(Serialize, Debug)]
+pub struct Resources {
+    /// 	The Customer, Manufacturer and Customer addresses
+    pub addresses: Address,          
+    /// 	The product Attachments
+    pub attachments: String,            
+    /// 	The product Attachments files
+    pub attachments_file: String,            
+    /// 	Customer’s carts
+    pub carts: String,          
+    /// 	The product categories
+    pub categories: String,             
+    /// 	The product combinations
+    pub combinations: String,
+    /// 	Customer services messages
+    pub customer_messages: String,          
+    /// 	Customer services threads
+    pub customer_threads: String,           
+    /// 	The e-shop’s customers
+    pub customers: String,
+    /// 	The Employees
+    pub employees: Employee,          
+    /// 	The guests (customers not logged in)
+    pub guests: String,             
+    /// 	The product manufacturers
+    pub manufacturers: String,          
+    /// 	The customers messages
+    pub messages: String,           
+    /// 	The order carriers
+    pub order_carriers: String,             
+    /// 	Details of an order
+    pub order_details: String,          
+    /// 	The Order histories
+    pub order_histories: String,            
+    /// 	The Order invoices
+    pub order_invoices: String,             
+    /// 	The Order payments
+    pub order_payments: String,   
+    /// 	The Order states (Waiting for transfer, Payment accepted, …)
+    pub order_states: String,           
+    /// 	The Customers orders
+    pub orders: String,    
+    /// 	The Product customization fields
+    pub product_customization_fields: String,           
+    /// 	The product feature values (Ceramic, Polyester, … - Removable cover, Short sleeves, …)
+    pub product_feature_values: String,             
+    /// 	The product features (Composition, Property, …)
+    pub product_features: String,           
+    /// 	The product options value (S, M, L, … - White, Camel, …)
+    pub product_option_values: String,          
+    /// 	The product options (Size, Color, …)
+    pub product_options: String,            
+    /// 	Product Suppliers
+    pub product_suppliers: String,          
+    /// 	The products
+    pub products: String,           
+    /// 	Search
+    pub search: String,             
+    /// 	Available quantities of products
+    pub stock_availables: String,  
+    /// 	Stocks for products
+    pub stocks: String,             
+    /// 	The stores
+    pub stores: String,
+    /// 	The Products tags
+    pub tags: String,           
+}
+
 pub trait SubResource {
     fn get_subresource(&self, field: &str) -> Option<String>;
     fn get_name(&self) -> String;
     fn get_resource_name(&self) -> String;
 }
-
 
 impl SubResource for Employee {
     fn get_subresource(&self, field: &str) -> Option<String> {
@@ -200,6 +203,8 @@ impl SubResource for Employee {
     }
 }
 
+
+
 // impl SubResource for Order{
 //     fn get_subresource(&self, field: &str) -> Option<String> {
 //         match field {
@@ -219,27 +224,3 @@ impl SubResource for Employee {
 //         }
 //     }
 // }
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Data{
-    #[serde(rename="@id")]
-    pub id: Option<i32>,
-    #[serde(rename="@xlink:href")]
-    pub link: String
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SubData{
-    #[serde(rename="#text")]
-    pub id: i32,
-    #[serde(rename="@xlink:href")]
-    pub link: String
-}
-
-
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Shipping{
-    #[serde(rename="#text")]
-    shipping_number: String
-}

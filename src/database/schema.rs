@@ -2,6 +2,8 @@
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
 
+use super::prestashop_schema::{Address, Customer, Employee, Order};
+
 pub const _NS: &str = "Mastertech";
 pub const _DB: &str = "MastertechDB";
 pub const _USER_SCOPE: &str = "user";
@@ -246,6 +248,14 @@ pub struct TaskNotePayload{
     pub note: String,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PrestashopPayload{
+    pub customer: CustomerData,
+    pub order: Order,
+    pub employee: Option<Employee>,
+    pub address: Address
+}
+
 // I will probably end up merging ModifyTask and TaskPayload since they contain most of the exact same data
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ModifyTask{
@@ -347,7 +357,8 @@ pub enum Store{
     AF,
     WJ, 
     ORE,
-    SAN
+    SAN,
+    None
 }
 
 impl Store{
@@ -360,10 +371,24 @@ impl Store{
             Store::WJ => "WJ",
             Store::ORE => "ORE",
             Store::SAN => "SAN",
+            Store::None => "MUR"
+        }
+    }
+    pub fn store_email(&self) -> &'static str {
+        match *self {
+            Store::RIV => "RIV",
+            Store::MUR => "pclmur@pclaptops.com",
+            Store::WJ => "pclwj@pclaptops.com",
+            Store::LTN => "pclltn@pclaptops.com",
+            Store::AF => "pclaf@pclaptops.com",
+            Store::SAN => "pclsan@pclaptops.com",
+            Store::ORE => "pclore@pclaptops.com",
+            _ => "pclmur@pclaptops.com"
         }
     }
     pub const _VALUES: [Self; 7] = [Self::RIV, Self::LTN, Self::MUR, Self::AF, Self::WJ, Self::ORE, Self::SAN];
 }
+
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct User {

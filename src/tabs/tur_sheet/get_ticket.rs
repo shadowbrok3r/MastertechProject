@@ -12,11 +12,13 @@ use quick_xml::de::from_str;
 use std::time::{Duration, Instant};
 use std::{error::Error, path::PathBuf, fs::{File, self}, io::BufReader, collections::HashMap};
 use log::{info, debug, trace, error};
-use crate::database::schema::{ExtendedSeb, LocalSebData};
-use crate::{scaffold::*, database::{PreTicketData, GetKeysResponse}, handle_api::AddressObject};
 use std::result::Result;
 use std::fmt::Debug;
-use super::{GetTicketResponse, AsanaResponse, Store, email_builder::{AsanaTask, TaskAssignee}};
+use crate::database::schema::Store;
+use crate::database::{PreTicketData, GetKeysResponse, schema::{ExtendedSeb, LocalSebData}};
+use crate::tabs::tur_sheet::scaffold::{AddressObject, GetTicketResponse, ScaffoldActions, ScaffoldApps};
+
+use super::email_builder::AsanaTask;
 
 pub struct SendRequest {
     pub tx: crossbeam::channel::Sender<String>,
