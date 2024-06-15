@@ -1,12 +1,7 @@
-use std::collections::HashMap;
-
 use eframe::egui::{Align, Button, Grid, Layout, RichText, Ui};
-use log::info;
-use resources::{Employee, Order};
+use resources::{Address, Customer, Employee, Order};
+use crate::{app_state::MastertechContext, database::schema::CustomerData};
 
-use crate::app_state::MastertechContext;
-
-use self::{api::PrestashopData, resources::Employees};
 pub mod api;
 pub mod resources;
 pub mod deserializer;
@@ -60,6 +55,55 @@ impl MastertechContext {
                                 &order.id_employee_split_rep
                             ).await.unwrap();
                         }
+
+                        let cust: Customer = api_call.request_subresources_by_id(
+                            "customers", 
+                            "customer", 
+                            &order.id_customer.id
+                        ).await.unwrap();
+
+                        let addr: Address = api_call.request_subresources_by_id(
+                            "addresses", 
+                            "address", 
+                            &order.id_address_delivery.id
+                        ).await.unwrap();
+
+                        let customer = CustomerData{
+                            id: None,
+                            part_order_links: None,
+                            computers: None,
+                            services: None,
+                            cust_code: addr.id_customer,
+                            name: format!("{} {}", addr.firstname, addr.lastname),
+                            phone_number: addr.phone,
+                            phone_number_2: addr.phone_mobile,
+                            email: cust.email,
+                            li_doc: todo!(),
+                            li_amnt: todo!(),
+                            num_inv: todo!(),
+                        };
+                        
+                        // let ticket = TicketData{
+                        //     id: None,
+                        //     created_at: None,
+                        //     customer: todo!(),
+                        //     computer: todo!(),
+                        //     service_task: todo!(),
+                        //     service_number: todo!(),
+                        //     checkin_rep: todo!(),
+                        //     sales_rep: todo!(),
+                        //     checkin_notes: todo!(),
+                        //     recommendations: todo!(),
+                        //     tech: todo!(),
+                        //     salesman: todo!(),
+                        //     dep: todo!(),
+                        //     terms: todo!(),
+                        //     ticket_total: todo!(),
+                        //     doc_alias: todo!(),
+                        //     current_antivirus: todo!(),
+                        //     hardware_test_results: todo!(),
+                        // };
+
                         // let employees: Vec<Employee> = api_call.request_resource_link("employees".to_string(), "employee".to_string(), Some("id".to_string())).await.unwrap();
                         // let orders: Vec<Order> = api_call.request_resource_link("orders".to_string(), "order".to_string(), Some("id".to_string())).await.unwrap();
                         // let x: Order = api_call.request_subresources_by_id("orders".to_string(), "order".to_string(),&3).await.unwrap();

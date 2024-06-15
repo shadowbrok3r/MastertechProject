@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Debug)]
 pub struct Resources {
     /// 	The Customer, Manufacturer and Customer addresses
-    pub addresses: Addresses,          
+    pub addresses: Address,          
     /// 	The product Attachments
     pub attachments: String,            
     /// 	The product Attachments files
@@ -69,29 +69,13 @@ pub struct Resources {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Addresses{
+pub struct Address{
     ///❌     isNullOrUnsignedId  
-    pub id_customer: String,
-    ///❌     isNullOrUnsignedId  
-    pub id_manufacturer: String,
-    ///❌     isNullOrUnsignedId  
-    pub id_supplier: String,
-    ///❌     isNullOrUnsignedId  
-    pub id_warehouse: String,
-    ///✔️     isUnsignedId    
-    pub id_country: String,
-    ///❌     isNullOrUnsignedId  
-    pub id_state: String,
-    ///✔️     isGenericName   
-    pub alias: String,
-    ///❌     isGenericName   
-    pub company: String,
+    pub id_customer: i32,
     ///✔️     isName  
     pub lastname: String,
     ///✔️     isName  
     pub firstname: String,
-    ///❌     isGenericName   
-    pub vat_number: String,
     ///✔️     isAddress   
     pub address1: String,
     ///❌     isAddress   
@@ -100,20 +84,10 @@ pub struct Addresses{
     pub postcode: String,
     ///✔️     isCityName  
     pub city: String,
-    ///❌     isMessage   
-    pub other: String,
     ///❌     isPhoneNumber   
     pub phone: String,
     ///❌     isPhoneNumber   
     pub phone_mobile: String,
-    ///❌     isDniLite   
-    pub dni: String,
-    ///❌     isBool  
-    pub deleted: String,
-    ///❌     isDate  
-    pub date_add: String,
-    ///❌	  isDate
-    pub date_upd: String, 
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -185,6 +159,13 @@ pub struct OrderRow{
     pub product_name: f32,
     pub product_price: String,
     // pub id_customization: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Customer { 	 	
+    pub lastname: String,    //  	isCustomerName 	✔️ 	✔️ 	255
+    pub firstname: String,   //  	isCustomerName 	✔️ 	✔️ 	255
+    pub email: String, 	     //  	isEmail 	✔️ 	✔️ 	255
 }
 
 pub trait SubResource {
