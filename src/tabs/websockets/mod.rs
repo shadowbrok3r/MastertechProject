@@ -1,6 +1,9 @@
 use std::mem;
 use eframe::egui::{CentralPanel, Color32, Key, TopBottomPanel, Ui};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
+use tokio::spawn;
+use tracing::info;
+use uuid::Uuid;
 
 use crate::app_state::MastertechContext;
 use tui_input::Input;
@@ -34,6 +37,25 @@ impl MastertechContext{
 
             if ui.button("Connect").clicked()
             {
+                if let Some(db) = self.database.clone(){
+                    self.client_uuid = Uuid::new_v4();
+                    self.url = format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client", &self.client_uuid);
+                    let uuid = self.client_uuid.clone();
+                    let usr = self.current_user.clone().unwrap().id.0;
+                    // let mut vec = Vec::new();
+                    // vec.push(uuid.to_string());
+                    // let x: Option<Vec<String>> = Some(vec);
+
+                    spawn(async move {
+                        db.database.set("uuid", uuid.to_string()).await.unwrap();
+                        info!("uuid: {uuid}");
+                        db.database.set("user", usr.clone()).await.unwrap();
+                        info!("usr: {usr:?}");
+                        let query = String::from("UPDATE user SET connected_clients += $uuid WHERE id == $user");
+                        let res = db.database.query(query).await;
+                        info!("Query done: {res:#?}");
+                    });
+                }
                 match ewebsock::connect_with_wakeup(&self.url, Default::default(), wakeup) {
                     Ok((ws_sender, ws_receiver)) => {
                         self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
