@@ -1,11 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::{fs::File, sync:: Arc};
+use chrono::DateTime;
 use log::{debug, info};
 use app_state::{AppState, MasterTechApp};
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use self_update::cargo_crate_version;
-use database::{database::Database, schema::ComputerData};
+use database::{database::Database, schema::{ComputerData, Store, TicketData}, PreTicketData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use tabs::{mastertech_website::websocket::WebSocket, tur_sheet::scaffold::AsanaResponse};
 
@@ -44,48 +45,43 @@ impl eframe::App for MasterTechApp {
 
             tokio::spawn(async move {
                 let system_info = ComputerData::get_computer_data().await;
-                // let database = Database::new().await;
+                let database = Database::new().await;
 
                 match sysinfo_tx.try_send(system_info.unwrap()){
                     Ok(_) => info!("sent computer data"),
                     Err(e) => info!("Error sending computer data: {e:?}"),
                 };
 
-                // match db_tx.try_send(database){
-                //     Ok(_) => info!("Sent db connection across thread"),
-                //     Err(err) => debug!("Error sending db connection: {err:?}"),
-                // }
+                match db_tx.try_send(database){
+                    Ok(_) => info!("Sent db connection across thread"),
+                    Err(err) => debug!("Error sending db connection: {err:?}"),
+                }
                 
             });
 
-            let specs = match self.context.computer_specs_rx.try_recv(){
-                Ok(data) => Ok(data),
-                Err(e) => Err(e),
-            };
+            if let Ok(db) = self.context.db_rx.try_recv(){
+                info!("Received DB connection from thread");
+                self.context.database = Some(db);
+            }
 
-            match specs{
-                Ok(computer_data) => {
-                    self.context.system_info = computer_data;
+            if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
+                self.context.system_info = computer_data;
 
-                    for disk in &self.context.system_info.drives{
-                        
-                        self.context.disk_num += 1;
-        
-                        if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                            // Convert `disk` to a serde_json::Value
-                            let disk_json = serde_json::to_value(&disk).unwrap();
+                for disk in &self.context.system_info.drives{
                     
-                            disks_arr.push(disk_json);
-                        } else {
-                            eprintln!("Expected self.context.drives to be an Array");
-                        }
-                        
+                    self.context.disk_num += 1;
+    
+                    if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                        // Convert `disk` to a serde_json::Value
+                        let disk_json = serde_json::to_value(&disk).unwrap();
+                
+                        disks_arr.push(disk_json);
+                    } else {
+                        eprintln!("Expected self.context.drives to be an Array");
                     }
-                    self.context.output_text += format!("{:#?}", &self.context.system_info.seb_info.as_mut()).as_str();
-                },
-                Err(e) => {
-                    self.context.output_text = format!("{}", e.to_string());
+                    
                 }
+                self.context.output_text += format!("{:#?}", &self.context.system_info.seb_info.as_mut()).as_str();
             };
 
             #[cfg(target_os="windows")]
@@ -194,7 +190,59 @@ impl eframe::App for MasterTechApp {
         }
     
         if let Ok(data) = self.context.prestashop_api_rx.try_recv(){
+            #[cfg(target_os="windows")]
+            {
+                let cps = &mut self.context.current_antivirus;
+                let installed_antivirus = ComputerData::get_antivirus()
+                .map_err(|e| 
+                    cps += format!("Error checking antivirus: {e}\n").as_str()
+                ).unwrap();
+    
+    
+                for (name, is_installed) in installed_antivirus {
+                    match is_installed {
+                        Some(true) => {
+                            cps += "\n";
+                            cps += &format!("{name}");
+                        },
+                        _ => {},
+                    }
+                }
+            }
+
+            // self.context.technician = data.employee.unwrap_or_default().firstname.clone();
             self.context.output_text += serde_json::to_string(&data).unwrap().as_str();
+            self.context.salesman = data.employee.unwrap_or_default().firstname.clone();
+            let ticket = TicketData{
+                service_number: self.context.so_number.parse::<i32>().unwrap_or(0),
+                sales_rep: data.order.id_employee_sales_rep.clone(),
+                recommendations: self.context.recommendations.clone(),
+                tech: self.context.technician.clone(),
+                salesman: self.context.salesman.clone(),
+                dep: data.order.id_store.clone(),
+                ticket_total: data.order.total_paid.clone(),
+                doc_alias: data.order.order_type.clone(),
+                // hardware_test_results: self.context.,
+                #[cfg(target_os="windows")]
+                current_antivirus: self.context.current_antivirus,
+                ..Default::default()
+            };
+            self.context.ticket_payload = Some(ticket);
+
+            let pre_ticket = PreTicketData{
+                sales_rep: data.order.id_employee_sales_rep,
+                due_date: Some(self.context.date.unwrap_or_default().to_string()),
+                doc_alias: data.order.order_type,
+                dep: Store::RIV,
+                jurisdiction: data.order.id_store,
+                ticket_total: data.order.total_paid,
+                customer_name: data.customer.name,
+                customer_phone_1: data.customer.phone_number,
+                customer_phone_2: data.customer.phone_number_2,
+                customer_email: data.customer.email,
+                ..Default::default()
+            };
+            self.context.ticket_info = pre_ticket;
         }
 
         self.viewport_loader(ctx);

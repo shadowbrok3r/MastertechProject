@@ -76,7 +76,7 @@ pub struct MastertechContext {
     pub disk_num: usize,
 
     pub database: Option<Database>,
-    pub rx: Option<crossbeam::channel::Receiver<String>>,
+    pub rx: Receiver<String>,
     pub ctx: Context,
     pub widget_size: f32,
     pub open_tabs: HashSet<String>,
@@ -103,6 +103,7 @@ pub struct MastertechContext {
     pub frame_counter: u64,
     pub show_deferred_viewport: Arc<AtomicBool>,
     pub ticket_data: Option<Vec<TaskPayload>>,
+    pub ticket_payload: Option<TicketData>,
 
     pub db_data_receiver: Receiver<Vec<TaskPayload>>,
     pub db_data_sender: Sender<Vec<TaskPayload>>,
@@ -126,65 +127,26 @@ pub struct MastertechContext {
 impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = DockState::new(
-            vec![
-                "TUR Sheet".to_owned(), 
-                "Minidump Analysis".to_owned(), 
-                "Prestashop API".to_owned(),
-            ]
+            vec!["TUR Sheet".to_owned(), "Minidump Analysis".to_owned()]
         );
-
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
-        
         let [_a, _b] = tree.main_surface_mut()
-            .split_left(
-                NodeIndex::root(),
-                0.30, 
-                vec![
-                    "File Browser 📂".to_owned(),
-        ]);
-
+            .split_left(NodeIndex::root(),0.30, vec!["File Browser 📂".to_owned(),]);
         let [_a, b] = tree.main_surface_mut()
-            .split_below(
-                NodeIndex::root(),
-                0.65, 
-                vec![
-                    "Console".to_owned(),
-                    "Tasks".to_owned(),
-                    "Websockets".to_owned()
-            ]
-        );
-
+            .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(),"Tasks".to_owned(),"Websockets".to_owned()]);
         let [_, _] = tree.main_surface_mut()
-            .split_left(
-            b,
-            0.45,
-            vec![
-                "System Information".to_owned(),
-                "Bug Tracker".to_owned()
-            ],
-        );
-
+            .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned()]);
         let [_, _] = tree.main_surface_mut()
-            .split_left(
-            b,
-            0.20,
-            vec!["Scripts".to_owned()],
-        );
-
-
+            .split_left(b,0.20,vec!["Scripts".to_owned()]);
 
         let mut open_tabs = HashSet::new();
-
         for node in tree[SurfaceIndex::main()].iter() {
             if let Node::Leaf { tabs, .. } = node {
-                for tab in tabs {
-                    open_tabs.insert(tab.clone());
-                }
+                for tab in tabs {open_tabs.insert(tab.clone());}
             }
         }
 
-        // Create watch channel with a default value
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
         let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
@@ -219,7 +181,7 @@ impl Default for MasterTechApp {
             disks: Value::Array(vec![]),
             disk_num: 0,
 
-            scaffold_request,
+            scaffold_request: SendRequest{ tx: tx_scaffold },
             client: reqwest::Client::new(),
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
             current_antivirus: "".to_string(),
@@ -234,13 +196,13 @@ impl Default for MasterTechApp {
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
-            minidump_app,
+            minidump_app: MiniDumpApp::default(),
             output_text: "".to_string(),
 
             connect_to_ws: false,
             disconnect_ws: false,
             client_uuid: Uuid::new_v4(),
-            rx: Some(rx),
+            rx,
 
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -272,6 +234,8 @@ impl Default for MasterTechApp {
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             ticket_data: None,
+            ticket_payload: None,
+
             db_data_receiver,  db_data_sender,
             prestashop_api_tx, prestashop_api_rx,
             computer_specs_tx, computer_specs_rx,
@@ -334,6 +298,69 @@ impl TabViewer for MastertechContext {
             "TUR Sheet" => self.simple_demo_menu(ui),
             "File Browser 📂" => self.file_browser_popup(ui),
             "Prestashop API" => self.presta_api(ui),
+            _ => {
+                ui.label(tab.to_string());
+                ui.label("This is a context menu");
+            }
+        }
+    }
+    
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.as_str().into()
+    }
+    
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        self.open_tabs.remove(tab);
+        true
+    }
+    
+    fn on_add(&mut self, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        
+        // for node in tree[SurfaceIndex::main()].iter() {
+        //     if let Node::Leaf { tabs, .. } = node {
+        //         for tab in tabs {
+        //             open_tabs.insert(tab.clone());
+        //         }
+        //     }
+        // }
+        // self.open_tabs.insert(surface_index.);
+    }
+
+}
+
+
+impl TabViewer for MastertechContext {
+    type Tab = String;
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+
+        match tab.as_str() {
+            "TUR Sheet" => self.tur_sheet(ui),
+            "Console" => self.output_console(ui),
+            "Scripts" => self.scripts(ui),
+            "File Browser 📂" => self.file_browse(ui),
+            "System Information" => self.system_information(ui),
+            "Minidump Analysis" => self.mini_dump(ui),
+            "Profiler" => self.puffin_profiler(ui),
+            "QC ☑️" => self.quality_check(ui),
+            "Tasks" => self.mastertech_website(ui),
+            "Bug Tracker" => self.github(ui),
+            "Websockets" => self.websockets(ui),
+            _ => {
+                let sysinfo_tab = &"System Information".to_string();
+                if ui.label(tab.as_str()).clicked(){
+                    if tab.as_str() == sysinfo_tab{
+                        self.specs_first_run = true;
+                    }
+                };
+            }
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        match tab.as_str() {
+            "TUR Sheet" => self.simple_demo_menu(ui),
+            "File Browser 📂" => self.file_browser_popup(ui),
             _ => {
                 ui.label(tab.to_string());
                 ui.label("This is a context menu");
