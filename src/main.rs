@@ -3,6 +3,7 @@ use std::{fs::File, sync:: Arc};
 use chrono::DateTime;
 use log::{debug, info};
 use app_state::{AppState, MasterTechApp};
+use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use self_update::cargo_crate_version;
@@ -45,24 +46,20 @@ impl eframe::App for MasterTechApp {
 
             tokio::spawn(async move {
                 let system_info = ComputerData::get_computer_data().await;
-                let database = Database::new().await;
+                // let database = Database::new().await;
 
                 match sysinfo_tx.try_send(system_info.unwrap()){
                     Ok(_) => info!("sent computer data"),
                     Err(e) => info!("Error sending computer data: {e:?}"),
                 };
 
-                match db_tx.try_send(database){
-                    Ok(_) => info!("Sent db connection across thread"),
-                    Err(err) => debug!("Error sending db connection: {err:?}"),
-                }
+                // match db_tx.try_send(database){
+                //     Ok(_) => info!("Sent db connection across thread"),
+                //     Err(err) => debug!("Error sending db connection: {err:?}"),
+                // }
                 
             });
 
-            if let Ok(db) = self.context.db_rx.try_recv(){
-                info!("Received DB connection from thread");
-                self.context.database = Some(db);
-            }
 
             if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
                 self.context.system_info = computer_data;
@@ -142,7 +139,7 @@ impl eframe::App for MasterTechApp {
             _ => {}
         }
 
-        while let Ok(message) = self.context.rx.as_ref().unwrap().try_recv() {
+        while let Ok(message) = self.context.rx.try_recv() {
             if let Ok(info) = serde_json::from_str::<database::PreTicketData>(&message) {
                 self.context.output_text.clear();
     
@@ -195,15 +192,15 @@ impl eframe::App for MasterTechApp {
                 let cps = &mut self.context.current_antivirus;
                 let installed_antivirus = ComputerData::get_antivirus()
                 .map_err(|e| 
-                    cps += format!("Error checking antivirus: {e}\n").as_str()
+                    *cps += format!("Error checking antivirus: {e}\n").as_str()
                 ).unwrap();
     
     
                 for (name, is_installed) in installed_antivirus {
                     match is_installed {
                         Some(true) => {
-                            cps += "\n";
-                            cps += &format!("{name}");
+                            *cps += "\n";
+                            *cps += &format!("{name}");
                         },
                         _ => {},
                     }
@@ -223,8 +220,8 @@ impl eframe::App for MasterTechApp {
                 ticket_total: data.order.total_paid.clone(),
                 doc_alias: data.order.order_type.clone(),
                 // hardware_test_results: self.context.,
-                #[cfg(target_os="windows")]
-                current_antivirus: self.context.current_antivirus,
+                // #[cfg(target_os="windows")]
+                // current_antivirus: Some(self.context.current_antivirus),
                 ..Default::default()
             };
             self.context.ticket_payload = Some(ticket);
@@ -274,7 +271,7 @@ async fn main() -> eframe::Result<()> {
                 .with_icon(load_icon()),
             ..Default::default()
         },
-        Box::new(|_cc| Box::<MasterTechApp>::default()),
+        Box::new(|cc| Box::new(MasterTechApp::new(cc))),
     )
 }
 

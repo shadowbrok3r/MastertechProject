@@ -71,8 +71,11 @@ ewebsock = "0.6.0"
 # softbuffer = {version = "0.4.2", optional = true}
 # skia-safe = {version = "0.73.0", optional = true}
 # portable-pty = "0.8.1"
-# ratatui = "0.26.2"
-# crossterm = "0.27.0"
+ratatui = {version = "0.26", features = ["crossterm"]}
+ratframe = "1"
+egui_ratatui = "0.0.5"
+tui-input = "0.8"
+crossterm = "0.27.0"
 # tui-term = "0.1.11"
 
 [dev-dependencies]

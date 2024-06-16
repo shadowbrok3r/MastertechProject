@@ -1,14 +1,28 @@
 use std::mem;
-
-use eframe::egui::{CentralPanel, Color32, Context, Key, TopBottomPanel, Ui};
+use eframe::egui::{CentralPanel, Color32, Key, TopBottomPanel, Ui};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 
 use crate::app_state::MastertechContext;
-
+use tui_input::Input;
+pub mod websocket;
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
-        let db_tx = self.db_tx.clone();
+        // if let Some(frontend) = &mut self.frontend {
+        //     self.terminal
+        //         .draw(|frame| {
+        //             let _area = frame.size();
+        //             // render_chart1(frame, area, &app);
+        //             frontend.ui(ui);
+
+        //         })
+        //     .expect("epic fail");
+
+        // }
+        // ui.add( self.terminal.backend_mut());
+        // self.terminal.show_cursor().unwrap();
+
+        let _db_tx = self.db_tx.clone();
 
         if self.current_user.is_none(){
             let _ = self.app_state_tx.send(crate::app_state::AppState::NoAuth("No User".to_string()));
@@ -39,22 +53,27 @@ impl MastertechContext{
                     });
                 });
             }
-    
             if let Some(frontend) = &mut self.frontend {
                 frontend.ui(ui);
             }
-
-
         });
         
     }
 }
 
 pub struct WebConsoleFrontend {
-    ws_sender: WsSender,
-    ws_receiver: WsReceiver,
-    events: Vec<WsEvent>,
-    text_to_send: String,
+    pub ws_sender: WsSender,
+    pub ws_receiver: WsReceiver,
+    pub events: Vec<WsEvent>,
+    pub text_to_send: String,
+    /// Position of cursor in the editor area.
+    pub character_index: usize,
+    /// Current value of the input box
+    pub input: Input,
+    /// Current input mode
+    // pub input_mode: InputMode,
+    /// History of recorded messages
+    pub messages: Vec<String>,
 }
 
 impl WebConsoleFrontend {
@@ -63,7 +82,11 @@ impl WebConsoleFrontend {
             ws_sender,
             ws_receiver,
             events: Default::default(),
-            text_to_send: Default::default(),
+            text_to_send: String::new(),
+            input: Input::default(),
+            // input_mode: InputMode::Normal,
+            messages: Vec::new(),
+            character_index: 0,
         }
     }
 
@@ -104,4 +127,153 @@ impl WebConsoleFrontend {
             }
         });
     }
+
+    // pub fn ui(&mut self, ui: &mut Ui, f: &mut Frame, area: Rect) {
+    //     // if ui.text_edit_singleline(&mut self.text_to_send).lost_focus()
+    //     //     && ui.input(|i| i.key_pressed(Key::Enter))
+    //     // {
+    //     //     self.ws_sender
+    //     //         .send(WsMessage::Text(std::mem::take(&mut self.text_to_send)));
+    //     // }
+
+    //     while let Some(event) = self.ws_receiver.try_recv() {
+    //         self.events.push(event);
+    //     }
+
+    //     let mut text: String = String::new();
+    //     for event in &self.events {
+    //         match event{
+    //             WsEvent::Message(msg) => {
+    //                 match msg{
+    //                     WsMessage::Binary(bin) => {
+    //                         text = format!("{bin:?}");
+    //                     },
+    //                     WsMessage::Text(txt) => {
+    //                         text = txt.clone();
+    //                     },
+    //                     _ => {}
+    //                 }
+    //             },
+    //             // WsEvent::Error(_) => todo!(),
+    //             _ => {}
+    //         }
+            
+    //     }
+
+    //     let block = Block::default()
+    //         .title(Title::from("MasterTech Web Console").alignment(Alignment::Center))
+    //         .title(
+    //             Title::from("X")
+    //                 .alignment(Alignment::Center)
+    //                 .position(Position::Bottom),
+    //         )
+    //         .borders(Borders::ALL)
+    //         .border_set(border::THICK)
+    //         .white().bg(Color::Black);
+
+    //     let para = Paragraph::new(text)
+    //         .centered()
+    //         .block(block)
+    //         .cyan()
+    //         .on_black();
+
+    //     // for event in &self.events {
+    //     //     ui.label(format!("{event:?}"));
+    //     // }
+    //     // f.render_widget(para, area);
+    //     let vertical = Layout::vertical([
+    //         Constraint::Length(1),
+    //         Constraint::Length(3),
+    //         Constraint::Min(1),
+    //     ]);
+    //     let [help_area, input_area, messages_area] = vertical.areas(f.size());
+    
+    //     let (msg, style) = match self.input_mode {
+    //         InputMode::Normal => (
+    //             vec![
+    //                 "Press ".into(),
+    //                 "q".bold(),
+    //                 " to exit, ".into(),
+    //                 "e".bold(),
+    //                 " to start editing.".bold(),
+    //             ],
+    //             Style::default().add_modifier(Modifier::RAPID_BLINK),
+    //         ),
+    //         InputMode::Editing => (
+    //             vec![
+    //                 "Press ".into(),
+    //                 "Esc".bold(),
+    //                 " to stop editing, ".into(),
+    //                 "Enter".bold(),
+    //                 " to record the message".into(),
+    //             ],
+    //             Style::default(),
+    //         ),
+    //     };
+    //     let text = Text::from(Line::from(msg)).patch_style(style);
+    //     let help_message = Paragraph::new(text);
+    //     f.render_widget(help_message, help_area);
+    
+    //     let input = Paragraph::new(self.input.value())
+    //         .style(match self.input_mode {
+    //             InputMode::Normal => Style::default(),
+    //             InputMode::Editing => Style::default().fg(Color::Yellow),
+    //         })
+    //         .block(Block::bordered().title("Input"));
+    //     f.render_widget(input, input_area);
+    //     match self.input_mode {
+    //         InputMode::Normal =>
+    //             // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
+    //             {}
+    
+    //         InputMode::Editing => {
+    //             // Make the cursor visible and ask ratatui to put it at the specified coordinates after
+    //             // rendering
+    //             #[allow(clippy::cast_possible_truncation)]
+    //             f.set_cursor(
+    //                 // Draw the cursor at the current position in the input field.
+    //                 // This position is can be controlled via the left and right arrow key
+    //                 input_area.x + self.character_index as u16 + 1,
+    //                 // Move one line down, from the border to the input line
+    //                 input_area.y + 1,
+    //             );
+    //         }
+    //     }
+    
+    //     let messages: Vec<ListItem> = self
+    //         .messages
+    //         .iter()
+    //         .enumerate()
+    //         .map(|(i, m)| {
+    //             let content = Line::from(Span::raw(format!("{i}: {m}")));
+    //             ListItem::new(content)
+    //         })
+    //         .collect();
+    //     let messages = List::new(messages).block(Block::bordered().title("Messages"));
+    //     f.render_widget(messages, messages_area);
+    // }
+
+    // pub fn handle_events(&mut self, ui: &mut Ui) {
+    //     if ui.input(|i| i.key_released(Key::Q)) {
+    //         panic!("HAVE A NICE WEEK");
+    //     }
+    //     if ui.input(|i| i.key_released(Key::ArrowRight)) {
+    //         self.change_status();
+    //     }
+    //     if ui.input(|i| i.key_released(Key::ArrowLeft)) {
+    //         self.items.unselect();
+    //     }
+    //     if ui.input(|i| i.key_released(Key::ArrowDown)) {
+    //         self.items.next();
+    //     }
+    //     if ui.input(|i| i.key_released(Key::ArrowUp)) {
+    //         self.items.previous();
+    //     }
+    //     if ui.input(|i| i.key_released(Key::G)) {
+    //         self.go_top();
+    //     }
+    //     if ui.input(|i| i.key_released(Key::F)) {
+    //         self.go_bottom();
+    //     }
+    // }
 }
