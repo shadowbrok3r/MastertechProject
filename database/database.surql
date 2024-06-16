@@ -14,7 +14,7 @@ OPTION IMPORT;
 -- SCOPES
 -- ------------------------------
 
-DEFINE SCOPE user SESSION 1d SIGNUP (CREATE user CONTENT { email: $email, everest_initials: $everest_initials, name: $name, password: crypto::argon2::generate($password), store: $store }) SIGNIN (SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(password, $password));
+DEFINE SCOPE user SESSION 2d SIGNUP (CREATE user CONTENT { email: $email, everest_initials: $everest_initials, name: $name, password: crypto::argon2::generate($password), store: $store }) SIGNIN (SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(password, $password));
 
 -- ------------------------------
 -- TABLE: computer
