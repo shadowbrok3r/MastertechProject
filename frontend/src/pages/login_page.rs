@@ -32,7 +32,7 @@ impl Login{
             // #[cfg(target_arch="wasm32-unknown-unknown")]
             match database{
                 Ok(db) => {
-                    let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None);
+                    let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure();
                     if let Some(ref cookie) = db.jwt{
                         if let Some(ref usr) = db.user{
                             wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
@@ -41,7 +41,7 @@ impl Login{
                             info!("set cookies");
                         }else{ 
                             info!("no usr"); 
-                            let _ = db.database.invalidate();
+                            let _ = db.database.invalidate().await;
                             match appstate_tx.send(AppState::NoAuth("No user was found".to_string())){
                                 Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                 Err(e) => info!("Error {e:?}"),
@@ -49,7 +49,7 @@ impl Login{
                         }
                     }else{ 
                         info!("no cookie"); 
-                        let _ = db.database.invalidate();
+                        let _ = db.database.invalidate().await;
                         match appstate_tx.send(AppState::NoAuth("No cookie was found".to_string())){
                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                             Err(e) => info!("Error {e:?}"),

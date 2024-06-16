@@ -40,22 +40,25 @@ struct Auth {
     password: String,
 }
 
+const DB_URL: &str = "localhost:8000"; // surreal.master-tech.app/rpc
+const USER_SCOPE: &str = "user";
+const DB: &str = "MastertechDB";
+const NS: &str = "Mastertech";
 
 
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = "surreal.master-tech.app".to_string(); //surreal.master-tech.app
         match jwt{
             Some(jwt) => {
                 info!("We already have a jwt, attempting token auth");
-                let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(DB_URL).await?;
                 let auth = database.authenticate(jwt.clone()).await;
 
                 match auth{
                     Ok(_) => {
                         info!("Auth ok");
                         if !username.is_empty() || !password.is_empty(){
-                            let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE email == $email");
+                            let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE email = $email");
                             database.set("email", username).await?;
                             let user: Vec<Value> = database.query(query).await?.take(0)?;
                             info!("user: {user:#?}");
@@ -70,19 +73,28 @@ impl Database{
                 }
             },
             None => {
+                info!("connecting");
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(DB_URL).await?;
                 info!("signing in");
-                let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
                 
+                database.use_ns(NS).use_db(DB).await?;
+
                 // Select a specific namespace / database
                 let jwt = database.signin(
-                    Scope { namespace: "Mastertech", database: "MastertechDB", scope: "user", // access: "user"
-                        params: Auth{email: username.clone(), password: password}
+                    Scope { 
+                        namespace: NS, 
+                        database: DB, 
+                        scope: USER_SCOPE, // access: "user"
+                        params: 
+                            Auth{
+                                email: username.clone(), 
+                                password: password
+                            }
                     }
                 ).await?;
-
-                let query = format!("SELECT  id, name, everest_initials, email, store FROM user WHERE email == $email");
-
-                database.set("email", username).await?;
+                
+                let query = format!("SELECT  id, name, everest_initials, email, store FROM user WHERE email = $email");
+                database.set("email", username.clone().to_lowercase()).await?;
                 info!("querying ");
                 let user: Vec<Value> = database.query(query).await?.take(0)?;
                     
@@ -94,12 +106,11 @@ impl Database{
     }
 
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = "localhost:8000".to_string(); //surreal.master-tech.app
-        let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
+        let database: Surreal<WsClient> = Surreal::new::<Wss>(DB_URL).await?;
         // Select a specific namespace / database
         let jwt = database.signup(
             Scope { 
-                namespace: "Mastertech", database: "MastertechDB", scope: "user",
+                namespace: NS, database: DB, scope: USER_SCOPE,
                 params: signup.clone()
             }
         ).await?;
