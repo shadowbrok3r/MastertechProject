@@ -8,6 +8,12 @@ use crate::app_state::MastertechContext;
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
+        let db_tx = self.db_tx.clone();
+
+        if self.current_user.is_none(){
+            let _ = self.app_state_tx.send(crate::app_state::AppState::NoAuth("No User".to_string()));
+        }
+        
         ui.vertical_centered(|ui| {
             let ctx = ui.ctx().clone();
             let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
@@ -80,7 +86,21 @@ impl WebConsoleFrontend {
             ui.separator();
             ui.heading("Received events:");
             for event in &self.events {
-                ui.label(format!("{event:?}"));
+                match event{
+                    WsEvent::Message(msg) => {
+                        match msg{
+                            WsMessage::Binary(bin) => {
+                                ui.label(format!("{bin:?}"));
+                            },
+                            WsMessage::Text(txt) => {
+                                ui.label(txt);
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+                
             }
         });
     }

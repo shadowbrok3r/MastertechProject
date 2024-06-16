@@ -1,78 +1,44 @@
 use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::AtomicBool, Arc}}; 
+use anyhow::Error;
 use chrono::{DateTime, Utc};
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, PrestashopPayload, TaskPayload}, GetKeysResponse, PreTicketData}, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
+use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, PrestashopPayload, TaskPayload, User}, GetKeysResponse, PreTicketData}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
 use egui_file::FileDialog;
 
-impl TabViewer for MastertechContext {
-    type Tab = String;
+pub struct MasterTechApp {
+    pub context: MastertechContext,
+    pub tree: DockState<String>,
+    pub state: AppState,
+    login: Login,
+}
 
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+#[derive(Default, Debug, PartialEq)]
+pub enum MainPages{
+    #[default]
+    Tasks,
+    Downloads,
+    WebConsole,
+}
 
-        match tab.as_str() {
-            "TUR Sheet" => self.tur_sheet(ui),
-            "Console" => self.output_console(ui),
-            "Scripts" => self.scripts(ui),
-            "File Browser 📂" => self.file_browse(ui),
-            "System Information" => self.system_information(ui),
-            "Minidump Analysis" => self.mini_dump(ui),
-            "Profiler" => self.puffin_profiler(ui),
-            "QC ☑️" => self.quality_check(ui),
-            "Prestashop API" => self.presta_api(ui),
-            "Tasks" => self.mastertech_website(ui),
-            "Bug Tracker" => self.github(ui),
-            "Websockets" => self.websockets(ui),
-            _ => {
-                let sysinfo_tab = &"System Information".to_string();
-                if ui.label(tab.as_str()).clicked(){
-                    if tab.as_str() == sysinfo_tab{
-                        self.specs_first_run = true;
-                    }
-                };
-            }
-        }
-    }
+#[derive(Debug, PartialEq)]
+pub enum AppState{
+    Authenticated(MainPages),
+    CreateAccount,
+    NoAuth(String),
+}
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        match tab.as_str() {
-            "TUR Sheet" => self.simple_demo_menu(ui),
-            "File Browser 📂" => self.file_browser_popup(ui),
-            "Prestashop API" => self.presta_api(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
+impl Default for AppState{
+    fn default() -> Self {
+        Self::NoAuth("Not Authenticated".to_string())
     }
-    
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-    
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
-    }
-    
-    fn on_add(&mut self, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        
-        // for node in tree[SurfaceIndex::main()].iter() {
-        //     if let Node::Leaf { tabs, .. } = node {
-        //         for tab in tabs {
-        //             open_tabs.insert(tab.clone());
-        //         }
-        //     }
-        // }
-        // self.open_tabs.insert(surface_index.);
-    }
-
 }
 
 pub struct MastertechContext { 
+    pub current_user: Option<User>,
     pub so_number: String,
     pub recommendations: String,
     pub url: String,
@@ -145,18 +111,16 @@ pub struct MastertechContext {
     pub prestashop_api_tx: Sender<PrestashopPayload>, 
     pub computer_specs_tx: Sender<ComputerData>,
     pub computer_specs_rx: Receiver<ComputerData>,
+    pub app_state_tx: Sender<AppState>,
+    pub app_state_rx: Receiver<AppState>,
 
-    pub db_tx: Sender<Database>,
-    pub db_rx: Receiver<Database>,
+
+    pub db_rx: Receiver<anyhow::Result<Database, Error>>,
+    pub db_tx: Sender<anyhow::Result<Database, Error>>,
     pub cps_keys_tx: Sender<GetKeysResponse>,
     pub cps_keys_rx: Receiver<GetKeysResponse>,
     pub github_issue_title: String,
     pub github_issue_descript: String,
-}
-
-pub struct MasterTechApp {
-    pub context: MastertechContext,
-    pub tree: DockState<String>,
 }
 
 impl Default for MasterTechApp {
@@ -228,16 +192,18 @@ impl Default for MasterTechApp {
         let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
         let (db_tx, db_rx) = crossbeam::channel::unbounded();
         let (cps_keys_tx,cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
+        let (app_state_tx,app_state_rx) = crossbeam::channel::unbounded::<AppState>();
 
         let scaffold_request = SendRequest{ tx: tx_scaffold };
 
         let minidump_app = MiniDumpApp::default();
 
         let context = MastertechContext {
+            current_user: None,
             so_number: "".to_string(),
             recommendations: "".to_string(),
 
-            url: "ws://127.0.0.1:8081/websocket".to_owned(),
+            url: "ws://127.0.0.1:8081/websocket?room_id=0&role=client".to_owned(),
             error: Default::default(),
             frontend: None,
 
@@ -306,12 +272,10 @@ impl Default for MasterTechApp {
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             ticket_data: None,
-            db_data_receiver, 
-            db_data_sender,
-            prestashop_api_tx,
-            prestashop_api_rx,
-            computer_specs_tx,
-            computer_specs_rx,
+            db_data_receiver,  db_data_sender,
+            prestashop_api_tx, prestashop_api_rx,
+            computer_specs_tx, computer_specs_rx,
+            app_state_tx, app_state_rx,
             db_tx,
             db_rx,
             cps_keys_tx,
@@ -320,6 +284,82 @@ impl Default for MasterTechApp {
             github_issue_descript: String::new(),
         };
 
-        Self { context, tree }
+        Self { context, tree, login: Login::default(), state: AppState::default() }
     }
+}
+
+/// Private method to access login state only within NoAuth context
+impl MasterTechApp{
+    pub fn login_mut(&mut self) -> Option<&mut Login> {
+        match self.state{
+            AppState::NoAuth(_) => Some(&mut self.login),
+            AppState::Authenticated(MainPages::Tasks) => None,
+            _ => None
+        }
+    }
+}
+
+
+impl TabViewer for MastertechContext {
+    type Tab = String;
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+
+        match tab.as_str() {
+            "TUR Sheet" => self.tur_sheet(ui),
+            "Console" => self.output_console(ui),
+            "Scripts" => self.scripts(ui),
+            "File Browser 📂" => self.file_browse(ui),
+            "System Information" => self.system_information(ui),
+            "Minidump Analysis" => self.mini_dump(ui),
+            "Profiler" => self.puffin_profiler(ui),
+            "QC ☑️" => self.quality_check(ui),
+            "Prestashop API" => self.presta_api(ui),
+            "Tasks" => self.mastertech_website(ui),
+            "Bug Tracker" => self.github(ui),
+            "Websockets" => self.websockets(ui),
+            _ => {
+                let sysinfo_tab = &"System Information".to_string();
+                if ui.label(tab.as_str()).clicked(){
+                    if tab.as_str() == sysinfo_tab{
+                        self.specs_first_run = true;
+                    }
+                };
+            }
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        match tab.as_str() {
+            "TUR Sheet" => self.simple_demo_menu(ui),
+            "File Browser 📂" => self.file_browser_popup(ui),
+            "Prestashop API" => self.presta_api(ui),
+            _ => {
+                ui.label(tab.to_string());
+                ui.label("This is a context menu");
+            }
+        }
+    }
+    
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.as_str().into()
+    }
+    
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        self.open_tabs.remove(tab);
+        true
+    }
+    
+    fn on_add(&mut self, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        
+        // for node in tree[SurfaceIndex::main()].iter() {
+        //     if let Node::Leaf { tabs, .. } = node {
+        //         for tab in tabs {
+        //             open_tabs.insert(tab.clone());
+        //         }
+        //     }
+        // }
+        // self.open_tabs.insert(surface_index.);
+    }
+
 }
