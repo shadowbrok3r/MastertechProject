@@ -1,19 +1,20 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Address{
-    pub id_customer: SubData,         // ❌     isNullOrUnsignedId  
+    pub id: i32,
+    pub id_customer: String,         // ❌     isNullOrUnsignedId  
     pub lastname: String,             // ✔️     isName  
     pub firstname: String,            // ✔️     isName  
     pub address1: String,             // ✔️     isAddress   
-    pub address2: Option<String>,     // ❌     isAddress   
-    pub postcode: i32,                // ❌     isPostCode  
+    pub address2: String,             // ❌     isAddress   
+    pub postcode: String,                // ❌     isPostCode  
     pub city: String,                 // ✔️     isCityName  
-    pub phone: i64,                   // ❌     isPhoneNumber   
-    // pub phone_mobile: Option<i64>,    // ❌     isPhoneNumber   
+    pub phone: String,                   // ❌     isPhoneNumber   
+    pub phone_mobile: String, // ❌     isPhoneNumber   
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Employee{
     pub id: i32,
     /// ✔️	isName	
@@ -23,48 +24,48 @@ pub struct Employee{
     /// ✔️	isEmail	
     pub email: String, 
     /// ❌	isBool	
-    pub active: i32, 
+    pub active: String, 
     /// ✔️	isInt	
-    pub id_profile: i32, 
+    pub id_profile: String, 
     /// ❌	isUnsignedInt	
-    pub id_last_order: i32, 
+    pub id_last_order: String, 
     /// ❌	isUnsignedInt	
-    pub id_last_customer_message: i32, 
+    pub id_last_customer_message: String, 
     /// ❌	isUnsignedInt	
-    pub id_last_customer: i32, 
+    pub id_last_customer: String, 
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Order{
-    pub id_address_delivery: SubData, // ✔️
-    pub id_customer: SubData, // ✔️
-    pub id_cart: SubData, // ✔️
-    pub invoice_number: i32, // ❌		
+    pub id_address_delivery: String, // ✔️
+    pub id_customer: String, // ✔️
+    pub id_cart: String, // ✔️
+    pub invoice_number: String, // ❌		
     pub invoice_date: String, // ❌		
     pub date_add: String, // ❌
     pub date_upd: String, // ❌
-    pub id_employee_sales_rep: i32,
-    pub id_employee_split_rep: i32,
-    pub id_employee_editing: i32,
-    pub id_order_everest: i32,
-    pub id_store: i32, // 1 = warehouse
-    pub total_paid: f32, // ✔️
+    pub id_employee_sales_rep: String,
+    pub id_employee_split_rep: String,
+    pub id_employee_editing: String,
+    pub id_order_everest: String,
+    pub id_store: String, // 1 = warehouse
+    pub total_paid: String, // ✔️
     pub reference: String, // what prestashop sees since order id and reference are different...
-    pub id_order_parent: i32, // no idea
+    pub id_order_parent: String, // no idea
     // #[serde(flatten)]
-    pub shipping_number: Shipping, // Tracking number
+    pub shipping_number: String, // Tracking number
     pub order_type: String, // Configurator / Sales Order
     // note: String, // ❌
     // associations: Associations
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Associations{
     pub order_rows: OrderRow
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct OrderRow{
     pub id: i32,
     pub id_order_config: i32,
@@ -75,36 +76,49 @@ pub struct OrderRow{
     // pub id_customization: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Customer { 	 	
     pub lastname: String,    //  	isCustomerName 	✔️ 	✔️ 	255
     pub firstname: String,   //  	isCustomerName 	✔️ 	✔️ 	255
     pub email: String, 	     //  	isEmail 	✔️ 	✔️ 	255
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Data{
-    #[serde(rename="@id")]
-    pub id: Option<i32>,
-    #[serde(rename="@xlink:href")]
-    pub link: String
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct CustomerMessage { 	 	
+    pub id_employee: String,        //  isUnsignedId   ❌ 		Employee ID
+    pub id_customer_thread: String, //	               ❌ 		Customer Thread ID
+    pub ip_address: String,         //  isIp2Long      ❌ 	    15 	
+    pub message: String,            //  isCleanHtml    ✔️ 	     16777216 	
+    pub file_name: String,          //		           ❌ 		
+    pub user_agent: String,         //	               ❌ 		
+    pub private: String,            //  isBool 	       ❌ 		
+    pub date_add: String,           // 	isDate 	       ❌ 		
+    pub date_upd: String,           // 	isDate 	       ❌ 		
+    pub read: String,           
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SubData{
-    #[serde(rename="#text")]
-    pub id: i32,
-    #[serde(rename="@xlink:href")]
-    pub link: String
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct CustomerThread { 	
+    pub id: i32,     
+    pub id_customer: String,    // isUnsignedId 	❌ 		Customer ID
+    pub id_order: String,    	// isUnsignedId 	❌ 		Order ID
+    pub date_add: String,    	// isDate 	        ❌ 		
+    pub date_upd: String,    	// isDate 	        ❌ 		
+    pub associations: CustMessageAssociation,    	     
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Shipping{
-    #[serde(rename="#text")]
-    shipping_number: Option<String>
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct CustMessageAssociation{
+    pub customer_messages: Vec<CustMessage>
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct CustMessage{
+    pub id: String
+}
+
+#[derive(Serialize, Debug, Default)]
 pub struct Resources {
     /// 	The Customer, Manufacturer and Customer addresses
     pub addresses: Address,          

@@ -14,6 +14,8 @@ pub mod submit_tur_mtech;
 pub mod submit_tur_email;
 pub mod email_builder;
 pub mod scaffold;
+pub mod presta_api;
+
 
 impl MastertechContext {
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
@@ -93,7 +95,7 @@ impl MastertechContext {
 
                                         } 
                                     
-                                        ui.add_enabled(
+                                        if ui.add_enabled(
                                             check, 
                                             Button::new( 
                                                 RichText::new("Get PrestaShop")
@@ -104,7 +106,9 @@ impl MastertechContext {
                                             ).min_size(
                                                 Vec2::new(145.0, 25.0)
                                             )
-                                        )
+                                        ).clicked() {
+                                            self.presta_api();
+                                        }
                                     });// horizontal_top
                                 }); // strip cell
 
@@ -180,23 +184,7 @@ impl MastertechContext {
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
                                                         .min_size(vec2(self.widget_size+2.0,14.0))
-                                                    );    
-                                                    // ComboBox::from_id_source("salesman_cbox").width(self.widget_size)
-                                                    // .selected_text(format!("{:?}", self.salesman_cbox))
-                                                    // .show_ui(ui, |ui| {
-                                                    //     ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Jake, "Jake");
-                                                    //     ui.selectable_value(&mut self.salesman_cbox, scaffold::Salesman::Danny, "Danny");
-                                                    // });
-
-
-                                                    // ComboBox::from_id_source("techs_cbox").width(self.widget_size)
-                                                    // .selected_text(format!("{:?}", self.techs_cbox))
-                                                    // .show_ui(ui, |ui| {
-                                                        
-                                                    //     ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Logan, "Logan");
-                                                    //     ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Bread, "Bread");
-                                                    //     ui.selectable_value(&mut self.techs_cbox, scaffold::Techs::Taco, "Taco");
-                                                    // });    
+                                                    );
                                                     
                                                     ui.end_row();
                                                                         /*     ROW 4     */
@@ -209,7 +197,6 @@ impl MastertechContext {
                                                         let cps_tx = self.cps_keys_tx.clone();
 
                                                         spawn(async move{
-                                                            
                                                             let unwrapped_request =  cps_request.await.unwrap_or(GetKeysResponse::default());
 
                                                             match cps_tx.send(unwrapped_request){
