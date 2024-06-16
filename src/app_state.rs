@@ -2,13 +2,15 @@ use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::AtomicBool,
 use anyhow::Error;
 use chrono::{DateTime, Utc};
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{Color32, Context, Stroke, Ui, WidgetText};
+use eframe::egui::{Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, PrestashopPayload, TaskPayload, User}, GetKeysResponse, PreTicketData}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend}};
+use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, PrestashopPayload, TaskPayload, TicketData, User}, GetKeysResponse, PreTicketData}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}};
 use egui_file::FileDialog;
-
+use ratatui::Terminal;
+use ratframe::NewCC;
+use egui_ratatui::RataguiBackend;
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: DockState<String>,
@@ -44,6 +46,8 @@ pub struct MastertechContext {
     pub url: String,
     pub error: String,
     pub frontend: Option<WebConsoleFrontend>,
+    pub terminal: Terminal<RataguiBackend>,
+    pub terminal_frontend: Option<TerminalFrontend>,
 
     pub ticket_info: PreTicketData,
     pub keys: GetKeysResponse,
@@ -124,8 +128,10 @@ pub struct MastertechContext {
     pub github_issue_descript: String,
 }
 
-impl Default for MasterTechApp {
-    fn default() -> Self {
+impl NewCC for MasterTechApp {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        setup_custom_fonts(&cc.egui_ctx);
+
         let mut tree = DockState::new(
             vec!["TUR Sheet".to_owned(), "Minidump Analysis".to_owned()]
         );
@@ -147,6 +153,15 @@ impl Default for MasterTechApp {
             }
         }
 
+        let backend = RataguiBackend::new_with_fonts(
+            10,
+            10,
+            "Regular".into(),
+            "Bold".into(),
+            "Oblique".into(),
+            "BoldOblique".into(),
+        );
+
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
         let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
@@ -156,14 +171,13 @@ impl Default for MasterTechApp {
         let (cps_keys_tx,cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
         let (app_state_tx,app_state_rx) = crossbeam::channel::unbounded::<AppState>();
 
-        let scaffold_request = SendRequest{ tx: tx_scaffold };
-
-        let minidump_app = MiniDumpApp::default();
 
         let context = MastertechContext {
             current_user: None,
             so_number: "".to_string(),
             recommendations: "".to_string(),
+            terminal: Terminal::new(backend).unwrap(),
+            terminal_frontend: None,
 
             url: "ws://127.0.0.1:8081/websocket?room_id=0&role=client".to_owned(),
             error: Default::default(),
@@ -278,7 +292,6 @@ impl TabViewer for MastertechContext {
             "Minidump Analysis" => self.mini_dump(ui),
             "Profiler" => self.puffin_profiler(ui),
             "QC ☑️" => self.quality_check(ui),
-            "Prestashop API" => self.presta_api(ui),
             "Tasks" => self.mastertech_website(ui),
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
@@ -297,7 +310,6 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
             "File Browser 📂" => self.file_browser_popup(ui),
-            "Prestashop API" => self.presta_api(ui),
             _ => {
                 ui.label(tab.to_string());
                 ui.label("This is a context menu");
@@ -329,64 +341,49 @@ impl TabViewer for MastertechContext {
 }
 
 
-impl TabViewer for MastertechContext {
-    type Tab = String;
+fn setup_custom_fonts(ctx: &Context) {
+    // Start with the default fonts (we will be adding to them rather than replacing them).
+    let mut fonts = FontDefinitions::default();
 
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+    // Install my own font (maybe supporting non-latin characters).
+    // .ttf and .otf files supported.
+    fonts.font_data.insert(
+        "Regular".to_owned(),
+        FontData::from_static(include_bytes!("./assets/fonts/Iosevka-Regular.ttf")),
+    );
+    fonts.families.insert(
+        FontFamily::Name("Regular".into()),
+        vec!["Regular".to_owned()],
+    );
+    fonts.font_data.insert(
+        "Bold".to_owned(),
+        FontData::from_static(include_bytes!("./assets/fonts/Iosevka-Bold.ttf")),
+    );
+    fonts.families.insert(
+        FontFamily::Name("Bold".into()),
+        vec!["Bold".to_owned()],
+    );
 
-        match tab.as_str() {
-            "TUR Sheet" => self.tur_sheet(ui),
-            "Console" => self.output_console(ui),
-            "Scripts" => self.scripts(ui),
-            "File Browser 📂" => self.file_browse(ui),
-            "System Information" => self.system_information(ui),
-            "Minidump Analysis" => self.mini_dump(ui),
-            "Profiler" => self.puffin_profiler(ui),
-            "QC ☑️" => self.quality_check(ui),
-            "Tasks" => self.mastertech_website(ui),
-            "Bug Tracker" => self.github(ui),
-            "Websockets" => self.websockets(ui),
-            _ => {
-                let sysinfo_tab = &"System Information".to_string();
-                if ui.label(tab.as_str()).clicked(){
-                    if tab.as_str() == sysinfo_tab{
-                        self.specs_first_run = true;
-                    }
-                };
-            }
-        }
-    }
+    fonts.font_data.insert(
+        "Oblique".to_owned(),
+        FontData::from_static(include_bytes!("./assets/fonts/Iosevka-Oblique.ttf")),
+    );
+    fonts.families.insert(
+        FontFamily::Name("Oblique".into()),
+        vec!["Oblique".to_owned()],
+    );
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        match tab.as_str() {
-            "TUR Sheet" => self.simple_demo_menu(ui),
-            "File Browser 📂" => self.file_browser_popup(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
-    }
-    
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-    
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
-    }
-    
-    fn on_add(&mut self, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        
-        // for node in tree[SurfaceIndex::main()].iter() {
-        //     if let Node::Leaf { tabs, .. } = node {
-        //         for tab in tabs {
-        //             open_tabs.insert(tab.clone());
-        //         }
-        //     }
-        // }
-        // self.open_tabs.insert(surface_index.);
-    }
+    fonts.font_data.insert(
+        "BoldOblique".to_owned(),
+        FontData::from_static(include_bytes!(
+            "./assets/fonts/Iosevka-BoldOblique.ttf"
+        )),
+    );
+    fonts.families.insert(
+        FontFamily::Name("BoldOblique".into()),
+        vec!["BoldOblique".to_owned()],
+    );
 
+    // Tell egui to use these fonts:
+    ctx.set_fonts(fonts);
 }
