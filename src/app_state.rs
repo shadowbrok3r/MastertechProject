@@ -99,7 +99,7 @@ pub struct MasterTechApp {
 impl Default for MasterTechApp {
     fn default() -> Self {
         let mut tree = DockState::new(
-            vec!["TUR Sheet".to_owned(), "Minidump Analysis".to_owned(), "Prestashop API".to_owned(),]
+            vec!["TUR Sheet".to_owned(), "Minidump Analysis".to_owned()]
         );
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
@@ -201,7 +201,7 @@ impl Default for MasterTechApp {
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             ticket_data: None,
             ticket_payload: None,
-            
+
             db_data_receiver, 
             db_data_sender,
             prestashop_api_tx,
