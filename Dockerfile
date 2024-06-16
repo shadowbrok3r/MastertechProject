@@ -9,6 +9,7 @@ COPY Trunk.toml Trunk.toml
 COPY ./frontend ./frontend
 COPY ./database ./database
 COPY Cargo.toml Cargo.toml
+COPY .cargo /.cargo
 COPY frontend/index.html frontend/index.html 
 
 CMD [ "trunk", "serve", "--release" ]

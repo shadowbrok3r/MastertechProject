@@ -4,13 +4,13 @@
   "icons": [
     {
       "src": "./pcllogo.png",
-      "sizes": "512x512",
+      "sizes": "48x48",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
       "src": "./mtechlogo.png",
-      "sizes": "1024x1024",
+      "sizes": "48x48",
       "type": "image/png"
     }
   ],
@@ -18,6 +18,6 @@
   "id": "/index.html",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "white",
-  "theme_color": "white"
+  "background_color": "black",
+  "theme_color": "#404040"
 }
