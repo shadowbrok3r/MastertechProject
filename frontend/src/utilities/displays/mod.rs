@@ -164,26 +164,59 @@ impl Displayable for TaskPayload{
 pub fn date_colors(date: String, complete: bool) -> Color32{
     let due_date = DateTime::parse_from_rfc3339(&date)
         .expect("Invalid date format")
-        .with_timezone(&Utc)
-        .date_naive();
+        .with_timezone(&Utc);
 
     let current_date = Utc::now().date_naive();
 
-    let overdue: bool = due_date < current_date ;
-    let due_today: bool = due_date > current_date ;
-    let due_tomorrow: bool = due_date == current_date.succ_opt().unwrap() ;
+    let mut overdue: Option<String> = None;
+    let mut due_today: Option<String> = None;
+    let mut due_tomorrow: Option<String> = None;
 
-    if overdue && complete == false{
+    if due_date.date_naive() == current_date.pred_opt().unwrap() {
+        overdue = Some(date.clone());
+    } else if due_date.date_naive() == current_date {
+        due_today = Some(date.clone());
+    } else if due_date.date_naive() == current_date.succ_opt().unwrap() {
+        due_tomorrow = Some(date.clone());
+    } 
+
+    if let Some(_) = overdue{
         Color32::from_rgb(199, 48, 103) // Pink
-    }else if due_today && !complete{
-        info!("due today - and not complete");
+    }else if let Some(_) = due_today{
         Color32::from_rgb(240, 200, 108) // Orange
-    }else if due_tomorrow {
+    }else if let Some(_) = due_tomorrow{
         Color32::from_rgb(79, 232, 125) // Green
     }else{
-        // Color32::from_rgb(31, 204, 178)
         Color32::from_rgb(199, 48, 103) // Pink
+        // Color32::from_rgb(31, 204, 178) 
     }
+
+    // if overdue && complete == false{
+    //     Color32::from_rgb(199, 48, 103) // Pink
+    // }else if due_today && !complete{
+    //     info!("due today - and not complete");
+    //     Color32::from_rgb(240, 200, 108) // Orange
+    // }else if due_tomorrow {
+    //     Color32::from_rgb(79, 232, 125) // Green
+    // }else{
+    //     // Color32::from_rgb(31, 204, 178)
+    //     Color32::from_rgb(199, 48, 103) // Pink
+
+    // let overdue: bool = due_date < current_date ;
+    // let due_today: bool = due_date > current_date ;
+    // let due_tomorrow: bool = due_date == current_date.succ_opt().unwrap() ;
+
+    // if overdue && complete == false{
+    //     Color32::from_rgb(199, 48, 103) // Pink
+    // }else if due_today && !complete{
+    //     info!("due today - and not complete");
+    //     Color32::from_rgb(240, 200, 108) // Orange
+    // }else if due_tomorrow {
+    //     Color32::from_rgb(79, 232, 125) // Green
+    // }else{
+    //     // Color32::from_rgb(31, 204, 178)
+    //     Color32::from_rgb(199, 48, 103) // Pink
+    // }
 }
 
 fn setup_task_styling(ui: &mut Ui){

@@ -113,11 +113,11 @@ impl Updatable for TaskPayload {
                     db.database.set("status", Status::Todo).await.unwrap();
                 },
                 Status::InRepair => {
-                    _query = format!("UPDATE task SET status=$status completed=false WHERE id=$id");
+                    _query = format!("UPDATE task SET status=$status, completed=false WHERE id=$id");
                     db.database.set("status", Status::InRepair).await.unwrap();
                 },
                 Status::Complete => {
-                    _query = format!("UPDATE task SET status=$status completed=true WHERE id=$id");
+                    _query = format!("UPDATE task SET status=$status, completed=true WHERE id=$id");
                     db.database.set("status", Status::Complete).await.unwrap();
                 },
             }
