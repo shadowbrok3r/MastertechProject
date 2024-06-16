@@ -364,7 +364,8 @@ pub struct User {
     // #[serde(skip)]
     pub email: String,
     pub store: Store,
-    pub notifications: Option<Vec<NotificationId>>
+    pub notifications: Option<Vec<NotificationId>>,
+    pub connected_clients: Option<Vec<String>>
 }
 
 impl Priority{
