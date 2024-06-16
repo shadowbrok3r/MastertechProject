@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::{fs::File, sync:: Arc};
 use log::{debug, info};
-use app_state::MasterTechApp;
+use app_state::{AppState, MasterTechApp};
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use self_update::cargo_crate_version;
@@ -24,7 +24,7 @@ impl eframe::App for MasterTechApp {
         ctx.set_style(arc_style);
         
         if self.context.connect_to_ws || self.context.disconnect_ws{
-            let uuid = self.context.client_uuid;
+            let _uuid = self.context.client_uuid;
             let socket_disconnect = self.context.disconnect_ws.clone();
             info!("Socket_disconnect: {:?}", socket_disconnect);
             // tokio::spawn(async move{
@@ -40,7 +40,7 @@ impl eframe::App for MasterTechApp {
             self.context.specs_first_run = false;
             
             let sysinfo_tx = self.context.computer_specs_tx.clone();
-            let db_tx = self.context.db_tx.clone();
+            // let db_tx = self.context.db_tx.clone();
 
             tokio::spawn(async move {
                 let system_info = ComputerData::get_computer_data().await;
@@ -57,12 +57,6 @@ impl eframe::App for MasterTechApp {
                 // }
                 
             });
-
-            if let Ok(db) = self.context.db_rx.try_recv(){
-                info!("Received DB connection from thread");
-                self.context.database = Some(db);
-            }
-
 
             let specs = match self.context.computer_specs_rx.try_recv(){
                 Ok(data) => Ok(data),
@@ -116,9 +110,43 @@ impl eframe::App for MasterTechApp {
             }
         }
         
-        let receiver = self.context.rx.as_ref().unwrap();
-        
-        while let Ok(message) = receiver.try_recv() {
+        if let Ok(db) = self.context.db_rx.try_recv(){
+            info!("Received DB connection from thread");
+            match db{
+                Ok(db) => {
+                    self.context.current_user = db.clone().user;
+                    self.context.database = Some(db);
+                },
+                Err(e) => {
+                    info!("Error with auth: {e:?}");
+                    self.state = AppState::NoAuth(e.to_string());
+                    self.context.current_user = None;
+                },
+            }
+            
+        }
+
+        if let Ok(state) = self.context.app_state_rx.try_recv(){
+            info!("Got a new state: {state:?}");
+            self.state = state
+        }
+
+        match &self.state{
+            app_state::AppState::Authenticated(page) => {
+                match page{
+                    app_state::MainPages::Tasks => self.main_page(ctx),
+                    app_state::MainPages::Downloads => self.main_page(ctx),
+                    app_state::MainPages::WebConsole => self.main_page(ctx),
+                }
+            },
+            app_state::AppState::NoAuth(reason) => {
+                info!("No auth: {reason}");
+                self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
+            },
+            _ => {}
+        }
+
+        while let Ok(message) = self.context.rx.as_ref().unwrap().try_recv() {
             if let Ok(info) = serde_json::from_str::<database::PreTicketData>(&message) {
                 self.context.output_text.clear();
     
@@ -169,7 +197,6 @@ impl eframe::App for MasterTechApp {
             self.context.output_text += serde_json::to_string(&data).unwrap().as_str();
         }
 
-        self.main_page(ctx);
         self.viewport_loader(ctx);
     }
 }

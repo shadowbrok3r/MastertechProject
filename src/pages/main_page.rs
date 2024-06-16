@@ -1,4 +1,4 @@
-use eframe::egui::Context;
+use eframe::egui::{Button, Context, Widget};
 use eframe::egui::{CentralPanel, Color32, Frame, TopBottomPanel};
 use egui_dock::{DockArea, Style as DockStyle};
 use crate::app_state::MasterTechApp;
@@ -9,34 +9,39 @@ impl MasterTechApp {
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| 
         {
             eframe::egui::menu::bar(ui, |ui| {
-                ui.menu_button("View", |ui| {
-                    // allow certain tabs to be toggled
-                    for tab in &[
-                        &"TUR Sheet".to_string(),
-                        &"Scripts".to_string(),
-                        &"Console".to_string(),
-                        &"System Information".to_string(),
-                        &"File Browser 📂".to_string(),
-                        &"Minidump Analysis".to_string(),
-                        &"Profiler".to_string(),
-                        &"QC".to_string(),
-                        &"Tasks".to_string(),
-                        &"Websockets".to_string()
-                    ] {
-                        if ui
-                            .selectable_label(self.context.open_tabs.contains(*tab), *tab)
-                            .clicked()
-                        {
-                            if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-                                self.tree.remove_tab(index);
-                                self.context.open_tabs.remove(*tab);
-                            } else {
-                                self.tree.push_to_focused_leaf(tab.to_string());
+                    ui.menu_button("View", |ui| {
+                        // allow certain tabs to be toggled
+                        for tab in &[
+                            &"TUR Sheet".to_string(),
+                            &"Scripts".to_string(),
+                            &"Console".to_string(),
+                            &"System Information".to_string(),
+                            &"File Browser 📂".to_string(),
+                            &"Minidump Analysis".to_string(),
+                            &"Profiler".to_string(),
+                            &"QC".to_string(),
+                            &"Tasks".to_string(),
+                            &"Websockets".to_string()
+                        ] {
+                            if ui
+                                .selectable_label(self.context.open_tabs.contains(*tab), *tab)
+                                .clicked()
+                            {
+                                if let Some(index) = self.tree.find_tab(&tab.to_string()) {
+                                    self.tree.remove_tab(index);
+                                    self.context.open_tabs.remove(*tab);
+                                } else {
+                                    self.tree.push_to_focused_leaf(tab.to_string());
+                                }
+                                ui.close_menu();
                             }
-                            ui.close_menu();
                         }
+                    });
+                if self.context.current_user.is_none(){
+                    if Button::new("Login").ui(ui).clicked(){
+                        let _ = self.context.app_state_tx.send(crate::app_state::AppState::NoAuth("Needs Login".to_string()));
                     }
-                });
+                }
             })
         });
     

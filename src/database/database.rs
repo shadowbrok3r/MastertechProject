@@ -1,15 +1,21 @@
 use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use serde_json::Value;
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::Scope, sql::Thing, Error, Surreal
+    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Scope}, sql::Thing, Error, Surreal
     
 };
 
+use super::schema::User;
 
-#[derive(Clone)]
+
+#[derive(Clone, Debug)]
 pub struct Database{
-    pub database: Surreal<WsClient>
+    pub database: Surreal<WsClient>,
+    pub jwt: Option<Jwt>,
+    pub user: Option<User>
 }
+
 #[derive(Serialize, Deserialize)]
 pub struct DataSuccess{
     success: bool
@@ -38,24 +44,70 @@ struct Auth {
     password: String,
 }
 
+
+const DB_URL: &str = "localhost:8000"; // surreal.master-tech.app/rpc
+const USER_SCOPE: &str = "user";
+const DB: &str = "MastertechDB";
+const NS: &str = "Mastertech";
+
+
 impl Database{
-    pub async fn new() -> Self {
-        let database: Surreal<WsClient> = Surreal::new::<Wss>("surreal.master-tech.app") // localhost:8000 // surreal.master-tech.app/rpc
-            .await.unwrap();
+    pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
+        match jwt{
+            Some(jwt) => {
+                info!("We already have a jwt, attempting token auth");
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(DB_URL).await?;
+                let auth = database.authenticate(jwt.clone()).await;
 
-        // Select a specific namespace / database
-        let jwt = database.signin(
-            Scope { namespace: "Mastertech", database: "MastertechDB", scope: "user", // access
-                params: Auth{email: "t@t.com".to_string(), password: "toor".to_string()}
-            }).await.unwrap();
-        info!("JWT: {:?}", jwt.as_insecure_token());
-        // database
-        //     .use_ns("Mastertech")
-        //     .use_db("MastertechDB")
-        //     .await
-        //     .expect("Could not use ns or db name");
+                match auth{
+                    Ok(_) => {
+                        info!("Auth ok");
+                        if !username.is_empty() || !password.is_empty(){
+                            let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE email = $email");
+                            database.set("email", username).await?;
+                            let user: Vec<Value> = database.query(query).await?.take(0)?;
+                            info!("user: {user:#?}");
+                            let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
+                            Ok(Self { database, jwt: Some(jwt.into()), user: Some(usr) })
+                        }else{
+                            info!("Auth not ok");
+                            Ok(Self { database, jwt: Some(jwt.into()), user: None })
+                        }
+                    },
+                    Err(e) => Err(e.into()),
+                }
+            },
+            None => {
+                info!("connecting");
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(DB_URL).await?;
+                info!("signing in");
+                
+                database.use_ns(NS).use_db(DB).await?;
 
-        Database { database }
+                // Select a specific namespace / database
+                let jwt = database.signin(
+                    Scope { 
+                        namespace: NS, 
+                        database: DB, 
+                        scope: USER_SCOPE, // access: "user"
+                        params: 
+                            Auth{
+                                email: username.clone(), 
+                                password: password
+                            }
+                    }
+                ).await?;
+                
+                let query = format!("SELECT  id, name, everest_initials, email, store FROM user WHERE email = $email");
+                database.set("email", username.clone().to_lowercase()).await?;
+                info!("querying ");
+                let user: Vec<Value> = database.query(query).await?.take(0)?;
+                    
+                let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
+
+                Ok(Self { database, jwt: Some(jwt), user: Some(usr) })
+            },
+        }
     }
 
     pub async fn insert<T: Serialize>(&self, table: &str, record: T) -> Result<Vec<Record>, Error> {
