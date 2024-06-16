@@ -12,7 +12,6 @@ pub mod file_browser;
 pub mod minidump;
 pub mod puffin_profiler;
 pub mod tur_sheet;
-pub mod prestashop_api;
 pub mod github;
 pub mod websockets;
 

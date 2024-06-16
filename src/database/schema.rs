@@ -2,7 +2,7 @@
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
 
-use super::prestashop_schema::{Address, Customer, Employee, Order};
+use super::prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order};
 
 pub const _NS: &str = "Mastertech";
 pub const _DB: &str = "MastertechDB";
@@ -253,7 +253,9 @@ pub struct PrestashopPayload{
     pub customer: CustomerData,
     pub order: Order,
     pub employee: Option<Employee>,
-    pub address: Address
+    pub address: Address,
+    pub customer_threads: Vec<CustomerThread>,
+    pub customer_messages: Vec<CustomerMessage>
 }
 
 // I will probably end up merging ModifyTask and TaskPayload since they contain most of the exact same data
