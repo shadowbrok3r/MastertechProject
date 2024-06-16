@@ -86,10 +86,10 @@ services:
       - ./dist:/dist
     labels:
       # Routers
-      - "traefik.http.routers.wasm.rule=Host(`shadowbrker.app`)"
+      - "traefik.http.routers.wasm.rule=Host(`master-tech.app`)"
       - "traefik.http.routers.wasm.entrypoints=websecure" 
       - "traefik.http.routers.wasm.tls=true"
-      - "traefik.http.routers.wasm.tls.certresolver=digitalocean"
+      - "traefik.http.routers.wasm.tls.certresolver=cloudflare"
       - "traefik.http.routers.wasm.middlewares=corsHeader"
       # Services
       - "traefik.http.routers.wasm.service=wasm"
@@ -98,7 +98,7 @@ services:
 ############################################## -- SURREALDB -- ##############################################
   surrealdb:
     container_name: "surrealdb"
-    image: surrealdb/surrealdb:v1.4.2
+    image: surrealdb/surrealdb:v1.5.2
     user: root
     restart: always
     entrypoint: /surreal
