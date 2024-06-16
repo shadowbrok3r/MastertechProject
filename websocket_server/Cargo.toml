@@ -13,5 +13,7 @@ ezsockets = { version = "0.6", features = ["axum"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+url = "2.5.1"
+uuid = { version = "1.8.0", features = ["v4"] }
 
 [workspace]
