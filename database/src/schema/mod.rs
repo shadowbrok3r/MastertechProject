@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
+use uuid::Uuid;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -13,6 +14,7 @@ pub const TASK_NOTE_TABLE: &str = "task_note";
 pub const SEB_TABLE: &str = "seb_data";
 pub const USER_TABLE: &str = "user";
 pub const NOTIFICATION_TABLE: &str = "notification";
+pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -20,6 +22,9 @@ pub struct Record {
     #[allow(dead_code)]
     pub id: Thing,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ClientId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ComputerId(pub RecordId);
@@ -257,6 +262,16 @@ pub struct ModifyTask{
     /// modify description of task
     pub task_description: Option<String>, 
 }
+
+#[derive(Serialize, Debug, Clone, Deserialize)]
+pub struct ConnectedClient{
+    pub id: ClientId,
+    pub assigned_user: RecordId,
+    pub hostname: String,
+    pub client_identifier: String,
+    pub uuid: Uuid
+}
+
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Notification{

@@ -13,3 +13,4 @@ log = { workspace=true }
 anyhow = { workspace=true }
 # surrealdb-alpha = { workspace=true }
 surrealdb = { workspace=true }
+uuid = { version = "1.8.0", features = ["v4"] }
