@@ -1333,6 +1333,7 @@ dependencies = [
  "serde",
  "serde_json",
  "surrealdb",
+ "uuid",
 ]
 
 [[package]]
@@ -3096,6 +3097,7 @@ dependencies = [
  "serde",
  "serde_json",
  "surrealdb",
+ "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-cookies",
