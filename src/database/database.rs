@@ -2,7 +2,7 @@ use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Record as Scope}, sql::Thing, Error, Surreal
+    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Scope}, sql::Thing, Error, Surreal
     
 };
 
@@ -89,7 +89,7 @@ impl Database{
                     Scope { 
                         namespace: NS, 
                         database: DB, 
-                        access: USER_SCOPE, // access: "user"
+                        scope: USER_SCOPE, // access: "user"
                         params: 
                             Auth{
                                 email: username.clone(), 

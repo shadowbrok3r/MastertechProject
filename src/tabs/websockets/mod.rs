@@ -11,12 +11,10 @@ use tui_input::Input;
 pub mod websocket;
 
 #[derive(Serialize, Debug, Clone, Deserialize, Default)]
-pub struct ConnectedClient<'a>{
+pub struct ConnectedClient{ // <'a>
     pub id: Option<ClientId>,
     pub assigned_user: Option<UserId>,
-    pub hostname: &'a str,
-    pub client_identifier: &'a str,
-    pub uuid: &'a str
+    pub client_identifier: String,
 }
 
 impl MastertechContext{
@@ -54,9 +52,8 @@ impl MastertechContext{
                     let client_identifier = format!("{hostname}:{}", uuid.to_string().split_at(36-12).1);
 
                     let connected_client = ConnectedClient {
-                        id: Some(ClientId(Thing::from((CONNECTED_CLIENT_TABLE.to_string(), hostname.clone())))), // client_identifier.clone()
-                        client_identifier: "client_identifier", 
-                        hostname: "hostname",
+                        id: Some(ClientId(Thing::from((CONNECTED_CLIENT_TABLE.to_string(), client_identifier.clone())))), // client_identifier.clone()
+                        client_identifier: client_identifier.clone(), 
                         ..Default::default()
                     };
 

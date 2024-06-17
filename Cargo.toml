@@ -50,8 +50,8 @@ reqwest_cookie_store = "0.8"
 anyhow = "1"
 sha2 = { version = "0.10", features = ["std"] }
 wmi = "0.13"
-# surrealdb = { version = "1.5", features = ["default"] }
-surrealdb-alpha = { version = "2", features = ["default"] }
+surrealdb = { version = "1.5", features = ["default"] }
+# surrealdb-alpha = { version = "2", features = ["default"] }
 
 quickxml_to_serde = "0.6"
 
@@ -73,7 +73,7 @@ ewebsock = "0.6.0"
 # portable-pty = "0.8.1"
 ratatui = {version = "0.26", features = ["crossterm"]}
 ratframe = "1"
-egui_ratatui = "0.0.7"
+egui_ratatui = "0.0.8"
 tui-input = "0.8"
 crossterm = "0.27.0"
 # tui-term = "0.1.11"
