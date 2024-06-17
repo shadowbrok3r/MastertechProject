@@ -12,6 +12,7 @@ pub const TICKET_TABLE: &str = "service_order";
 pub const CUSTOMER_TABLE: &str = "customer";
 pub const COMPUTER_TABLE: &str = "computer";
 pub const TASK_TABLE: &str = "task";
+pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 pub const _TASK_NOTE_TABLE: &str = "task_note";
 pub const _SEB_TABLE: &str = "seb_data";
 pub const _USER_TABLE: &str = "user";
@@ -23,6 +24,9 @@ pub struct Record {
     #[allow(dead_code)]
     pub id: Thing,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ClientId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ComputerId(pub RecordId);

@@ -1,5 +1,5 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
-use std::{collections::HashMap, error::Error, fmt::Display, path::Path, process::{Output, Stdio}, str, sync::{mpsc::Sender, Arc}, time::Duration};
+use std::{collections::HashMap, error::Error, fmt::Display, path::Path, process::{Output, Stdio}, str, sync::Arc, time::Duration};
 use anyhow::{anyhow, Context};
 use dotenv::dotenv;
 use log::{debug, info};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::*;
 use serde_json::Value;
 use tokio::{io::{self, ErrorKind}, process::{Child, Command}, runtime::Handle, spawn};
-use crossbeam::channel;
+use crossbeam::channel::Sender;
 use regex::Regex;
 use num_format::{Locale, ToFormattedString};
 use futures_util::FutureExt;
@@ -26,7 +26,7 @@ use crate::{database::{schema::{ComputerData, DriveData, LocalSebData}, SystemIn
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 impl ComputerData{
-    pub async fn get_computer_data() -> anyhow::Result<ComputerData, anyhow::Error>{
+    pub async fn get_computer_data(tx: Sender<ComputerData>) -> anyhow::Result<(), anyhow::Error>{
         
         let sys = System::new_all(); // Create `System` struct.
 
@@ -74,7 +74,6 @@ impl ComputerData{
                 tokio::process::Command::new("cmd")
                 .args(["/C", "wmic path win32_VideoController get name"])
                 .creation_flags(CREATE_NO_WINDOW)
-                // "-Command", "{(win32_videocontroller | select-object -property Name | ft -autosize -hidetableheaders | out-string).trim()}"
                 .output()
                 .await?
                 .stdout
@@ -99,8 +98,11 @@ impl ComputerData{
                 hostname,
                 seb_info
             };
-
-            Ok(system_info)
+            match tx.try_send(system_info){
+                Ok(_) => info!("Sent computer data"),
+                Err(e) => info!("Error sending computer data: {e:?}"),
+            }
+            Ok(())
         }
 
         #[cfg(target_os = "linux")]
@@ -132,14 +134,18 @@ impl ComputerData{
                 id: None,
                 customer: None,
             };
-
-            Ok(system_info)
+            match tx.try_send(system_info){
+                Ok(_) => info!("Sent computer data"),
+                Err(e) => info!("Error sending computer data: {e:?}"),
+            }
+            Ok(())
         }
     }
 
     #[cfg(target_os="windows")]
     pub fn get_antivirus() -> io::Result<Vec<(String, Option<bool>)>> {
-        let (sender, receiver) = channel::unbounded();
+        let (sender, receiver) = crossbeam::channel::unbounded();
+
         let av_to_search = vec![
             "mbam", // MALWAREBYTES
             "aswtoolssvc", // AVAST
@@ -187,13 +193,13 @@ impl ComputerData{
 
                     let name = antivirus_mapping.get(antivirus).unwrap_or(&antivirus);
 
-                    sender.send((name.to_string(), exists)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
+                    sender.try_send((name.to_string(), exists)).map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to send data through channel"))
             });
         }
     
         let mut antivirus_exists = Vec::new();
         for _ in 0..av_to_search.len() {
-            let exists = receiver.recv().map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to receive data from channel"))?;
+            let exists = receiver.try_recv().map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Failed to receive data from channel"))?;
             antivirus_exists.push(exists);
         }
     
