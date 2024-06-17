@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::{fs::File, sync:: Arc};
-use chrono::DateTime;
 use log::{debug, info};
 use app_state::{AppState, MasterTechApp};
 use ratframe::NewCC;
@@ -42,44 +41,17 @@ impl eframe::App for MasterTechApp {
             self.context.specs_first_run = false;
             
             let sysinfo_tx = self.context.computer_specs_tx.clone();
-            // let db_tx = self.context.db_tx.clone();
 
             tokio::spawn(async move {
-                let system_info = ComputerData::get_computer_data().await;
+                let _ = ComputerData::get_computer_data(sysinfo_tx).await.unwrap_or(());
                 // let database = Database::new().await;
-
-                match sysinfo_tx.try_send(system_info.unwrap()){
-                    Ok(_) => info!("sent computer data"),
-                    Err(e) => info!("Error sending computer data: {e:?}"),
-                };
-
                 // match db_tx.try_send(database){
                 //     Ok(_) => info!("Sent db connection across thread"),
                 //     Err(err) => debug!("Error sending db connection: {err:?}"),
                 // }
-                
             });
 
-
-            if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
-                self.context.system_info = computer_data;
-
-                for disk in &self.context.system_info.drives{
-                    
-                    self.context.disk_num += 1;
-    
-                    if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                        // Convert `disk` to a serde_json::Value
-                        let disk_json = serde_json::to_value(&disk).unwrap();
-                
-                        disks_arr.push(disk_json);
-                    } else {
-                        eprintln!("Expected self.context.drives to be an Array");
-                    }
-                    
-                }
-                self.context.output_text += format!("{:#?}", &self.context.system_info.seb_info.as_mut()).as_str();
-            };
+            
 
             #[cfg(target_os="windows")]
             {
@@ -88,7 +60,7 @@ impl eframe::App for MasterTechApp {
                 let installed_antivirus = ComputerData::get_antivirus()
                 .map_err(|e| 
                     cps += format!("Error checking antivirus: {e}\n").as_str()
-                ).unwrap();
+                ).unwrap_or(Vec::new());
     
     
                 for (name, is_installed) in installed_antivirus {
@@ -103,6 +75,19 @@ impl eframe::App for MasterTechApp {
             }
         }
         
+
+        if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
+            self.context.system_info = computer_data;
+            for disk in &self.context.system_info.drives{
+                self.context.disk_num += 1;
+                if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                    let disk_json = serde_json::to_value(&disk).unwrap();
+                    disks_arr.push(disk_json);
+                } else { debug!("Expected self.context.drives to be an Array"); }
+            }
+            self.context.output_text += format!("{:#?}", &self.context.system_info.seb_info.as_mut()).as_str();
+        };
+
         if let Ok(db) = self.context.db_rx.try_recv(){
             info!("Received DB connection from thread");
             match db{
@@ -133,7 +118,7 @@ impl eframe::App for MasterTechApp {
                 }
             },
             app_state::AppState::NoAuth(reason) => {
-                info!("No auth: {reason}");
+                // info!("No auth: {reason}");
                 self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             },
             _ => {}

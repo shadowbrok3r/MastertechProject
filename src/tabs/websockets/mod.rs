@@ -1,13 +1,23 @@
 use std::mem;
 use eframe::egui::{CentralPanel, Color32, Key, TopBottomPanel, Ui};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
+use serde::{Deserialize, Serialize};
+use surrealdb::{opt::RecordId, sql::{Thing, Uuid}};
 use tokio::spawn;
 use tracing::info;
-use uuid::Uuid;
 
-use crate::app_state::MastertechContext;
+use crate::{app_state::MastertechContext, database::schema::{ClientId, UserId, CONNECTED_CLIENT_TABLE}};
 use tui_input::Input;
 pub mod websocket;
+
+#[derive(Serialize, Debug, Clone, Deserialize)]
+pub struct ConnectedClient{
+    pub id: Option<ClientId>,
+    pub assigned_user: UserId,
+    pub hostname: String,
+    pub client_identifier: String,
+    pub uuid: Uuid
+}
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
@@ -17,10 +27,8 @@ impl MastertechContext{
         //             let _area = frame.size();
         //             // render_chart1(frame, area, &app);
         //             frontend.ui(ui);
-
         //         })
         //     .expect("epic fail");
-
         // }
         // ui.add( self.terminal.backend_mut());
         // self.terminal.show_cursor().unwrap();
@@ -38,20 +46,37 @@ impl MastertechContext{
             if ui.button("Connect").clicked()
             {
                 if let Some(db) = self.database.clone(){
-                    self.client_uuid = Uuid::new_v4();
-                    self.url = format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client", &self.client_uuid);
+                    self.client_uuid = *Uuid::new_v4();
                     let uuid = self.client_uuid.clone();
-                    let usr = self.current_user.clone().unwrap().id.0;
-                    // let mut vec = Vec::new();
-                    // vec.push(uuid.to_string());
-                    // let x: Option<Vec<String>> = Some(vec);
+                    let usr = self.current_user.clone().unwrap().id;
+                    self.url = format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client", &self.client_uuid);
+                    let hostname = &self.system_info.hostname;
+                    let client_identifier = format!("{hostname}-{}", uuid.to_string().split_at(36-12).1);
 
+                    let connected_client = ConnectedClient {
+                        id: None, //  ClientId(Thing::from((CONNECTED_CLIENT_TABLE, client_identifier.as_str()))),
+                        assigned_user: usr.clone(),
+                        hostname: hostname.clone(),
+                        client_identifier: client_identifier.clone(), 
+                        uuid: surrealdb::sql::Uuid(uuid.clone())
+                    };
+
+                    info!("Client: {:#?}", connected_client);
                     spawn(async move {
-                        db.database.set("uuid", uuid.to_string()).await.unwrap();
-                        info!("uuid: {uuid}");
+                        let rec: Vec<ConnectedClient> = db.database
+                            .create(CONNECTED_CLIENT_TABLE)
+                            .content(connected_client.clone())
+                            .await
+                            .unwrap();
+
+                        info!("CLient: {rec:#?}");
+                        db.database.set("connected_client", connected_client.id.clone()).await.unwrap();
+                        info!("connected_client: {connected_client:#?}");
+
                         db.database.set("user", usr.clone()).await.unwrap();
                         info!("usr: {usr:?}");
-                        let query = String::from("UPDATE user SET connected_clients += $uuid WHERE id == $user");
+                        
+                        let query = String::from("UPDATE user SET connected_clients += $connected_client WHERE id == $user");
                         let res = db.database.query(query).await;
                         info!("Query done: {res:#?}");
                     });
