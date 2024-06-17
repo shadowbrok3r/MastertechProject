@@ -13,10 +13,10 @@ pub mod websocket;
 #[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct ConnectedClient{
     pub id: Option<ClientId>,
-    pub assigned_user: UserId,
-    pub hostname: String,
-    pub client_identifier: String,
-    pub uuid: Uuid
+    pub assigned_user: Option<UserId>,
+    pub hostname: Option<String>,
+    pub client_identifier: Option<String>,
+    pub uuid: Option<String>
 }
 
 impl MastertechContext{
@@ -54,30 +54,29 @@ impl MastertechContext{
                     let client_identifier = format!("{hostname}-{}", uuid.to_string().split_at(36-12).1);
 
                     let connected_client = ConnectedClient {
-                        id: None, //  ClientId(Thing::from((CONNECTED_CLIENT_TABLE, client_identifier.as_str()))),
-                        assigned_user: usr.clone(),
-                        hostname: hostname.clone(),
-                        client_identifier: client_identifier.clone(), 
-                        uuid: surrealdb::sql::Uuid(uuid.clone())
+                        id: Some(ClientId(Thing::from((CONNECTED_CLIENT_TABLE, client_identifier.as_str())))),
+                        assigned_user: Some(usr.clone()),
+                        hostname: Some(hostname.clone()),
+                        client_identifier: Some(client_identifier.clone()), 
+                        uuid: Some(uuid.to_string())
                     };
 
                     info!("Client: {:#?}", connected_client);
+
                     spawn(async move {
-                        let rec: Vec<ConnectedClient> = db.database
-                            .create(CONNECTED_CLIENT_TABLE)
-                            .content(connected_client.clone())
-                            .await
-                            .unwrap();
-
-                        info!("CLient: {rec:#?}");
-                        db.database.set("connected_client", connected_client.id.clone()).await.unwrap();
-                        info!("connected_client: {connected_client:#?}");
-
-                        db.database.set("user", usr.clone()).await.unwrap();
-                        info!("usr: {usr:?}");
+                        // db.database.set("connected_client", connected_client.id.clone()).await.unwrap();
+                        // info!("connected_client: {connected_client:#?}");
+                        // db.database.set("user", usr.clone()).await.unwrap();
+                        // info!("usr: {usr:?}");
                         
-                        let query = String::from("UPDATE user SET connected_clients += $connected_client WHERE id == $user");
-                        let res = db.database.query(query).await;
+                        let res = db.database
+                            .query("CREATE connected_client CONTENT $content")
+                            .bind(("content", connected_client.clone()))
+                            .query("UPDATE user SET connected_clients += $connected_client WHERE id == $user")
+                            .bind(("connected_client", connected_client.id))
+                            .bind(("user", usr.clone()))
+                            .await;
+
                         info!("Query done: {res:#?}");
                     });
                 }

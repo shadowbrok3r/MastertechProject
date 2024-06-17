@@ -25,7 +25,7 @@ pub struct Record {
     pub id: Thing,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClientId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -405,7 +405,7 @@ pub struct User {
     pub email: String,
     pub store: Store,
     pub notifications: Option<Vec<NotificationId>>,
-    pub connected_clients: Option<Vec<String>>
+    pub connected_clients: Option<Vec<ClientId>>
 }
 
 impl Priority{
