@@ -113,15 +113,14 @@ impl eframe::App for MasterTechApp {
             app_state::AppState::Authenticated(page) => {
                 match page{
                     app_state::MainPages::Tasks => self.main_page(ctx),
-                    app_state::MainPages::Downloads => self.main_page(ctx),
-                    app_state::MainPages::WebConsole => self.main_page(ctx),
+                    _ => self.main_page(ctx),
                 }
             },
-            app_state::AppState::NoAuth(reason) => {
-                // info!("No auth: {reason}");
-                self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
-            },
-            _ => {}
+            // app_state::AppState::NoAuth(reason) => {
+            //     // info!("No auth: {reason}");
+            //     self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
+            // },
+            _ => self.main_page(ctx)
         }
 
         while let Ok(message) = self.context.rx.try_recv() {

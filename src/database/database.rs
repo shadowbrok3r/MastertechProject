@@ -2,7 +2,7 @@ use log::{debug, info};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::Value;
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Scope}, sql::Thing, Error, Surreal
+    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Record as Scope}, sql::Thing, Error, Surreal
     
 };
 
@@ -63,7 +63,7 @@ impl Database{
                     Ok(_) => {
                         info!("Auth ok");
                         if !username.is_empty() || !password.is_empty(){
-                            let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE email = $email");
+                            let query = format!("SELECT id, name, everest_initials, email, store, connected_clients FROM user WHERE email = $email");
                             database.set("email", username).await?;
                             let user: Vec<Value> = database.query(query).await?.take(0)?;
                             info!("user: {user:#?}");
@@ -89,7 +89,7 @@ impl Database{
                     Scope { 
                         namespace: NS, 
                         database: DB, 
-                        scope: USER_SCOPE, // access: "user"
+                        access: USER_SCOPE, // access: "user"
                         params: 
                             Auth{
                                 email: username.clone(), 
@@ -98,7 +98,7 @@ impl Database{
                     }
                 ).await?;
                 
-                let query = format!("SELECT  id, name, everest_initials, email, store FROM user WHERE email = $email");
+                let query = format!("SELECT  id, name, everest_initials, email, store, connected_clients FROM user WHERE email = $email");
                 database.set("email", username.clone().to_lowercase()).await?;
                 info!("querying ");
                 let user: Vec<Value> = database.query(query).await?.take(0)?;
