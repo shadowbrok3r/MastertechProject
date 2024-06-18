@@ -6,8 +6,9 @@ use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use self_update::cargo_crate_version;
-use database::{database::Database, schema::{ComputerData, Store, TicketData}, PreTicketData};
+use database::{database::Database, schema::{ClientId, ComputerData, ComputerId, ConnectedClient, Store, TicketData, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
+use surrealdb::sql::Thing;
 use tabs::{mastertech_website::websocket::WebSocket, tur_sheet::scaffold::AsanaResponse};
 
 pub mod app_state;
@@ -25,7 +26,6 @@ impl eframe::App for MasterTechApp {
         ctx.set_style(arc_style);
         
         if self.context.connect_to_ws || self.context.disconnect_ws{
-            let _uuid = self.context.client_uuid;
             let socket_disconnect = self.context.disconnect_ws.clone();
             info!("Socket_disconnect: {:?}", socket_disconnect);
             // tokio::spawn(async move{
@@ -41,7 +41,6 @@ impl eframe::App for MasterTechApp {
             self.context.specs_first_run = false;
             
             let sysinfo_tx = self.context.computer_specs_tx.clone();
-
             tokio::spawn(async move {
                 let _ = ComputerData::get_computer_data(sysinfo_tx).await.unwrap_or(());
                 // let database = Database::new().await;
@@ -90,10 +89,11 @@ impl eframe::App for MasterTechApp {
 
         if let Ok(db) = self.context.db_rx.try_recv(){
             info!("Received DB connection from thread");
+            self.context.specs_first_run = true;
             match db{
                 Ok(db) => {
                     self.context.current_user = db.clone().user;
-                    self.context.database = Some(db);
+                    self.context.database = Some(db.clone());
                 },
                 Err(e) => {
                     info!("Error with auth: {e:?}");
@@ -101,7 +101,6 @@ impl eframe::App for MasterTechApp {
                     self.context.current_user = None;
                 },
             }
-            
         }
 
         if let Ok(state) = self.context.app_state_rx.try_recv(){
@@ -225,6 +224,10 @@ impl eframe::App for MasterTechApp {
                 ..Default::default()
             };
             self.context.ticket_info = pre_ticket;
+        }
+
+        if let Ok(connected_clients) = self.context.connected_clients_rx.try_recv(){
+            //     info!("Connected clients: {:#?}", connected_clients.clone());
         }
 
         self.viewport_loader(ctx);

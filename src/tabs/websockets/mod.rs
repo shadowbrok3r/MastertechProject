@@ -1,7 +1,9 @@
-use std::mem;
+use std::{env, mem};
 use eframe::egui::{CentralPanel, Color32, Key, TopBottomPanel, Ui};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
+use log::debug;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use surrealdb::{opt::RecordId, sql::{Thing, Uuid}};
 use tokio::spawn;
 use tracing::info;
@@ -33,51 +35,68 @@ impl MastertechContext{
         }
         
         ui.vertical_centered(|ui| {
-            let ctx = ui.ctx().clone();
-            let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
-
             if ui.button("Connect").clicked()
             {
                 if let Some(db) = self.database.clone(){
+                    let client_hash = generate_client_id(self.system_info.hostname.clone(), self.system_info.cpu.trim().to_string());
+                    let url_string = format!("{}:{}", self.system_info.hostname.clone(), client_hash.split_at(9).0);
+                    info!("url_string: {}", url_string.clone());
 
+                    self.url = Some(format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client",  url_string.clone()));
+                    info!("url: {:?}", self.url.clone());
                     let computer_id = &self.system_info.id.clone().unwrap_or( // i need to first check if a computer exists with a customer id or something..
                         ComputerId(
                             Thing::from(
-                                (COMPUTER_TABLE, format!("{}:{}", self.system_info.hostname, self.system_info.cpu.trim()).as_str())
+                                (COMPUTER_TABLE,  url_string.clone().as_str())
                             )
                         )
                     );
                     
+                    self.client_uuid = Some(
+                        ClientId(
+                            Thing::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.0.id.clone()))
+                        )
+                    );
+
                     let connected_client = ConnectedClient {
-                        id: Some(ClientId(Thing::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.0.id.clone())))),
+                        id: self.client_uuid.clone(),
+                        client_hash,
                         ..Default::default()
                     };
 
-                    self.url = format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client", connected_client.id.clone().unwrap().0.id);
 
                     info!("Client: {:?}", connected_client);
 
+                    let tx = self.connected_clients_tx.clone();
                     spawn(async move {
                         
-                        let res = db.database
+                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = db.database
                             .query("CREATE connected_client CONTENT $content")
                             .bind(("content", connected_client.clone()))
                             .await
-                            .unwrap();
-
-                        info!("connected_client repsonse: {res:?}");
+                            .unwrap().take(0);
+                        match res{
+                            Ok(data) => tx.try_send(data.clone()).unwrap(),
+                            Err(e) => debug!("db error: {e:?}"),
+                        }
                     });
+                    
+                    if let Some(url) = &self.url{
+                        let ctx = ui.ctx().clone();
+                        let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
+                        match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
+                            Ok((ws_sender, ws_receiver)) => {
+                                self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
+                                self.error.clear();
+                            }
+                            Err(error) => {
+                                log::error!("Failed to connect to {:?}: {}", &self.url, error);
+                                self.error = error;
+                            }
+                        };
+                    }
                 }
-                match ewebsock::connect_with_wakeup(&self.url, Default::default(), wakeup) {
-                    Ok((ws_sender, ws_receiver)) => {
-                        self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
-                        self.error.clear();
-                    }
-                    Err(error) => {
-                        log::error!("Failed to connect to {:?}: {}", &self.url, error);
-                        self.error = error;
-                    }
-                };
+
             }
             if !self.error.is_empty() {
                 TopBottomPanel::top("error").show_inside(ui, |ui| {
@@ -93,6 +112,20 @@ impl MastertechContext{
         });
     }
 }
+
+// Function to generate client ID
+fn generate_client_id(hostname: String, cpu: String) -> String {
+    let cpu_id = env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown-cpu".to_string());
+    let combined = format!("{}-{}-{}", hostname, cpu, cpu_id);
+    info!("combined: {}", combined.clone());
+    let mut hasher = Sha256::new();
+    hasher.update(combined.as_bytes());
+    let result = hasher.finalize();
+    let hex_string = hex::encode(result);
+    info!("hex_string: {}", hex_string.clone());
+    hex_string
+}
+
 
 pub struct WebConsoleFrontend {
     pub ws_sender: WsSender,

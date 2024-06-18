@@ -401,8 +401,8 @@ impl Store{
 pub struct ConnectedClient{ // <'a>
     pub id: Option<ClientId>,
     pub assigned_user: Option<UserId>,
-    pub client_identifier: String,
-    pub uuid: Uuid
+    pub client_hash: String,
+    pub connection_string: String
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
