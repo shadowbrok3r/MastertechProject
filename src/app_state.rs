@@ -6,7 +6,7 @@ use eframe::egui::{Color32, Context, FontData, FontDefinitions, FontFamily, Stro
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ComputerData, LocalSebData, PrestashopPayload, TaskPayload, TicketData, User}, GetKeysResponse, PreTicketData}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}};
+use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, LocalSebData, PrestashopPayload, TaskPayload, TicketData, User}, GetKeysResponse, PreTicketData}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}};
 use egui_file::FileDialog;
 use ratatui::Terminal;
 use ratframe::NewCC;
@@ -43,7 +43,7 @@ pub struct MastertechContext {
     pub current_user: Option<User>,
     pub so_number: String,
     pub recommendations: String,
-    pub url: String,
+    pub url: Option<String>,
     pub error: String,
     pub frontend: Option<WebConsoleFrontend>,
     pub terminal: Terminal<RataguiBackend>,
@@ -72,7 +72,7 @@ pub struct MastertechContext {
 
     pub output_text: String,
     
-    pub client_uuid: Uuid,
+    pub client_uuid: Option<ClientId>,
     pub connect_to_ws: bool,
     pub disconnect_ws: bool,
     pub system_info: ComputerData,
@@ -118,7 +118,8 @@ pub struct MastertechContext {
     pub computer_specs_rx: Receiver<ComputerData>,
     pub app_state_tx: Sender<AppState>,
     pub app_state_rx: Receiver<AppState>,
-
+    pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
+    pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
 
     pub db_rx: Receiver<anyhow::Result<Database, Error>>,
     pub db_tx: Sender<anyhow::Result<Database, Error>>,
@@ -170,7 +171,7 @@ impl NewCC for MasterTechApp {
         let (db_tx, db_rx) = crossbeam::channel::unbounded();
         let (cps_keys_tx,cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
         let (app_state_tx,app_state_rx) = crossbeam::channel::unbounded::<AppState>();
-
+        let (connected_clients_tx, connected_clients_rx) = crossbeam::channel::unbounded::<Vec<ConnectedClient>>();
 
         let context = MastertechContext {
             current_user: None,
@@ -179,7 +180,7 @@ impl NewCC for MasterTechApp {
             terminal: Terminal::new(backend).unwrap(),
             terminal_frontend: None,
 
-            url: "ws://127.0.0.1:8081/websocket?room_id=0&role=client".to_owned(),
+            url: None,
             error: Default::default(),
             frontend: None,
 
@@ -215,7 +216,7 @@ impl NewCC for MasterTechApp {
 
             connect_to_ws: false,
             disconnect_ws: false,
-            client_uuid: Uuid::new_v4(),
+            client_uuid: None,
             rx,
 
             //////////////////////////////////////////
@@ -254,10 +255,10 @@ impl NewCC for MasterTechApp {
             prestashop_api_tx, prestashop_api_rx,
             computer_specs_tx, computer_specs_rx,
             app_state_tx, app_state_rx,
-            db_tx,
-            db_rx,
-            cps_keys_tx,
-            cps_keys_rx,
+            connected_clients_tx, connected_clients_rx,
+            db_tx, db_rx,
+            cps_keys_tx, cps_keys_rx,
+
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
         };

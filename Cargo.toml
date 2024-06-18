@@ -76,6 +76,7 @@ ratframe = "1"
 egui_ratatui = "0.0.8"
 tui-input = "0.8"
 crossterm = "0.27.0"
+hex = "0.4.3"
 # tui-term = "0.1.11"
 
 [dev-dependencies]
