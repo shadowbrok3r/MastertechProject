@@ -1,5 +1,5 @@
 
-use egui::Ui;
+use egui::{Key, TextEdit, Ui, Widget};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use log::info;
 use ratatui::{
@@ -47,13 +47,9 @@ impl TerminalFrontend {
         }
     }
     
-    pub fn ui(&mut self, ui: &mut Ui, frame: &mut Frame, area: Rect) {
-        if ui.text_edit_singleline(&mut self.text_to_send).lost_focus()
-            && ui.input(|i| i.key_pressed(egui::Key::Enter))
-        {
-            self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.text_to_send)));
-        }
-
+    pub fn ui(&mut self, ui: &mut Ui, frame: &mut Frame) {
+        let area = frame.size();
+        
         while let Some(event) = self.ws_receiver.try_recv() {
             self.events.push(event);
         }
@@ -89,16 +85,30 @@ impl TerminalFrontend {
             .border_set(border::THICK)
             .white().bg(Color::Black);
 
+        
+        for event in &self.events {
+            ui.label(format!("{event:?}"));
+        }
+        
         let para = Paragraph::new(text)
-            .centered()
+            .left_aligned()
             .block(block)
             .cyan()
             .on_black();
 
-        // for event in &self.events {
-        //     ui.label(format!("{event:?}"));
-        // }
+        
+
         frame.render_widget(para, area);
+        ui.vertical_centered(|ui| {
+            let text_edit = TextEdit::singleline(&mut self.text_to_send).hint_text("Send command").ui(ui);
+            let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+            if text_edit.lost_focus() && key_press
+            {
+                text_edit.request_focus();
+                self.ws_sender
+                    .send(WsMessage::Text(std::mem::take(&mut self.text_to_send)));
+            }
+        });
     }
 }
 
