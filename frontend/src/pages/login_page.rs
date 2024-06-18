@@ -42,7 +42,7 @@ impl Login{
                         }else{ 
                             info!("no usr"); 
                             let _ = db.database.invalidate().await;
-                            match appstate_tx.send(AppState::NoAuth("No user was found".to_string())){
+                            match appstate_tx.try_send(AppState::NoAuth("No user was found".to_string())){
                                 Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                 Err(e) => info!("Error {e:?}"),
                             }
@@ -50,17 +50,17 @@ impl Login{
                     }else{ 
                         info!("no cookie"); 
                         let _ = db.database.invalidate().await;
-                        match appstate_tx.send(AppState::NoAuth("No cookie was found".to_string())){
+                        match appstate_tx.try_send(AppState::NoAuth("No cookie was found".to_string())){
                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                             Err(e) => info!("Error {e:?}"),
                         }
                     }
 
-                    match appstate_tx.send(AppState::Authenticated(MainPages::Tasks)){
+                    match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
                         Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                         Err(e) => info!("Error {e:?}"),
                     }
-                    match db_tx.send(Ok(db)){
+                    match db_tx.try_send(Ok(db)){
                         Ok(_) => {
                             info!("Sent db connection across thread");
                             drop(db_tx);
@@ -70,7 +70,7 @@ impl Login{
                 },
                 Err(e) => {
                     info!("Error with db: {e:?}");
-                    match appstate_tx.send(AppState::NoAuth(e.to_string())){
+                    match appstate_tx.try_send(AppState::NoAuth(e.to_string())){
                         Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                         Err(e) => info!("Error {e:?}"),
                     }
@@ -158,7 +158,7 @@ impl MtechServer{
                                             .color(Color32::from_rgb(100, 10, 80))
                                             .ui(ui);
 
-                                        match appstate_tx.send(AppState::CreateAccount){
+                                        match appstate_tx.try_send(AppState::CreateAccount){
                                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                             Err(e) => info!("Error {e:?}"),
                                         }

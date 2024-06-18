@@ -24,7 +24,7 @@ impl Task for TaskPayload{
                 .take(0).unwrap();
             info!("get_data: {get_data:#?}");
 
-                match tx.send(get_data){
+                match tx.try_send(get_data){
                     Ok(_) => info!("Sent data"),
                     Err(e) => error!("Error sending data: {e:?}")
                 };
@@ -45,7 +45,7 @@ impl Task for TaskPayload{
                 .take(0).unwrap();
             info!("get_data: {get_data:#?}");
 
-                match tx.send(get_data){
+                match tx.try_send(get_data){
                     Ok(_) => info!("Sent data"),
                     Err(e) => error!("Error sending data: {e:?}")
                 };
@@ -66,7 +66,7 @@ impl Task for TaskPayload{
     //             .take(0).unwrap();
     //         info!("get_data: {get_data:#?}");
 
-    //             match tx.send(get_data){
+    //             match tx.try_send(get_data){
     //                 Ok(_) => info!("Sent data"),
     //                 Err(e) => error!("Error sending data: {e:?}")
     //             };
@@ -87,7 +87,7 @@ impl Task for TaskPayload{
                 .take(0).unwrap();
             info!("get_data: {get_data:#?}");
 
-                match tx.send(get_data){
+                match tx.try_send(get_data){
                     Ok(_) => info!("Sent data"),
                     Err(e) => error!("Error sending data: {e:?}")
                 };
@@ -105,7 +105,7 @@ impl Task for TaskPayload{
                 .unwrap()
                 .take(0).unwrap();
 
-            match tx.send(get_data){
+            match tx.try_send(get_data){
                 Ok(_) => info!("Sent data"),
                 Err(e) => error!("Error sending data: {e:?}")
             };

@@ -27,7 +27,7 @@ impl MtechServer{
                             wasm_cookies::delete("jwt");
                             let logout_msg = "Logged out".to_string();
                             self.state = AppState::NoAuth(logout_msg.clone());
-                            match self.context.app_state_tx.send(AppState::NoAuth(logout_msg)){
+                            match self.context.app_state_tx.try_send(AppState::NoAuth(logout_msg)){
                                 Ok(_) => info!("Logged out"),
                                 Err(e) => info!("Error: {e:?}"),
                             }
@@ -37,14 +37,14 @@ impl MtechServer{
                         // }
                         if ui.add(Button::new("Downloads")).clicked(){
                             self.state = AppState::Authenticated(MainPages::Downloads);
-                            match self.context.app_state_tx.send(AppState::Authenticated(MainPages::Downloads)){
+                            match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads)){
                                 Ok(_) => info!("Logged out"),
                                 Err(e) => info!("Error: {e:?}"),
                             }
                         }
                         if ui.add(Button::new("ChatGPT")).clicked(){
                             self.state = AppState::Authenticated(MainPages::ChatGpt);
-                            match self.context.app_state_tx.send(AppState::Authenticated(MainPages::ChatGpt)){
+                            match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::ChatGpt)){
                                 Ok(_) => info!("Logged out"),
                                 Err(e) => info!("Error: {e:?}"),
                             }
@@ -121,7 +121,7 @@ impl MtechServer{
                                 );
 
                                 if let Some(task) = task{
-                                    let _ = self.context.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task.clone()));
+                                    let _ = self.context.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task.clone()));
                                 }
                             }
                         }

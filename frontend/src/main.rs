@@ -186,6 +186,13 @@ impl eframe::App for MtechServer {
             self.state = state
         }
 
+        if let Ok(connected_clients) = self.context.connected_clients_rx.try_recv(){
+            info!("Connected clients: {:#?}", connected_clients.clone());
+            for client in connected_clients.iter(){
+                self.context.clients.insert(client.id.clone().unwrap().0.id.to_string(), client.clone());
+            }
+        }
+
         // Always checking authentication.
         match &self.state{
             //if auth'd, user shall be allowed

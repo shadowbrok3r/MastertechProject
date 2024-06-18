@@ -98,7 +98,7 @@ impl ColumnLayout for TaskLayout {
                                         if let Some(action) = action{
                                             match action{
                                                 TaskUiActions::OpenTaskModal(task) => {
-                                                    let _ = self.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task));
+                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
                                                 },
                                                 _ => ()
                                             }
@@ -112,7 +112,7 @@ impl ColumnLayout for TaskLayout {
                                         if let Some(action) = action{
                                             match action{
                                                 TaskUiActions::OpenTaskModal(task) => {
-                                                    let _ = self.ui_actions_tx.send(TaskUiActions::OpenTaskModal(task));
+                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
                                                 },
                                                 _ => ()
                                             }
@@ -170,7 +170,7 @@ impl ColumnLayout for TaskLayout {
                             ui.add_space(30.0);
 
                             if button.clicked(){
-                                let _ = self.ui_actions_tx.send(TaskUiActions::CreateTaskModal);
+                                let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
                             }
 
                             let mut count = 0;

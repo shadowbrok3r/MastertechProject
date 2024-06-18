@@ -5,7 +5,6 @@ use uuid::Uuid;
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
 pub const USER_SCOPE: &str = "user";
-
 pub const TICKET_TABLE: &str = "service_order";
 pub const CUSTOMER_TABLE: &str = "customer";
 pub const COMPUTER_TABLE: &str = "computer";
@@ -23,7 +22,7 @@ pub struct Record {
     pub id: Thing,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClientId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -263,11 +262,10 @@ pub struct ModifyTask{
     pub task_description: Option<String>, 
 }
 
-#[derive(Serialize, Debug, Clone, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize, Default)]
 pub struct ConnectedClient{
-    pub id: ClientId,
-    pub assigned_user: RecordId,
-    pub hostname: String,
+    pub id: Option<ClientId>,
+    pub assigned_user: Option<UserId>,
     pub client_identifier: String,
     pub uuid: Uuid
 }
@@ -380,7 +378,7 @@ pub struct User {
     pub email: String,
     pub store: Store,
     pub notifications: Option<Vec<NotificationId>>,
-    pub connected_clients: Option<Vec<String>>
+    pub connected_clients: Option<Vec<ClientId>>
 }
 
 impl Priority{
