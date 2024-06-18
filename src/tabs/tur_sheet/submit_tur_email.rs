@@ -102,11 +102,11 @@ impl MastertechContext{
         if self.send_specs == true{
             self.output_text.clear();
             self.output_text += "pulling system information. Please wait a moment..\n";
-            let system_name = &self.system_info.hostname;
-            let os = &self.system_info.operating_system;
-            let cpu_name = &self.system_info.cpu;
-            let total_ram = &self.system_info.ram;
-            let gpu = &self.system_info.gpu.clone();
+            let system_name = &self.system_info.hostname.trim().to_string();
+            let os = &self.system_info.operating_system.trim().to_string();
+            let cpu_name = &self.system_info.cpu.trim().to_string();
+            let total_ram = &self.system_info.ram.trim().to_string();
+            let gpu = &self.system_info.gpu.clone().trim().to_string();
 
             for index in 0..self.disk_num
             {
@@ -193,9 +193,9 @@ impl MastertechContext{
         let store_email = store.store_email();
 
         let system_name = &self.system_info.hostname;
-        let cpu_name = &self.system_info.cpu;
-        let total_ram = &self.system_info.ram;
-        let gpu = &self.system_info.gpu.clone();
+        let cpu_name = &self.system_info.cpu.trim().to_string();
+        let total_ram = &self.system_info.ram.trim().to_string();
+        let gpu = &self.system_info.gpu.clone().trim().to_string();
         let mut final_disk = String::new();
         let mut each_disk = String::new();
 

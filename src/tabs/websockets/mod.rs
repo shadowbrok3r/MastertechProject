@@ -6,16 +6,11 @@ use surrealdb::{opt::RecordId, sql::{Thing, Uuid}};
 use tokio::spawn;
 use tracing::info;
 
-use crate::{app_state::MastertechContext, database::schema::{ClientId, User, UserId, CONNECTED_CLIENT_TABLE}};
+use crate::{app_state::MastertechContext, database::schema::{ClientId, ComputerId, ConnectedClient, User, UserId, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}};
 use tui_input::Input;
 pub mod websocket;
 
-#[derive(Serialize, Debug, Clone, Deserialize, Default)]
-pub struct ConnectedClient{ // <'a>
-    pub id: Option<ClientId>,
-    pub assigned_user: Option<UserId>,
-    pub client_identifier: String,
-}
+
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
@@ -44,69 +39,33 @@ impl MastertechContext{
             if ui.button("Connect").clicked()
             {
                 if let Some(db) = self.database.clone(){
-                    self.client_uuid = *Uuid::new_v4();
-                    let uuid = self.client_uuid.clone();
-                    let usr = self.current_user.clone();
-                    self.url = format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client", &self.client_uuid);
-                    let hostname = &self.system_info.hostname;
-                    let client_identifier = format!("{hostname}:{}", uuid.to_string().split_at(36-12).1);
 
+                    let computer_id = &self.system_info.id.clone().unwrap_or( // i need to first check if a computer exists with a customer id or something..
+                        ComputerId(
+                            Thing::from(
+                                (COMPUTER_TABLE, format!("{}:{}", self.system_info.hostname, self.system_info.cpu.trim()).as_str())
+                            )
+                        )
+                    );
+                    
                     let connected_client = ConnectedClient {
-                        id: Some(ClientId(Thing::from((CONNECTED_CLIENT_TABLE.to_string(), client_identifier.clone())))), // client_identifier.clone()
-                        client_identifier: client_identifier.clone(), 
+                        id: Some(ClientId(Thing::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.0.id.clone())))),
                         ..Default::default()
                     };
 
-                    info!("Client: {:#?}", connected_client);
+                    self.url = format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client", connected_client.id.clone().unwrap().0.id);
+
+                    info!("Client: {:?}", connected_client);
 
                     spawn(async move {
-                        // db.database.set("connected_client", connected_client.id.clone()).await.unwrap();
-                        // info!("connected_client: {connected_client:#?}");
-                        // db.database.set("user", usr.clone()).await.unwrap();
-                        // info!("usr: {usr:?}");
                         
-                        let res = db.database // : Option<ConnectedClient>
+                        let res = db.database
                             .query("CREATE connected_client CONTENT $content")
                             .bind(("content", connected_client.clone()))
                             .await
                             .unwrap();
 
-                        info!("connected_client repsonse: {res:#?}");
-
-                        // let response: Option<ConnectedClient> = db.database
-                        //     .query("CREATE connected_client CONTENT $content")
-                        //     .bind(connected_client.clone())
-                        //     .await
-                        //     .unwrap()
-                        //     .take(0)
-                        //     .unwrap();
-
-                        
-                        // let user = usr.unwrap().clone();
-                        // let mut vec = Vec::new();
-                        // vec.push(connected_client.id.unwrap());
-
-                        // let response: Option<ConnectedClient> = db.database // : Option<ConnectedClient>
-                        //     .update(("user", user.id.clone().0.id))
-                        //     .merge(User{
-                        //         id: user.id,
-                        //         name: user.name,
-                        //         everest_initials: user.everest_initials,
-                        //         email: user.email,
-                        //         store: user.store,
-                        //         notifications: user.notifications,
-                        //         connected_clients: Some(vec),
-                        //     })
-                        //     .await.unwrap();
-
-                        // info!("user response: {response:#?}");
-                        // info!("Response 1: {:#?}", res.take(1));
-                            // .query("UPDATE user SET connected_clients += $connected_client WHERE id == $user")
-                            // .bind(("connected_client", connected_client.id))
-                            // .bind(("user", usr.clone()))
-                            // .await;
-
-                        info!("Query done: {res:#?}");
+                        info!("connected_client repsonse: {res:?}");
                     });
                 }
                 match ewebsock::connect_with_wakeup(&self.url, Default::default(), wakeup) {
@@ -132,7 +91,6 @@ impl MastertechContext{
                 frontend.ui(ui);
             }
         });
-        
     }
 }
 
