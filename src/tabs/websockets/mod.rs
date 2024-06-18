@@ -80,7 +80,7 @@ impl MastertechContext{
                             Err(e) => debug!("db error: {e:?}"),
                         }
                     });
-                    
+
                     if let Some(url) = &self.url{
                         let ctx = ui.ctx().clone();
                         let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
@@ -164,9 +164,11 @@ impl WebConsoleFrontend {
         CentralPanel::default().show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Message to send:");
-                if ui.text_edit_singleline(&mut self.text_to_send).lost_focus()
-                    && ui.input(|i| i.key_pressed(Key::Enter))
+                let text_edit = ui.text_edit_singleline(&mut self.text_to_send);
+                let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+                if text_edit.lost_focus() && key_press
                 {
+                    text_edit.request_focus();
                     self.ws_sender
                         .send(WsMessage::Text(mem::take(&mut self.text_to_send)));
                 }
