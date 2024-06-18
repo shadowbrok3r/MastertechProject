@@ -142,18 +142,21 @@ impl ezsockets::ServerExt for ChatServer {
                     for (room_id, room) in self.rooms.iter() {
                         if let Some(client) = &room.client {
                             info!("Broadcasting message to client session {} in room {}", client.id, room_id);
-                            client.text(format!("from {}: {}", from, text)).unwrap();
+                            client.text(format!("from {}: {}", room_id, text)).unwrap();
                         }
                         if let Some(master) = &room.master {
                             info!("Broadcasting message to master session {} in room {}", master.id, room_id);
-                            master.text(format!("from {}: {}", from, text)).unwrap();
+                            master.text(format!("from {}: {}", room_id, text)).unwrap();
                         }
                     }
                 } else if let Some(room) = self.rooms.get(&room_id) {
+                    let mut role = String::new();
                     // Determine the target session based on the sender's role
                     let target_session = if room.master.as_ref().map_or(false, |s| s.id == from) {
+                        role = "Master".to_string();
                         room.client.as_ref()
                     } else if room.client.as_ref().map_or(false, |s| s.id == from) {
+                        role = "Client".to_string();
                         room.master.as_ref()
                     } else {
                         None
@@ -162,7 +165,7 @@ impl ezsockets::ServerExt for ChatServer {
                     // Relay the message to the target session
                     if let Some(session) = target_session {
                         info!("Relaying message to session {}: {}", session.id, text);
-                        session.text(format!("from {}: {}", from, text)).unwrap();
+                        session.text(format!("{role}-{}: {}", room_id, text)).unwrap();
                     } else {
                         info!("No target session found for session {} in room {}", from, room_id);
                     }

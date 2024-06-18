@@ -189,7 +189,9 @@ impl eframe::App for MtechServer {
         if let Ok(connected_clients) = self.context.connected_clients_rx.try_recv(){
             info!("Connected clients: {:#?}", connected_clients.clone());
             for client in connected_clients.iter(){
-                self.context.clients.insert(client.id.clone().unwrap().0.id.to_string(), client.clone());
+                // let cli = client.id.as_ref().unwrap().clone().0.id.to_string();
+                // let parsed = cli.split(":").;
+                self.context.clients.insert(client.connection_string.clone(), client.clone());
             }
         }
 

@@ -263,11 +263,11 @@ pub struct ModifyTask{
 }
 
 #[derive(Serialize, Debug, Clone, Deserialize, Default)]
-pub struct ConnectedClient{
+pub struct ConnectedClient{ // <'a>
     pub id: Option<ClientId>,
     pub assigned_user: Option<UserId>,
-    pub client_identifier: String,
-    pub uuid: Uuid
+    pub client_hash: String,
+    pub connection_string: String,
 }
 
 
