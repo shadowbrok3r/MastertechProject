@@ -18,18 +18,16 @@ impl MtechServerContext {
         self.terminal
             .draw(|frame| {
                 let app = &self.chart_app;
-                let area = frame.size();
                 // render_chart1(frame, area, &app);
-        
                 if let Some(frontend) = &mut self.terminal_frontend {
-                  frontend.ui(ui, frame, area);
+                  frontend.ui(ui, frame);
                 }else{
-                    render_chart1(frame, area, &app);
+                    render_chart1(frame, frame.size(), &app);
                 }
             })
         .expect("epic fail");
 
-        ui.add( self.terminal.backend_mut());
+        
 
         if ui.button("Connect").clicked()
         {
@@ -43,6 +41,7 @@ impl MtechServerContext {
                 }
             }
         }
+        ui.add( self.terminal.backend_mut());
 
         let wakeup = move || ctx.request_repaint();
         for (client_id, client) in self.clients.iter(){
