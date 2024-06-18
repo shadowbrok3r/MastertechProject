@@ -16,7 +16,7 @@ pub fn get_my_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, user_id: UserId)
         
         match query_results{
             Ok(data) => {
-                match tx.send(data){
+                match tx.try_send(data){
                     Ok(_) => drop(tx),
                     Err(e) => info!("Error sending Task Data: {e:?}")
                 }
@@ -37,7 +37,7 @@ pub fn get_store_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: Store)
         let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
         match query_results{
             Ok(data) => {
-                match tx.send(data){
+                match tx.try_send(data){
                     Ok(_) => drop(tx),
                     Err(e) => error!("Error sending Task Data: {e:?}")
                 }
@@ -55,7 +55,7 @@ pub fn get_completed_tasks(db: Database, tx: Sender<Vec<TaskPayload>>, store: St
         let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = db.database.query(query).await.unwrap().take(0);
         match query_results{
             Ok(data) => {
-                match tx.send(data){
+                match tx.try_send(data){
                     Ok(_) => drop(tx),
                     Err(e) => error!("Error sending Task Data: {e:?}")
                 }
@@ -80,7 +80,7 @@ pub fn get_tasks(db: Database, tx: Sender<Vec<TaskPayload>>){
 
         match query_results{
             Ok(data) => {
-                match tx.send(data){
+                match tx.try_send(data){
                     Ok(_) => drop(tx),
                     Err(e) => error!("Error sending Task Data: {e:?}")
                 }

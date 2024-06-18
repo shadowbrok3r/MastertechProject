@@ -126,7 +126,7 @@ async fn handle_streams(
             Ok(notification) => {
                 let data = notification.data;
                 let action = notification.action;
-                match tx.send((action, data)){
+                match tx.try_send((action, data)){
                     Ok(_) => info!("Sent notification"),
                     Err(e) => error!("Error sending task data: {e:?}")
                 }

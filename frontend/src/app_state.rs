@@ -13,7 +13,7 @@ use serde::Serialize;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use database::{schema::{LiveTaskPayload, TaskPayload, User}, Database};
+use database::{schema::{ConnectedClient, LiveTaskPayload, TaskPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::terminal::{chart::App, websocket::TerminalFrontend}, 
@@ -64,6 +64,7 @@ pub struct MtechServerContext{
     ///Gets data from the first run of the main loop
     pub first_run: bool,
 
+    pub clients: HashMap<String, ConnectedClient>,
     /// Database connection
     #[serde(skip)]
     pub database: Option<Database>,
@@ -110,7 +111,10 @@ pub struct MtechServerContext{
     pub ui_actions_tx: Sender<TaskUiActions>,
     #[serde(skip)]
     pub ui_actions_rx: Receiver<TaskUiActions>,
-
+    #[serde(skip)]
+    pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
+    #[serde(skip)]
+    pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
     pub data_update: Option<Rc<Cell<Option<u32>>>>,
@@ -212,11 +216,12 @@ impl NewCC for MtechServer{
         let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
+        let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
 
         let context = MtechServerContext{
             current_user: None,
             first_run: true,
-            
+            clients: HashMap::new(),
             database: None,
 
             task_map: HashMap::new(),
@@ -232,6 +237,7 @@ impl NewCC for MtechServer{
             app_state_tx, app_state_rx,
             store_users_tx, store_users_rx,
             ui_actions_tx, ui_actions_rx,
+            connected_clients_tx, connected_clients_rx,
 
             // MODALS / LAYOUTS
             task_layouts: HashMap::new(),
@@ -382,7 +388,7 @@ pub fn check_authentication(
                 Some(cookie.unwrap())
             ).await;
             
-            match db_tx.send(database){
+            match db_tx.try_send(database){
                 Ok(_) => {
                     info!("Sent DB");
                     drop(db_tx);

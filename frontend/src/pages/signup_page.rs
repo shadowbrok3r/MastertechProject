@@ -59,7 +59,7 @@ impl Signup{
                     }else{ info!("no cookie"); }
 
                     
-                    match db_tx.send(Ok(db)){
+                    match db_tx.try_send(Ok(db)){
                         Ok(_) => {
                             info!("Sent db connection across thread");
                             drop(db_tx);
@@ -164,7 +164,7 @@ impl MtechServer{
                                             .ui(ui)
                                             .clicked()
                                         {
-                                            match appstate_tx.send(AppState::NoAuth("Login".to_string())){
+                                            match appstate_tx.try_send(AppState::NoAuth("Login".to_string())){
                                                 Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                                 Err(e) => info!("Error {e:?}"),
                                             }
