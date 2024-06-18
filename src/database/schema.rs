@@ -1,6 +1,7 @@
 
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
+use uuid::Uuid;
 
 use super::prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order};
 
@@ -395,6 +396,14 @@ impl Store{
     pub const _VALUES: [Self; 7] = [Self::RIV, Self::LTN, Self::MUR, Self::AF, Self::WJ, Self::ORE, Self::SAN];
 }
 
+
+#[derive(Serialize, Debug, Clone, Deserialize, Default)]
+pub struct ConnectedClient{ // <'a>
+    pub id: Option<ClientId>,
+    pub assigned_user: Option<UserId>,
+    pub client_identifier: String,
+    pub uuid: Uuid
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct User {

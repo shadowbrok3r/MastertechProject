@@ -185,10 +185,10 @@ pub async fn send_payload(
         customer: Some(customer_id.clone()),
         seb_info: computer_data.seb_info,
         hostname: computer_data.hostname,
-        operating_system: computer_data.operating_system,
-        cpu: computer_data.cpu,
-        gpu: computer_data.gpu,
-        ram: computer_data.ram,
+        operating_system: computer_data.operating_system.trim().to_string(),
+        cpu: computer_data.cpu.trim().to_string(),
+        gpu: computer_data.gpu.trim().to_string(),
+        ram: computer_data.ram.trim().to_string(),
         drives: computer_data.drives,
     };
 
