@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members=[ "frontend", "database" ] #  , "websocket_server"
-
+exclude = ["websocket_server"]
+package.exclude = ["websocket_server"]
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -11,3 +12,4 @@ surrealdb = { version = "1.5", features = ["protocol-ws"] } # kv-speedb "protoco
 anyhow = "1"
 log="0.4"
 chrono = "0.4"
+
