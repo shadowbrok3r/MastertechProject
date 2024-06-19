@@ -187,7 +187,7 @@ impl WebConsoleFrontend {
         });
     }
 
-    pub fn initialize_websocket(&self, ui: &mut Ui)
+    pub fn initialize_websocket(&mut self, ui: &mut Ui)
         -> anyhow::Result<(), anyhow::Error>
     {
         for event in &self.events {
@@ -200,20 +200,36 @@ impl WebConsoleFrontend {
                         WsMessage::Text(txt) => {
                             match txt.as_str(){
                                 "live_data" => {
+                                    ui.label(format!("Getting live data"));
                                     let tx = self.tx.clone();
                                     spawn(async move { 
                                         live_computer_stats(tx.clone()).await.unwrap();
                                     });
                                 },
                                 "cmd" => {
+                                    ui.label(format!("Getting cmd"));
                                     let tx = self.tx.clone();
                                     spawn(async move { 
                                         live_computer_stats(tx.clone()).await.unwrap();
                                     });
                                 }
-                                _ => {}
+                                _ => {
+                                    if txt.contains("live_data"){
+                                        ui.label(format!("Getting live data"));
+                                        let tx = self.tx.clone();
+                                        spawn(async move { 
+                                            live_computer_stats(tx.clone()).await.unwrap();
+                                        });
+                                    }
+                                    else{
+                                        ui.label(txt);
+                                    }
+                                    while let Ok(sysinfo) = self.rx.try_recv(){
+                                        self.ws_sender
+                                            .send(WsMessage::Binary(sysinfo));
+                                    }
+                                }
                             }
-                            ui.label(txt);
                         },
                         _ => {}
                     }
@@ -232,6 +248,7 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>)
     -> anyhow::Result<(), anyhow::Error>
 {
     loop{ // constantly send information as well as wait for shutdown signal
+        info!("In loop");
         sleep(Duration::from_secs(2)).await;
 
         let systeminfo: SystemInformation = get_sysinfo().await?;
