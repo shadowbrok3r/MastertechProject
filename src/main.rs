@@ -6,10 +6,9 @@ use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use self_update::cargo_crate_version;
-use database::{database::Database, schema::{ClientId, ComputerData, ComputerId, ConnectedClient, Store, TicketData, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
+use database::{database::Database, schema::{ClientId, ComputerData, Store, TicketData, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
-use surrealdb::sql::Thing;
-use tabs::{mastertech_website::websocket::WebSocket, tur_sheet::scaffold::AsanaResponse};
+use tabs::tur_sheet::scaffold::AsanaResponse;
 
 pub mod app_state;
 pub mod tabs;

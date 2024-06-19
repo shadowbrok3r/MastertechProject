@@ -302,3 +302,13 @@ pub async fn query_id<'a, T>(database: Database, table: &'a str, id: T)
     info!("Query: {:?}  // {}", record, query);
     Ok(record)
 }
+
+
+pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
+    bincode::serialize(system_info).expect("Failed to serialize SystemInformation")
+}
+
+
+pub fn deserialize_system_info(bytes: &[u8]) -> SystemInformation {
+    bincode::deserialize(bytes).expect("Failed to deserialize SystemInformation")
+}
