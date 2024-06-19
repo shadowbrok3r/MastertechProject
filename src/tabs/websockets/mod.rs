@@ -1,19 +1,17 @@
-use std::{collections::HashMap, env, mem, process::Stdio, time::Duration};
+use std::{collections::HashMap, env, process::Stdio, time::Duration};
 use anyhow::Context;
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{CentralPanel, Color32, Key, TextEdit, TopBottomPanel, Ui, Widget};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use log::debug;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use sha2::{Digest, Sha256};
 use shell_words::split;
-use surrealdb::{opt::RecordId, sql::{Thing, Uuid}};
+use surrealdb::sql::Thing;
 use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
 use tokio::{process::Command, spawn, time::sleep};
 use tracing::info;
 
-use crate::{app_state::MastertechContext, database::{schema::{ClientId, ComputerId, ConnectedClient, User, UserId, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}};
+use crate::{app_state::MastertechContext, database::{schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}};
 use tui_input::Input;
 pub mod websocket;
 
