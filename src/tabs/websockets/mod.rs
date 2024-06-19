@@ -145,6 +145,14 @@ pub struct WebConsoleFrontend {
     // pub input_mode: InputMode,
     /// History of recorded messages
     pub messages: Vec<String>,
+    pub command: Cmd,
+    pub send_specs: bool
+}
+
+pub enum Cmd{
+    LiveData,
+    Command,
+    None
 }
 
 impl WebConsoleFrontend {
@@ -160,13 +168,15 @@ impl WebConsoleFrontend {
             // input_mode: InputMode::Normal,
             messages: Vec::new(),
             character_index: 0,
+            command: Cmd::None,
+            send_specs: false
         }
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
-        while let Some(event) = self.ws_receiver.try_recv() {
-            self.events.push(event);
-        }
+        // while let Some(event) = self.ws_receiver.try_recv() {
+        //     self.events.push(event);
+        // }
 
         CentralPanel::default().show_inside(ui, |ui| {
             ui.vertical_centered(|ui| {
@@ -190,44 +200,30 @@ impl WebConsoleFrontend {
     pub fn initialize_websocket(&mut self, ui: &mut Ui)
         -> anyhow::Result<(), anyhow::Error>
     {
-        for event in &self.events {
+        if let Some(event) = &self.ws_receiver.try_recv() {
+            ui.ctx().request_repaint();
             match event{
                 WsEvent::Message(msg) => {
                     match msg{
-                        WsMessage::Binary(bin) => {
-                            ui.label(format!("{bin:?}"));
-                        },
+                        WsMessage::Binary(bin) => { ui.label(format!("{bin:?}")); },
                         WsMessage::Text(txt) => {
                             match txt.as_str(){
-                                "live_data" => {
-                                    ui.label(format!("Getting live data"));
-                                    let tx = self.tx.clone();
-                                    spawn(async move { 
-                                        live_computer_stats(tx.clone()).await.unwrap();
-                                    });
-                                },
-                                "cmd" => {
-                                    ui.label(format!("Getting cmd"));
-                                    let tx = self.tx.clone();
-                                    spawn(async move { 
-                                        live_computer_stats(tx.clone()).await.unwrap();
-                                    });
-                                }
-                                _ => {
+                                "live_data" => { self.command = Cmd::LiveData; },
+                                "cmd" => { self.command = Cmd::Command; }
+                                _ => { 
                                     if txt.contains("live_data"){
+                                        self.command = Cmd::LiveData;
+                                        info!("Getting live data");
                                         ui.label(format!("Getting live data"));
                                         let tx = self.tx.clone();
                                         spawn(async move { 
-                                            live_computer_stats(tx.clone()).await.unwrap();
+                                            match live_computer_stats(tx.clone()).await{
+                                                Ok(_) => drop(tx),
+                                                Err(e) => debug!("Error with live data {e:?}"),
+                                            }
                                         });
-                                    }
-                                    else{
-                                        ui.label(txt);
-                                    }
-                                    while let Ok(sysinfo) = self.rx.try_recv(){
-                                        self.ws_sender
-                                            .send(WsMessage::Binary(sysinfo));
-                                    }
+                                        
+                                    } else { ui.label(txt); }
                                 }
                             }
                         },
@@ -236,8 +232,27 @@ impl WebConsoleFrontend {
                 },
                 _ => {}
             }
-            
         }
+
+        match self.command{
+            Cmd::LiveData => {
+                self.command = Cmd::LiveData;
+
+            },
+            Cmd::Command => {
+                ui.label(format!("Getting cmd"));
+                let tx = self.tx.clone();
+                spawn(async move { 
+                    live_computer_stats(tx.clone()).await.unwrap();
+                });
+            },
+            Cmd::None => {},
+        };
+
+        if let Ok(sysinfo) = &mut self.rx.try_recv(){
+            self.ws_sender.send(WsMessage::Binary(std::mem::take(sysinfo)));
+        }
+
        Ok(())
     }
 
@@ -247,10 +262,8 @@ impl WebConsoleFrontend {
 async fn live_computer_stats(tx: Sender<Vec<u8>>) 
     -> anyhow::Result<(), anyhow::Error>
 {
-    loop{ // constantly send information as well as wait for shutdown signal
-        info!("In loop");
-        sleep(Duration::from_secs(2)).await;
-
+    loop{
+        sleep(Duration::from_secs(4)).await;
         let systeminfo: SystemInformation = get_sysinfo().await?;
         tx.send(serialize_system_info(&systeminfo))?;
         // if app.lock().await.finish {
@@ -258,18 +271,19 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>)
         // }
     }
 }
-async fn handle_command_payload(string_payload: String, tx: Sender<String>) -> anyhow::Result<(), anyhow::Error>  { 
+async fn handle_command_payload(string_payload: String, tx: Sender<String>) 
+    -> anyhow::Result<(), anyhow::Error>  
+{ 
     println!("string_payload: {}", string_payload.clone());
     let command_payload = split(string_payload.as_str()).unwrap_or(Vec::new());
-    if cfg!(target_os = "windows"){
-        handle_windows_cmd(string_payload, tx.clone()).await?;
-    }else if cfg!(target_os = "linux"){
-        handle_linux_cmd(command_payload, tx.clone()).await?;
-    }
+
+    #[cfg(target_os="windows")]{ handle_windows_cmd(string_payload, tx.clone()).await?; }
+    #[cfg(target_os="linux")]{ handle_linux_cmd(command_payload, tx.clone()).await?; }
 
     Ok(())
 }
 
+#[cfg(target_os="windows")]
 async fn handle_windows_cmd(command_payload: String, tx: Sender<String>)
     -> anyhow::Result<(), anyhow::Error> 
 {
@@ -318,7 +332,9 @@ async fn handle_linux_cmd(command_payload: Vec<String>, tx: Sender<String>)
     Ok(())
 }
 
-async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
+async fn get_sysinfo() 
+    -> anyhow::Result<SystemInformation, anyhow::Error> 
+{
     let mut sys = System::new_all();
     let sysinf: SystemInformation;
 
@@ -379,11 +395,11 @@ async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
     sysinf = SystemInformation {
         cpu_percentage,
-        cpu_clock,
+        cpu_clock: cpu_clock as f32,
         component_temps,
         disks,
-        total_memory,
-        used_memory,
+        total_memory: total_memory as f32,
+        used_memory: used_memory as f32,
         name,
         kernel_version,
         os_version,

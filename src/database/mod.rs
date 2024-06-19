@@ -50,13 +50,13 @@ pub struct SystemInformation {
     /// Live CPU usage as a percentaget
     pub cpu_percentage: f32,
     /// Live CPU clock speed
-    pub cpu_clock: u64,
+    pub cpu_clock: f32,
     /// Live system temps
     pub component_temps: HashMap<String, f32>,
     /// Live RAM usage in Mb
-    pub used_memory: u64,
+    pub used_memory: f32,
     /// Total RAM
-    pub total_memory: u64,
+    pub total_memory: f32,
     /// Disk usage
     pub disks: String,
     /// Name of machine
