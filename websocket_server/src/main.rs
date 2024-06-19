@@ -9,10 +9,12 @@ use ezsockets::CloseFrame; // Represents WebSocket close frames
 use ezsockets::Error; // Represents WebSocket errors
 use ezsockets::Server;
 use uuid::Uuid; // Manages WebSocket server instances
-use std::collections::HashMap; // Provides a hash map data structure
+use std::collections::HashMap; use std::fs::File;
+// Provides a hash map data structure
 use std::io::BufRead; // Trait for reading lines from standard input
 use std::net::SocketAddr; // Represents socket addresses
 use tracing::info; // For logging information
+use simplelog::{WriteLogger, Config, LevelFilter};
 
 type SessionID = String;
 type RoomID = String;
@@ -21,7 +23,7 @@ type Session = ezsockets::Session<SessionID, ()>;
 // Enum to represent different chat messages
 #[derive(Debug)]
 enum ChatMessage {
-    Send { from: SessionID, room_id: RoomID, text: String },
+    Send { from: SessionID, room_id: RoomID, text: String , bin: Option<Vec<u8>>}
 }
 
 // Struct to represent a room
@@ -134,19 +136,29 @@ impl ezsockets::ServerExt for ChatServer {
     // Handles incoming chat messages
     async fn on_call(&mut self, call: Self::Call) -> Result<(), Error> {
         match call {
-            ChatMessage::Send { text, from, room_id } => {
+            ChatMessage::Send { text, from, room_id, bin } => {
                 info!("Message received from session {} in room {}: {}", from, room_id, text);
                 
                 if from == "ffffffff-ffff-ffff-ffff-ffffffffffff" {
                     // Broadcast to all rooms
                     for (room_id, room) in self.rooms.iter() {
                         if let Some(client) = &room.client {
-                            info!("Broadcasting message to client session {} in room {}", client.id, room_id);
-                            client.text(format!("from {}: {}", room_id, text)).unwrap();
+                            if let Some(bin) = bin.clone() {
+                                info!("Broadcasting binary message to client session {} in room {}", client.id, room_id);
+                                client.binary(bin).unwrap();
+                            } else {
+                                info!("Broadcasting text message to client session {} in room {}", client.id, room_id);
+                                client.text(format!("from {}: {}", from, text)).unwrap();
+                            }
                         }
                         if let Some(master) = &room.master {
-                            info!("Broadcasting message to master session {} in room {}", master.id, room_id);
-                            master.text(format!("from {}: {}", room_id, text)).unwrap();
+                            if let Some(bin) = bin.clone() {
+                                info!("Broadcasting binary message to master session {} in room {}", master.id, room_id);
+                                master.binary(bin).unwrap();
+                            } else {
+                                info!("Broadcasting text message to master session {} in room {}", master.id, room_id);
+                                master.text(format!("from {}: {}", from, text)).unwrap();
+                            }
                         }
                     }
                 } else if let Some(room) = self.rooms.get(&room_id) {
@@ -161,11 +173,16 @@ impl ezsockets::ServerExt for ChatServer {
                     } else {
                         None
                     };
-        
+            
                     // Relay the message to the target session
                     if let Some(session) = target_session {
-                        info!("Relaying message to session {}: {}", session.id, text);
-                        session.text(format!("{role}-{}: {}", room_id, text)).unwrap();
+                        if let Some(bin) = bin {
+                            info!("Relaying binary message to session {}: {:?}", session.id, bin);
+                            session.binary(bin).unwrap();
+                        } else {
+                            info!("Relaying text message to session {}: {}", session.id, text);
+                            session.text(format!("{role}-{}: {}", room_id, text)).unwrap();
+                        }
                     } else {
                         info!("No target session found for session {} in room {}", from, room_id);
                     }
@@ -173,7 +190,7 @@ impl ezsockets::ServerExt for ChatServer {
                     info!("Room {} not found", room_id);
                 }
             }
-        };
+        };        
              
         Ok(())
     }
@@ -201,11 +218,13 @@ impl ezsockets::SessionExt for ChatSession {
     // Handles incoming text messages
     async fn on_text(&mut self, text: String) -> Result<(), Error> {
         info!("Session {} (role: {}) in room {} received message: {}", self.id, self.role, self.room_id, text);
+        // self.server
         self.server
             .call(ChatMessage::Send {
                 from: self.id.clone(),
                 room_id: self.room_id.clone(),
                 text,
+                bin: None
             })
             .unwrap();
         Ok(())
@@ -213,7 +232,14 @@ impl ezsockets::SessionExt for ChatSession {
 
     // Handles incoming binary messages (not implemented)
     async fn on_binary(&mut self, bytes: Vec<u8>) -> Result<(), Error> {
-        info!("binary: {bytes:#?}");
+        self.server
+            .call(ChatMessage::Send {
+                from: self.id.clone(),
+                room_id: self.room_id.clone(),
+                text: "Binary".to_string(),
+                bin: Some(bytes)
+            })
+        .unwrap();
         Ok(())
     }
 
@@ -227,8 +253,17 @@ impl ezsockets::SessionExt for ChatSession {
 
 #[tokio::main]
 async fn main() {
-    // Initialize the tracing subscriber for logging
-    tracing_subscriber::fmt::init();
+    // Configure log level and log file
+    let log_level = LevelFilter::Info; 
+    let log_file = File::create("output.log").unwrap();
+
+    // Init the logger
+    WriteLogger::init( 
+        log_level,
+        Config::default(),
+        log_file
+    ).unwrap();
+    
     info!("Starting the WebSocket server");
 
     // Create the WebSocket server
@@ -264,6 +299,7 @@ async fn main() {
                 text: line,
                 from: Uuid::max().to_string(), // Reserve some ID for the server
                 room_id: 0.to_string(), // Broadcast to all rooms (can be customized)
+                bin: None
             })
             .unwrap();
     }
