@@ -1,9 +1,11 @@
 
+use std::fmt::Display;
+
 use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
 use uuid::Uuid;
 
-use super::prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order};
+use super::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order}, SystemInformation};
 
 pub const _NS: &str = "Mastertech";
 pub const _DB: &str = "MastertechDB";
@@ -450,5 +452,24 @@ impl ComputerData{
 
     pub fn add_disk(&mut self, disk: DriveData){
         self.drives.push(disk);
+    }
+}
+
+
+impl Display for SystemInformation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "==> cpu_percentage: {} \n==> comps: {:?} \n==> used_memory: {} \n==> total_memory: {} \n==> disks: {} \n==> name: {} \n==> kernel_version: {} \n==> os_version: {} \n==> hostname: {} \n==> number_of_cpus: {} \n==> network_interfaces: {:#?} \n", 
+            self.cpu_percentage,
+            self.component_temps,
+            self.used_memory,
+            self.total_memory,
+            self.disks,
+            self.name,
+            self.kernel_version,
+            self.os_version,
+            self.hostname,
+            self.number_of_cpus,
+            self.network_interfaces,
+        )
     }
 }

@@ -1,18 +1,21 @@
-use std::{env, mem};
-use eframe::egui::{CentralPanel, Color32, Key, TopBottomPanel, Ui};
+use std::{collections::HashMap, env, mem, process::Stdio, time::Duration};
+use anyhow::Context;
+use crossbeam::channel::{Receiver, Sender};
+use eframe::egui::{CentralPanel, Color32, Key, TextEdit, TopBottomPanel, Ui, Widget};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use log::debug;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
+use shell_words::split;
 use surrealdb::{opt::RecordId, sql::{Thing, Uuid}};
-use tokio::spawn;
+use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
+use tokio::{process::Command, spawn, time::sleep};
 use tracing::info;
 
-use crate::{app_state::MastertechContext, database::schema::{ClientId, ComputerId, ConnectedClient, User, UserId, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}};
+use crate::{app_state::MastertechContext, database::{schema::{ClientId, ComputerId, ConnectedClient, User, UserId, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}};
 use tui_input::Input;
 pub mod websocket;
-
-
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
@@ -130,6 +133,10 @@ fn generate_client_id(hostname: String, cpu: String) -> String {
 pub struct WebConsoleFrontend {
     pub ws_sender: WsSender,
     pub ws_receiver: WsReceiver,
+
+    pub tx: Sender<Vec<u8>>,
+    pub rx: Receiver<Vec<u8>>,
+
     pub events: Vec<WsEvent>,
     pub text_to_send: String,
     /// Position of cursor in the editor area.
@@ -144,9 +151,11 @@ pub struct WebConsoleFrontend {
 
 impl WebConsoleFrontend {
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
+        let (tx, rx) = crossbeam::channel::unbounded::<Vec<u8>>();
         Self {
             ws_sender,
             ws_receiver,
+            tx, rx,
             events: Default::default(),
             text_to_send: String::new(),
             input: Input::default(),
@@ -162,186 +171,211 @@ impl WebConsoleFrontend {
         }
 
         CentralPanel::default().show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Message to send:");
-                let text_edit = ui.text_edit_singleline(&mut self.text_to_send);
+            ui.vertical_centered(|ui| {
+                let text_edit = TextEdit::singleline(&mut self.text_to_send).hint_text("Send message").ui(ui);
                 let key_press = ui.input(|i| i.key_pressed(Key::Enter));
                 if text_edit.lost_focus() && key_press
                 {
                     text_edit.request_focus();
                     self.ws_sender
-                        .send(WsMessage::Text(mem::take(&mut self.text_to_send)));
+                        .send(WsMessage::Text(std::mem::take(&mut self.text_to_send)));
                 }
             });
 
             ui.separator();
             ui.heading("Received events:");
-            for event in &self.events {
-                match event{
-                    WsEvent::Message(msg) => {
-                        match msg{
-                            WsMessage::Binary(bin) => {
-                                ui.label(format!("{bin:?}"));
-                            },
-                            WsMessage::Text(txt) => {
-                                ui.label(txt);
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
-                
-            }
+            self.initialize_websocket(ui).unwrap();
+            
         });
     }
 
-    // pub fn ui(&mut self, ui: &mut Ui, f: &mut Frame, area: Rect) {
-    //     // if ui.text_edit_singleline(&mut self.text_to_send).lost_focus()
-    //     //     && ui.input(|i| i.key_pressed(Key::Enter))
-    //     // {
-    //     //     self.ws_sender
-    //     //         .send(WsMessage::Text(std::mem::take(&mut self.text_to_send)));
-    //     // }
-
-    //     while let Some(event) = self.ws_receiver.try_recv() {
-    //         self.events.push(event);
-    //     }
-
-    //     let mut text: String = String::new();
-    //     for event in &self.events {
-    //         match event{
-    //             WsEvent::Message(msg) => {
-    //                 match msg{
-    //                     WsMessage::Binary(bin) => {
-    //                         text = format!("{bin:?}");
-    //                     },
-    //                     WsMessage::Text(txt) => {
-    //                         text = txt.clone();
-    //                     },
-    //                     _ => {}
-    //                 }
-    //             },
-    //             // WsEvent::Error(_) => todo!(),
-    //             _ => {}
-    //         }
+    pub fn initialize_websocket(&self, ui: &mut Ui)
+        -> anyhow::Result<(), anyhow::Error>
+    {
+        for event in &self.events {
+            match event{
+                WsEvent::Message(msg) => {
+                    match msg{
+                        WsMessage::Binary(bin) => {
+                            ui.label(format!("{bin:?}"));
+                        },
+                        WsMessage::Text(txt) => {
+                            match txt.as_str(){
+                                "live_data" => {
+                                    let tx = self.tx.clone();
+                                    spawn(async move { 
+                                        live_computer_stats(tx.clone()).await.unwrap();
+                                    });
+                                },
+                                "cmd" => {
+                                    let tx = self.tx.clone();
+                                    spawn(async move { 
+                                        live_computer_stats(tx.clone()).await.unwrap();
+                                    });
+                                }
+                                _ => {}
+                            }
+                            ui.label(txt);
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
             
-    //     }
+        }
+       Ok(())
+    }
 
-    //     let block = Block::default()
-    //         .title(Title::from("MasterTech Web Console").alignment(Alignment::Center))
-    //         .title(
-    //             Title::from("X")
-    //                 .alignment(Alignment::Center)
-    //                 .position(Position::Bottom),
-    //         )
-    //         .borders(Borders::ALL)
-    //         .border_set(border::THICK)
-    //         .white().bg(Color::Black);
+    
+}
 
-    //     let para = Paragraph::new(text)
-    //         .centered()
-    //         .block(block)
-    //         .cyan()
-    //         .on_black();
+async fn live_computer_stats(tx: Sender<Vec<u8>>) 
+    -> anyhow::Result<(), anyhow::Error>
+{
+    loop{ // constantly send information as well as wait for shutdown signal
+        sleep(Duration::from_secs(2)).await;
 
-    //     // for event in &self.events {
-    //     //     ui.label(format!("{event:?}"));
-    //     // }
-    //     // f.render_widget(para, area);
-    //     let vertical = Layout::vertical([
-    //         Constraint::Length(1),
-    //         Constraint::Length(3),
-    //         Constraint::Min(1),
-    //     ]);
-    //     let [help_area, input_area, messages_area] = vertical.areas(f.size());
-    
-    //     let (msg, style) = match self.input_mode {
-    //         InputMode::Normal => (
-    //             vec![
-    //                 "Press ".into(),
-    //                 "q".bold(),
-    //                 " to exit, ".into(),
-    //                 "e".bold(),
-    //                 " to start editing.".bold(),
-    //             ],
-    //             Style::default().add_modifier(Modifier::RAPID_BLINK),
-    //         ),
-    //         InputMode::Editing => (
-    //             vec![
-    //                 "Press ".into(),
-    //                 "Esc".bold(),
-    //                 " to stop editing, ".into(),
-    //                 "Enter".bold(),
-    //                 " to record the message".into(),
-    //             ],
-    //             Style::default(),
-    //         ),
-    //     };
-    //     let text = Text::from(Line::from(msg)).patch_style(style);
-    //     let help_message = Paragraph::new(text);
-    //     f.render_widget(help_message, help_area);
-    
-    //     let input = Paragraph::new(self.input.value())
-    //         .style(match self.input_mode {
-    //             InputMode::Normal => Style::default(),
-    //             InputMode::Editing => Style::default().fg(Color::Yellow),
-    //         })
-    //         .block(Block::bordered().title("Input"));
-    //     f.render_widget(input, input_area);
-    //     match self.input_mode {
-    //         InputMode::Normal =>
-    //             // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
-    //             {}
-    
-    //         InputMode::Editing => {
-    //             // Make the cursor visible and ask ratatui to put it at the specified coordinates after
-    //             // rendering
-    //             #[allow(clippy::cast_possible_truncation)]
-    //             f.set_cursor(
-    //                 // Draw the cursor at the current position in the input field.
-    //                 // This position is can be controlled via the left and right arrow key
-    //                 input_area.x + self.character_index as u16 + 1,
-    //                 // Move one line down, from the border to the input line
-    //                 input_area.y + 1,
-    //             );
-    //         }
-    //     }
-    
-    //     let messages: Vec<ListItem> = self
-    //         .messages
-    //         .iter()
-    //         .enumerate()
-    //         .map(|(i, m)| {
-    //             let content = Line::from(Span::raw(format!("{i}: {m}")));
-    //             ListItem::new(content)
-    //         })
-    //         .collect();
-    //     let messages = List::new(messages).block(Block::bordered().title("Messages"));
-    //     f.render_widget(messages, messages_area);
-    // }
+        let systeminfo: SystemInformation = get_sysinfo().await?;
+        tx.send(serialize_system_info(&systeminfo))?;
+        // if app.lock().await.finish {
+        //     break;
+        // }
+    }
+}
+async fn handle_command_payload(string_payload: String, tx: Sender<String>) -> anyhow::Result<(), anyhow::Error>  { 
+    println!("string_payload: {}", string_payload.clone());
+    let command_payload = split(string_payload.as_str()).unwrap_or(Vec::new());
+    if cfg!(target_os = "windows"){
+        handle_windows_cmd(string_payload, tx.clone()).await?;
+    }else if cfg!(target_os = "linux"){
+        handle_linux_cmd(command_payload, tx.clone()).await?;
+    }
 
-    // pub fn handle_events(&mut self, ui: &mut Ui) {
-    //     if ui.input(|i| i.key_released(Key::Q)) {
-    //         panic!("HAVE A NICE WEEK");
-    //     }
-    //     if ui.input(|i| i.key_released(Key::ArrowRight)) {
-    //         self.change_status();
-    //     }
-    //     if ui.input(|i| i.key_released(Key::ArrowLeft)) {
-    //         self.items.unselect();
-    //     }
-    //     if ui.input(|i| i.key_released(Key::ArrowDown)) {
-    //         self.items.next();
-    //     }
-    //     if ui.input(|i| i.key_released(Key::ArrowUp)) {
-    //         self.items.previous();
-    //     }
-    //     if ui.input(|i| i.key_released(Key::G)) {
-    //         self.go_top();
-    //     }
-    //     if ui.input(|i| i.key_released(Key::F)) {
-    //         self.go_bottom();
-    //     }
-    // }
+    Ok(())
+}
+
+async fn handle_windows_cmd(command_payload: String, tx: Sender<String>)
+    -> anyhow::Result<(), anyhow::Error> 
+{
+    let process = Command::new("cmd")
+        .arg("/C")
+        .raw_arg(command_payload)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn();
+    
+    match process{
+        Ok(child) => {
+            let output = child.wait_with_output().await?;
+            
+            // client.emit(
+            //     "clientCmdResponse", 
+            //     json!({"message": String::from_utf8(output.stdout)?})
+            // ).await?;
+        },
+        Err(err) =>{
+            info!("Error in process => {err:?}");
+        },
+    };
+
+    Ok(())
+}
+
+async fn handle_linux_cmd(command_payload: Vec<String>, tx: Sender<String>)
+    -> anyhow::Result<(), anyhow::Error> 
+{
+    let process = Command::new("sh")
+        .arg("-c")
+        .args(command_payload)
+        .stdout(Stdio::piped())
+        .spawn();
+        
+    match process{
+        Ok(child) => {
+            let output = child
+                .wait_with_output()
+                .await?;
+        },
+        Err(err) => info!("Error in process => {err:?}"),
+    }
+
+    Ok(())
+}
+
+async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
+    let mut sys = System::new_all();
+    let sysinf: SystemInformation;
+
+    // First we update all information of our `System` struct.
+    sys.refresh_all();
+
+    let mut cpu_percentage = f32::default();
+    let mut cpu_clock = u64::default();
+    let mut disks = String::new();
+    let disk_list = Disks::new_with_refreshed_list();
+    // let component_temp = String::new();
+    let mut network_interfaces: HashMap<String, String> = HashMap::new();
+    let mut component_temps: HashMap<String, f32> = HashMap::new();
+    // Components temperature:
+    let components = Components::new_with_refreshed_list();
+    // Network interfaces name, total data received and total data transmitted:
+    let networks = Networks::new_with_refreshed_list();
+    // RAM and swap information:
+    let total_memory = sys.total_memory();
+    let used_memory = sys.used_memory();
+
+    // Display system information:
+    let name = System::name().context("Could not retrieve system name")?;
+    let kernel_version = System::kernel_version().context("Could not retrieve kernel_version")?;
+    let os_version = System::os_version().context("Could not retrieve os_version")?;
+    let hostname = System::host_name().context("Could not retrieve hostname")?;
+
+    // Number of CPUs:
+    let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
+
+    // Display processes ID, name na disk usage:
+    // for (pid, process) in sys.processes() {println!("[{pid}] {} {:?}", process.name(), process.disk_usage());}
+
+    for disk in &disk_list {disks += format!("{disk:?}").as_str();}
+
+    for (interface_name, data) in &networks {
+        if data.total_received() > 1 {
+            let up_down = format!("{}/{}", data.total_received(), data.total_transmitted());
+            network_interfaces.insert(interface_name.clone(), up_down);
+        }
+    }
+    
+    for component in &components {
+        // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
+        component_temps.insert(component.label().to_string(), component.temperature());
+        // comps += format!("{component:#?} \n", component.).as_str();
+    }
+
+    let mut s = System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
+
+    std::thread::sleep(Duration::from_millis(200));
+
+    s.refresh_cpu(); // Refreshing CPU information.
+    for cpu in s.cpus() {
+        cpu_percentage = cpu.cpu_usage();
+        cpu_clock = cpu.frequency();
+    }
+
+    sysinf = SystemInformation {
+        cpu_percentage,
+        cpu_clock,
+        component_temps,
+        disks,
+        total_memory,
+        used_memory,
+        name,
+        kernel_version,
+        os_version,
+        hostname,
+        number_of_cpus,
+        network_interfaces,
+    };
+
+    Ok(sysinf)
 }

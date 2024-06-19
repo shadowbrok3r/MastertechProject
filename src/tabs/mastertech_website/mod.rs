@@ -7,7 +7,6 @@ use crate::app_state::MastertechContext;
 use self::task_cards::TaskLayout;
 
 pub mod task_cards;
-pub mod websocket;
 
 impl MastertechContext {
     pub fn mastertech_website(&mut self, ui: &mut Ui){ 

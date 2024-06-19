@@ -17,10 +17,6 @@ use shell_words::{join, quote, split, ParseError};
 use serde_json::json;
 use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
 use tokio::{sync::{mpsc, Mutex}, time::{self, sleep}};
-use rust_socketio::{
-    asynchronous::{Client as SocketClient, ClientBuilder},
-    Payload
-};
 use uuid::Uuid;
 use crate::{database::{schema::{ComputerData, DriveData, LocalSebData}, SystemInformation}, tabs::tur_sheet::get_ticket::request_seb_info};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
