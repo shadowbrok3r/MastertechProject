@@ -16,7 +16,7 @@ use web_time::{Duration, Instant};
 use database::{schema::{ConnectedClient, LiveTaskPayload, TaskPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
-    pages::{login_page::Login, signup_page::Signup}, tabs::terminal::{chart::App, websocket::TerminalFrontend}, 
+    pages::{login_page::Login, signup_page::Signup}, tabs::{web_console::websockets::TerminalFrontend, terminal::chart::App}, 
     utilities::{
         displays::{
             chats::ChatView, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal
@@ -59,6 +59,7 @@ impl Default for AppState{
 }
 #[derive(Serialize)]
 pub struct MtechServerContext{
+    #[serde(skip)]
     pub current_user: Option<User>,
     pub task_map: HashMap<String, Vec<TaskPayload>>,
     ///Gets data from the first run of the main loop
@@ -166,7 +167,7 @@ impl NewCC for MtechServer{
 
         let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned()]);
         let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned()]);
-        let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned()]);
+        let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned(), "Web Console".to_owned()]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
         let mut open_tabs = HashSet::new();
         for node in tree[SurfaceIndex::main()].iter() {
