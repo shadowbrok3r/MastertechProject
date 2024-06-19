@@ -1,18 +1,19 @@
 
-use std::{collections::HashMap, fmt::Display};
-
-use egui::{Key, ScrollArea, TextEdit, Ui, Widget};
+use std::{collections::{HashMap, VecDeque}, fmt::Display};
+use egui::{Color32, Key, ScrollArea, TextEdit, Ui, Vec2, Widget};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
-use log::info;
-use ratatui::{
-    layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
-    terminal::Frame,
-    text::{Line, Span, Text},
-    widgets::{block::{Position, Title}, Block, Borders, List, ListItem, Paragraph},
-};
-use ratatui::symbols::border;
 use serde::{Deserialize, Serialize};
+use log::info;
+
+use super::charts::LinePlot;
+
+// use ratatui::{
+//     layout::{Alignment, Constraint, Layout, Rect},
+//     style::{Color, Modifier, Style, Stylize},
+//     terminal::Frame,
+//     text::{Line, Span, Text},
+//     widgets::{block::{Position, Title}, Block, Borders, List, ListItem, Paragraph},
+// }, symbols::border;
 
 pub enum InputMode {
     Normal,
@@ -34,7 +35,11 @@ pub struct TerminalFrontend {
     pub input_mode: InputMode,
     /// History of recorded messages
     pub messages: Vec<String>,
+    pub cpu_clock: VecDeque<f32>,
+    pub component_temps: VecDeque<HashMap<String, f32>>,
+    pub cpu_percentage: VecDeque<f32>
 }
+
 
 impl TerminalFrontend {
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
@@ -47,28 +52,49 @@ impl TerminalFrontend {
             input_mode: InputMode::Normal,
             messages: Vec::new(),
             character_index: 0,
+            cpu_clock: VecDeque::new(),
+            component_temps: VecDeque::new(),
+            cpu_percentage: VecDeque::new(),
         }
     }
     
     pub fn ui(&mut self, ui: &mut Ui) { // , area: Rect, frame: &mut Frame
         
-        
         while let Some(event) = self.ws_receiver.try_recv() {
             self.events.push(event);
         }
+        let mut system_info: Option<SystemInformation> = None;
 
-        // let mut text: String = String::new();
-        ScrollArea::vertical()
-            .show(ui, |ui| 
+        ui.with_layout(
+            egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, 
+            egui::Align::Center
+        ), |ui| 
         {
+
             for event in &self.events {
                 match event{
                     WsEvent::Message(msg) => {
                         match msg{
                             WsMessage::Binary(bin) => {
-                                info!("Binary data: {bin:#?}");
-                                let sysinfo = deserialize_system_info(bin);
-                                ui.label(format!("{sysinfo}"));
+                                // info!("Binary data: {bin:#?}");
+                                let sys = deserialize_system_info(bin);
+                                system_info = Some(deserialize_system_info(bin));
+                                if self.cpu_percentage.len() < 30
+                                || self.component_temps.len() < 30 
+                                || self.cpu_clock.len() < 30{
+                                    self.cpu_percentage.push_back(sys.cpu_percentage);
+                                    self.component_temps.push_back(sys.component_temps);
+                                    self.cpu_clock.push_back(sys.cpu_clock);
+                                }
+                                else{
+                                    self.cpu_percentage.pop_front();
+                                    self.cpu_percentage.push_back(sys.cpu_percentage);
+                                    self.component_temps.pop_front();
+                                    self.component_temps.push_back(sys.component_temps);
+                                    self.cpu_clock.pop_front();
+                                    self.cpu_clock.push_back(sys.cpu_clock);
+                                }
+                                // ui.label(format!("{sysinfo}"));
 
                             },
                             WsMessage::Text(txt) => {
@@ -82,38 +108,38 @@ impl TerminalFrontend {
                             _ => {}
                         }
                     },
-                    // WsEvent::Error(_) => todo!(),
                     _ => {}
                 }
-                
+            }
+
+            if let Some(sysinfo) = system_info{
+                // let x_val = sysinfo.cpu_clock as f32;
+                info!("length: {}", self.cpu_percentage.len());
+                let percentages = self.cpu_percentage.make_contiguous().to_owned();
+                let other = self.cpu_clock.make_contiguous().to_owned();
+                LinePlot::new(other.as_slice(), &percentages.as_slice()).ui(ui);
             }
         });
         
 
-        let block = Block::default().on_black().bg(Color::Black)
-            .title(Title::from("MasterTech Web Console").alignment(Alignment::Center))
-            .title(
-                Title::from("X")
-                    .alignment(Alignment::Center)
-                    .position(Position::Bottom),
-            )
-            .borders(Borders::ALL)
-            .border_set(border::THICK)
-            .white().bg(Color::Black);
-
-        
-
-        
+        // let block = Block::default().on_black().bg(Color::Black)
+        //     .title(Title::from("MasterTech Web Console").alignment(Alignment::Center))
+        //     .title(
+        //         Title::from("X")
+        //             .alignment(Alignment::Center)
+        //             .position(Position::Bottom),
+        //     )
+        //     .borders(Borders::ALL)
+        //     .border_set(border::THICK)
+        //     .white().bg(Color::Black);
         // let para = Paragraph::new(text)
         //     .left_aligned()
         //     .block(block)
         //     .cyan()
             // .on_black();
 
-        
-
         // frame.render_widget(para, area);
-        ui.vertical_centered(|ui| {
+        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::Center), |ui| {
             let text_edit = TextEdit::singleline(&mut self.text_to_send).hint_text("Send command").ui(ui);
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
             if text_edit.lost_focus() && key_press
@@ -141,13 +167,13 @@ pub struct SystemInformation {
     /// Live CPU usage as a percentaget
     pub cpu_percentage: f32,
     /// Live CPU clock speed
-    pub cpu_clock: u64,
+    pub cpu_clock: f32,
     /// Live system temps
     pub component_temps: HashMap<String, f32>,
     /// Live RAM usage in Mb
-    pub used_memory: u64,
+    pub used_memory: f32,
     /// Total RAM
-    pub total_memory: u64,
+    pub total_memory: f32,
     /// Disk usage
     pub disks: String,
     /// Name of machine
