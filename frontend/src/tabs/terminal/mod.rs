@@ -8,8 +8,7 @@ pub mod chart;
 
 impl MtechServerContext {
     pub fn terminal(&mut self, ui: &mut Ui){
-        let ctx = ui.ctx().clone();
-        ctx.request_repaint();
+        let ctx = ui.ctx().request_repaint();
         
         self.terminal
             .draw(|frame| {

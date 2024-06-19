@@ -12,15 +12,17 @@ impl MtechServerContext {
         let ctx = ui.ctx().clone();
         ctx.request_repaint();
         
-        self.terminal.draw(|frame| {
-                let area = frame.size();
-                if let Some(frontend) = &mut self.terminal_frontend {
-                  frontend.ui(ui, area, frame);
-                }
-            })
-        .expect("epic fail");
+        // self.terminal.draw(|frame| {
+        //         let area = frame.size();
+        //         if let Some(frontend) = &mut self.terminal_frontend {
+        //           frontend.ui(ui, area, frame);
+        //         }
+        //     })
+        // .expect("epic fail");
 
-        
+        if let Some(frontend) = &mut self.terminal_frontend {
+            frontend.ui(ui);
+        }
         ui.vertical_centered(|ui | {
             if ui.button("Connect").clicked()
             {
@@ -36,7 +38,7 @@ impl MtechServerContext {
             }
         });
 
-        ui.add( self.terminal.backend_mut());
+        // ui.add( self.terminal.backend_mut());
 
         let wakeup = move || ctx.request_repaint();
         for (client_id, client) in self.clients.iter(){
@@ -68,22 +70,22 @@ impl MtechServerContext {
 }
 
 
-fn _centered_rect(r: Rect, percent_x: u16, percent_y: u16) -> Rect {
-    let popup_layout = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-      ])
-      .split(r);
+// fn _centered_rect(r: Rect, percent_x: u16, percent_y: u16) -> Rect {
+//     let popup_layout = Layout::default()
+//       .direction(Direction::Vertical)
+//       .constraints([
+//         Constraint::Percentage((100 - percent_y) / 2),
+//         Constraint::Percentage(percent_y),
+//         Constraint::Percentage((100 - percent_y) / 2),
+//       ])
+//       .split(r);
   
-    Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-      ])
-      .split(popup_layout[1])[1]
-  }
+//     Layout::default()
+//       .direction(Direction::Horizontal)
+//       .constraints([
+//         Constraint::Percentage((100 - percent_x) / 2),
+//         Constraint::Percentage(percent_x),
+//         Constraint::Percentage((100 - percent_x) / 2),
+//       ])
+//       .split(popup_layout[1])[1]
+//   }
