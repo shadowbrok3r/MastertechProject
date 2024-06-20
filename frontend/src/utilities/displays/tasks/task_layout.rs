@@ -1,24 +1,57 @@
-use std::borrow::BorrowMut;
-use std::collections::{BTreeSet, HashMap};
-
-use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use crossbeam::channel::Sender;
 use database::Database;
+use eframe::egui::Ui;
+use database::schema::{Priority, TaskPayload, User};
+use serde::Serialize;
+use std::borrow::BorrowMut;
+use std::collections::BTreeSet;
+use chrono::{DateTime, Utc};
 use egui::{Align, Button, FontId, RichText, ScrollArea, TextEdit, Vec2, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
-use database::schema::{TaskPayload, User};
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
-use super::task_layout::TaskLayout;
 
+
+#[derive(Serialize)]
+pub struct TaskLayout{
+    pub search_inputs: HashMap<String, String>,
+    pub task_map: HashMap<String, Vec<TaskPayload>>,
+    pub column_names: Vec<String>,
+    #[serde(skip)]
+    pub database: Database,
+    #[serde(skip)]
+    pub ui_actions_tx: Sender<TaskUiActions>,
+    pub assignees: Option<Vec<User>>
+}
+
+pub struct SortTasks{
+    pub sort_by_status: bool,
+    pub sort_by_priority: Option<Priority>,
+    pub sort_by_complete: Option<bool>,
+    pub sort_by_current_user: Option<User> 
+}
+
+impl TaskLayout { 
+    pub fn new(
+        task_map: HashMap<String, Vec<TaskPayload>>,
+        column_names: Vec<String>,
+        database: Database,
+        ui_actions_tx: Sender<TaskUiActions>,
+        assignees: Option<Vec<User>>,
+    ) -> Self {
+        Self {  task_map, column_names, database, ui_actions_tx, search_inputs: HashMap::new(), assignees }
+    }
+
+    pub fn display(&mut self, ui: &mut Ui){
+        self.layout_cols(ui);
+    }
+}
 
 impl ColumnLayout for TaskLayout {
-    fn layout_task_cols(
+    fn layout_cols(
         &mut self,
-        ui: &mut egui::Ui, 
-        column_names: Vec<String>, 
-        database: Database,
-        assignees: &Option<Vec<User>>,
-        filter_items: HashMap<String, Vec<TaskPayload>>
+        ui: &mut egui::Ui
     ){
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         
@@ -39,22 +72,19 @@ impl ColumnLayout for TaskLayout {
                     .strip(|strip| 
                 {
                     strip
-                        .sizes(column_width, column_names.len())
-                        .horizontal( |strip| self.task_headers(strip, &filter_items));
+                        .sizes(column_width, self.column_names.len())
+                        .horizontal( |strip| self.headers(strip));
                 });
                 strip.empty();
                 strip
                     .strip(|strip| 
                 {
                     strip
-                        .sizes(column_width, column_names.len())
+                        .sizes(column_width, self.column_names.len())
                         .horizontal( |mut strip| 
                     {
-                        self.task_columns(
+                        self.columns(
                             strip.borrow_mut(),
-                            assignees,
-                            database.to_owned(),
-                            filter_items,
                         );
                     });
                 });
@@ -62,12 +92,9 @@ impl ColumnLayout for TaskLayout {
         });
     }
 
-    fn task_columns(
-        &self,
-        s: &mut Strip, 
-        assignees: &Option<Vec<User>>,
-        database: Database,
-        filter_items: HashMap<String, Vec<TaskPayload>>
+    fn columns(
+        &mut self,
+        s: &mut Strip,
     ) {
         let column_frame = Frame::default()
             .fill(Color32::from_rgb(12, 12, 14))
@@ -77,7 +104,7 @@ impl ColumnLayout for TaskLayout {
 
         let mut inputs = BTreeSet::new();
 
-        for (name, mut tasks) in filter_items {
+        for (name, tasks) in self.task_map.iter_mut() {
             tasks.sort_task_payloads();
             for task in tasks.iter(){
                 inputs.insert(task.task_name.clone());
@@ -90,11 +117,11 @@ impl ColumnLayout for TaskLayout {
                             .auto_shrink(false)
                             .show_viewport(ui, |ui, _| 
                         {
-                            let search_input = self.search_inputs.get(&name).cloned().unwrap_or_default();
+                            let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
                             if !search_input.is_empty(){
                                 for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
-                                    if let Some(store_users) = &assignees {
-                                        let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
+                                    if let Some(store_users) = &self.assignees {
+                                        let action = task.display_task_cards(ui, self.database.to_owned(), &store_users.as_ref());
                                         if let Some(action) = action{
                                             match action{
                                                 TaskUiActions::OpenTaskModal(task) => {
@@ -106,9 +133,9 @@ impl ColumnLayout for TaskLayout {
                                     }
                                 }
                             }else{
-                                for mut task in tasks {
-                                    if let Some(store_users) = &assignees {
-                                        let action = task.display_task_cards(ui, database.to_owned(), &store_users.as_ref());
+                                for task in tasks {
+                                    if let Some(store_users) = &self.assignees {
+                                        let action = task.display_task_cards(ui, self.database.to_owned(), &store_users.as_ref());
                                         if let Some(action) = action{
                                             match action{
                                                 TaskUiActions::OpenTaskModal(task) => {
@@ -128,7 +155,7 @@ impl ColumnLayout for TaskLayout {
     }
     
 
-    fn task_headers(&mut self, mut s: Strip, items: &HashMap<String, Vec<TaskPayload>>){
+    fn headers(&mut self, mut s: Strip){
         let header_frame = Frame::default()
             .fill(Color32::from_rgb(20, 20, 25))
             .inner_margin(Margin::same(4.0))
@@ -136,7 +163,7 @@ impl ColumnLayout for TaskLayout {
             .rounding(Rounding::same(5.0))
             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
-        for (name, tasks) in items.iter(){
+        for (name, tasks) in self.task_map.iter(){
             s.cell(|ui|{
                 header_frame.show(ui, |ui|
                 {

@@ -1,9 +1,12 @@
 
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
-use egui::{Color32, Key, ScrollArea, TextEdit, Ui, Vec2, Widget};
+use egui::{Align, Color32, Direction, Key, Layout, Rounding, ScrollArea, TextEdit, Ui, Vec2, Widget};
+use egui_extras::{Size, StripBuilder};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
 use log::info;
+
+use crate::utilities::ColumnLayout;
 
 use super::charts::LinePlot;
 
@@ -26,18 +29,15 @@ pub struct TerminalFrontend {
     pub ws_sender: WsSender,
     pub ws_receiver: WsReceiver,
     pub events: Vec<WsEvent>,
-    pub text_to_send: String,
-    /// Current value of the input box
     pub input: String,
-    /// Position of cursor in the editor area.
-    pub character_index: usize,
-    /// Current input mode
-    pub input_mode: InputMode,
-    /// History of recorded messages
+
     pub messages: Vec<String>,
     pub cpu_clock: VecDeque<f32>,
     pub component_temps: VecDeque<HashMap<String, f32>>,
-    pub cpu_percentage: VecDeque<f32>
+    pub cpu_percentage: VecDeque<f32>,
+
+    pub column_names: Vec<String>,
+    // pub search_inputs: HashMap<String, String>,
 }
 
 
@@ -47,14 +47,14 @@ impl TerminalFrontend {
             ws_sender,
             ws_receiver,
             events: Default::default(),
-            text_to_send: String::new(),
             input: String::new(),
-            input_mode: InputMode::Normal,
             messages: Vec::new(),
-            character_index: 0,
+
             cpu_clock: VecDeque::new(),
             component_temps: VecDeque::new(),
             cpu_percentage: VecDeque::new(),
+
+            column_names: Vec::new()
         }
     }
     
@@ -65,63 +65,45 @@ impl TerminalFrontend {
         }
         let mut system_info: Option<SystemInformation> = None;
 
-        ui.with_layout(
-            egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, 
-            egui::Align::Center
-        ), |ui| 
-        {
+        for event in &self.events {
+            match event{
+                WsEvent::Message(msg) => {
+                    match msg{
+                        WsMessage::Binary(bin) => {
+                            let sys = deserialize_system_info(bin);
+                            system_info = Some(deserialize_system_info(bin));
 
-            for event in &self.events {
-                match event{
-                    WsEvent::Message(msg) => {
-                        match msg{
-                            WsMessage::Binary(bin) => {
-                                // info!("Binary data: {bin:#?}");
-                                let sys = deserialize_system_info(bin);
-                                system_info = Some(deserialize_system_info(bin));
-                                if self.cpu_percentage.len() < 30
-                                || self.component_temps.len() < 30 
-                                || self.cpu_clock.len() < 30{
-                                    self.cpu_percentage.push_back(sys.cpu_percentage);
-                                    self.component_temps.push_back(sys.component_temps);
-                                    self.cpu_clock.push_back(sys.cpu_clock);
-                                }
-                                else{
-                                    self.cpu_percentage.pop_front();
-                                    self.cpu_percentage.push_back(sys.cpu_percentage);
-                                    self.component_temps.pop_front();
-                                    self.component_temps.push_back(sys.component_temps);
-                                    self.cpu_clock.pop_front();
-                                    self.cpu_clock.push_back(sys.cpu_clock);
-                                }
-                                // ui.label(format!("{sysinfo}"));
+                            if self.cpu_percentage.len() < 30
+                            || self.component_temps.len() < 30 
+                            || self.cpu_clock.len() < 30 {
+                                self.cpu_percentage.push_back(sys.cpu_percentage);
+                                self.component_temps.push_back(sys.component_temps);
+                                self.cpu_clock.push_back(sys.cpu_clock);
+                            } else {
+                                self.cpu_percentage.pop_front();
+                                self.cpu_percentage.push_back(sys.cpu_percentage);
+                                self.component_temps.pop_front();
+                                self.component_temps.push_back(sys.component_temps);
+                                self.cpu_clock.pop_front();
+                                self.cpu_clock.push_back(sys.cpu_clock);
+                            }
+                            // ui.label(format!("{sysinfo}"));
 
-                            },
-                            WsMessage::Text(txt) => {
-                                info!("Text data: {txt:#?}");
-                                // text = txt.clone();
-                                ui.label(txt);
-                            },
-                            WsMessage::Unknown(unknown) => {
-                                info!("unknown data: {unknown:#?}");
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
+                        },
+                        WsMessage::Text(txt) => {
+                            info!("Text data: {txt:#?}");
+                            // text = txt.clone();
+                            ui.label(txt);
+                        },
+                        WsMessage::Unknown(unknown) => {
+                            info!("unknown data: {unknown:#?}");
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
             }
-
-            if let Some(sysinfo) = system_info{
-                // let x_val = sysinfo.cpu_clock as f32;
-                info!("length: {}", self.cpu_percentage.len());
-                let percentages = self.cpu_percentage.make_contiguous().to_owned();
-                let other = self.cpu_clock.make_contiguous().to_owned();
-                LinePlot::new(other.as_slice(), &percentages.as_slice()).ui(ui);
-            }
-        });
-        
-
+        }  
         // let block = Block::default().on_black().bg(Color::Black)
         //     .title(Title::from("MasterTech Web Console").alignment(Alignment::Center))
         //     .title(
@@ -137,18 +119,75 @@ impl TerminalFrontend {
         //     .block(block)
         //     .cyan()
             // .on_black();
+    }
+}
 
-        // frame.render_widget(para, area);
-        ui.with_layout(egui::Layout::from_main_dir_and_cross_align(egui::Direction::BottomUp, egui::Align::Center), |ui| {
-            let text_edit = TextEdit::singleline(&mut self.text_to_send).hint_text("Send command").ui(ui);
-            let key_press = ui.input(|i| i.key_pressed(Key::Enter));
-            if text_edit.lost_focus() && key_press
+impl ColumnLayout for TerminalFrontend {
+    fn layout_cols(
+        &mut self,
+        ui: &mut egui::Ui
+    ){
+        ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
+        
+        let column_width = Size::exact(450.0);
+    
+        ScrollArea::horizontal()
+            .show_viewport(ui, |ui, _|
+        {
+            let x: f32 = ui.available_height() - 40.0;
+            StripBuilder::new(ui)
+                .cell_layout(Layout::top_down_justified(egui::Align::Center))
+                .size(Size::exact(30.0))
+                .size(Size::exact(5.0))
+                .size(Size::exact(x))
+                .vertical(|mut strip| 
             {
-                text_edit.request_focus();
-                self.ws_sender
-                    .send(WsMessage::Text(std::mem::take(&mut self.text_to_send)));
-            }
+                strip
+                    .strip(|strip| 
+                {
+                    strip
+                        .sizes(column_width, self.column_names.len())
+                        .horizontal( |strip| self.headers(strip));
+                });
+                strip.empty();
+                strip
+                    .strip(|strip| 
+                {
+                    strip
+                        .sizes(column_width, self.column_names.len())
+                        .horizontal( |mut strip| 
+                    {
+                        // self.task_columns(
+                        //     strip.borrow_mut(),
+                        // );
+                    });
+                });
+            });
         });
+    }
+
+    fn columns(&mut self, s: &mut egui_extras::Strip) {
+        // if let Some(sysinfo) = system_info{
+        //     // let x_val = sysinfo.cpu_clock as f32;
+        //     info!("length: {}", self.cpu_percentage.len());
+        //     let percentages = self.cpu_percentage.make_contiguous().to_owned();
+        //     let other = self.cpu_clock.make_contiguous().to_owned();
+        //     LinePlot::new(&[0.0], &percentages.as_slice()).ui(ui);
+        // }
+        // // frame.render_widget(para, area);
+        
+        // let text_edit = TextEdit::singleline(&mut self.input).hint_text("Send command").ui(ui);
+        // let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+        // if text_edit.lost_focus() && key_press
+        // {
+        //     text_edit.request_focus();
+        //     self.ws_sender
+        //         .send(WsMessage::Text(std::mem::take(&mut self.input)));
+        // }
+    }
+
+    fn headers(&mut self, s: egui_extras::Strip) {
+        todo!()
     }
 }
 
@@ -161,6 +200,7 @@ pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
 pub fn deserialize_system_info(bytes: &[u8]) -> SystemInformation {
     bincode::deserialize(bytes).expect("Failed to deserialize SystemInformation")
 }
+
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SystemInformation {

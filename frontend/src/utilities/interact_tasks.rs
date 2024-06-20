@@ -6,8 +6,7 @@ use egui_extras::DatePickerButton;
 use log::info;
 
 use crate::utilities::Updatable;
-use crate::utilities::displays::date_colors;
-use super::Interaction;
+use super::{displays::tasks::task_cards::date_colors, Interaction};
 
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {

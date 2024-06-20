@@ -19,7 +19,7 @@ use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::{web_console::websockets::TerminalFrontend, terminal::chart::App}, 
     utilities::{
         displays::{
-            chats::ChatView, create_task_modal::CreateTaskModal, modals::ModalHandler, task_layout::TaskLayout, task_modal::TaskModal
+            chats::ChatView, modals::create_task_modal::CreateTaskModal, modals::ModalHandler, tasks::task_layout::TaskLayout, modals::task_modal::TaskModal
         }, 
         DisplayModal, ModalType, ModalTypes, TaskUiActions
     }
@@ -282,16 +282,26 @@ impl NewCC for MtechServer{
 }
 
 impl MtechServerContext{
-    pub fn initialize_task_layout(&mut self, page: &str, col_names: Vec<String>, database: Database){
-        if !self.task_layouts.contains_key(page) {
+    pub fn initialize_task_layout(
+        &mut self, 
+        page: &str, 
+        col_names: Vec<String>, 
+        database: Database, 
+        assignees: Option<Vec<User>>
+    )
+        // -> HashMap<String, TaskLayout>
+    {
+        // if !self.task_layouts.contains_key(page) {
             let task_layout_opts = TaskLayout::new(
                 HashMap::new(),
                 col_names,
                 database,
-                self.ui_actions_tx.clone()
+                self.ui_actions_tx.clone(),
+                assignees,
             );
             self.task_layouts.insert(page.to_string(), task_layout_opts);
-        }
+            // self.task_layouts
+        // }
     }
 
     pub fn handle_modals(&mut self, ctx: &Context){

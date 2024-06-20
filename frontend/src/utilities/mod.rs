@@ -1,10 +1,10 @@
 use crossbeam::channel::Sender;
-use displays::{create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, task_modal::{ModalAction, TaskModal}};
+use displays::{modals::create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, modals::task_modal::{ModalAction, TaskModal}};
 use egui::{vec2, Align, Align2, Button, Color32, Context, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Ui, Widget, Window};
 use database::{schema::{Priority, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 pub mod displays;
 pub mod update_tasks;
 pub mod get_tasks;
@@ -37,9 +37,9 @@ pub trait Displayable{
 }
 
 pub trait ColumnLayout{
-    fn layout_task_cols(&mut self, ui: &mut Ui,  column_names: Vec<String>,  database: Database, assignees: &Option<Vec<User>>, filter_items: HashMap<String, Vec<TaskPayload>>);
-    fn task_columns(&self,s: &mut Strip, assignees: &Option<Vec<User>>,database: Database,filter_items: HashMap<String, Vec<TaskPayload>>);
-    fn task_headers(&mut self, s: Strip, items: &HashMap<String, Vec<TaskPayload>>);
+    fn layout_cols(&mut self, ui: &mut Ui);
+    fn columns(&mut self,s: &mut Strip);
+    fn headers(&mut self, s: Strip);
 }
 
 pub trait Updatable { // This is correctly implemented
@@ -156,7 +156,7 @@ pub trait ModalTypes: Default{
         // let mut page_state = &;
 
         let screen_height = ctx.screen_rect().height();
-        let screen_width = ctx.screen_rect().width();
+        let _screen_width = ctx.screen_rect().width();
         let modal_vertical_margins = (75.0).at_most(screen_height * 0.1);
 
         let mut window = Window::new(&*self.modal_state().title.as_ref().unwrap())
