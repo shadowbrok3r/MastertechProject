@@ -1,6 +1,6 @@
 use egui::Ui;
 use log::info;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+// use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use wasm_bindgen_futures::spawn_local;
 use websockets::TerminalFrontend;
 use crate::{app_state::MtechServerContext, utilities::get_other::get_connected_clients};
@@ -42,7 +42,7 @@ impl MtechServerContext {
         // ui.add( self.terminal.backend_mut());
 
         let wakeup = move || ctx.request_repaint();
-        for (client_id, client) in self.clients.iter(){
+        for (client_id, _client) in self.clients.iter(){
             if ui.button(client_id).clicked(){
                 let url = format!("ws://127.0.0.1:8081/websocket?role=master&room_id={}", client_id);
                 info!("url: {:?}", url.clone());

@@ -4,9 +4,10 @@ use egui::{epaint::Shadow, Align, Button, Color32, ComboBox, Direction, FontId, 
 use egui_extras::{Size, StripBuilder};
 use serde::Serialize;
 
-use crate::utilities::{DisplayModal, ModalTypes};
+use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes};
 
-use super::{chats::ChatView, modals::ModalState};
+use super::ModalState;
+
 
 #[derive(Serialize, Clone, Debug)]
 pub struct TaskModal{

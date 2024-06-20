@@ -8,7 +8,8 @@ use wasm_bindgen_futures::spawn_local;
 
 use crate::utilities::{DisplayModal, ModalTypes};
 
-use super::{modals::ModalState, task_modal::ModalAction};
+use super::{task_modal::ModalAction, ModalState};
+
 
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct CreateTaskModal{

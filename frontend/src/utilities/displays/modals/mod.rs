@@ -1,7 +1,9 @@
-use serde::Serialize;
-use crate::utilities::ModalTypes;
+pub mod create_task_modal;
+pub mod task_modal;
 
-use super::task_modal::ModalAction;
+use serde::Serialize;
+use task_modal::ModalAction;
+use crate::utilities::ModalTypes;
 
 #[derive(Default, Serialize)]
 pub struct ModalHandler<M: ModalTypes>{
