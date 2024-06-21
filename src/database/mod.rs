@@ -6,7 +6,7 @@ use schema::{ComputerId, CustomerId, LiveTaskPayload, Status, Store, TicketId, U
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use surrealdb::sql::Thing;
-use crate::database::schema::{CustomerData, TicketData};
+use crate::{database::schema::{CustomerData, TicketData}, tabs::websockets::Cmd};
 
 use self::schema::{ComputerData, HardwareTests};
 
@@ -303,12 +303,14 @@ pub async fn query_id<'a, T>(database: Database, table: &'a str, id: T)
     Ok(record)
 }
 
-
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
     bincode::serialize(system_info).expect("Failed to serialize SystemInformation")
 }
 
-
 pub fn deserialize_system_info(bytes: &[u8]) -> SystemInformation {
     bincode::deserialize(bytes).expect("Failed to deserialize SystemInformation")
+}
+
+pub fn deserialize_command(bytes: &[u8]) -> Cmd {
+    bincode::deserialize(bytes).expect("Failed to deserialize Cmd")
 }

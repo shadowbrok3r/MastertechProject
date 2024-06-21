@@ -4,14 +4,15 @@ use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{CentralPanel, Color32, Key, TextEdit, TopBottomPanel, Ui, Widget};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use log::debug;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use shell_words::split;
 use surrealdb::sql::Thing;
 use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
-use tokio::{process::Command, spawn, time::sleep};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::Command, spawn, time::sleep};
 use tracing::info;
 
-use crate::{app_state::MastertechContext, database::{schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}};
+use crate::{app_state::MastertechContext, database::{deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}};
 use tui_input::Input;
 pub mod websocket;
 
@@ -70,7 +71,6 @@ impl MastertechContext{
 
                     let tx = self.connected_clients_tx.clone();
                     spawn(async move {
-                        
                         let res: Result<Vec<ConnectedClient>, surrealdb::Error> = db.database
                             .query("CREATE connected_client CONTENT $content")
                             .bind(("content", connected_client.clone()))
@@ -134,6 +134,8 @@ pub struct WebConsoleFrontend {
 
     pub tx: Sender<Vec<u8>>,
     pub rx: Receiver<Vec<u8>>,
+    pub command_tx: Sender<Vec<u8>>,
+    pub command_rx: Receiver<Vec<u8>>,
 
     pub events: Vec<WsEvent>,
     pub text_to_send: String,
@@ -149,18 +151,28 @@ pub struct WebConsoleFrontend {
     pub send_specs: bool
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 pub enum Cmd{
     LiveData,
     Command,
+    Tuneup,
+    Cps,
+    Qc,
+    SfcScan,
+    DismScan,
+    ChkDsk,
+    Mbr2Gpt,
     None
 }
 
 impl WebConsoleFrontend {
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
         let (tx, rx) = crossbeam::channel::unbounded::<Vec<u8>>();
+        let (command_tx, command_rx) = crossbeam::channel::unbounded::<Vec<u8>>();
+
         Self {
-            ws_sender,
-            ws_receiver,
+            ws_sender, ws_receiver,
+            command_tx, command_rx,
             tx, rx,
             events: Default::default(),
             text_to_send: String::new(),
@@ -174,9 +186,9 @@ impl WebConsoleFrontend {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
-        // while let Some(event) = self.ws_receiver.try_recv() {
-        //     self.events.push(event);
-        // }
+        while let Some(event) = self.ws_receiver.try_recv() {
+            self.events.push(event);
+        }
 
         CentralPanel::default().show_inside(ui, |ui| {
             ui.vertical_centered(|ui| {
@@ -193,66 +205,158 @@ impl WebConsoleFrontend {
             ui.separator();
             ui.heading("Received events:");
             self.initialize_websocket(ui).unwrap();
-            
         });
     }
 
     pub fn initialize_websocket(&mut self, ui: &mut Ui)
         -> anyhow::Result<(), anyhow::Error>
     {
-        if let Some(event) = &self.ws_receiver.try_recv() {
-            ui.ctx().request_repaint();
-            match event{
-                WsEvent::Message(msg) => {
-                    match msg{
-                        WsMessage::Binary(bin) => { ui.label(format!("{bin:?}")); },
-                        WsMessage::Text(txt) => {
-                            match txt.as_str(){
-                                "live_data" => { self.command = Cmd::LiveData; },
-                                "cmd" => { self.command = Cmd::Command; }
-                                _ => { 
-                                    if txt.contains("live_data"){
-                                        self.command = Cmd::LiveData;
-                                        info!("Getting live data");
-                                        ui.label(format!("Getting live data"));
-                                        let tx = self.tx.clone();
-                                        spawn(async move { 
-                                            match live_computer_stats(tx.clone()).await{
-                                                Ok(_) => drop(tx),
-                                                Err(e) => debug!("Error with live data {e:?}"),
-                                            }
-                                        });
-                                        
-                                    } else { ui.label(txt); }
-                                }
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-        }
-
-        match self.command{
-            Cmd::LiveData => {
-                self.command = Cmd::LiveData;
-
-            },
-            Cmd::Command => {
-                ui.label(format!("Getting cmd"));
-                let tx = self.tx.clone();
-                spawn(async move { 
-                    live_computer_stats(tx.clone()).await.unwrap();
-                });
-            },
-            Cmd::None => {},
-        };
+        // if let Some(event) = &self.ws_receiver.try_recv() {
+        //     ui.ctx().request_repaint();
+        //     match event{
+        //         WsEvent::Message(msg) => {
+        //             match msg{
+        //                 WsMessage::Binary(bin) => { 
+        //                     ui.label(format!("{bin:?}")); 
+        //                     let cmd = deserialize_command(bin);
+        //                     info!("222Cmd: {bin:?}");
+        //                     match cmd{
+        //                         Cmd::LiveData => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::Command => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::Tuneup => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::Cps => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::Qc => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::SfcScan => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::DismScan => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::ChkDsk => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::Mbr2Gpt => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                         Cmd::None => {
+        //                             ui.label(format!("Cmd: {:?}", cmd));
+        //                             info!("Cmd: {cmd:?}");
+        //                         },
+        //                     }
+        //                 },
+        //                 WsMessage::Text(txt) => {
+        //                     ui.label(format!("267Raw Command: {}", txt.clone()));
+        //                     let tx = self.command_tx.clone();
+        //                     let text = txt.clone();
+        //                     spawn(async move {
+        //                         handle_command_payload(text.clone(), tx.clone()).await.unwrap();
+        //                     });
+        //                 },
+        //                 _ => {}
+        //             }
+        //         },
+        //         _ => {}
+        //     }
+        // }
 
         if let Ok(sysinfo) = &mut self.rx.try_recv(){
             self.ws_sender.send(WsMessage::Binary(std::mem::take(sysinfo)));
         }
+        
+        if let Ok(cmd_output) = &mut self.command_rx.try_recv(){
+            self.ws_sender.send(WsMessage::Binary(std::mem::take(cmd_output)));
+        }
 
+        for event in &self.events{
+            match event{
+                WsEvent::Message(msg) => {
+                    
+                    match msg{
+                        WsMessage::Binary(bin) => {
+                            ui.label(format!("{:?}", deserialize_command(&bin.clone())));
+                            let cmd = deserialize_command(&bin.clone());
+                            info!("297Cmd: {bin:?}");
+                            match cmd{
+                                Cmd::LiveData => {
+                                    let tx = self.tx.clone();
+                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    spawn(async move { 
+                                        match live_computer_stats(tx.clone()).await{
+                                            Ok(_) => drop(tx),
+                                            Err(e) => debug!("Error with live data {e:?}"),
+                                        }
+                                    });
+                                },
+                                Cmd::Tuneup => {
+                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    info!("Cmd: {cmd:?}");
+                                },
+                                Cmd::Cps => {
+                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    info!("Cmd: {cmd:?}");
+                                },
+                                Cmd::Qc => {
+                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    info!("Cmd: {cmd:?}");
+                                },
+                                Cmd::SfcScan => {
+                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    info!("Cmd: {cmd:?}");
+                                },
+                                Cmd::DismScan => {
+                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    info!("Cmd: {cmd:?}");
+                                },
+                                Cmd::ChkDsk => {
+                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    info!("Cmd: {cmd:?}");
+                                },
+                                Cmd::Mbr2Gpt => {
+                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    info!("Cmd: {cmd:?}");
+                                },
+                                _ => {
+                                    ui.label(format!("Raw Binary: {:?}", bin));
+                                },
+                            }
+                        },
+                        WsMessage::Text(txt) => {
+                            ui.label(format!("343Raw Command: {}", txt.clone()));
+                            let tx = self.command_tx.clone();
+                            let text = txt.clone();
+                            spawn(async move {
+                                handle_command_payload(text.clone(), tx.clone()).await.unwrap();
+                            });
+                        },
+                        _ => {}
+                    }
+                },
+                WsEvent::Error(e) => {
+                    ui.label(format!("Error: {e}"));
+                },
+                _ => {}
+            }
+        }
+        self.events.clear();
        Ok(())
     }
 
@@ -271,20 +375,20 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>)
         // }
     }
 }
-async fn handle_command_payload(string_payload: String, tx: Sender<String>) 
+async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) 
     -> anyhow::Result<(), anyhow::Error>  
 { 
     println!("string_payload: {}", string_payload.clone());
-    let command_payload = split(string_payload.as_str()).unwrap_or(Vec::new());
+    // let command_payload = split(string_payload.as_str()).unwrap_or(Vec::new());
 
     #[cfg(target_os="windows")]{ handle_windows_cmd(string_payload, tx.clone()).await?; }
-    #[cfg(target_os="linux")]{ handle_linux_cmd(command_payload, tx.clone()).await?; }
+    #[cfg(target_os="linux")]{ handle_linux_cmd(string_payload, tx.clone()).await?; }
 
     Ok(())
 }
 
 #[cfg(target_os="windows")]
-async fn handle_windows_cmd(command_payload: String, tx: Sender<String>)
+async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>)
     -> anyhow::Result<(), anyhow::Error> 
 {
     let process = Command::new("cmd")
@@ -311,22 +415,48 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<String>)
     Ok(())
 }
 
-async fn handle_linux_cmd(command_payload: Vec<String>, tx: Sender<String>)
+async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>)
     -> anyhow::Result<(), anyhow::Error> 
 {
-    let process = Command::new("sh")
+    info!("Executing command: {}", command_payload);
+    let mut process = Command::new("sh")
         .arg("-c")
-        .args(command_payload)
+        .arg(&command_payload)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn();
-        
-    match process{
-        Ok(child) => {
-            let output = child
-                .wait_with_output()
-                .await?;
-        },
-        Err(err) => info!("Error in process => {err:?}"),
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // // Handle stdin
+    // if let Some(mut stdin) = process.stdin.take() {
+    //     tokio::spawn(async move {
+    //         stdin.write_all(command_payload.as_bytes()).await.ok();
+    //     });
+    // }
+
+
+    // Handle stdout and stderr
+    let mut stdout = process.stdout.take().expect("Failed to open stdout");
+    let mut stderr = process.stderr.take().expect("Failed to open stderr");
+
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        let mut stdout_buf = Vec::new();
+        stdout.read_to_end(&mut stdout_buf).await.ok();
+        tx_clone.send(stdout_buf).ok();
+    });
+
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        let mut stderr_buf = Vec::new();
+        stderr.read_to_end(&mut stderr_buf).await.ok();
+        tx_clone.send(stderr_buf).ok();
+    });
+
+    let output = process.wait_with_output().await?;
+    let tx_clone = tx.clone();
+    if !output.status.success() {
+        tx_clone.send(output.stderr).ok();
     }
 
     Ok(())
