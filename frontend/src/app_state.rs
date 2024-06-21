@@ -16,10 +16,10 @@ use web_time::{Duration, Instant};
 use database::{schema::{ConnectedClient, LiveTaskPayload, TaskPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
-    pages::{login_page::Login, signup_page::Signup}, tabs::{web_console::websockets::TerminalFrontend, terminal::chart::App}, 
+    pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::{ClientDisplay, ClientConnection}}, 
     utilities::{
         displays::{
-            chats::ChatView, modals::create_task_modal::CreateTaskModal, modals::ModalHandler, tasks::task_layout::TaskLayout, modals::task_modal::TaskModal
+            chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalHandler}, tasks::task_layout::TaskLayout
         }, 
         DisplayModal, ModalType, ModalTypes, TaskUiActions
     }
@@ -82,9 +82,9 @@ pub struct MtechServerContext{
     pub tasks_rx: Receiver<(Action, TaskPayload)>,
 
     #[serde(skip)]
-    pub my_tasks_tx: Sender<Vec<TaskPayload>>,
+    pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
     #[serde(skip)]
-    pub my_tasks_rx: Receiver<Vec<TaskPayload>>,
+    pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
 
     #[serde(skip)]
     pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
@@ -108,6 +108,10 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub db_tx:  Sender<anyhow::Result<Database, Error>>,
 
+    #[serde(skip)]
+    pub client_connection_tx: Sender<ClientConnection>,
+    #[serde(skip)]
+    pub client_connection_rx: Receiver<ClientConnection>,
     #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
     #[serde(skip)]
@@ -134,7 +138,7 @@ pub struct MtechServerContext{
     pub url: String,
     pub error: String,
     #[serde(skip)]
-    pub terminal_frontend: Option<TerminalFrontend>,
+    pub client_layout: Option<ClientDisplay>,
     pub text_to_send: String,
 
     /// Widgets / Modals / Ui for portions throughout the app
@@ -165,9 +169,9 @@ impl NewCC for MtechServer{
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         setup_custom_fonts(&cc.egui_ctx);
 
-        let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned()]);
+        let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), "Web Console".to_owned()]);
         let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned()]);
-        let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned(), "Web Console".to_owned()]);
+        let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned()]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
         let mut open_tabs = HashSet::new();
         for node in tree[SurfaceIndex::main()].iter() {
@@ -211,14 +215,15 @@ impl NewCC for MtechServer{
         // }
 
         let (db_tx, db_rx) = channel::unbounded();
-        let (my_tasks_tx, my_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
+        let (initial_tasks_tx, initial_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
         let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
-
+        let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
+        
         let context = MtechServerContext{
             current_user: None,
             first_run: true,
@@ -234,11 +239,12 @@ impl NewCC for MtechServer{
             db_tx, db_rx,
             live_tasks_tx, live_tasks_rx,
             tasks_tx, tasks_rx,
-            my_tasks_tx,  my_tasks_rx,
+            initial_tasks_tx,  initial_tasks_rx,
             app_state_tx, app_state_rx,
             store_users_tx, store_users_rx,
             ui_actions_tx, ui_actions_rx,
             connected_clients_tx, connected_clients_rx,
+            client_connection_tx, client_connection_rx,
 
             // MODALS / LAYOUTS
             task_layouts: HashMap::new(),
@@ -254,7 +260,7 @@ impl NewCC for MtechServer{
             last_tick: Instant::now(),
             url: "ws://127.0.0.1:8081/websocket?room_id=0&role=master".to_owned(),
             error: Default::default(),
-            terminal_frontend: None,
+            client_layout: None,
             text_to_send: Default::default(),
             // MISC / EVERYTHING ELSE
             bridge: Some(bridge),
@@ -282,28 +288,6 @@ impl NewCC for MtechServer{
 }
 
 impl MtechServerContext{
-    pub fn initialize_task_layout(
-        &mut self, 
-        page: &str, 
-        col_names: Vec<String>, 
-        database: Database, 
-        assignees: Option<Vec<User>>
-    )
-        // -> HashMap<String, TaskLayout>
-    {
-        // if !self.task_layouts.contains_key(page) {
-            let task_layout_opts = TaskLayout::new(
-                HashMap::new(),
-                col_names,
-                database,
-                self.ui_actions_tx.clone(),
-                assignees,
-            );
-            self.task_layouts.insert(page.to_string(), task_layout_opts);
-            // self.task_layouts
-        // }
-    }
-
     pub fn handle_modals(&mut self, ctx: &Context){
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
