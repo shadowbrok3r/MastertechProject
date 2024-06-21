@@ -12,6 +12,9 @@ use crate::utilities::ColumnLayout;
 
 use super::charts::LinePlot;
 
+pub enum ClientConnection{
+    ClientUrl(String)
+}
 pub struct ClientDisplay{
     pub clients: HashMap<String, ConnectedClient>,
     pub client_names: Vec<String>,
@@ -117,23 +120,54 @@ impl WebSocketClient{
                 .horizontal(|mut s| 
             {
                 s.cell(|ui|{
-                    let _tuneup = Button::new("Tuneup").ui(ui);
+                    if Button::new("Tuneup").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Text("tuneup".to_string()));
+                    }
                 });
                 s.cell(|ui|{
-                    let _cps = Button::new("CPS").ui(ui);
+                    if Button::new("CPS").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Text("cps".to_string()));
+                    }
                 });
                 s.cell(|ui|{
-                    let _qc = Button::new("QC").ui(ui);
+                    if Button::new("QC").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Text("qc".to_string()));
+                    }
                 });
                 s.cell(|ui|{
-                    let live_data = Button::new("Live Data").ui(ui);
-                    if live_data.clicked(){
+                    if Button::new("Live Data").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Text("live_data".to_string()));
                     }
                 });
             });
         });
-
+        strip.strip(|strip| 
+        {
+            strip.sizes(Size::remainder(), 4)
+                .horizontal(|mut s| 
+            {
+                s.cell(|ui|{
+                    if Button::new("SFC Scan").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Text("tuneup".to_string()));
+                    }
+                });
+                s.cell(|ui|{
+                    if Button::new("Dism Scan").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Text("cps".to_string()));
+                    }
+                });
+                s.cell(|ui|{
+                    if Button::new("QC").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Text("qc".to_string()));
+                    }
+                });
+                s.cell(|ui|{
+                    if Button::new("Live Data").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Text("live_data".to_string()));
+                    }
+                });
+            });
+        });
         strip.cell(|ui | 
         {
             let client_id = ui.make_persistent_id(format!("client_id {:?}", name.clone()));
@@ -294,9 +328,6 @@ impl WebSocketClient{
     }
 }
 
-pub enum ClientConnection{
-    ClientUrl(String)
-}
 
 impl ClientDisplay{
     pub fn new(clients: HashMap<String, ConnectedClient>) -> Self { 
@@ -338,8 +369,10 @@ impl ClientDisplay{
         shadow.blur = 10.0;
         shadow.spread = 2.0;
         shadow.color = Color32::from_rgb_additive(20, 1, 20);
+
         let mut outer_margin = Margin::default();
         outer_margin.left = 8.0;
+
         let mut inner_margin = Margin::default();
         inner_margin.top = 2.0;
         inner_margin.left = 2.0;
@@ -415,14 +448,15 @@ impl ClientDisplay{
                     {
                         column_frame.show(ui, |ui| {
                             ui.vertical_centered_justified(|ui| {
-                                ScrollArea::vertical()
-                                    .auto_shrink(false)
-                                    .show_viewport(ui, |ui, _| 
-                                {
+                                // ScrollArea::vertical()
+                                //     .auto_shrink(false)
+                                //     .show_viewport(ui, |ui, _| 
+                                // {
                                     let height = ui.available_height();
                                     StripBuilder::new(ui)
                                         .size(Size::exact(25.0))
-                                        .size(Size::remainder().at_most(height - 50.0))
+                                        .size(Size::exact(25.0))
+                                        .size(Size::remainder().at_most(height - 15.0))
                                         // .size(Size::initial(height))
                                         // .size(Size::exact(25.0))// 
                                         .vertical(| strip| 
@@ -431,7 +465,7 @@ impl ClientDisplay{
                                             ws_client.show(strip, name.clone());
                                         }
                                     });
-                                });
+                                // });
                             });
                         });
                     });
