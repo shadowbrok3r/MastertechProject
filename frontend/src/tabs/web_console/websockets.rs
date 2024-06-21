@@ -92,7 +92,8 @@ impl WebSocketClient{
                             
                             if let Some(sysinfo) = deserialize_system_info(bin){
                                 self.sysinfo = Some(sysinfo);
-                            } else if let Ok(data) = bincode::deserialize(bin){
+                            } 
+                            if let Ok(data) = bincode::deserialize(bin){
                                 self.history.push(data);
                             };
 
