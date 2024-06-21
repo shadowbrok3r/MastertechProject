@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
 use database::Database;
-use eframe::egui::Ui;
 use database::schema::{Priority, TaskPayload, User};
+use log::info;
 use serde::Serialize;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
@@ -11,6 +11,13 @@ use egui::{Align, Button, FontId, RichText, ScrollArea, TextEdit, Vec2, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
+
+pub struct SortTasks{
+    pub sort_by_status: bool,
+    pub sort_by_priority: Option<Priority>,
+    pub sort_by_complete: Option<bool>,
+    pub sort_by_current_user: Option<User> 
+}
 
 
 #[derive(Serialize)]
@@ -25,13 +32,6 @@ pub struct TaskLayout{
     pub assignees: Option<Vec<User>>
 }
 
-pub struct SortTasks{
-    pub sort_by_status: bool,
-    pub sort_by_priority: Option<Priority>,
-    pub sort_by_complete: Option<bool>,
-    pub sort_by_current_user: Option<User> 
-}
-
 impl TaskLayout { 
     pub fn new(
         task_map: HashMap<String, Vec<TaskPayload>>,
@@ -43,8 +43,9 @@ impl TaskLayout {
         Self {  task_map, column_names, database, ui_actions_tx, search_inputs: HashMap::new(), assignees }
     }
 
-    pub fn display(&mut self, ui: &mut Ui){
-        self.layout_cols(ui);
+    pub fn update_tasks(&mut self,task_map: HashMap<String, Vec<TaskPayload>>, column_names: Vec<String>) {
+        self.task_map = task_map;
+        self.column_names = column_names;
     }
 }
 
@@ -54,9 +55,8 @@ impl ColumnLayout for TaskLayout {
         ui: &mut egui::Ui
     ){
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
-        
         let column_width = Size::exact(450.0);
-    
+        
         ScrollArea::horizontal()
             .show_viewport(ui, |ui, _|
         {
@@ -121,7 +121,7 @@ impl ColumnLayout for TaskLayout {
                             if !search_input.is_empty(){
                                 for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
                                     if let Some(store_users) = &self.assignees {
-                                        let action = task.display_task_cards(ui, self.database.to_owned(), &store_users.as_ref());
+                                        let action = task.display_cards(ui, self.database.to_owned(), &store_users.as_ref());
                                         if let Some(action) = action{
                                             match action{
                                                 TaskUiActions::OpenTaskModal(task) => {
@@ -135,7 +135,7 @@ impl ColumnLayout for TaskLayout {
                             }else{
                                 for task in tasks {
                                     if let Some(store_users) = &self.assignees {
-                                        let action = task.display_task_cards(ui, self.database.to_owned(), &store_users.as_ref());
+                                        let action = task.display_cards(ui, self.database.to_owned(), &store_users.as_ref());
                                         if let Some(action) = action{
                                             match action{
                                                 TaskUiActions::OpenTaskModal(task) => {
@@ -223,4 +223,5 @@ impl ColumnLayout for TaskLayout {
             });
         }
     }
+
 }

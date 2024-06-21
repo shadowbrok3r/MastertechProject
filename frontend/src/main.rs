@@ -2,7 +2,9 @@ use app_state::{check_authentication, AppState, MainPages, MtechServer};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::get_store_users, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}, ModalType, TaskUiActions};
+use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}, ModalType, TaskUiActions};
+use wasm_bindgen_futures::spawn_local;
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{Color32, FontId, Stroke, Style, Vec2};
@@ -43,16 +45,8 @@ impl eframe::App for MtechServer {
                     self.state = d.0;
                     if let Some(ref _usr) = d.1{
                         // let toast = &mut self.context.toasts;
-                        
-                        // let auth_toast = Toast{
-                        //     kind: ToastKind::Success,
-                        //     text: format!("Welcome, {}", usr.name).into(),
-                        //     options: ToastOptions::default()
-                        //         .show_progress(true)
-                        //         .duration_in_seconds(6.0)
-                        // };
+                        // let auth_toast = Toast{ kind: ToastKind::Success, text: format!("Welcome, {}", usr.name).into(), options: ToastOptions::default().show_progress(true).duration_in_seconds(6.0) };
                         // toast.add(auth_toast);
-
                         self.context.current_user = d.1;
                     }
                 },
@@ -73,14 +67,17 @@ impl eframe::App for MtechServer {
                     // get all of our channel Senders from crossbeam to get user/store/completed tasks, 
                     // as well as store users and live task notifications
                     let live_tasks_tx = self.context.live_tasks_tx.clone();
-                    let my_tasks_tx = self.context.my_tasks_tx.clone();
+                    let initial_tasks_tx = self.context.initial_tasks_tx.clone();
                     let store_users_tx = self.context.store_users_tx.clone();
-
+                    let tx = self.context.connected_clients_tx.clone();
                     if let Some(usr) = self.context.current_user.as_ref(){
-                        get_tasks(db.clone(), my_tasks_tx);
+                        get_tasks(db.clone(), initial_tasks_tx);
                         get_store_users(db.clone(), store_users_tx, usr.store);
                         listen_tasks(db.clone(), live_tasks_tx);
-
+                        let user = usr.clone();
+                        spawn_local(async move {
+                            get_connected_clients(db, tx, user).await.unwrap();
+                        });
                         let toast = &mut self.context.toasts;
     
                         let auth_toast = Toast{
@@ -97,7 +94,7 @@ impl eframe::App for MtechServer {
                                 self.state = d.0;
                                 if let Some(ref usr) = d.1{
                                     self.context.current_user = Some(usr.clone());
-                                    get_tasks(db.clone(), my_tasks_tx);
+                                    get_tasks(db.clone(), initial_tasks_tx);
                                     get_store_users(db.clone(), store_users_tx, usr.store);
                                     listen_tasks(db.clone(), live_tasks_tx);
             
@@ -137,12 +134,10 @@ impl eframe::App for MtechServer {
                 }
             }
         }
-
         
-        if let Ok(tasks) = self.context.my_tasks_rx.try_recv(){
+        if let Ok(tasks) = self.context.initial_tasks_rx.try_recv(){
             self.context.tasks = Some(tasks);
         }
-
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
             self.context.store_users = Some(users);
@@ -174,9 +169,9 @@ impl eframe::App for MtechServer {
             }
         }
 
-        while let Ok(ref data) = self.context.live_tasks_rx.try_recv(){
-            if let Some(tasks) = &mut self.context.tasks{
-                handle_live_data(data.to_owned(), tasks).unwrap();
+        while let Ok(ref new_task) = self.context.live_tasks_rx.try_recv(){
+            if let Some(existing_tasks) = &mut self.context.tasks{
+                handle_live_data(new_task.to_owned(), existing_tasks).unwrap();
             }
         }
 
@@ -191,6 +186,28 @@ impl eframe::App for MtechServer {
             }
         }
 
+        
+
+        if let Ok(connection) = self.context.client_connection_rx.try_recv(){
+            match connection{
+                ClientConnection::ClientUrl(url) => {
+                    // let wakeup = move || ctx.request_repaint();
+                    match ewebsock::connect(&url, Default::default()) {
+                        Ok((ws_sender, ws_receiver)) => {
+                            let ws_client = WebSocketClient::new(ws_sender, ws_receiver);
+                            self.context.client_layout = Some(ClientDisplay::new_client(self.context.clients.clone(), ws_client));
+                            // self.ws_sender = ws_sender;
+                            // self.ws_receiver = ws_receiver;
+                        }
+                        Err(error) => {
+                            log::error!("Failed to connect to {:?}: {}", &url, error);
+                            // self.error = error;
+                        }
+                    };
+                },
+            }
+
+        }
         // Always checking authentication.
         match &self.state{
             //if auth'd, user shall be allowed
@@ -291,7 +308,7 @@ fn set_style() -> Arc<Style>{
     custom_style.visuals.window_shadow.blur = 10.0;
     custom_style.visuals.selection.stroke.color =  Color32::BLACK;
     custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-    custom_style.visuals.widgets.inactive.bg_fill =  Color32::GOLD;
+    custom_style.visuals.widgets.inactive.bg_fill =  Color32::from_rgb(15,14,18);
     custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
     custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
     custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));

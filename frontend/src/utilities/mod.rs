@@ -33,13 +33,18 @@ pub enum ModalType{
 }
 
 pub trait Displayable{ 
-    fn display_task_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<TaskUiActions>;
+    fn display_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<TaskUiActions>;
+}
+
+pub trait DisplayCards{ 
+    fn display_cards(&mut self, ui: &mut Ui, name: String);
 }
 
 pub trait ColumnLayout{
     fn layout_cols(&mut self, ui: &mut Ui);
     fn columns(&mut self,s: &mut Strip);
     fn headers(&mut self, s: Strip);
+    // fn card_layout(&mut self, ui: &mut Ui) -> Option<TaskUiActions>;
 }
 
 pub trait Updatable { // This is correctly implemented

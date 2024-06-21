@@ -9,7 +9,7 @@ use database::schema::{TaskPayload, User};
 use crate::utilities::{Displayable, Interaction, TaskUiActions};
 
 impl Displayable for TaskPayload{
-    fn display_task_cards(
+    fn display_cards(
         &mut self, 
         ui: &mut Ui, 
         database: Database, 

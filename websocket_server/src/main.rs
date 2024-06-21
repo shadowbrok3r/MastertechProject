@@ -254,7 +254,7 @@ impl ezsockets::SessionExt for ChatSession {
 #[tokio::main]
 async fn main() {
     // Configure log level and log file
-    let log_level = LevelFilter::Info; 
+    let log_level = LevelFilter::Debug; 
     let log_file = File::create("output.log").unwrap();
 
     // Init the logger
