@@ -10,20 +10,17 @@ pub mod charts;
 
 impl MtechServerContext {
     pub fn web_console(&mut self, ui: &mut Ui){
-        let ctx = ui.ctx().clone();
-        ctx.request_repaint();
+        ui.ctx().request_repaint();
+        
         let mut shadow = Shadow::default();
         shadow.blur = 10.0;
         shadow.spread = 2.0;
         shadow.color = Color32::from_rgb_additive(20, 1, 20);
 
-        let top_panel_frame = Frame::default()
-            .fill(Color32::from_rgb(8, 7, 10))
-            .inner_margin(Margin::same(8.0))
-            .outer_margin(Margin::symmetric(1.0, 1.0))
-            .rounding(Rounding::same(5.0))
-            .shadow(shadow)
-            .stroke(Stroke::new(1.0, Color32::from_rgb_additive(20, 1, 20)));
+        let top_panel_frame = Frame::default().fill(Color32::from_rgb(8, 7, 10))
+            .inner_margin(Margin::same(8.0)).outer_margin(Margin::symmetric(1.0, 1.0))
+            .rounding(Rounding::same(5.0)).shadow(shadow)
+            .stroke(Stroke::new(1.0, Color32::from_rgb_additive(36, 156, 158)));
 
         let mut outer_margin = Margin::default();
         outer_margin.right = 8.0;
@@ -33,13 +30,10 @@ impl MtechServerContext {
         inner_margin.left = 3.0;
         inner_margin.right = 3.0;
 
-        let side_panel_frame = Frame::default()
-            .fill(Color32::from_rgb(8, 7, 10))
-            .inner_margin(inner_margin)
-            .outer_margin(outer_margin)
-            .rounding(Rounding::same(5.0))
-            .shadow(shadow)
-            .stroke(Stroke::new(1.0, Color32::from_rgb_additive(20, 1, 20)));
+        let side_panel_frame = Frame::default().fill(Color32::from_rgb(8, 7, 10))
+            .inner_margin(inner_margin).outer_margin(outer_margin)
+            .rounding(Rounding::same(5.0)).shadow(shadow)
+            .stroke(Stroke::new(1.0, Color32::from_rgb_additive(36, 156, 158)));
 
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
 
@@ -58,7 +52,7 @@ impl MtechServerContext {
         {
             ui.vertical_centered(|ui |
             {
-                if Button::new("Check for clients").min_size(Vec2::new(50.0, 15.0)).ui(ui).clicked()
+                if Button::new("Refresh").min_size(Vec2::new(50.0, 15.0)).ui(ui).clicked()
                 {
                     if let Some(db) = self.database.clone(){
                         let usr = self.current_user.clone();

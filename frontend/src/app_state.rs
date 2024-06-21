@@ -87,6 +87,10 @@ pub struct MtechServerContext{
     pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
 
     #[serde(skip)]
+    pub live_clients_tx: Sender<(Action, ConnectedClient)>,
+    #[serde(skip)]
+    pub live_clients_rx: Receiver<(Action, ConnectedClient)>,
+    #[serde(skip)]
     pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
     #[serde(skip)]
     pub live_tasks_rx: Receiver<(Action, LiveTaskPayload)>,
@@ -220,6 +224,7 @@ impl NewCC for MtechServer{
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
         let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
+        let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
@@ -238,6 +243,7 @@ impl NewCC for MtechServer{
             // CHANNEL SENDERS / RECEIVERS
             db_tx, db_rx,
             live_tasks_tx, live_tasks_rx,
+            live_clients_tx, live_clients_rx,
             tasks_tx, tasks_rx,
             initial_tasks_tx,  initial_tasks_rx,
             app_state_tx, app_state_rx,

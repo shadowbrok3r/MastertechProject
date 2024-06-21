@@ -2,8 +2,9 @@ use app_state::{check_authentication, AppState, MainPages, MtechServer};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::info;
 use ratframe::NewCC;
+use surrealdb::Action;
 use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_data, listen_tasks}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_update, listen_data, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
 use web_time::Instant;
 use std::sync::Arc;
@@ -67,13 +68,16 @@ impl eframe::App for MtechServer {
                     // get all of our channel Senders from crossbeam to get user/store/completed tasks, 
                     // as well as store users and live task notifications
                     let live_tasks_tx = self.context.live_tasks_tx.clone();
+                    let live_clients_tx = self.context.live_clients_tx.clone();
                     let initial_tasks_tx = self.context.initial_tasks_tx.clone();
                     let store_users_tx = self.context.store_users_tx.clone();
                     let tx = self.context.connected_clients_tx.clone();
+
                     if let Some(usr) = self.context.current_user.as_ref(){
                         get_tasks(db.clone(), initial_tasks_tx);
                         get_store_users(db.clone(), store_users_tx, usr.store);
                         listen_tasks(db.clone(), live_tasks_tx);
+                        listen_data(db.clone(), live_clients_tx);
                         let user = usr.clone();
                         spawn_local(async move {
                             get_connected_clients(db, tx, user).await.unwrap();
@@ -175,6 +179,15 @@ impl eframe::App for MtechServer {
             }
         }
 
+        while let Ok(ref new_data) = self.context.live_clients_rx.try_recv(){
+            match new_data.0{
+                Action::Create => handle_live_create(&mut self.context.clients, new_data.1.clone()).unwrap_or(()),
+                Action::Update => handle_live_update(&mut self.context.clients, new_data.1.clone()).unwrap_or(()),
+                Action::Delete => handle_live_delete(&mut self.context.clients, new_data.1.clone()).unwrap_or(()),
+                _ => (),
+            };
+        }
+
         if let Ok(state) = self.context.app_state_rx.try_recv(){
             info!("Got a new state: {state:?}");
             self.state = state
@@ -185,8 +198,6 @@ impl eframe::App for MtechServer {
                 self.context.clients.insert(client.connection_string.clone(), client.clone());
             }
         }
-
-        
 
         if let Ok(connection) = self.context.client_connection_rx.try_recv(){
             match connection{

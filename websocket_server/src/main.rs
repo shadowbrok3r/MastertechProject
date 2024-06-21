@@ -181,7 +181,7 @@ impl ezsockets::ServerExt for ChatServer {
                             session.binary(bin).unwrap();
                         } else {
                             info!("Relaying text message to session {}: {}", session.id, text);
-                            session.text(format!("{role}-{}: {}", room_id, text)).unwrap();
+                            session.text(format!("{text}")).unwrap(); // "{role}-{}: {}", room_id, text
                         }
                     } else {
                         info!("No target session found for session {} in room {}", from, room_id);
