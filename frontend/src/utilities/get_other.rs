@@ -34,3 +34,17 @@ pub async fn get_connected_clients(db: Database, tx: Sender<Vec<ConnectedClient>
 
     Ok(())
 }
+
+pub async fn modify_connected_client(db: Database, tx: Sender<Vec<ConnectedClient>>, user_id: User)
+    -> anyhow::Result<(), anyhow::Error>
+{
+    db.database.set("id", user_id.id.0).await?;
+    let query: Vec<ConnectedClient> = db.database.query("SELECT * FROM connected_client WHERE assigned_user == $id").await?.take(0)?;
+
+    match tx.try_send(query){
+        Ok(_) => info!("Sent connected clients"),
+        Err(e) => debug!("Error sending connected_clients: {e:?}")
+    };
+
+    Ok(())
+}

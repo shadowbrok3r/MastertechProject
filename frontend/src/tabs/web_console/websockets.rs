@@ -1,5 +1,5 @@
 
-use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, fmt::Display};
+use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, fmt::Display, str::from_utf8};
 use crossbeam::channel::Sender;
 use database::schema::ConnectedClient;
 use egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
@@ -14,6 +14,27 @@ use super::charts::LinePlot;
 
 pub enum ClientConnection{
     ClientUrl(String)
+}
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Cmd{
+    LiveData,
+    Command,
+    Tuneup,
+    Cps,
+    Qc,
+    SfcScan,
+    DismScan,
+    ChkDsk,
+    Mbr2Gpt,
+    None
+}
+pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
+    if let Ok(cmd) = bincode::deserialize(bytes){
+        Some(cmd)
+    }else{ None }
+}
+pub fn serialize_command(bytes: &Cmd) -> Vec<u8> {
+    bincode::serialize(bytes).expect("Failed to deserialize Cmd")
 }
 pub struct ClientDisplay{
     pub clients: HashMap<String, ConnectedClient>,
@@ -68,31 +89,37 @@ impl WebSocketClient{
                 WsEvent::Message(msg) => {
                     match msg{
                         WsMessage::Binary(bin) => {
-                            let sys = deserialize_system_info(bin);
-                            self.sysinfo = Some(deserialize_system_info(bin));
+                            
+                            if let Some(sysinfo) = deserialize_system_info(bin){
+                                self.sysinfo = Some(sysinfo);
+                            } else if let Ok(data) = bincode::deserialize(bin){
+                                self.history.push(data);
+                            };
 
-                            let normalized_cpu_percentage = normalize(sys.cpu_percentage, 0.0, 100.0);
-                            let normalized_cpu_clock = normalize(sys.cpu_clock, 0.0, 5000.0); // Example range for CPU clock
-                            let normalized_temps: Vec<f32> = sys.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
-                            let normalized_ram_usage = normalize(sys.used_memory, 0.0, 16000.0); // Example range for RAM usage
-    
-                            if self.cpu_percentage.len() < 30
-                                // || self.component_temps.len() < 30
-                                || self.cpu_clock.len() < 30
-                                || self.ram_usage.len() < 30 {
-                                self.cpu_percentage.push_back(normalized_cpu_percentage);
-                                // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                                self.cpu_clock.push_back(normalized_cpu_clock);
-                                self.ram_usage.push_back(normalized_ram_usage);
-                            } else {
-                                self.cpu_percentage.pop_front();
-                                self.cpu_percentage.push_back(normalized_cpu_percentage);
-                                // self.component_temps.pop_front();
-                                // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                                self.cpu_clock.pop_front();
-                                self.cpu_clock.push_back(normalized_cpu_clock);
-                                self.ram_usage.pop_front();
-                                self.ram_usage.push_back(normalized_ram_usage);
+                            if let Some(sysinfo) = &self.sysinfo{
+                                let normalized_cpu_percentage = normalize(sysinfo.cpu_percentage, 0.0, 100.0);
+                                let normalized_cpu_clock = normalize(sysinfo.cpu_clock, 0.0, 5000.0); // Example range for CPU clock
+                                let normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
+                                let normalized_ram_usage = normalize(sysinfo.used_memory, 0.0, 16000.0); // Example range for RAM usage
+        
+                                if self.cpu_percentage.len() < 30
+                                    // || self.component_temps.len() < 30
+                                    || self.cpu_clock.len() < 30
+                                    || self.ram_usage.len() < 30 {
+                                    self.cpu_percentage.push_back(normalized_cpu_percentage);
+                                    // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
+                                    self.cpu_clock.push_back(normalized_cpu_clock);
+                                    self.ram_usage.push_back(normalized_ram_usage);
+                                } else {
+                                    self.cpu_percentage.pop_front();
+                                    self.cpu_percentage.push_back(normalized_cpu_percentage);
+                                    // self.component_temps.pop_front();
+                                    // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
+                                    self.cpu_clock.pop_front();
+                                    self.cpu_clock.push_back(normalized_cpu_clock);
+                                    self.ram_usage.pop_front();
+                                    self.ram_usage.push_back(normalized_ram_usage);
+                                }
                             }
                         },
                         WsMessage::Text(txt) => {
@@ -121,26 +148,31 @@ impl WebSocketClient{
             {
                 s.cell(|ui|{
                     if Button::new("Tuneup").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Text("tuneup".to_string()));
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
+                        self.history.push(format!("You\nCommand::Tuneup"))
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("CPS").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Text("cps".to_string()));
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
+                        self.history.push(format!("You\nCommand::Cps"))
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("QC").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Text("qc".to_string()));
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Qc)));
+                        self.history.push(format!("You\nCommand::Qc"))
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("Live Data").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Text("live_data".to_string()));
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::LiveData)));
+                        self.history.push(format!("You\nCommand::LiveData"))
                     }
                 });
             });
         });
+
         strip.strip(|strip| 
         {
             strip.sizes(Size::remainder(), 4)
@@ -148,26 +180,31 @@ impl WebSocketClient{
             {
                 s.cell(|ui|{
                     if Button::new("SFC Scan").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Text("tuneup".to_string()));
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
+                        self.history.push(format!("You\nCommand::SfcScan"))
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("Dism Scan").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Text("cps".to_string()));
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
+                        self.history.push(format!("You\nCommand::DismScan"))
                     }
                 });
                 s.cell(|ui|{
-                    if Button::new("QC").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Text("qc".to_string()));
+                    if Button::new("ChkDsk").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
+                        self.history.push(format!("You\nCommand::ChkDsk"))
                     }
                 });
                 s.cell(|ui|{
-                    if Button::new("Live Data").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Text("live_data".to_string()));
+                    if Button::new("Mbr2Gpt").ui(ui).clicked(){
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
+                        self.history.push(format!("You\nCommand::Mbr2Gpt"))
                     }
                 });
             });
         });
+
         strip.cell(|ui | 
         {
             let client_id = ui.make_persistent_id(format!("client_id {:?}", name.clone()));
@@ -368,7 +405,7 @@ impl ClientDisplay{
         let mut shadow = Shadow::default();
         shadow.blur = 10.0;
         shadow.spread = 2.0;
-        shadow.color = Color32::from_rgb_additive(20, 1, 20);
+        shadow.color = Color32::from_rgb_additive(36, 156, 158);
 
         let mut outer_margin = Margin::default();
         outer_margin.left = 8.0;
@@ -431,9 +468,8 @@ impl ClientDisplay{
         for (name, _) in self.clients.iter(){
             let color = if *self.client_connected.get(name).unwrap_or(&false){
                 Color32::GREEN
-            }else{
-                Color32::RED
-            };
+            }else{ Color32::RED };
+            let connected = self.client_connected.get(name).unwrap_or(&false);
             let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 18))
                 .inner_margin(Margin::same(4.0)).rounding(Rounding::same(10.0))
                 .stroke(Stroke::new(1.0, Color32::from_additive_luminance(150)));
@@ -448,24 +484,20 @@ impl ClientDisplay{
                     {
                         column_frame.show(ui, |ui| {
                             ui.vertical_centered_justified(|ui| {
-                                // ScrollArea::vertical()
-                                //     .auto_shrink(false)
-                                //     .show_viewport(ui, |ui, _| 
-                                // {
-                                    let height = ui.available_height();
-                                    StripBuilder::new(ui)
-                                        .size(Size::exact(25.0))
-                                        .size(Size::exact(25.0))
-                                        .size(Size::remainder().at_most(height - 15.0))
-                                        // .size(Size::initial(height))
-                                        // .size(Size::exact(25.0))// 
-                                        .vertical(| strip| 
-                                    {
-                                        if let Some(ws_client) = &mut self.websocket_client{
+                                let height = ui.available_height();
+                                StripBuilder::new(ui)
+                                    .size(Size::exact(25.0))
+                                    .size(Size::exact(25.0))
+                                    .size(Size::remainder().at_most(height - 15.0))
+                                    .vertical(| strip| 
+                                {
+                                    if let Some(ws_client) = &mut self.websocket_client{
+                                        // if *connected{
+                                        
                                             ws_client.show(strip, name.clone());
-                                        }
-                                    });
-                                // });
+                                        // }    
+                                    }
+                                });
                             });
                         });
                     });
@@ -524,12 +556,22 @@ impl ClientDisplay{
 }
 
 
-pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
-    bincode::serialize(system_info).expect("Failed to serialize SystemInformation")
+pub fn serialize_system_info(system_info: &SystemInformation) -> Option<Vec<u8>> {
+    if let Ok(data) = bincode::serialize(system_info){
+        Some(data)
+    } else {
+        None
+    }
+    
 }
 
-pub fn deserialize_system_info(bytes: &[u8]) -> SystemInformation {
-    bincode::deserialize(bytes).expect("Failed to deserialize SystemInformation")
+pub fn deserialize_system_info(bytes: &[u8]) -> Option<SystemInformation> {
+    if let Ok(data) = bincode::deserialize(bytes){
+        Some(data)
+    } else {
+        None
+    }
+    
 }
 
 fn normalize(value: f32, min: f32, max: f32) -> f32 {

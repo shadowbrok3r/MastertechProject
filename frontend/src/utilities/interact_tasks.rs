@@ -24,7 +24,7 @@ impl Interaction for TaskPayload {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
 
         
-        if let Some(service_ticket) = &mut self.service_ticket{
+        if let Some(service_ticket) = &mut self.service_ticket{ // std::mem::take()
 
             let text_edit = TextEdit::multiline(&mut service_ticket.checkin_notes)
                 .desired_rows(5)

@@ -1,11 +1,13 @@
 use database::schema::TaskPayload;
 use futures::StreamExt;
 use database::{schema::*, Database};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
 use wasm_bindgen_futures::spawn_local;
 use log::{info, error};
 use crossbeam::channel::Sender;
 use surrealdb::engine::remote::ws::Client;
+use std::{collections::HashMap, fmt::Debug};
 use super::LiveUpdate;
 
 
@@ -22,6 +24,25 @@ pub fn handle_live_data(data: (Action, LiveTaskPayload), existing_tasks: &mut Ve
         },
         _ => {},
     }
+    Ok(())
+}
+
+
+pub fn handle_live_create<T: Serialize + for<'a> Deserialize<'a> + Debug>(existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+    info!("Data was Created: {:?}", new_data);
+
+    Ok(())
+}
+
+pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug>(existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+    info!("Data was Updated: {:?}", new_data);
+
+    Ok(())
+}
+
+pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug>(existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+    info!("Data was Deleted: {:?}", new_data);
+
     Ok(())
 }
 
@@ -83,10 +104,9 @@ pub fn update_or_insert(
     Ok(())
 }
 
-pub fn convert_live_to_task(
-    live_task: LiveTaskPayload,
-    existing_task: &TaskPayload,
-) -> TaskPayload {
+pub fn convert_live_to_task(live_task: LiveTaskPayload,existing_task: &TaskPayload) 
+    -> TaskPayload 
+{
     TaskPayload {
         id: live_task.id,
         task_name: live_task.task_name,
@@ -104,7 +124,14 @@ pub fn convert_live_to_task(
     }
 }
 
-
+pub fn listen_data<T>(db: Database, tx: Sender<(Action, T)>) 
+    where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin
+{
+    spawn_local(async move {
+        let client_stream: Stream<Client, Vec<T>> = db.database.select(CONNECTED_CLIENT_TABLE).live().await.unwrap();
+        handle_streams(client_stream, tx).await;
+    });
+}
 
 pub fn listen_tasks(db: Database, tx: Sender<(Action, LiveTaskPayload)>) 
     // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
@@ -117,10 +144,11 @@ pub fn listen_tasks(db: Database, tx: Sender<(Action, LiveTaskPayload)>)
 
 
 
-async fn handle_streams(
-    mut notification_stream: impl futures::Stream<Item = Result<Notification<LiveTaskPayload>, surrealdb::Error>> + Unpin,
-    tx: Sender<(Action, LiveTaskPayload)>
-){ //  where T: Serialize + Deserialize<'static> + Debug
+async fn handle_streams<T>(
+    mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,
+    tx: Sender<(Action, T)>
+) where T: Serialize + Deserialize<'static> + Debug
+{
     while let Some(notification) = notification_stream.next().await {
         match notification{
             Ok(notification) => {

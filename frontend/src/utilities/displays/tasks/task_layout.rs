@@ -181,7 +181,6 @@ impl ColumnLayout for TaskLayout {
                             ui.add_space(ui.available_width() / 3.4);
                             ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading());
                         });
-    
                         
                         ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
                         {
