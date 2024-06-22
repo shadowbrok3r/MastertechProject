@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM rust:latest
+FROM --platform=$BUILDPLATFORM rustlang/rust:nightly
 WORKDIR /
 RUN rustup target add wasm32-unknown-unknown
 RUN rustup target add wasm32-wasi
