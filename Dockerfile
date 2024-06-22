@@ -2,7 +2,7 @@ FROM --platform=$BUILDPLATFORM rustlang/rust:nightly
 WORKDIR /
 RUN rustup target add wasm32-unknown-unknown
 RUN rustup target add wasm32-wasi
-RUN rustup comonent add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
+RUN rustup toolchain install nightly-x86_64-unknown-linux-gnu
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev 
 RUN cargo install trunk
 # COPY ./dist /dist
