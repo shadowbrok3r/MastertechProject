@@ -2,7 +2,7 @@
 use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, fmt::Display, str::from_utf8};
 use crossbeam::channel::Sender;
 use database::schema::ConnectedClient;
-use egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
+use egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
@@ -57,7 +57,8 @@ pub struct WebSocketClient {
     pub ram_usage: VecDeque<f32>,
 
     pub sysinfo: Option<SystemInformation>,
-    pub history: Vec<String>
+    pub history: Vec<String>,
+    pub loading: bool,
 }
 
 impl WebSocketClient{
@@ -75,6 +76,7 @@ impl WebSocketClient{
             ram_usage: VecDeque::new(),
             history: Vec::new(),
             temps: VecDeque::new(),
+            loading: false
         }
     }
     
@@ -89,13 +91,19 @@ impl WebSocketClient{
                 WsEvent::Message(msg) => {
                     match msg{
                         WsMessage::Binary(bin) => {
+                            info!("Binary: {bin:?}");
                             
                             if let Some(sysinfo) = deserialize_system_info(bin){
+                                info!("Got sysinfo");
+                                self.loading = false;
                                 self.sysinfo = Some(sysinfo);
-                            } 
-                            if let Ok(data) = bincode::deserialize(bin){
-                                self.history.push(data);
-                            };
+                            } else{ 
+                                if bin.len() > 0 {
+                                    self.loading = false;
+                                    self.history.push(String::from_utf8_lossy(&bin).to_string());
+                                }
+                            }
+                            
 
                             if let Some(sysinfo) = &self.sysinfo{
                                 let normalized_cpu_percentage = normalize(sysinfo.cpu_percentage, 0.0, 100.0);
@@ -124,10 +132,12 @@ impl WebSocketClient{
                             }
                         },
                         WsMessage::Text(txt) => {
+                            self.loading = false;
                             info!("Text data: {txt:#?}");
                             self.history.push(txt.clone());
                         },
                         WsMessage::Unknown(unknown) => {
+                            self.loading = false;
                             info!("unknown data: {unknown:#?}");
                         },
                         _ => {}
@@ -239,6 +249,7 @@ impl WebSocketClient{
 
             scroll.show_background(true).show_unindented(ui, |ui| 
             {
+                
                 ScrollArea::vertical()
                     .auto_shrink(false)
                     .stick_to_bottom(true)
@@ -318,7 +329,12 @@ impl WebSocketClient{
                                 .stroke(Stroke::new(1.0, Color32::from_additive_luminance(100)))
                                 .show(ui, |ui| {
                                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                                        Label::new(item).selectable(true).ui(ui);
+                                        if self.loading{
+                                            Spinner::new().color(Color32::RED).size(15.0).ui(ui);
+                                            Label::new(item).selectable(true).ui(ui);
+                                        }else{
+                                            Label::new(item).selectable(true).ui(ui);
+                                        }
                                     });
                                 })
                                 .response;
@@ -351,10 +367,12 @@ impl WebSocketClient{
                         });
                     };
                 });
+
                 ui.vertical_centered_justified(|ui| {
                     let text_edit = TextEdit::singleline(&mut self.input).hint_text("Send command").ui(ui);
                     let key_press = ui.input(|i| i.key_pressed(Key::Enter));
                     if text_edit.lost_focus() && key_press {
+                        self.loading = true;
                         text_edit.request_focus();
                         self.history.push(format!("You\n{}", self.input.clone()));
                         self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));

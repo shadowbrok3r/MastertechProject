@@ -16,7 +16,7 @@ surrealdb = { workspace=true }
 chrono = { workspace=true }
 
 egui ={ version="0.27", features = ["persistence"]} # "callstack", "log"
-eframe = { version="0.27", default-features = false, features=["glow"] } # wgpu
+eframe = { version="0.27", default-features = false, features=["wgpu"] } # wgpu
 wasm-bindgen = "0.2"
 egui_extras = { version = "0.27", features = ["datepicker"]}
 egui-aesthetix = { version = "0.2", features = ["carl"] }
