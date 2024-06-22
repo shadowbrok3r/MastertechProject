@@ -40,7 +40,7 @@ struct Auth {
     password: String,
 }
 
-const DB_URL: &str = "localhost:8000"; // surreal.master-tech.app/rpc
+const DB_URL: &str = "surreal.master-tech.app/rpc"; // surreal.master-tech.app/rpc // localhost:8000
 const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";

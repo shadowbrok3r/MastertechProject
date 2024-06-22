@@ -17,7 +17,7 @@ address = "0.0.0.0"
 # The port to serve on.
 port = 8080
 # Additional headers set for responses.
-# headers = { "test-header" = "header value", "test-header2" = "header value 2" }
+# headers = { "Cross-Origin-Embedder-Policy" = "require-corp", "Cross-Origin-Opener-Policy" = "same-origin" }
 # Protocol used for autoreload WebSockets connection.
 # ws_protocol = "ws"
 # The certificate/private key pair to use for TLS, which is enabled if both are set.
