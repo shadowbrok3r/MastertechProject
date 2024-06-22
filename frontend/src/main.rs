@@ -6,6 +6,7 @@ use surrealdb::Action;
 use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_update, listen_data, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
+use wasm_cookies::CookieOptions;
 use web_time::Instant;
 use std::sync::Arc;
 use egui::{Color32, FontId, Stroke, Style, Vec2};
@@ -19,6 +20,7 @@ pub mod pages;
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
         // most important part of the whole app.. setting up our styling
         let arc_style = set_style();
         ctx.set_style(arc_style);
@@ -40,7 +42,8 @@ impl eframe::App for MtechServer {
         // 1. Getting database connection
         if self.context.first_run{ // || or if refresh button is hit
             self.context.first_run = false;
-    
+            // wasm_cookies::set("Cross-Origin-Embedder-Policy","require-corp", &CookieOptions::default().with_same_site(wasm_cookies::SameSite::None));
+            // wasm_cookies::set("Cross-Origin-Opener-Policy", "same-origin", &CookieOptions::default().with_same_site(wasm_cookies::SameSite::None));
             match check_authentication(self.context.db_tx.clone()){
                 Ok(d) => {
                     self.state = d.0;

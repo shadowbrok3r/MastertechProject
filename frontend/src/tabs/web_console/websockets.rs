@@ -560,7 +560,7 @@ impl ClientDisplay{
                             ui.add_space(30.0);
 
                             if button.clicked(){ // CONNECT
-                                let url = format!("ws://127.0.0.1:8081/websocket?role=master&room_id={}", name.clone());
+                                let url = format!("ws://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
                                 self.connected_client = Some(client.clone());
                                 self.client_connected.clear();
                                 self.client_connected.insert(name.clone(), true);
