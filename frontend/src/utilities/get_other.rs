@@ -1,4 +1,4 @@
-use database::{schema::{ConnectedClient, Store, User}, Database};
+use database::{schema::{ClientId, ConnectedClient, Store, User}, Database};
 use log::{debug, error, info};
 use crossbeam::channel::Sender;
 use wasm_bindgen_futures::spawn_local;
@@ -26,6 +26,20 @@ pub async fn get_connected_clients(db: Database, tx: Sender<Vec<ConnectedClient>
 {
     db.database.set("id", user_id.id.0).await?;
     let query: Vec<ConnectedClient> = db.database.query("SELECT * FROM connected_client WHERE assigned_user == $id").await?.take(0)?;
+
+    match tx.try_send(query){
+        Ok(_) => info!("Sent connected clients"),
+        Err(e) => debug!("Error sending connected_clients: {e:?}")
+    };
+
+    Ok(())
+}
+
+pub async fn disconnect_client(db: Database, tx: Sender<Vec<ClientId>>, id: ClientId)
+    -> anyhow::Result<(), anyhow::Error>
+{
+    db.database.set("id", id.0.id).await?;
+    let query: Vec<ClientId> = db.database.update("UPDATE connected_client SET connected = false WHERE id == $id").await.unwrap();
 
     match tx.try_send(query){
         Ok(_) => info!("Sent connected clients"),
