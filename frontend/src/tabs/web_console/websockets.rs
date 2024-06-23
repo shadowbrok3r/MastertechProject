@@ -13,7 +13,8 @@ use crate::utilities::ColumnLayout;
 use super::charts::LinePlot;
 
 pub enum ClientConnection{
-    ClientUrl(String)
+    ClientUrl(String),
+    Disconnect(String)
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Cmd{
@@ -26,8 +27,10 @@ pub enum Cmd{
     DismScan,
     ChkDsk,
     Mbr2Gpt,
+    Quit,
     None
 }
+
 pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
     if let Ok(cmd) = bincode::deserialize(bytes){
         Some(cmd)
@@ -40,7 +43,6 @@ pub struct ClientDisplay{
     pub clients: HashMap<String, ConnectedClient>,
     pub client_names: Vec<String>,
     pub connected_client: Option<ConnectedClient>,
-    pub client_connected: HashMap<String, bool>,
     pub websocket_client: Option<WebSocketClient>,
 }
 
@@ -389,6 +391,7 @@ impl ClientDisplay{
     pub fn new(clients: HashMap<String, ConnectedClient>) -> Self { 
         let mut client_names = Vec::new();
         for (name, _) in clients.iter(){
+            
             client_names.push(name.clone());
         }
 
@@ -396,7 +399,6 @@ impl ClientDisplay{
             clients,
             client_names,
             connected_client: None,
-            client_connected: HashMap::new(),
             websocket_client: None
         }
     }
@@ -411,7 +413,6 @@ impl ClientDisplay{
             clients,
             client_names,
             connected_client: None,
-            client_connected: HashMap::new(),
             websocket_client: Some(websocket_client)
         }
     }
@@ -484,14 +485,13 @@ impl ClientDisplay{
     }
 
     pub fn columns(&mut self, strip: &mut egui_extras::Strip) {
-        for (name, _) in self.clients.iter(){
-            let color = if *self.client_connected.get(name).unwrap_or(&false){
+        for (name, client) in self.clients.iter(){
+            let color = if client.connected{
                 Color32::GREEN
             }else{ Color32::RED };
-            let connected = self.client_connected.get(name).unwrap_or(&false);
             let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 18))
                 .inner_margin(Margin::same(4.0)).rounding(Rounding::same(10.0))
-                .stroke(Stroke::new(1.0, Color32::from_additive_luminance(150)));
+                .stroke(Stroke::new(1.0, color));
 
             strip.strip(|s | 
             {
@@ -541,7 +541,24 @@ impl ClientDisplay{
                     ui.horizontal_top(|ui| 
                     {
                         ui.with_layout(Layout::left_to_right(Align::Min), 
-                        |ui| ui.add_space(ui.available_width() / 4.0));
+                        |ui| {
+                            let button = Button::new(
+                                RichText::new("X")
+                                    .raised()
+                                    .color(Color32::LIGHT_RED)
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .min_size(Vec2::new(30.0, 20.0))
+                                .ui(ui);
+                            if button.clicked(){ // CONNECT
+                                let url = format!("ws://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
+                                if client.connected{
+                                    self.connected_client = Some(client.clone());
+                                }
+                                tx.send(ClientConnection::Disconnect(url)).unwrap();
+                            }
+                            // ui.add_space(ui.available_width() / 4.0)
+                        });
 
                         ui.with_layout(Layout::left_to_right(Align::Center), 
                         |ui| ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading()));
@@ -561,9 +578,9 @@ impl ClientDisplay{
 
                             if button.clicked(){ // CONNECT
                                 let url = format!("ws://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
-                                self.connected_client = Some(client.clone());
-                                self.client_connected.clear();
-                                self.client_connected.insert(name.clone(), true);
+                                if client.connected{
+                                    self.connected_client = Some(client.clone());
+                                }
                                 tx.send(ClientConnection::ClientUrl(url)).unwrap();
                             }
                         });

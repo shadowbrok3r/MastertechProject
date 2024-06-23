@@ -1,5 +1,5 @@
 [toolchain]
-channel = "nightly-x86_64-unknown-linux-gnu"
-components = [ "rustfmt", "rust-src", "clippy" ]
+channel = "stable-x86_64-pc-windows-msvc" # nightly-x86_64-unknown-linux-gnu
+# components = [ "rustfmt", "rust-src", "clippy" ]
 targets = [ "wasm32-unknown-unknown" ]
-profile = "minimal"
+# profile = "minimal"

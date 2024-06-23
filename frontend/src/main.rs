@@ -4,7 +4,7 @@ use log::info;
 use ratframe::NewCC;
 use surrealdb::Action;
 use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_update, listen_data, listen_tasks}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{disconnect_client, get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_update, listen_data, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
 use wasm_cookies::CookieOptions;
 use web_time::Instant;
@@ -210,14 +210,30 @@ impl eframe::App for MtechServer {
                         Ok((ws_sender, ws_receiver)) => {
                             let ws_client = WebSocketClient::new(ws_sender, ws_receiver);
                             self.context.client_layout = Some(ClientDisplay::new_client(self.context.clients.clone(), ws_client));
-                            // self.ws_sender = ws_sender;
-                            // self.ws_receiver = ws_receiver;
                         }
                         Err(error) => {
                             log::error!("Failed to connect to {:?}: {}", &url, error);
                             // self.error = error;
                         }
                     };
+                },                
+                
+                ClientConnection::Disconnect(url) => {
+                    spawn_local(async move {
+                        // disconnect_client(db, tx, user).await.unwrap();
+                    });
+                    // let wakeup = move || ctx.request_repaint();
+                    // match ewebsock::connect(&url, Default::default()) {
+                    //     Ok((ws_sender, ws_receiver)) => {
+                    //         ws_sender.close()
+                    //         let ws_client = WebSocketClient::new(ws_sender, ws_receiver);
+                    //         self.context.client_layout = Some(ClientDisplay::new_client(self.context.clients.clone(), ws_client));
+                    //     }
+                    //     Err(error) => {
+                    //         log::error!("Failed to connect to {:?}: {}", &url, error);
+                    //         // self.error = error;
+                    //     }
+                    // };
                 },
             }
 
