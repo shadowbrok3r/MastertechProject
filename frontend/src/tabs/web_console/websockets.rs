@@ -551,13 +551,13 @@ impl ClientDisplay{
                                 .min_size(Vec2::new(30.0, 20.0))
                                 .ui(ui);
                             if button.clicked(){ // CONNECT
-                                let url = format!("ws://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
+                                let url = format!("ws://127.0.0.1:8081/websocket?role=master&room_id={}", name.clone());
                                 if client.connected{
                                     self.connected_client = Some(client.clone());
                                 }
                                 tx.send(ClientConnection::Disconnect(url)).unwrap();
                             }
-                            // ui.add_space(ui.available_width() / 4.0)
+                            ui.add_space(ui.available_width() / 4.0)
                         });
 
                         ui.with_layout(Layout::left_to_right(Align::Center), 
@@ -577,7 +577,7 @@ impl ClientDisplay{
                             ui.add_space(30.0);
 
                             if button.clicked(){ // CONNECT
-                                let url = format!("ws://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
+                                let url = format!("ws://127.0.0.1:8081/websocket?role=master&room_id={}", name.clone());
                                 if client.connected{
                                     self.connected_client = Some(client.clone());
                                 }

@@ -42,6 +42,13 @@ impl FilterTasks for Vec<TaskPayload>{
             .collect()
     }
 
+    fn filter_by_date(&self, date: &String) -> Vec<TaskPayload> {
+        self.into_iter()
+            .filter(|task| task.due_date >= *date)
+            .cloned()
+            .collect()
+    }
+
     fn filter_by_task_name<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>
     (&self, search: T, search_input: String) -> Vec<TaskPayload> 
     {
