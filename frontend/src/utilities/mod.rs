@@ -78,6 +78,7 @@ pub trait FilterTasks{
     fn filter_by_completion(&self, completed: bool) -> Vec<TaskPayload>;
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
+    fn filter_by_date(&self, date: &String) -> Vec<TaskPayload>;
     /// Filters a list of tasks by their name based on a fuzzy search input.
     /// # Parameters
     /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.

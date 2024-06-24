@@ -173,7 +173,8 @@ impl NewCC for MtechServer{
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         setup_custom_fonts(&cc.egui_ctx);
 
-        let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), "Web Console".to_owned()]);
+        let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), "Quote Fullfilled".to_owned(), 
+            "Aging Tasks".to_owned(), "Web Console".to_owned()]);
         let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned()]);
         let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned()]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
@@ -264,7 +265,7 @@ impl NewCC for MtechServer{
             tick_rate: Duration::from_millis(30),
             chart_app: App::new(),
             last_tick: Instant::now(),
-            url: "ws://sock.master-tech.app:8081/websocket?room_id=0&role=master".to_owned(),
+            url: "ws://127.0.0.1:8081:8081/websocket?room_id=0&role=master".to_owned(),
             error: Default::default(),
             client_layout: None,
             text_to_send: Default::default(),
