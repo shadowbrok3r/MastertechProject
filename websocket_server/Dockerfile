@@ -35,6 +35,8 @@ RUN cargo build --release --target x86_64-unknown-linux-musl
 RUN ls -las /server/target/x86_64-unknown-linux-musl/release/
 
 FROM rust:slim-buster
+WORKDIR /
 COPY --from=builder /server/target/x86_64-unknown-linux-musl/release/websocket_server /websocket_server
 EXPOSE 8081
 ENTRYPOINT ["/websocket_server"]
+RUN echo output.log

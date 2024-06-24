@@ -265,7 +265,7 @@ impl NewCC for MtechServer{
             tick_rate: Duration::from_millis(30),
             chart_app: App::new(),
             last_tick: Instant::now(),
-            url: "ws://127.0.0.1:8081:8081/websocket?room_id=0&role=master".to_owned(),
+            url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_owned(),
             error: Default::default(),
             client_layout: None,
             text_to_send: Default::default(),

@@ -264,7 +264,7 @@ async fn main() {
         log_file
     ).unwrap();
     
-    info!("Starting the WebSocket server");
+    println!("Starting the WebSocket server");
 
     // Create the WebSocket server
     let (server, _) = Server::create(|handle| ChatServer {
@@ -282,7 +282,7 @@ async fn main() {
 
     // Spawn a new async task to run the server
     tokio::spawn(async move {
-        info!("Listening on {}", address);
+        println!("Listening on {}", address);
         axum::Server::bind(&address)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await
@@ -290,19 +290,19 @@ async fn main() {
     });
 
     // Read lines from standard input and broadcast them to all rooms
-    let stdin = std::io::stdin();
-    let lines = stdin.lock().lines();
-    for line in lines {
-        let line = line.unwrap();
-        server
-            .call(ChatMessage::Send {
-                text: line,
-                from: Uuid::max().to_string(), // Reserve some ID for the server
-                room_id: 0.to_string(), // Broadcast to all rooms (can be customized)
-                bin: None
-            })
-            .unwrap();
-    }
+    // let stdin = std::io::stdin();
+    // let lines = stdin.lock().lines();
+    // for line in lines {
+    //     let line = line.unwrap();
+    //     server
+    //         .call(ChatMessage::Send {
+    //             text: line,
+    //             from: Uuid::max().to_string(), // Reserve some ID for the server
+    //             room_id: 0.to_string(), // Broadcast to all rooms (can be customized)
+    //             bin: None
+    //         })
+    //         .unwrap();
+    // }
 }
 
 // Handles WebSocket upgrade requests
