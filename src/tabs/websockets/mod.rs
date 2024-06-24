@@ -63,6 +63,7 @@ impl MastertechContext{
                     let connected_client = ConnectedClient {
                         id: self.client_uuid.clone(),
                         client_hash,
+                        connected: true,
                         ..Default::default()
                     };
 
@@ -148,7 +149,8 @@ pub struct WebConsoleFrontend {
     /// History of recorded messages
     pub messages: Vec<String>,
     pub command: Cmd,
-    pub send_specs: bool
+    pub send_specs: bool,
+    pub connected: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -162,6 +164,7 @@ pub enum Cmd{
     DismScan,
     ChkDsk,
     Mbr2Gpt,
+    Quit,
     None
 }
 
@@ -181,7 +184,8 @@ impl WebConsoleFrontend {
             messages: Vec::new(),
             character_index: 0,
             command: Cmd::None,
-            send_specs: false
+            send_specs: false,
+            connected: false,
         }
     }
 
@@ -299,8 +303,9 @@ impl WebConsoleFrontend {
                                 Cmd::LiveData => {
                                     let tx = self.tx.clone();
                                     ui.label(format!("Cmd: {:?}", cmd));
+                                    let connected = self.connected.clone();
                                     spawn(async move { 
-                                        match live_computer_stats(tx.clone()).await{
+                                        match live_computer_stats(tx.clone(), connected).await{
                                             Ok(_) => drop(tx),
                                             Err(e) => debug!("Error with live data {e:?}"),
                                         }
@@ -334,6 +339,9 @@ impl WebConsoleFrontend {
                                     ui.label(format!("Cmd: {:?}", cmd));
                                     info!("Cmd: {cmd:?}");
                                 },
+                                Cmd::Quit => {
+                                    self.connected = false;
+                                }
                                 _ => {
                                     ui.label(format!("Raw Binary: {:?}", bin));
                                 },
@@ -363,10 +371,10 @@ impl WebConsoleFrontend {
     
 }
 
-async fn live_computer_stats(tx: Sender<Vec<u8>>) 
+async fn live_computer_stats(tx: Sender<Vec<u8>>, connected: bool) 
     -> anyhow::Result<(), anyhow::Error>
 {
-    loop{
+    while connected{
         sleep(Duration::from_secs(4)).await;
         let systeminfo: SystemInformation = get_sysinfo().await?;
         tx.send(serialize_system_info(&systeminfo))?;
@@ -374,6 +382,7 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>)
         //     break;
         // }
     }
+    Ok(())
 }
 async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) 
     -> anyhow::Result<(), anyhow::Error>  
