@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
-use database::{schema::TaskPayload, Database};
-use egui::{epaint::Shadow, Align, Button, Color32, ComboBox, Direction, FontId, Frame, Grid, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
+use database::{schema::{TaskNotePayload, TaskPayload}, Database};
+use egui::{epaint::Shadow, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use serde::Serialize;
+use wasm_bindgen_futures::spawn_local;
 
-use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes};
+use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes, Updatable};
 
 use super::ModalState;
 
@@ -17,7 +18,7 @@ pub struct TaskModal{
     #[serde(skip)]
     pub task: Option<TaskPayload>,
     #[serde(skip)]
-    pub chat_view: Option<ChatView>,
+    pub chat_view: ChatView,
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
@@ -47,7 +48,7 @@ impl Default for TaskModal{
             default_height: Some(800.0),
             full_span_content: false,
             state: ModalState::default(),
-            chat_view: None
+            chat_view: ChatView::default()
         }
     }
 }
@@ -63,7 +64,7 @@ impl TaskModal{
             default_height: Some(800.0),
             full_span_content: false,
             state: ModalState::default(),
-            chat_view: Some(chats)
+            chat_view: chats
         }
     }
 }
@@ -82,19 +83,7 @@ impl ModalTypes for TaskModal{
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>{
         let mut response: Option<ModalAction> = None;
-        ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
-        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        ui.style_mut().visuals.widgets.inactive.bg_fill =  Color32::GOLD;
-        ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-        ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
-        ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
-        let avail_size = Vec2::new(570.0,600.0);
+        let avail_size = Vec2::new(600.0,600.0);
         
         StripBuilder::new(ui)
             .cell_layout(Layout::top_down_justified(Align::Center))
@@ -180,8 +169,13 @@ impl DisplayModal for TaskModal {
                                         ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref(), avail_size),
                                         ModalAction::PartOrderPage => display_part_order_page(ui, avail_size),
                                         ModalAction::TaskNotePage => {
-                                            if let Some(chat_view) = &self.chat_view{
-                                                display_chat_page(ui, chat_view, avail_size);
+                                            ui.set_width(avail_size.x);
+                                            ui.add_space(60.0);
+
+                                            if let Some(new_message) = self.chat_view.ui(ui){
+                                                if let (Some(db), Some(task)) = (self.database.clone(), self.task.clone()){
+                                                    task.update_task_notes(new_message, db);
+                                                }
                                             }
                                         },
                                         _ => display_task_page(ui, self.task.as_mut(), avail_size)
@@ -708,26 +702,5 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
         });
     });
     
-    
-}
-
-fn display_chat_page(ui: &mut Ui, chat_view: &ChatView, _avail_size: Vec2){
-    let mut shadow = Shadow::default();
-    shadow.blur = 10.0;
-    shadow.spread = 5.0;
-    shadow.color = Color32::from_rgb(40,36,40);
-    
-    Frame::none()
-        .fill(Color32::from_rgb(20,20,30))
-        .inner_margin(Margin::same(5.0))
-        .shadow(shadow)
-        .stroke(ui.style().visuals.widgets.inactive.bg_stroke)
-        .rounding(Rounding::same(10.0))
-        .show(ui, |ui| {
-            ui.horizontal_top(|ui| ui.add_space(15.0));
-            ui.vertical_centered_justified(|ui| {
-                chat_view.ui(ui);
-            });
-        });
     
 }

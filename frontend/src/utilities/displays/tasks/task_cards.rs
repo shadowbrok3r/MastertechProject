@@ -15,8 +15,6 @@ impl Displayable for TaskPayload{
         database: Database, 
         store_users: &Vec<User>
     )  -> Option<TaskUiActions>{
-        setup_task_styling(ui);
-
         let mut res: Option<TaskUiActions> = None;
         // let task_frame_color = if self.due_date.parse::<>
         let frame_color = date_colors(self.due_date.clone(), self.completed);
@@ -207,25 +205,4 @@ pub fn date_colors(date: String, _complete: bool) -> Color32{
     //     // Color32::from_rgb(31, 204, 178)
     //     Color32::from_rgb(199, 48, 103) // Pink
     // }
-}
-
-fn setup_task_styling(ui: &mut Ui){
-    ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;
-    ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-    
-    ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::GOLD;
-    ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-    ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
-    ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-
-    ui.style_mut().visuals.widgets.open.bg_fill = Color32::from_black_alpha(50);
-    ui.style_mut().visuals.widgets.open.weak_bg_fill = Color32::from_black_alpha(50);
-
-    ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30,30,30);
-
-    ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
-    ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 12);
-    ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
-    // ui.style_mut().visuals.widgets.hovered.fg_stroke = Stroke::new(2.0, Color32::from_rgb(200, 20, 200));
-    ui.style_mut().visuals.widgets.hovered.expansion = 2.0;
 }

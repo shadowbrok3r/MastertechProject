@@ -300,13 +300,9 @@ impl MtechServerContext{
             ModalType::TaskModal(task_modal) => {
                 let modal = if let Some(task) = &task_modal.task{
                     if let Some(notes) = &task.task_note{
-                        let chat_modal = ChatView::new(notes.clone(), self.current_user.as_ref().unwrap().clone());
-                        // info!("We have notes! {:?}", notes);
+                        let chat_modal = ChatView::new(notes.clone(), self.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
                         TaskModal::new(chat_modal).title(task_modal.task.as_ref().unwrap().task_name.clone())
-                    }else{
-                        info!("no notes");
-                        TaskModal::default().title(task_modal.task.as_ref().unwrap().task_name.clone())
-                    }
+                    }else{ TaskModal::new(ChatView::default()).title(task_modal.task.as_ref().unwrap().task_name.clone()) }
                 }else{
                     info!("No task payload?");
                     TaskModal::default().title(task_modal.task.as_ref().unwrap().task_name.clone())

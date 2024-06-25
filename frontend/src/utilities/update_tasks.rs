@@ -1,6 +1,6 @@
 
 
-use database::{schema::{Priority, Record, Status, Store, TaskPayload}, Database};
+use database::{schema::{Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use log::info;
 use surrealdb::opt::RecordId;
 use wasm_bindgen_futures::spawn_local;
@@ -223,6 +223,32 @@ impl Updatable for TaskPayload {
                 .unwrap()
                 .take(0)
                 .unwrap();
+        })
+    }
+
+    fn update_task_notes(&self, new_msg: String, db: Database) {
+        let id = self.id.clone().unwrap();
+        
+        let task_note = TaskNotePayload {
+            task_id: Some(id.clone()),
+            note: new_msg,
+            ..Default::default()
+        };
+        
+        spawn_local(async move {
+            let query = format!("CREATE task_note CONTENT $note");
+
+            // db.database.set("id", id.0).await.unwrap();
+            db.database.set("note", task_note).await.unwrap();
+
+            let update_task: Vec<Record> = db
+                .database
+                .query(query)
+                .await
+                .unwrap()
+                .take(0)
+                .unwrap();
+            info!("Updated notes: {update_task:?}");
         })
     }
 }
