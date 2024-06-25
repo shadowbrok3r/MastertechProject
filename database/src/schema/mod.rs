@@ -232,7 +232,7 @@ pub struct HardwareTests{
     pub ram_test: String
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskNotePayload{
     pub task_id: Option<TaskId>,
     pub everest_initials: String,

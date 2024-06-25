@@ -154,7 +154,7 @@ impl eframe::App for MtechServer {
             match action{
                 TaskUiActions::OpenTaskModal(task) => {
                     let mut task_modal = if let Some(notes) = &task.task_note{
-                        let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone());
+                        let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
                         TaskModal::new(chat_modal)
                     }else{
                         TaskModal::default()
@@ -321,23 +321,23 @@ fn set_style() -> Arc<Style>{
     let theme = CarlDark;
     let mut custom_style: Style = theme.custom_style();
     let mut font = FontId::default();
+    font.size = 12.0;
+    custom_style.override_font_id = Some(font);
     custom_style.spacing.button_padding.x = 2.0;
     custom_style.spacing.button_padding.y = 2.0;
     custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
-    font.size = 12.0;
-    custom_style.override_font_id = Some(font);
     custom_style.spacing.combo_height = 60.0; 
     custom_style.spacing.combo_width = 100.0;
     custom_style.interaction.multi_widget_text_select = false;
     custom_style.interaction.selectable_labels = false;
     custom_style.explanation_tooltips = false;
-    custom_style.url_in_tooltip = false;
-    custom_style.interaction.interact_radius = 15.0;
-    custom_style.interaction.resize_grab_radius_side = 15.0;
-    custom_style.interaction.resize_grab_radius_corner = 18.0;
+    custom_style.url_in_tooltip = true;
+    custom_style.interaction.interact_radius = 10.0;
+    custom_style.interaction.resize_grab_radius_side = 10.0;
+    custom_style.interaction.resize_grab_radius_corner = 10.0;
     custom_style.visuals.window_shadow.spread = 8.0;
     custom_style.visuals.window_shadow.blur = 10.0;
-    custom_style.visuals.selection.stroke.color =  Color32::BLACK;
+    custom_style.visuals.selection.stroke.color =  Color32::from_rgb(29, 209, 161);
     custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
     custom_style.visuals.widgets.inactive.bg_fill =  Color32::from_rgb(15,14,18);
     custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
@@ -346,7 +346,7 @@ fn set_style() -> Arc<Style>{
     custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
     custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
     custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
-    custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+    // custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
     custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
     custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
     let arc_style = Arc::new(custom_style);

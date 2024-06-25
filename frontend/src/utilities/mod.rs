@@ -58,6 +58,7 @@ pub trait Updatable { // This is correctly implemented
     fn update_task_description(&self, description: Option<String>, db: Database);
     fn update_recommendations(&self, recommendations: Option<String>, db: Database);
     fn update_checkin_notes(&self, checkin_notes: Option<String>, db: Database);
+    fn update_task_notes(&self, new_msg: String, db: Database);
 }
 
 pub trait Interaction{ // This is correctly implemented
