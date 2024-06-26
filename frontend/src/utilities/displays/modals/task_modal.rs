@@ -67,6 +67,10 @@ impl TaskModal{
             chat_view: chats
         }
     }
+
+    pub fn update_task(&mut self, task: TaskPayload) {
+        self.task = Some(task);
+    }
 }
 
 impl ModalTypes for TaskModal{
@@ -83,7 +87,7 @@ impl ModalTypes for TaskModal{
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>{
         let mut response: Option<ModalAction> = None;
-        let avail_size = Vec2::new(600.0,600.0);
+        let avail_size = Vec2::new(680.0,600.0);
         
         StripBuilder::new(ui)
             .cell_layout(Layout::top_down_justified(Align::Center))
@@ -114,7 +118,9 @@ impl DisplayModal for TaskModal {
                                 _ => {ticket_page = true},
                             };
 
-                            if Button::new(RichText::new("Delete Task").color(Color32::DARK_RED)).ui(ui).double_clicked(){
+                            
+
+                            if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked(){
             
                             }
 
@@ -170,10 +176,11 @@ impl DisplayModal for TaskModal {
                                         ModalAction::PartOrderPage => display_part_order_page(ui, avail_size),
                                         ModalAction::TaskNotePage => {
                                             ui.set_width(avail_size.x);
-                                            ui.add_space(60.0);
+                                            // ui.add_space(15.0);
 
                                             if let Some(new_message) = self.chat_view.ui(ui){
                                                 if let (Some(db), Some(task)) = (self.database.clone(), self.task.clone()){
+                                                    
                                                     task.update_task_notes(new_message, db);
                                                 }
                                             }

@@ -13,7 +13,7 @@ use serde::Serialize;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use database::{schema::{ConnectedClient, LiveTaskPayload, TaskPayload, User}, Database};
+use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::{ClientDisplay, ClientConnection}}, 
@@ -94,6 +94,10 @@ pub struct MtechServerContext{
     pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
     #[serde(skip)]
     pub live_tasks_rx: Receiver<(Action, LiveTaskPayload)>,
+    #[serde(skip)]
+    pub notes_tx: Sender<(Action, TaskNotePayload)>,
+    #[serde(skip)]
+    pub notes_rx: Receiver<(Action, TaskNotePayload)>,
 
     #[serde(skip)]
     pub store_users_tx: Sender<Vec<User>>,
@@ -124,6 +128,7 @@ pub struct MtechServerContext{
     pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
     #[serde(skip)]
     pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
+
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
     pub data_update: Option<Rc<Cell<Option<u32>>>>,
@@ -146,9 +151,7 @@ pub struct MtechServerContext{
     pub text_to_send: String,
 
     /// Widgets / Modals / Ui for portions throughout the app
-    pub my_tasks_opened: bool,
-    pub store_tasks_opened: bool,
-    pub completed_tasks_opened: bool,
+    pub new_note: bool,
     pub search_input: String,
     pub task_layouts: HashMap<String, TaskLayout>,
     #[serde(skip)]
@@ -229,7 +232,8 @@ impl NewCC for MtechServer{
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
-        
+        let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
+
         let context = MtechServerContext{
             current_user: None,
             first_run: true,
@@ -252,6 +256,7 @@ impl NewCC for MtechServer{
             ui_actions_tx, ui_actions_rx,
             connected_clients_tx, connected_clients_rx,
             client_connection_tx, client_connection_rx,
+            notes_tx, notes_rx,
 
             // MODALS / LAYOUTS
             task_layouts: HashMap::new(),
@@ -276,9 +281,7 @@ impl NewCC for MtechServer{
             open_tabs,
             style: None,
             added_nodes: Vec::new(),
-            my_tasks_opened: false,
-            store_tasks_opened: false,
-            completed_tasks_opened: false,
+            new_note: false,
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
         };
         
@@ -300,7 +303,9 @@ impl MtechServerContext{
             ModalType::TaskModal(task_modal) => {
                 let modal = if let Some(task) = &task_modal.task{
                     if let Some(notes) = &task.task_note{
-                        let chat_modal = ChatView::new(notes.clone(), self.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
+                        info!("Any new notes here? {:?}", notes.clone());
+                        let chat_modal = ChatView::new(notes.to_owned(), self.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
+                        
                         TaskModal::new(chat_modal).title(task_modal.task.as_ref().unwrap().task_name.clone())
                     }else{ TaskModal::new(ChatView::default()).title(task_modal.task.as_ref().unwrap().task_name.clone()) }
                 }else{
@@ -338,7 +343,6 @@ impl MtechServerContext{
             //             || ChatView::new(notes, current_user),
             //             move |ui, _stay_open, _page_state| chat_modal.ui(ui));
             //         }
-
             // }
             _ => {},
         }

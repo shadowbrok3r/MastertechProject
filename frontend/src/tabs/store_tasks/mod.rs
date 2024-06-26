@@ -5,7 +5,6 @@ use egui::Ui;
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {
         if let Some(tasks) = self.tasks.clone(){
-            self.store_tasks_opened = true;
             let page = "store_tasks";
             let mut col_names = Vec::new();
             let database = self.database.as_ref().unwrap().clone();   

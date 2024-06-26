@@ -53,10 +53,10 @@ pub fn item_ui(ui: &mut Ui, item: easy_mark::Item<'_>) {
             if style.small && !style.raised {
                 ui.with_layout(Layout::left_to_right(Align::BOTTOM), |ui| {
                     ui.set_height(row_height);
-                    ui.add(Hyperlink::from_label_and_url(label, url));
+                    ui.add(Hyperlink::from_label_and_url(label, url).open_in_new_tab(true));
                 });
             } else {
-                ui.add(Hyperlink::from_label_and_url(label, url));
+                ui.add(Hyperlink::from_label_and_url(label, url).open_in_new_tab(true));
             }
         }
 

@@ -8,10 +8,10 @@ pub struct EasyMarkEditor {
     message: String,
     highlight_editor: bool,
     show_rendered: bool,
-    default_msg: String,
-    show_example: bool,
+    // default_msg: String,
+    // show_example: bool,
     #[cfg_attr(feature = "serde", serde(skip))]
-    highlighter: highlighter::MemoizedEasymarkHighlighter,
+    pub highlighter: highlighter::MemoizedEasymarkHighlighter,
 }
 
 impl PartialEq for EasyMarkEditor {
@@ -26,10 +26,10 @@ impl Default for EasyMarkEditor {
         Self {
             message: String::new(),
             highlight_editor: true,
-            show_rendered: true,
+            show_rendered: false,
             highlighter: Default::default(),
-            default_msg: DEFAULT_CODE.trim().to_owned(),
-            show_example: false,
+            // default_msg: DEFAULT_CODE.trim().to_owned(),
+            // show_example: false,
         }
     }
 }
@@ -39,10 +39,10 @@ impl EasyMarkEditor {
         Self {
             message: msg,
             highlight_editor: true,
-            show_rendered: true,
+            show_rendered: false,
             highlighter: Default::default(),
-            default_msg: DEFAULT_CODE.trim().to_owned(),
-            show_example: false,
+            // default_msg: DEFAULT_CODE.trim().to_owned(),
+            // show_example: false,
         }
     }
 
@@ -137,6 +137,10 @@ impl EasyMarkEditor {
         self.message.clone()
     }
 
+    pub fn clear(&mut self) {
+        self.message.clear();
+    }
+
     pub fn panels(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.ui(ui);
@@ -178,7 +182,7 @@ fn nested_hotkeys_ui(ui: &mut egui::Ui) {
     });
 }
 
-fn shortcuts(ui: &Ui, message: &mut dyn TextBuffer, ccursor_range: &mut CCursorRange) -> bool {
+pub fn shortcuts(ui: &Ui, message: &mut dyn TextBuffer, ccursor_range: &mut CCursorRange) -> bool {
     let mut any_change = false;
 
     if ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_INDENT)) {

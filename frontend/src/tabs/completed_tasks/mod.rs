@@ -6,7 +6,6 @@ impl MtechServerContext{
     pub fn completed_tasks(&mut self, ui: &mut Ui){ 
         if let Some(tasks) = self.tasks.clone(){
             if let Some(users) = self.store_users.as_ref(){
-                self.completed_tasks_opened = true;
                 let mut col_names = Vec::new();
                 let page = "completed_tasks";
                 let database = self.database.as_ref().unwrap().clone();   

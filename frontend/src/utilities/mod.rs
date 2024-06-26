@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use displays::{modals::create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, modals::task_modal::{ModalAction, TaskModal}};
-use egui::{vec2, Align, Align2, Button, Color32, Context, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Ui, Widget, Window};
+use egui::{vec2, Align, Align2, Button, Color32, Context, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
 use database::{schema::{Priority, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
@@ -167,12 +167,19 @@ pub trait ModalTypes: Default{
         let modal_vertical_margins = (75.0).at_most(screen_height * 0.1);
 
         let mut window = Window::new(&*self.modal_state().title.as_ref().unwrap())
+            .frame(
+                egui::Frame::default()
+                .inner_margin(Margin::symmetric(15.0, 0.0))
+                .outer_margin(Margin::same(20.0))
+                .stroke(Stroke::new(2.0, Color32::from_additive_luminance(150)))
+                .rounding(Rounding::same(15.0))
+            )
             .pivot(Align2::CENTER_TOP)
             .fixed_pos(ctx.screen_rect().center_top() + vec2(0.0, modal_vertical_margins))
             .constrain_to(ctx.screen_rect())
-            .max_height(570.0)
-            .max_width(650.0)
-            .default_width(600.0)
+            .max_height(600.0)
+            .max_width(680.0)
+            .default_width(680.0)
             .collapsible(false)
             .resizable(false)
             .title_bar(false);
@@ -195,7 +202,7 @@ pub trait ModalTypes: Default{
             ui.spacing_mut().item_spacing.y = 0.0;
 
             egui::Frame {
-                inner_margin: egui::Margin::symmetric(5.0, 0.0),
+                inner_margin: Margin::same(0.0),
                 ..Default::default()
             }
             .show(ui, |ui| {
@@ -203,11 +210,7 @@ pub trait ModalTypes: Default{
                 ui.add_space(item_spacing_y);
 
                 egui::Frame {
-                    inner_margin: egui::Margin {
-                        top: 0.0,
-                        bottom: 10.0,
-                        ..Default::default()
-                    },
+                    inner_margin: Margin::same(0.0),
                     ..Default::default()
                 }
                 .show(ui, |ui| {
@@ -251,7 +254,7 @@ pub trait ModalTypes: Default{
         painter.add(Shape::rect_filled(
             ctx.screen_rect(),
             Rounding::ZERO,
-            Color32::from_black_alpha(210),
+            Color32::from_black_alpha(240),
         ));
     }
 
@@ -260,7 +263,7 @@ pub trait ModalTypes: Default{
         egui::Frame::default()
             .fill(Color32::from_rgb(20, 20, 25))
             .rounding(Rounding{nw: 15.0,ne: 15.0,sw: 0.0,se: 0.0})
-            .inner_margin(Margin::same(7.0))
+            .inner_margin(Margin::same(0.0))
             .outer_margin(Margin::same(0.0))
             .show(ui, |ui| 
         {
