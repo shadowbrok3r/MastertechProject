@@ -11,16 +11,37 @@ use std::{collections::HashMap, fmt::Debug};
 use super::LiveUpdate;
 
 
-pub fn handle_live_data(data: (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
-    match data.0{
+pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
+    match action{
         Action::Create => {
-            data.1.handle_live_create(existing_tasks)?;
+            data.handle_live_create(existing_tasks)?;
         },
         Action::Update => {
-            data.1.handle_live_delete(existing_tasks)?;
+            data.handle_live_delete(existing_tasks)?;
         },
         Action::Delete => {
-            data.1.handle_live_update(existing_tasks)?;
+            data.handle_live_update(existing_tasks)?;
+        },
+        _ => {},
+    }
+    Ok(())
+}
+
+pub fn handle_live_notes(
+    (action, data): (Action, TaskNotePayload), 
+    existing_tasks: &mut Vec<TaskPayload>
+) 
+    -> anyhow::Result<(), anyhow::Error>
+{
+    match action{
+        Action::Create => {
+            update_or_insert_notes(data, existing_tasks)?;
+        },
+        Action::Update => {
+            update_or_insert_notes(data, existing_tasks)?;
+        },
+        Action::Delete => {
+            update_or_insert_notes(data, existing_tasks)?;
         },
         _ => {},
     }
@@ -46,6 +67,24 @@ pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug>(existi
     Ok(())
 }
 
+// impl LiveUpdate for TaskNotePayload {
+//     fn handle_live_create(self, existing_tasks: &mut Vec<TaskNotePayload>) -> anyhow::Result<(), anyhow::Error>{
+//         info!("Data was Created: {:?}", self);
+//         update_or_insert(existing_tasks, self)?;
+//         Ok(())
+//     }
+//     fn handle_live_update(self, _existing_tasks: &mut Vec<TaskNotePayload>) -> anyhow::Result<(), anyhow::Error>{
+//         info!("Data was Updated: {:?}", self);
+//         Ok(())
+//     }
+//     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskNotePayload>) -> anyhow::Result<(), anyhow::Error>{
+//         info!("Data was Deleted: {:?}", self);
+//         update_or_insert(existing_tasks, self)?;
+//         Ok(())
+//     }
+// }
+
+
 impl LiveUpdate for LiveTaskPayload {
     fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
         info!("Data was Created: {:?}", self);
@@ -65,6 +104,30 @@ impl LiveUpdate for LiveTaskPayload {
     }
 }
 
+pub fn update_or_insert_notes(
+    new_note: TaskNotePayload,
+    tasks: &mut Vec<TaskPayload>
+) 
+    -> anyhow::Result<(), anyhow::Error>
+{
+    if let Some(ref task_id) = new_note.task_id {
+        let mut updated = false;
+
+        for task in tasks.iter_mut() {
+            if let Some(existing_task_id) = &task.id {
+                if existing_task_id.clone() == task_id.clone(){
+                    info!("ID's match: {:?} // {:?}", existing_task_id, task_id);
+                    // let updated_task = convert_live_to_task(new_note.clone(), task);
+                    task.task_note.as_mut().unwrap_or(&mut Vec::new()).push(new_note);
+                    updated = true;
+                    break;
+                }
+            }
+        }
+        if updated{}
+    }
+    Ok(())
+}
 
 pub fn update_or_insert(
     tasks: &mut Vec<TaskPayload>, 
@@ -133,6 +196,15 @@ pub fn listen_data<T>(db: Database, tx: Sender<(Action, T)>)
     });
 }
 
+pub fn listen_task_notes(db: Database, tx: Sender<(Action, TaskNotePayload)>) 
+    // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
+{
+    spawn_local(async move {
+        let task_stream: Stream<Client, Vec<TaskNotePayload>> = db.database.select(TASK_NOTE_TABLE).live().await.unwrap();
+        handle_streams(task_stream, tx).await;
+    });
+}
+
 pub fn listen_tasks(db: Database, tx: Sender<(Action, LiveTaskPayload)>) 
     // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
 {
@@ -141,8 +213,6 @@ pub fn listen_tasks(db: Database, tx: Sender<(Action, LiveTaskPayload)>)
         handle_streams(task_stream, tx).await;
     });
 }
-
-
 
 async fn handle_streams<T>(
     mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,

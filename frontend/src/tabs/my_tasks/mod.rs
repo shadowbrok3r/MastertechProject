@@ -6,7 +6,6 @@ impl MtechServerContext{
     pub fn my_tasks(&mut self, ui: &mut Ui){ 
         if let Some(tasks) = self.tasks.clone(){
             if let Some(users) = self.store_users.as_ref(){
-                self.my_tasks_opened = true;
                 let page = "my_tasks";
                 let col_names = vec!["Todo".to_string(), "In Repair".to_string(), "Complete".to_string()];
                 let database = self.database.as_ref().unwrap().clone();   

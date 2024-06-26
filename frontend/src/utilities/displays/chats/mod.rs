@@ -1,10 +1,11 @@
+use chrono::{DateTime, Local, Utc};
 use database::schema::{TaskId, TaskNotePayload, User};
 use eframe::emath::Vec2;
 use egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Label, Layout, Margin, Rangef, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontSelection, Frame, Label, Layout, Margin, Pos2, Rangef, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
 };
 use log::info;
-use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
+use markdown_editor::{shortcuts, EasyMarkEditor, SHORTCUT_ENTER};
 use wasm_bindgen_futures::spawn_local;
 use super::modals::ModalState;
 
@@ -38,6 +39,7 @@ impl Default for ChatView{
 
 impl ChatView {
     pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: TaskId) -> Self {
+        // info!("Before messages: {messages:?}");
         ChatView {
             current_user: Some(current_user),
             messages,
@@ -46,6 +48,10 @@ impl ChatView {
             markdown_editor: EasyMarkEditor::default(),
             task_id: Some(task_id)
         }
+    }
+
+    pub fn insert_note(&mut self, new_note: TaskNotePayload){
+        self.messages.push(new_note);
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Option<String>{
@@ -61,6 +67,8 @@ impl ChatView {
         c_panel_marg.top = 10.0;
         b_panel_marg.bottom = 10.0;
         let color = Color32::from_rgb(6,6,10);
+
+        let markdown_editor = &mut self.markdown_editor;
 
         let central_panel_frame = Frame::none().fill(color)
             .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
@@ -80,14 +88,16 @@ impl ChatView {
             ui.visuals_mut().code_bg_color = Color32::BLACK;
             ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             let enter_pressed = ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_ENTER));
-            if  enter_pressed{
+            if enter_pressed{
                 info!("Enter shortcut pressed");
             }
-            if let Some(response) = self.markdown_editor.ui(ui) 
+            
+            if let Some(response) = markdown_editor.ui(ui)
             {
                 if response.clicked(){
-                    let txt = self.markdown_editor.submit();
+                    let txt = markdown_editor.submit();
                     info!("Txt: {txt}");
+                    markdown_editor.clear();
                     new_msg = Some(txt);
                 }
             }
@@ -110,7 +120,7 @@ impl ChatView {
                 let fixed_height = 50.0;
                 let min_width = 200.0;
                 let other = min_width - 30.0;
-                for item in self.messages.iter(){
+                for item in self.messages.iter_mut(){
                     let mut is_message_from_myself = false;
                     if let Some(user) = &self.current_user{
                         is_message_from_myself = if item.everest_initials == user.everest_initials{
@@ -137,7 +147,7 @@ impl ChatView {
                         let rounding = 8.0;
                         let margin = 8.0;
                         
-                        ui.set_min_width(min_width);
+                        // ui.set_min_width(min_width);
                         let rnding = Rounding {
                             ne: if is_message_from_myself { 0.0 } else { rounding },
                             nw: if is_message_from_myself { rounding } else { 0.0 },
@@ -152,7 +162,7 @@ impl ChatView {
                             .fill(msg_color)
                             .show(ui, |ui| {
                                 ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-                                ui.set_min_width(min_width);
+                                ui.set_min_width(min_width - 40.0);
                                 // Use a vertical layout to stack the name and message content
                                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
 
@@ -165,19 +175,29 @@ impl ChatView {
                                     b_panel_marg.top = 3.0;
 
                                     let color = Color32::from_rgb(10,10,12);
-                                    let from_frame_color = Color32::from_white_alpha(2);
 
-                                    let from_frame = Frame::none()
-                                        .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(Margin::same(0.0))
-                                        .inner_margin(Margin::same(6.0)).rounding(rnding);
+                                    // let from_frame_color = Color32::from_white_alpha(2);
+                                    // let from_frame = Frame::none()
+                                    //     .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(Margin::same(0.0))
+                                    //     .inner_margin(Margin::same(6.0)).rounding(rnding);
 
                                     let note_frame = Frame::none().fill(color)
                                         .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
                                         .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
                             
 
-                                    let txt = RichText::new(&item.note).monospace();
-                                    let from = RichText::new(&item.everest_initials).strong().monospace().color(Color32::BLUE);
+
+                                    // let txt = RichText::new(&item.note).monospace();
+                                    // let txt = RichText::new(&item.note).monospace()
+                                    //     .append_to(
+                                    //         &mut layout_job, ui.style(), 
+                                    // FontSelection::Default,
+                                    // Align::Center
+                                    // );
+                                    let from = RichText::new(&item.everest_initials).strong().monospace().color(Color32::LIGHT_BLUE);
+
+
+                                    
                                     // from_frame.show(ui, |ui| {
                                     if is_message_from_myself {
                                         ui.with_layout(Layout::from_main_dir_and_cross_align(
@@ -185,11 +205,22 @@ impl ChatView {
                                             Align::Min,
                                         ), |ui| {
                                             ui.add_space(8.0);
-                                            ui.label(from);
+                                            Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30.0, 20.0)).sense(Sense::hover()).ui(ui);
+                                            
                                             ui.add_space(20.0);
-                                            ui.label(item.created_at.clone());
+                                            let parsed_date = DateTime::parse_from_rfc3339(&item.created_at.clone())
+                                                .unwrap_or_default()
+                                                .with_timezone(&Local);
+                                        
+                                            let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
+                                            ui.label(RichText::new(formatted_date).weak());
+                                            ui.add_space(15.0);
                                             ui.add_space(other);
-                                            Button::new("X").rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::splat(10.0)).ui(ui);
+                                            let btn = Button::new(RichText::new("X").small().weak().color(Color32::LIGHT_RED))
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                            if btn.clicked(){
+                                                
+                                            }
                                         });
                                     } else{
                                         ui.with_layout(Layout::from_main_dir_and_cross_align(
@@ -197,9 +228,15 @@ impl ChatView {
                                             Align::Min,
                                         ), |ui| {
                                             ui.add_space(8.0);
-                                            ui.label(from);
-                                            ui.add_space(20.0);
-                                            ui.label(item.created_at.clone());
+                                            Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30.0, 20.0)).sense(Sense::hover()).ui(ui);
+                                            ui.add_space(35.0);
+                                            let parsed_date = DateTime::parse_from_rfc3339(&item.created_at.clone())
+                                                .unwrap_or_default()
+                                                .with_timezone(&Local);
+                                        
+                                            let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
+                                            ui.label(RichText::new(formatted_date).small().weak());
+                                            // ui.add_space(15.0);
                                         });
                                     }
                                     note_frame.show(ui, |ui| {
@@ -207,7 +244,40 @@ impl ChatView {
                                             Direction::TopDown,
                                             Align::Center,
                                         ), |ui| {
-                                            ui.label(txt);
+                                            // ui.label(txt);
+                                            // let mut layout_job = markdown_editor.highlighter.highlight(ui.style(), &item.note.as_str());
+                                            // layout_job.wrap.max_width = wrap_width;
+                                            // let x = ui.fonts(|f| f.layout_job(layout_job.clone()));
+                                            // ui.painter().galley(Pos2::default(), x, Color32::default());
+                                            // RichText::new(&item.note).monospace()
+                                            //     .append_to(
+                                            //         &mut layout_job, ui.style(), 
+                                            // FontSelection::Default,
+                                            // Align::Center
+                                            // );
+                                            ui.set_width(ui.available_width());
+                                            viewer::easy_mark(ui, &item.note);
+
+                                            // let mut layouter = |ui: &egui::Ui, easymark: &str, wrap_width: f32| {
+                                            //     let mut layout_job = markdown_editor.highlighter.highlight(ui.style(), easymark);
+                                            //     layout_job.wrap.max_width = wrap_width;
+                                            //     ui.fonts(|f| f.layout_job(layout_job))
+                                            // };
+                                            // let response = ui.add(
+                                            //     egui::TextEdit::multiline(&mut item.note)
+                                            //         .desired_width(f32::INFINITY).font(egui::TextStyle::Monospace) 
+                                            //         .layouter(&mut layouter),
+                                            // );
+                                            // if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {
+                                            //     if let Some(mut ccursor_range) = state.cursor.char_range() {
+                                            //         let any_change = shortcuts(ui, &mut item.note, &mut ccursor_range);
+                                            //         if any_change {
+                                            //             state.cursor.set_char_range(Some(ccursor_range));
+                                            //             state.store(ui.ctx(), response.id);
+                                            //         }
+                                            //     }
+                                            // }
+                                            
                                         });
                                     });
                                 });

@@ -4,7 +4,7 @@ use log::info;
 use ratframe::NewCC;
 use surrealdb::Action;
 use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{disconnect_client, get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_update, listen_data, listen_tasks}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{disconnect_client, get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
 use wasm_cookies::CookieOptions;
 use web_time::Instant;
@@ -75,12 +75,14 @@ impl eframe::App for MtechServer {
                     let initial_tasks_tx = self.context.initial_tasks_tx.clone();
                     let store_users_tx = self.context.store_users_tx.clone();
                     let tx = self.context.connected_clients_tx.clone();
-
+                    let notes_tx = self.context.notes_tx.clone();
                     if let Some(usr) = self.context.current_user.as_ref(){
                         get_tasks(db.clone(), initial_tasks_tx);
                         get_store_users(db.clone(), store_users_tx, usr.store);
                         listen_tasks(db.clone(), live_tasks_tx);
                         listen_data(db.clone(), live_clients_tx);
+                        listen_task_notes(db.clone(), notes_tx);
+
                         let user = usr.clone();
                         spawn_local(async move {
                             get_connected_clients(db, tx, user).await.unwrap();
@@ -104,7 +106,8 @@ impl eframe::App for MtechServer {
                                     get_tasks(db.clone(), initial_tasks_tx);
                                     get_store_users(db.clone(), store_users_tx, usr.store);
                                     listen_tasks(db.clone(), live_tasks_tx);
-            
+                                    listen_task_notes(db.clone(), notes_tx);
+
                                     let toast = &mut self.context.toasts;
                 
                                     let auth_toast = Toast{
@@ -169,10 +172,7 @@ impl eframe::App for MtechServer {
                     self.context.current_modal = ModalType::CreateTaskModal(create_modal);
                     self.context.create_task_modal_handler.open();
                 },
-                TaskUiActions::Response(_res) => {
-
-                    
-                }
+                TaskUiActions::Response(_res) => { }
             }
         }
 
@@ -182,13 +182,28 @@ impl eframe::App for MtechServer {
             }
         }
 
-        while let Ok(ref new_data) = self.context.live_clients_rx.try_recv(){
-            match new_data.0{
-                Action::Create => handle_live_create(&mut self.context.clients, new_data.1.clone()).unwrap_or(()),
-                Action::Update => handle_live_update(&mut self.context.clients, new_data.1.clone()).unwrap_or(()),
-                Action::Delete => handle_live_delete(&mut self.context.clients, new_data.1.clone()).unwrap_or(()),
+        while let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
+            match action{
+                Action::Create => handle_live_create(&mut self.context.clients, new_client.clone()).unwrap_or(()),
+                Action::Update => handle_live_update(&mut self.context.clients, new_client.clone()).unwrap_or(()),
+                Action::Delete => handle_live_delete(&mut self.context.clients, new_client.clone()).unwrap_or(()),
                 _ => (),
             };
+        }
+
+        while let Ok(payload) = self.context.notes_rx.try_recv(){
+            handle_live_notes(payload.clone(), &mut self.context.tasks.as_mut().unwrap_or(&mut Vec::new())).unwrap_or(());
+            if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal{
+                info!("task_modal");
+                if let Some(task) = task_modal.task.as_mut(){
+                    info!("got a task");
+                    let current_notes = task.task_note.as_mut().unwrap();
+                    info!("current_notes: {:?}", current_notes);
+                    current_notes.push(payload.1.clone());
+                    task_modal.chat_view.insert_note(payload.1);
+                    // self.context.new_note = true;
+                }
+            }
         }
 
         if let Ok(state) = self.context.app_state_rx.try_recv(){
@@ -238,6 +253,7 @@ impl eframe::App for MtechServer {
             }
 
         }
+        
         // Always checking authentication.
         match &self.state{
             //if auth'd, user shall be allowed
