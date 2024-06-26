@@ -1,7 +1,7 @@
 use database::schema::{TaskId, TaskNotePayload, User};
 use eframe::emath::Vec2;
 use egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Frame, Label, Layout, Margin, Rangef, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Label, Layout, Margin, Rangef, Rect, RichText, Rounding, ScrollArea, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
 };
 use log::info;
 use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
@@ -96,7 +96,9 @@ impl ChatView {
             ui.visuals_mut().code_bg_color = Color32::BLACK;
             ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             let enter_pressed = ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_ENTER));
-
+            if  enter_pressed{
+                info!("Enter shortcut pressed");
+            }
             if let Some(response) = self.markdown_editor.ui(ui) 
             {
                 if response.clicked(){
@@ -121,7 +123,9 @@ impl ChatView {
             {
 
                 let max_msg_width = ui.available_width() / 2.5;
-
+                let fixed_height = 50.0;
+                let min_width = 200.0;
+                let other = min_width - 15.0;
                 for item in self.messages.iter(){
                     let mut is_message_from_myself = false;
                     if let Some(user) = &self.current_user{
@@ -137,66 +141,90 @@ impl ChatView {
                         Layout::top_down(Align::Min)
                     };
 
+                    let msg_color = if is_message_from_myself {
+                        ui.style().visuals.widgets.inactive.bg_fill
+                    } else {
+                        ui.style().visuals.widgets.active.weak_bg_fill
+                    };
+
                     ui.with_layout(layout, |ui| {
                         ui.set_max_width(max_msg_width);
 
-                        // let mut measure = |text| {
-                        //     let label = Label::new(text);
-                        //     // We need to calculate the text width here to enable the typical
-                        //     // chat bubble layout where the own bubbles are right-aligned and
-                        //     // the text within is left-aligned.
-                        //     let (_pos, galley, _response) = label
-                        //         .layout_in_ui(&mut ui.child_ui(ui.max_rect(), *ui.layout()));
-                        //     let rect = galley.rect;
-                        //     // Calculate the width of the frame based on the width of
-                        //     // the text and add 0.1 to account for floating point errors.
-                        //     f32::min(
-                        //         rect.width() / 2.5,// + inner_margin * 2.0 + outer_margin * 2.0 + 0.1,
-                        //         max_msg_width,
-                        //     )
-                        // };
-
-                        // let content = RichText::new(&item.note);
-                        // let mut msg_width = measure(content.clone());
-                        let name = RichText::new(&item.from).strong();
-                        // let width = measure(name.clone());
-                        // msg_width = f32::max(msg_width, width);
-                        let msg_width = ui.available_width() / 2.5;
-
-                        // Set the width of the ui to the width of the message.
-                        ui.set_min_width(msg_width);
-
-                        let msg_color = if is_message_from_myself {
-                            ui.style().visuals.widgets.inactive.bg_fill
-                        } else {
-                            ui.style().visuals.widgets.active.weak_bg_fill
-                        };
-
                         let rounding = 8.0;
                         let margin = 8.0;
+                        
+                        ui.set_min_width(min_width);
+                        let rnding = Rounding {
+                            ne: if is_message_from_myself { 0.0 } else { rounding },
+                            nw: if is_message_from_myself { rounding } else { 0.0 },
+                            se: rounding,
+                            sw: rounding,
+                        };
+
                         let response = Frame::none()
-                            .rounding(Rounding {
-                                ne: if is_message_from_myself {
-                                    0.0
-                                } else {
-                                    rounding
-                                },
-                                nw: if is_message_from_myself {
-                                    rounding
-                                } else {
-                                    0.0
-                                },
-                                se: rounding,
-                                sw: rounding,
-                            })
+                            .rounding(rnding)
                             .inner_margin(margin)
                             .outer_margin(margin)
                             .fill(msg_color)
                             .show(ui, |ui| {
-                                ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                                    Label::new(name).ui(ui);
+                                ui.set_min_height(fixed_height);  // Set the fixed height for the message box
 
-                                    ui.label(&item.note);
+                                // Use a vertical layout to stack the name and message content
+                                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+
+                                    let mut shadow = Shadow::default();
+                                    shadow.blur = 3.0;
+                                    shadow.spread = 3.0;
+                                    shadow.color = Color32::from_rgb(40,36,40);
+                                    
+                                    let mut b_panel_marg = Margin::default();
+                                    b_panel_marg.top = 3.0;
+
+                                    let color = Color32::from_rgb(10,10,12);
+                                    let from_frame_color = Color32::from_white_alpha(2);
+
+                                    let from_frame = Frame::none()
+                                        .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(Margin::same(0.0))
+                                        .inner_margin(Margin::same(6.0)).rounding(rnding);
+
+                                    let note_frame = Frame::none().fill(color)
+                                        .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+                                        .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
+                            
+
+                                    let txt = RichText::new(&item.note).monospace();
+                                    let from = RichText::new(&item.from).strong().monospace();
+
+                                    // from_frame.show(ui, |ui| {
+                                        if is_message_from_myself {
+                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                Direction::RightToLeft,
+                                                Align::Min,
+                                            ), |ui| {
+                                                ui.set_min_width(min_width);
+                                                ui.label(from);
+                                                ui.add_space(other);
+                                                ui.button("X");
+                                            });
+                                        } else{
+                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                Direction::LeftToRight,
+                                                Align::Min,
+                                            ), |ui| {
+                                                ui.set_min_width(min_width);
+                                                ui.label(from);
+                                            });
+                                        }
+                                    // });
+                                    note_frame.show(ui, |ui| {
+                                        ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                            Direction::TopDown,
+                                            Align::Center,
+                                        ), |ui| {
+                                            ui.set_min_width(min_width);
+                                            ui.label(txt);
+                                        });
+                                    });
                                 });
                             })
                             .response;
