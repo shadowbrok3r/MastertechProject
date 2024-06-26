@@ -109,7 +109,7 @@ impl ChatView {
                 let max_msg_width = ui.available_width() / 2.5;
                 let fixed_height = 50.0;
                 let min_width = 200.0;
-                let other = min_width - 15.0;
+                let other = min_width - 30.0;
                 for item in self.messages.iter(){
                     let mut is_message_from_myself = false;
                     if let Some(user) = &self.current_user{
@@ -198,6 +198,8 @@ impl ChatView {
                                         ), |ui| {
                                             ui.add_space(8.0);
                                             ui.label(from);
+                                            ui.add_space(20.0);
+                                            ui.label(item.created_at.clone());
                                         });
                                     }
                                     note_frame.show(ui, |ui| {
