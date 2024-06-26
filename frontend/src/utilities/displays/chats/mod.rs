@@ -13,17 +13,11 @@ pub mod highlighter;
 pub mod parser;
 pub mod viewer;
 
-#[derive(Debug, Clone, Default)]
-pub struct ChatMessage {
-    pub note: String,
-    pub from: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct ChatView{
     pub state: ModalState,
     pub title: String,
-    pub messages: Vec<ChatMessage>,
+    pub messages: Vec<TaskNotePayload>,
     pub current_user: Option<User>,
     pub markdown_editor: EasyMarkEditor,
     pub task_id: Option<TaskId>
@@ -44,16 +38,6 @@ impl Default for ChatView{
 
 impl ChatView {
     pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: TaskId) -> Self {
-        let messages = messages
-        .into_iter()
-        .map(|chat_message| 
-            ChatMessage {
-                note: chat_message.note,
-                from: chat_message.everest_initials
-            }
-        )
-        .collect();
-    
         ChatView {
             current_user: Some(current_user),
             messages,
@@ -129,7 +113,7 @@ impl ChatView {
                 for item in self.messages.iter(){
                     let mut is_message_from_myself = false;
                     if let Some(user) = &self.current_user{
-                        is_message_from_myself = if item.from == user.everest_initials{
+                        is_message_from_myself = if item.everest_initials == user.everest_initials{
                             true
                         } else { false };
                     }
@@ -168,7 +152,7 @@ impl ChatView {
                             .fill(msg_color)
                             .show(ui, |ui| {
                                 ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-
+                                ui.set_min_width(min_width);
                                 // Use a vertical layout to stack the name and message content
                                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
 
@@ -193,35 +177,34 @@ impl ChatView {
                             
 
                                     let txt = RichText::new(&item.note).monospace();
-                                    let from = RichText::new(&item.from).strong().monospace();
-
+                                    let from = RichText::new(&item.everest_initials).strong().monospace().color(Color32::BLUE);
                                     // from_frame.show(ui, |ui| {
-                                        if is_message_from_myself {
-                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                                Direction::RightToLeft,
-                                                Align::Min,
-                                            ), |ui| {
-                                                ui.set_min_width(min_width);
-                                                ui.label(from);
-                                                ui.add_space(other);
-                                                ui.button("X");
-                                            });
-                                        } else{
-                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                                Direction::LeftToRight,
-                                                Align::Min,
-                                            ), |ui| {
-                                                ui.set_min_width(min_width);
-                                                ui.label(from);
-                                            });
-                                        }
-                                    // });
+                                    if is_message_from_myself {
+                                        ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                            Direction::RightToLeft,
+                                            Align::Min,
+                                        ), |ui| {
+                                            ui.add_space(8.0);
+                                            ui.label(from);
+                                            ui.add_space(20.0);
+                                            ui.label(item.created_at.clone());
+                                            ui.add_space(other);
+                                            Button::new("X").rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::splat(10.0)).ui(ui);
+                                        });
+                                    } else{
+                                        ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                            Direction::LeftToRight,
+                                            Align::Min,
+                                        ), |ui| {
+                                            ui.add_space(8.0);
+                                            ui.label(from);
+                                        });
+                                    }
                                     note_frame.show(ui, |ui| {
                                         ui.with_layout(Layout::from_main_dir_and_cross_align(
                                             Direction::TopDown,
                                             Align::Center,
                                         ), |ui| {
-                                            ui.set_min_width(min_width);
                                             ui.label(txt);
                                         });
                                     });
