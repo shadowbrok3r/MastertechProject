@@ -345,7 +345,7 @@ fn set_style() -> Arc<Style>{
     custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
     custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
     custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
-    custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
+    custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(28,28,28);
     // custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
     custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
     custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
