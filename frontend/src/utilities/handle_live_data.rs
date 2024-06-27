@@ -29,19 +29,20 @@ pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_task
 
 pub fn handle_live_notes(
     (action, data): (Action, TaskNotePayload), 
-    existing_tasks: &mut Vec<TaskPayload>
+    existing_task: &mut TaskPayload
 ) 
     -> anyhow::Result<(), anyhow::Error>
 {
     match action{
         Action::Create => {
-            update_or_insert_notes(data, existing_tasks)?;
+            update_or_insert_notes(data, existing_task)?;
         },
         Action::Update => {
-            update_or_insert_notes(data, existing_tasks)?;
+            update_or_insert_notes(data, existing_task)?;
         },
         Action::Delete => {
-            update_or_insert_notes(data, existing_tasks)?;
+            info!("Data: {data:?}");
+            update_or_insert_notes(data, existing_task)?;
         },
         _ => {},
     }
@@ -98,7 +99,7 @@ impl LiveUpdate for LiveTaskPayload {
     }
     
     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
-        info!("Data was Deleted: {:?}", self);
+        // info!("Data was Deleted: {:?}", self);
         update_or_insert(existing_tasks, self)?;
         Ok(())
     }
@@ -106,25 +107,34 @@ impl LiveUpdate for LiveTaskPayload {
 
 pub fn update_or_insert_notes(
     new_note: TaskNotePayload,
-    tasks: &mut Vec<TaskPayload>
-) 
-    -> anyhow::Result<(), anyhow::Error>
-{
+    task: &mut TaskPayload
+) -> anyhow::Result<(), anyhow::Error> {
     if let Some(ref task_id) = new_note.task_id {
-        let mut updated = false;
-
-        for task in tasks.iter_mut() {
-            if let Some(existing_task_id) = &task.id {
-                if existing_task_id.clone() == task_id.clone(){
-                    info!("ID's match: {:?} // {:?}", existing_task_id, task_id);
-                    // let updated_task = convert_live_to_task(new_note.clone(), task);
-                    task.task_note.as_mut().unwrap_or(&mut Vec::new()).push(new_note);
-                    updated = true;
-                    break;
+        if let Some(existing_task_id) = &task.id {
+            if existing_task_id == task_id {
+                // Check if the note ID already exists
+                // let notes = task.task_note.get_or_insert_with(Vec::new);
+                if let Some(notes) = task.task_note.as_mut(){
+                    if notes.iter().any(|note| 
+                        note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
+                        && !note.note.is_empty() 
+                        && !note.created_at.is_empty()
+                        && !note.everest_initials.is_empty()
+                    ){
+                        notes.push(new_note.clone());
+                        info!("Contains notes already, inserting new: {new_note:?}");
+                    }
+                } else {
+                    let mut vec = Vec::new();
+                    vec.push(new_note.clone());
+                    info!("there were no existing notes. creating note: {:?}", vec);
+                    task.task_note = Some(vec);
                 }
+
             }
         }
-        if updated{}
+        // if updated { info!("Note updated or inserted successfully."); } 
+        // else { info!("Task ID not found or note already exists."); }
     }
     Ok(())
 }
@@ -167,9 +177,7 @@ pub fn update_or_insert(
     Ok(())
 }
 
-pub fn convert_live_to_task(live_task: LiveTaskPayload,existing_task: &TaskPayload) 
-    -> TaskPayload 
-{
+pub fn convert_live_to_task(live_task: LiveTaskPayload,existing_task: &TaskPayload) -> TaskPayload {
     TaskPayload {
         id: live_task.id,
         task_name: live_task.task_name,
@@ -224,6 +232,7 @@ async fn handle_streams<T>(
             Ok(notification) => {
                 let data = notification.data;
                 let action = notification.action;
+                info!("Data: {data:?}");
                 match tx.try_send((action, data)){
                     Ok(_) => info!("Sent notification"),
                     Err(e) => error!("Error sending task data: {e:?}")
