@@ -105,8 +105,8 @@ impl eframe::App for MtechServer {
                                     self.context.current_user = Some(usr.clone());
                                     get_tasks(db.clone(), initial_tasks_tx);
                                     get_store_users(db.clone(), store_users_tx, usr.store);
-                                    listen_tasks(db.clone(), live_tasks_tx);
-                                    listen_task_notes(db.clone(), notes_tx);
+                                    // listen_tasks(db.clone(), live_tasks_tx);
+                                    // listen_task_notes(db.clone(), notes_tx);
 
                                     let toast = &mut self.context.toasts;
                 
@@ -176,13 +176,13 @@ impl eframe::App for MtechServer {
             }
         }
 
-        while let Ok(ref new_task) = self.context.live_tasks_rx.try_recv(){
+        if let Ok(ref new_task) = self.context.live_tasks_rx.try_recv(){
             if let Some(existing_tasks) = &mut self.context.tasks{
                 handle_live_data(new_task.to_owned(), existing_tasks).unwrap();
             }
         }
 
-        while let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
+        if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
             match action{
                 Action::Create => handle_live_create(&mut self.context.clients, new_client.clone()).unwrap_or(()),
                 Action::Update => handle_live_update(&mut self.context.clients, new_client.clone()).unwrap_or(()),
@@ -191,17 +191,13 @@ impl eframe::App for MtechServer {
             };
         }
 
-        while let Ok(payload) = self.context.notes_rx.try_recv(){
-            handle_live_notes(payload.clone(), &mut self.context.tasks.as_mut().unwrap_or(&mut Vec::new())).unwrap_or(());
+        if let Ok(payload) = self.context.notes_rx.try_recv(){
+            self.context.new_note = true;
             if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal{
-                info!("task_modal");
                 if let Some(task) = task_modal.task.as_mut(){
-                    info!("got a task");
-                    let current_notes = task.task_note.as_mut().unwrap();
-                    info!("current_notes: {:?}", current_notes);
-                    current_notes.push(payload.1.clone());
+                    handle_live_notes(payload.clone(), task).unwrap_or(());
+                    // info!("Got the new note {:?}");
                     task_modal.chat_view.insert_note(payload.1);
-                    // self.context.new_note = true;
                 }
             }
         }

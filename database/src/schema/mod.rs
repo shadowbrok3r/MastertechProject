@@ -234,6 +234,7 @@ pub struct HardwareTests{
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskNotePayload{
+    pub id: Option<TaskNoteId>,
     pub task_id: Option<TaskId>,
     pub everest_initials: String,
     // pub service_number: Option<i32>,

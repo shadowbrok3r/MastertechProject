@@ -51,7 +51,16 @@ impl ChatView {
     }
 
     pub fn insert_note(&mut self, new_note: TaskNotePayload){
-        self.messages.push(new_note);
+        // if self.messages.iter().any(|note| 
+        //     note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
+        //     && !new_note.note.is_empty() 
+        //     && !new_note.created_at.is_empty()
+        //     && !new_note.everest_initials.is_empty()
+        // ) {
+            info!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
+            self.messages.push(new_note);
+        // }
+
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Option<String>{
@@ -162,7 +171,7 @@ impl ChatView {
                             .fill(msg_color)
                             .show(ui, |ui| {
                                 ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-                                ui.set_min_width(min_width - 40.0);
+                                ui.set_min_width(min_width / 2.5);
                                 // Use a vertical layout to stack the name and message content
                                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
 

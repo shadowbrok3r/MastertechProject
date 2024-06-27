@@ -303,7 +303,8 @@ impl MtechServerContext{
             ModalType::TaskModal(task_modal) => {
                 let modal = if let Some(task) = &task_modal.task{
                     if let Some(notes) = &task.task_note{
-                        info!("Any new notes here? {:?}", notes.clone());
+                        // info!("Any new notes here? {:?}", notes.clone());
+                        
                         let chat_modal = ChatView::new(notes.to_owned(), self.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
                         
                         TaskModal::new(chat_modal).title(task_modal.task.as_ref().unwrap().task_name.clone())
