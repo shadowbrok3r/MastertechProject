@@ -278,7 +278,7 @@ async fn main() {
         .layer(Extension(server.clone()));
 
     // Define the server address
-    let address = SocketAddr::from(([127, 0, 0, 1], 8081));
+    let address = SocketAddr::from(([0,0,0,0], 8081));
 
     // Spawn a new async task to run the server
     tokio::spawn(async move {
