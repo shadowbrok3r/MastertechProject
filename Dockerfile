@@ -12,7 +12,7 @@ COPY ./database ./database
 COPY Cargo.toml Cargo.toml
 COPY .cargo /.cargo
 COPY frontend/index.html frontend/index.html 
-COPY rust-toolchain.toml rust-toolchain.toml 
+# COPY rust-toolchain.toml rust-toolchain.toml 
 
 CMD [ "trunk", "serve", "--release" ]
 
