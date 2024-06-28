@@ -44,7 +44,7 @@ impl MastertechContext{
                     let url_string = format!("{}:{}", self.system_info.hostname.clone(), client_hash.split_at(9).0);
                     info!("url_string: {}", url_string.clone());
 
-                    self.url = Some(format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client",  url_string.clone()));
+                    self.url = Some(format!("wss://sock.master-tech.app/websocket?room_id={}&role=client",  url_string.clone()));
                     info!("url: {:?}", self.url.clone());
                     let computer_id = &self.system_info.id.clone().unwrap_or( // i need to first check if a computer exists with a customer id or something..
                         ComputerId(
