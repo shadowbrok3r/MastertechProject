@@ -10,12 +10,12 @@ use self_update::{
 
 pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Error>> {
     // let token = var("GITHUB_KEY").unwrap();
-    let token = "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".to_string();
+    let token = "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";
 
     let releases = ReleaseList::configure()
         .repo_owner("shadowbrok3r")
         .repo_name("Mastertech4.0")
-        .auth_token(token.as_str())
+        .auth_token(token)
         .build()?
         .fetch()?;
 
@@ -29,7 +29,7 @@ pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Err
         .target("Mastertech")
         //.bin_install_path(bin_install_path)
         .no_confirm(true)
-        .auth_token(token.as_str())
+        .auth_token(token)
         .current_version(cargo_crate_version!())
         .build()?
         .update()?;
