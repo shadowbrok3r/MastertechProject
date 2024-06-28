@@ -44,7 +44,7 @@ impl MastertechContext{
                     let url_string = format!("{}:{}", self.system_info.hostname.clone(), client_hash.split_at(9).0);
                     info!("url_string: {}", url_string.clone());
 
-                    self.url = Some(format!("ws://127.0.0.1:8081/websocket?room_id={}&role=client",  url_string.clone()));
+                    self.url = Some(format!("wss://sock.master-tech.app/websocket?room_id={}&role=client",  url_string.clone()));
                     info!("url: {:?}", self.url.clone());
                     let computer_id = &self.system_info.id.clone().unwrap_or( // i need to first check if a computer exists with a customer id or something..
                         ComputerId(
@@ -215,72 +215,6 @@ impl WebConsoleFrontend {
     pub fn initialize_websocket(&mut self, ui: &mut Ui)
         -> anyhow::Result<(), anyhow::Error>
     {
-        // if let Some(event) = &self.ws_receiver.try_recv() {
-        //     ui.ctx().request_repaint();
-        //     match event{
-        //         WsEvent::Message(msg) => {
-        //             match msg{
-        //                 WsMessage::Binary(bin) => { 
-        //                     ui.label(format!("{bin:?}")); 
-        //                     let cmd = deserialize_command(bin);
-        //                     info!("222Cmd: {bin:?}");
-        //                     match cmd{
-        //                         Cmd::LiveData => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::Command => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::Tuneup => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::Cps => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::Qc => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::SfcScan => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::DismScan => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::ChkDsk => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::Mbr2Gpt => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                         Cmd::None => {
-        //                             ui.label(format!("Cmd: {:?}", cmd));
-        //                             info!("Cmd: {cmd:?}");
-        //                         },
-        //                     }
-        //                 },
-        //                 WsMessage::Text(txt) => {
-        //                     ui.label(format!("267Raw Command: {}", txt.clone()));
-        //                     let tx = self.command_tx.clone();
-        //                     let text = txt.clone();
-        //                     spawn(async move {
-        //                         handle_command_payload(text.clone(), tx.clone()).await.unwrap();
-        //                     });
-        //                 },
-        //                 _ => {}
-        //             }
-        //         },
-        //         _ => {}
-        //     }
-        // }
 
         if let Ok(sysinfo) = &mut self.rx.try_recv(){
             self.ws_sender.send(WsMessage::Binary(std::mem::take(sysinfo)));
@@ -293,7 +227,6 @@ impl WebConsoleFrontend {
         for event in &self.events{
             match event{
                 WsEvent::Message(msg) => {
-                    
                     match msg{
                         WsMessage::Binary(bin) => {
                             ui.label(format!("{:?}", deserialize_command(&bin.clone())));
@@ -456,13 +389,6 @@ async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-
-    // // Handle stdin
-    // if let Some(mut stdin) = process.stdin.take() {
-    //     tokio::spawn(async move {
-    //         stdin.write_all(command_payload.as_bytes()).await.ok();
-    //     });
-    // }
 
 
     // Handle stdout and stderr
