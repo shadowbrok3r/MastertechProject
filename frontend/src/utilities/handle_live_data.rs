@@ -115,12 +115,13 @@ pub fn update_or_insert_notes(
                 // Check if the note ID already exists
                 // let notes = task.task_note.get_or_insert_with(Vec::new);
                 if let Some(notes) = task.task_note.as_mut(){
+                    let x = new_note.note.is_empty() ;
+                    let y = new_note.created_at.is_empty();
+                    let z = new_note.everest_initials.is_empty();
+                    
                     if notes.iter().any(|note| 
-                        note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
-                        && !note.note.is_empty() 
-                        && !note.created_at.is_empty()
-                        && !note.everest_initials.is_empty()
-                    ){
+                        note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
+                    ) {
                         notes.push(new_note.clone());
                         info!("Contains notes already, inserting new: {new_note:?}");
                     }

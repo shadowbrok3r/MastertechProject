@@ -4,7 +4,7 @@ use eframe::emath::Vec2;
 use egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontSelection, Frame, Label, Layout, Margin, Pos2, Rangef, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
 };
-use log::info;
+use log::{debug, info};
 use markdown_editor::{shortcuts, EasyMarkEditor, SHORTCUT_ENTER};
 use wasm_bindgen_futures::spawn_local;
 use super::modals::ModalState;
@@ -51,15 +51,16 @@ impl ChatView {
     }
 
     pub fn insert_note(&mut self, new_note: TaskNotePayload){
-        // if self.messages.iter().any(|note| 
-        //     note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
-        //     && !new_note.note.is_empty() 
-        //     && !new_note.created_at.is_empty()
-        //     && !new_note.everest_initials.is_empty()
-        // ) {
-            info!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
+        let x = new_note.note.is_empty() ;
+        let y = new_note.created_at.is_empty();
+        let z = new_note.everest_initials.is_empty();
+        info!("X {x} // Y {y} // Z {z}");
+        if self.messages.iter().any(|note| 
+            note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
+        ) {
+            debug!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
             self.messages.push(new_note);
-        // }
+        }
 
     }
 

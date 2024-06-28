@@ -14,7 +14,7 @@ use std::collections::HashMap; use std::fs::File;
 use std::io::BufRead; // Trait for reading lines from standard input
 use std::net::SocketAddr; // Represents socket addresses
 use tracing::info; // For logging information
-use simplelog::{WriteLogger, Config, LevelFilter};
+use simplelog::{WriteLogger, Config, LevelFilter, TermLogger, TerminalMode, ColorChoice};
 
 type SessionID = String;
 type RoomID = String;
@@ -253,17 +253,24 @@ impl ezsockets::SessionExt for ChatSession {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
     // Configure log level and log file
-    let log_level = LevelFilter::Debug; 
-    let log_file = File::create("output.log").unwrap();
+    // let log_level = LevelFilter::Debug; 
+    // let log_file = File::create("output.log").unwrap();
 
-    // Init the logger
-    WriteLogger::init( 
-        log_level,
-        Config::default(),
-        log_file
-    ).unwrap();
+    // // Init the logger
+    // WriteLogger::init( 
+    //     log_level,
+    //     Config::default(),
+    //     log_file
+    // ).unwrap();
     
+    TermLogger::init(
+        LevelFilter::Info,
+        Config::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto
+    );
     println!("Starting the WebSocket server");
 
     // Create the WebSocket server
@@ -281,13 +288,13 @@ async fn main() {
     let address = SocketAddr::from(([0,0,0,0], 8081));
 
     // Spawn a new async task to run the server
-    tokio::spawn(async move {
+    // tokio::spawn(async move {
         println!("Listening on {}", address);
         axum::Server::bind(&address)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await
             .unwrap();
-    });
+    // });
 
     // Read lines from standard input and broadcast them to all rooms
     // let stdin = std::io::stdin();

@@ -1,6 +1,6 @@
 use app_state::{check_authentication, AppState, MainPages, MtechServer};
 use egui_toast::{Toast, ToastKind, ToastOptions};
-use log::info;
+use log::{debug, info};
 use ratframe::NewCC;
 use surrealdb::Action;
 use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
@@ -203,7 +203,7 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(state) = self.context.app_state_rx.try_recv(){
-            info!("Got a new state: {state:?}");
+            debug!("Got a new state: {state:?}");
             self.state = state
         }
 
