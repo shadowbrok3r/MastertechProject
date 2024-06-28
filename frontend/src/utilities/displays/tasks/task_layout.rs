@@ -7,10 +7,12 @@ use serde::Serialize;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
-use egui::{Align, Button, FontId, RichText, ScrollArea, TextEdit, Vec2, Widget};
+use egui::{popup_below_widget, Align, Button, FontId, RichText, ScrollArea, Sense, TextEdit, Vec2, Widget};
 use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
+
+use super::sub_menu::sub_menu;
 
 pub struct SortTasks{
     pub sort_by_status: bool,
@@ -29,7 +31,9 @@ pub struct TaskLayout{
     pub database: Database,
     #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
-    pub assignees: Option<Vec<User>>
+    pub assignees: Option<Vec<User>>,
+
+    pub open_menu: bool,
 }
 
 impl TaskLayout { 
@@ -40,7 +44,7 @@ impl TaskLayout {
         ui_actions_tx: Sender<TaskUiActions>,
         assignees: Option<Vec<User>>,
     ) -> Self {
-        Self {  task_map, column_names, database, ui_actions_tx, search_inputs: HashMap::new(), assignees }
+        Self {  task_map, column_names, database, ui_actions_tx, search_inputs: HashMap::new(), assignees, open_menu: false }
     }
 
     pub fn update_tasks(&mut self,task_map: HashMap<String, Vec<TaskPayload>>, column_names: Vec<String>) {
@@ -179,7 +183,23 @@ impl ColumnLayout for TaskLayout {
                                 .ui(ui);
 
                             ui.add_space(ui.available_width() / 3.4);
-                            ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading());
+                            let response = Button::new(RichText::new(name.to_owned()).color(Color32::LIGHT_BLUE))
+                                .fill(Color32::TRANSPARENT).min_size(Vec2::new(50.0, 20.0)).ui(ui);
+
+                            if response.clicked(){
+                                ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
+                            }
+                            
+                            popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, |ui| {
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.set_width(200.0);
+                                    // let rect = ui.clip_rect();
+                                    // ui.allocate_rect(rect, Sense::click());
+                                    sub_menu(ui);        
+                                }); 
+                            });
+
+                            // ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading());
                         });
                         
                         ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
