@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
 use database::Database;
-use database::schema::{Priority, TaskPayload, User};
+use database::schema::{Priority, Record, TaskId, TaskPayload, User};
 use log::info;
 use serde::Serialize;
+use surrealdb::opt::RecordId;
+use surrealdb::sql::{Id, Thing};
+use wasm_bindgen_futures::spawn_local;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
@@ -12,7 +15,7 @@ use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
 
-use super::sub_menu::sub_menu;
+// use super::sub_menu::sub_menu;
 
 pub struct SortTasks{
     pub sort_by_status: bool,
@@ -190,15 +193,61 @@ impl ColumnLayout for TaskLayout {
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
                             }
                             
-                            popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, |ui| {
+                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, |ui| {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
-                                    // let rect = ui.clip_rect();
-                                    // ui.allocate_rect(rect, Sense::click());
-                                    sub_menu(ui);        
-                                }); 
+                                    if ui.button("Mark all Complete").clicked(){
+                                        return TaskActions::MarkComplete;
+                                    }
+                                    ui.add_space(5.0);
+                                    if ui.button("Mark all Incomplete").clicked(){
+                                        return TaskActions::MarkIncomplete;
+                                    }
+                                    ui.add_space(5.0);
+                                    if ui.button("Mark all Due Today").clicked(){
+                                        return TaskActions::MarkDueToday;
+                                    }
+                                    TaskActions::None
+                                }).inner
                             });
 
+                            if let Some(action) = res{
+                                match action{
+                                    TaskActions::MarkComplete => {
+                                        let id: Vec<String> = tasks.iter().map(|t| t.id.clone().unwrap().0.id.to_string()).collect::<Vec<String>>();
+                                        let db = self.database.clone();
+                                        info!("ids: {:?}", id);
+                                        spawn_local(async move {
+                                            let x: Vec<Record> = db.database.query("fn::mark_all_completion($ids, $completion)")
+                                                .bind(("ids", id))
+                                                .bind(("completion", true))
+                                                .await.unwrap().take(0).unwrap();
+                                        });
+                                    },
+                                    TaskActions::MarkIncomplete => {
+                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
+                                        let db = self.database.clone();
+                                        spawn_local(async move {
+                                            let x: Vec<Record> = db.database.query("fn::mark_all_completion($ids, $completion)")
+                                                .bind(("ids", id))
+                                                .bind(("completion", false))
+                                                .await.unwrap().take(0).unwrap();
+                                        });
+                                    },
+                                    TaskActions::MarkDueToday => {
+                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
+                                        let db = self.database.clone();
+                                        spawn_local(async move {
+                                            let query = "fn::mark_all_completion($ids, $completion)";
+                                            db.database.set("ids", id);
+                                            db.database.set("completion", true);
+
+                                            let x: Vec<Record> = db.sql(query).await.unwrap();
+                                        });
+                                    }, _ => {}
+                                }
+                            }
+                            
                             // ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading());
                         });
                         
@@ -243,4 +292,11 @@ impl ColumnLayout for TaskLayout {
         }
     }
 
+}
+
+pub enum TaskActions{
+    MarkComplete,
+    MarkIncomplete,
+    MarkDueToday,
+    None
 }
