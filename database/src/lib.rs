@@ -1,5 +1,6 @@
 pub mod schema;
 
+use dotenv::dotenv;
 use log::info;
 use std::fmt::Debug;
 use schema::User;
@@ -40,7 +41,6 @@ struct Auth {
     password: String,
 }
 
-const DB_URL: &str = "localhost:8000"; // surreal.master-tech.app/rpc // localhost:8000
 const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
@@ -48,10 +48,11 @@ const NS: &str = "Mastertech";
 
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
+        let db_url = dotenv::var("DB_URL").unwrap_or("localhost:8000".to_string());
         match jwt{
             Some(jwt) => {
                 info!("We already have a jwt, attempting token auth");
-                let database: Surreal<WsClient> = Surreal::new::<Ws>(DB_URL).await?;
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url).await?;
                 let auth = database.authenticate(jwt.clone()).await;
 
                 match auth{
@@ -74,7 +75,7 @@ impl Database{
             },
             None => {
                 info!("connecting");
-                let database: Surreal<WsClient> = Surreal::new::<Ws>(DB_URL).await?;
+                let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url).await?;
                 info!("signing in");
                 
                 database.use_ns(NS).use_db(DB).await?;
@@ -106,7 +107,8 @@ impl Database{
     }
 
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
-        let database: Surreal<WsClient> = Surreal::new::<Wss>(DB_URL).await?;
+        let db_url = dotenv::var("DB_URL").unwrap_or("localhost:8000".to_string());
+        let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
         // Select a specific namespace / database
         let jwt = database.signup(
             Scope { 
