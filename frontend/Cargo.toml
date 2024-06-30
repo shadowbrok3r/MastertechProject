@@ -8,7 +8,8 @@ edition = "2021"
 
 [dependencies]
 database = { workspace=true }
-anyhow = { workspace=true }
+anyhow = "1"
+# anyhow = { workspace=true }
 log  = { workspace=true }
 serde = { workspace=true }
 surrealdb = { workspace=true }
