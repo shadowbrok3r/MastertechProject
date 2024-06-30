@@ -10,7 +10,8 @@ serde_json = { workspace=true }
 dotenv = { workspace=true }
 serde = { workspace=true }
 log = { workspace=true }
-anyhow = { workspace=true }
+# anyhow = { workspace=true }
+anyhow = "1"
 # surrealdb-alpha = { workspace=true }
 surrealdb = { workspace=true }
 uuid = { version = "1.8.0", features = ["v4"] }
