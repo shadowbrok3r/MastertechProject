@@ -4,7 +4,8 @@ WORKDIR /
 RUN rustup target add wasm32-unknown-unknown
 RUN rustup target add wasm32-wasi
 # RUN rustup toolchain install nightly-x86_64-unknown-linux-gnu
-RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev 
+RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
+RUN update-ca-certificates 
 RUN cargo install trunk
 # COPY ./dist /dist
 COPY Trunk.toml Trunk.toml
