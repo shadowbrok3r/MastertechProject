@@ -271,7 +271,7 @@ impl NewCC for MtechServer{
             chart_app: App::new(),
             last_tick: Instant::now(),
             // url: format!("{}websocket?room_id=0&role=master", dotenv::var("WS_URL").unwrap()),
-            url: "ws://localhost:8081/websocket?room_id=0&role=master".to_string(),
+            url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_string(),
             error: Default::default(),
             client_layout: None,
             text_to_send: Default::default(),

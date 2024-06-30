@@ -48,7 +48,7 @@ const NS: &str = "Mastertech";
 
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = dotenv::var("DB_URL").unwrap_or("localhost:8000".to_string());
+        let db_url = dotenv::var("DB_URL").unwrap_or("surrealdb.master-tech.app".to_string());
         match jwt{
             Some(jwt) => {
                 info!("We already have a jwt, attempting token auth");
@@ -107,7 +107,7 @@ impl Database{
     }
 
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = dotenv::var("DB_URL").unwrap_or("localhost:8000".to_string());
+        let db_url = dotenv::var("DB_URL").unwrap_or("surrealdb.master-tech.app".to_string());
         let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
         // Select a specific namespace / database
         let jwt = database.signup(

@@ -2,7 +2,7 @@
 use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, fmt::Display, str::from_utf8};
 use crossbeam::channel::Sender;
 use database::schema::ConnectedClient;
-use egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
+use egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,7 @@ pub struct ClientDisplay{
     pub client_names: Vec<String>,
     pub connected_client: Option<ConnectedClient>,
     pub websocket_client: Option<WebSocketClient>,
+    pub connected: bool
 }
 
 pub struct WebSocketClient {
@@ -61,6 +62,7 @@ pub struct WebSocketClient {
     pub sysinfo: Option<SystemInformation>,
     pub history: Vec<String>,
     pub loading: bool,
+    pub connected: bool,
 }
 
 impl WebSocketClient{
@@ -78,12 +80,12 @@ impl WebSocketClient{
             ram_usage: VecDeque::new(),
             history: Vec::new(),
             temps: VecDeque::new(),
-            loading: false
+            loading: false, 
+            connected: false
         }
     }
     
     pub fn handle_events(&mut self) {
-
         while let Some(event) = self.ws_receiver.try_recv() {
             self.events.push(event);
         }
@@ -91,6 +93,7 @@ impl WebSocketClient{
         for event in &self.events {
             match event{
                 WsEvent::Message(msg) => {
+                    self.connected = true;
                     match msg{
                         WsMessage::Binary(bin) => {
                             info!("Binary: {bin:?}");
@@ -145,10 +148,22 @@ impl WebSocketClient{
                         _ => {}
                     }
                 },
-                _ => {}
+                WsEvent::Opened => {
+                    self.connected = true;
+                },
+                WsEvent::Closed => {
+                    self.connected = false;
+                },
+                WsEvent::Error(e) => {
+                    self.connected = false;
+                    self.history.push(e.clone());
+                },
             }
         }
         self.events.clear();
+        if !self.connected{
+            info!("DISCONNECTED");
+        }
     }
     
     pub fn show(&mut self, mut strip: Strip, name: String) {
@@ -221,7 +236,7 @@ impl WebSocketClient{
         strip.cell(|ui | 
         {
             let client_id = ui.make_persistent_id(format!("client_id {:?}", name.clone()));
-            let client_header = CollapsingHeader::new("Charts").id_source(client_id);
+            let client_header = CollapsingHeader::new("Live Stats").id_source(client_id);
             client_header.show_background(true).show_unindented(ui, |ui| 
             {
                 ui.add_space(10.0);
@@ -253,99 +268,133 @@ impl WebSocketClient{
             {
                 
                 ScrollArea::vertical()
+                    .animated(true)
+                    .max_height(ui.available_height() - 5.0)
+                    .max_width(f32::INFINITY)
                     .auto_shrink(false)
                     .stick_to_bottom(true)
-                    .show(ui, |ui | 
+                    .show(ui, |ui| 
                 {
                     ui.set_width(ui.available_width());
                     let max_msg_width = ui.available_width() / 2.5;
-
+                    let fixed_height = 50.0;
+                    let min_width = 200.0;
+        
                     for item in self.history.iter(){
                         let is_message_from_myself = if item.contains("You"){
                             true
-                        }else{
-                            false
-                        };
-
+                        } else { false };
+        
                         // Messages from the user are right-aligned.
                         let layout = if is_message_from_myself {
                             Layout::top_down(Align::Max)
                         } else {
                             Layout::top_down(Align::Min)
                         };
-
+        
+                        let msg_color = if is_message_from_myself {
+                            ui.style().visuals.widgets.inactive.bg_fill
+                        } else {
+                            ui.style().visuals.widgets.active.weak_bg_fill
+                        };
+        
                         ui.with_layout(layout, |ui| {
                             ui.set_max_width(max_msg_width);
-
-                            let mut measure = |text| {
-                                let label = Label::new(text);
-                                // We need to calculate the text width here to enable the typical
-                                // chat bubble layout where the own bubbles are right-aligned and
-                                // the text within is left-aligned.
-                                let (_pos, galley, _response) = label
-                                    .layout_in_ui(&mut ui.child_ui(ui.max_rect(), *ui.layout()));
-                                let rect = galley.rect;
-                                // Calculate the width of the frame based on the width of
-                                // the text and add 0.1 to account for floating point errors.
-                                f32::min(
-                                    rect.width() / 2.5,// + inner_margin * 2.0 + outer_margin * 2.0 + 0.1,
-                                    max_msg_width,
-                                )
-                            };
-
-                            let content = RichText::new(item);
-                            let mut msg_width = measure(content.clone());
-
-                            let width = measure(content.clone());
-                            msg_width = f32::max(msg_width, width);
-
-                            // Set the width of the ui to the width of the message.
-                            ui.set_min_width(msg_width);
-
-                            let msg_color = if is_message_from_myself {
-                                ui.style().visuals.widgets.inactive.bg_fill
-                            } else {
-                                ui.style().visuals.widgets.active.weak_bg_fill
-                            };
-
+        
                             let rounding = 8.0;
                             let margin = 8.0;
+                            
+                            // ui.set_min_width(min_width);
+                            let rnding = Rounding {
+                                ne: if is_message_from_myself { 0.0 } else { rounding },
+                                nw: if is_message_from_myself { rounding } else { 0.0 },
+                                se: rounding,
+                                sw: rounding,
+                            };
+        
                             let response = Frame::none()
-                                .rounding(Rounding {
-                                    ne: if is_message_from_myself {
-                                        0.0
-                                    } else {
-                                        rounding
-                                    },
-                                    nw: if is_message_from_myself {
-                                        rounding
-                                    } else {
-                                        0.0
-                                    },
-                                    se: rounding,
-                                    sw: rounding,
-                                })
+                                .rounding(rnding)
                                 .inner_margin(margin)
                                 .outer_margin(margin)
                                 .fill(msg_color)
-                                .stroke(Stroke::new(1.0, Color32::from_additive_luminance(100)))
                                 .show(ui, |ui| {
-                                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                                        if self.loading{
-                                            Spinner::new().color(Color32::RED).size(15.0).ui(ui);
-                                            Label::new(item).selectable(true).ui(ui);
-                                        }else{
-                                            Label::new(item).selectable(true).ui(ui);
+                                    ui.set_min_height(fixed_height);  // Set the fixed height for the message box
+                                    ui.set_min_width(min_width / 2.5);
+                                    // Use a vertical layout to stack the name and message content
+                                    ui.with_layout(Layout::top_down(Align::Min), |ui| 
+                                    {
+        
+                                        let mut shadow = Shadow::default();
+                                        shadow.blur = 3.0;
+                                        shadow.spread = 3.0;
+                                        shadow.color = Color32::from_rgb(40,36,40);
+                                        
+                                        let mut b_panel_marg = Margin::default();
+                                        b_panel_marg.top = 3.0;
+        
+                                        let color = Color32::from_rgb(10,10,12);
+        
+                                        let note_frame = Frame::none().fill(color)
+                                            .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+                                            .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
+        
+                                        let (from, txt) = if item.contains("You"){
+                                            let text: (&str, &str) = item.split_once("\n").unwrap_or(("", ""));
+                                            let cmd = text.1;
+                                            (
+                                                RichText::new("Command Sent:").strong().monospace().color(Color32::LIGHT_BLUE),
+                                                RichText::new(cmd).strong().monospace()
+                                            )
+                                        }else {
+                                            (
+                                                RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_BLUE),
+                                                RichText::new(item).strong().monospace()
+                                            )
+                                        };
+                                        
+        
+                                        if is_message_from_myself {
+                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                Direction::RightToLeft,
+                                                Align::Min,
+                                            ), |ui| {
+                                                Button::new(from)
+                                                    .fill(Color32::TRANSPARENT)
+                                                    .min_size(Vec2::new(30.0, 20.0))
+                                                    .sense(Sense::hover())
+                                                    .ui(ui);
+                                                
+                                            });
+                                        } else {
+                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                Direction::LeftToRight,
+                                                Align::Min,
+                                            ), |ui| {
+                                                Button::new(from)
+                                                    .fill(Color32::TRANSPARENT)
+                                                    .min_size(Vec2::new(30.0, 20.0))
+                                                    .sense(Sense::hover())
+                                                    .ui(ui);
+                                            });
                                         }
-                                    });
-                                })
-                                .response;
-
+                                        note_frame.show(ui, |ui| {
+                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                Direction::TopDown,
+                                                Align::Center,
+                                            ), |ui| {
+                                                ui.set_width(ui.available_width());
+                                                ui.label(txt);
+                                            });
+                                        });
+                                });
+                            })
+                            .response;
+        
                             let points = if !is_message_from_myself {
                                 let top = response.rect.left_top() + Vec2::splat(margin);
                                 let arrow_rect =
                                     Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
-
+        
                                 vec![
                                     arrow_rect.left_top(),
                                     arrow_rect.right_top(),
@@ -355,23 +404,23 @@ impl WebSocketClient{
                                 let top = response.rect.right_top() + Vec2::new(-margin, margin);
                                 let arrow_rect =
                                     Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
-
+        
                                 vec![
                                     arrow_rect.left_top(),
                                     arrow_rect.right_top(),
                                     arrow_rect.left_bottom(),
                                 ]
                             };
-
+        
                             ui.painter()
                                 .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
-
+        
                         });
                     };
                 });
 
                 ui.vertical_centered_justified(|ui| {
-                    let text_edit = TextEdit::singleline(&mut self.input).hint_text("Send command").ui(ui);
+                    let text_edit = TextEdit::singleline(&mut self.input).hint_text("Raw Command Prompt > USE WISELY").ui(ui);
                     let key_press = ui.input(|i| i.key_pressed(Key::Enter));
                     if text_edit.lost_focus() && key_press {
                         self.loading = true;
@@ -399,7 +448,8 @@ impl ClientDisplay{
             clients,
             client_names,
             connected_client: None,
-            websocket_client: None
+            websocket_client: None,
+            connected: false
         }
     }
 
@@ -413,7 +463,8 @@ impl ClientDisplay{
             clients,
             client_names,
             connected_client: None,
-            websocket_client: Some(websocket_client)
+            websocket_client: Some(websocket_client),
+            connected: true
         }
     }
 
@@ -486,7 +537,7 @@ impl ClientDisplay{
 
     pub fn columns(&mut self, strip: &mut egui_extras::Strip) {
         for (name, client) in self.clients.iter(){
-            let color = if client.connected{
+            let color = if self.connected{
                 Color32::GREEN
             }else{ Color32::RED };
             let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 18))
@@ -552,7 +603,7 @@ impl ClientDisplay{
                                 .ui(ui);
                             if button.clicked(){ // CONNECT
                                 // let url = format!("{}/websocket?role=master&room_id={}", dotenv::from_filename("WS_URL").unwrap(), name.clone());
-                                let url = format!("ws://localhost:8081/websocket?role=master&room_id={}", name.clone());
+                                let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
                                 if client.connected{
                                     self.connected_client = Some(client.clone());
                                 }
@@ -579,7 +630,7 @@ impl ClientDisplay{
 
                             if button.clicked(){ // CONNECT
                                 // let url = format!("{}/websocket?role=master&room_id={}", dotenv::from_filename("WS_URL").unwrap(), name.clone());
-                                let url = format!("ws://localhost:8081/websocket?role=master&room_id={}", name.clone());
+                                let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
                                 if client.connected{
                                     self.connected_client = Some(client.clone());
                                 }
