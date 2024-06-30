@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env, process::Stdio, time::Duration};
 use anyhow::Context;
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{CentralPanel, Color32, Key, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::{egui::{Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Id, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use log::debug;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,6 @@ use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::Command, spawn, time::sl
 use tracing::info;
 
 use crate::{app_state::MastertechContext, database::{deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}};
-use tui_input::Input;
 pub mod websocket;
 
 impl MastertechContext{
@@ -42,10 +41,7 @@ impl MastertechContext{
                 if let Some(db) = self.database.clone(){
                     let client_hash = generate_client_id(self.system_info.hostname.clone(), self.system_info.cpu.trim().to_string());
                     let url_string = format!("{}:{}", self.system_info.hostname.clone(), client_hash.split_at(9).0);
-                    info!("url_string: {}", url_string.clone());
-
                     self.url = Some(format!("wss://sock.master-tech.app/websocket?room_id={}&role=client",  url_string.clone()));
-                    info!("url: {:?}", self.url.clone());
                     let computer_id = &self.system_info.id.clone().unwrap_or( // i need to first check if a computer exists with a customer id or something..
                         ComputerId(
                             Thing::from(
@@ -84,6 +80,7 @@ impl MastertechContext{
                     });
 
                     if let Some(url) = &self.url{
+                        info!("self.url: {}", url.clone());
                         let ctx = ui.ctx().clone();
                         let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
                         match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
@@ -103,13 +100,15 @@ impl MastertechContext{
             if !self.error.is_empty() {
                 TopBottomPanel::top("error").show_inside(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("Error:");
-                        ui.colored_label(Color32::RED, &self.error);
+                        ui.colored_label(Color32::RED, format!("Error: {}", &self.error));
                     });
                 });
             }
             if let Some(frontend) = &mut self.frontend {
-                frontend.ui(ui);
+                let connected = frontend.initialize_websocket(ui);
+                if !connected{
+                    info!("Connected: {connected}");
+                } 
             }
         });
     }
@@ -139,17 +138,17 @@ pub struct WebConsoleFrontend {
     pub command_rx: Receiver<Vec<u8>>,
 
     pub events: Vec<WsEvent>,
-    pub text_to_send: String,
     /// Position of cursor in the editor area.
     pub character_index: usize,
     /// Current value of the input box
-    pub input: Input,
+    pub input: String,
     /// Current input mode
     // pub input_mode: InputMode,
     /// History of recorded messages
     pub messages: Vec<String>,
     pub command: Cmd,
     pub send_specs: bool,
+    pub history: Vec<String>,
     pub connected: bool,
 }
 
@@ -178,44 +177,22 @@ impl WebConsoleFrontend {
             command_tx, command_rx,
             tx, rx,
             events: Default::default(),
-            text_to_send: String::new(),
-            input: Input::default(),
-            // input_mode: InputMode::Normal,
+            input: String::new(),
             messages: Vec::new(),
             character_index: 0,
             command: Cmd::None,
+            history: Vec::new(),
             send_specs: false,
             connected: false,
         }
     }
 
-    pub fn ui(&mut self, ui: &mut Ui) {
+    pub fn handle_events(&mut self) -> bool{
+        let mut connected = false;
+
         while let Some(event) = self.ws_receiver.try_recv() {
             self.events.push(event);
         }
-
-        CentralPanel::default().show_inside(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                let text_edit = TextEdit::singleline(&mut self.text_to_send).hint_text("Send message").ui(ui);
-                let key_press = ui.input(|i| i.key_pressed(Key::Enter));
-                if text_edit.lost_focus() && key_press
-                {
-                    text_edit.request_focus();
-                    self.ws_sender
-                        .send(WsMessage::Text(std::mem::take(&mut self.text_to_send)));
-                }
-            });
-
-            ui.separator();
-            ui.heading("Received events:");
-            self.initialize_websocket(ui).unwrap();
-        });
-    }
-
-    pub fn initialize_websocket(&mut self, ui: &mut Ui)
-        -> anyhow::Result<(), anyhow::Error>
-    {
-
         if let Ok(sysinfo) = &mut self.rx.try_recv(){
             self.ws_sender.send(WsMessage::Binary(std::mem::take(sysinfo)));
         }
@@ -227,15 +204,16 @@ impl WebConsoleFrontend {
         for event in &self.events{
             match event{
                 WsEvent::Message(msg) => {
+                    connected = true;
                     match msg{
                         WsMessage::Binary(bin) => {
-                            ui.label(format!("{:?}", deserialize_command(&bin.clone())));
+                            self.history.push(format!("{:?}", deserialize_command(&bin.clone())));
                             let cmd = deserialize_command(&bin.clone());
                             info!("297Cmd: {bin:?}");
                             match cmd{
                                 Cmd::LiveData => {
                                     let tx = self.tx.clone();
-                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    self.history.push(format!("Cmd: {:?}", cmd));
                                     let connected = self.connected.clone();
                                     spawn(async move { 
                                         match live_computer_stats(tx.clone(), connected).await{
@@ -245,43 +223,43 @@ impl WebConsoleFrontend {
                                     });
                                 },
                                 Cmd::Tuneup => {
-                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    self.history.push(format!("Cmd: {:?}", cmd));
                                     info!("Cmd: {cmd:?}");
                                 },
                                 Cmd::Cps => {
-                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    self.history.push(format!("Cmd: {:?}", cmd));
                                     info!("Cmd: {cmd:?}");
                                 },
                                 Cmd::Qc => {
-                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    self.history.push(format!("Cmd: {:?}", cmd));
                                     info!("Cmd: {cmd:?}");
                                 },
                                 Cmd::SfcScan => {
-                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    self.history.push(format!("Cmd: {:?}", cmd));
                                     info!("Cmd: {cmd:?}");
                                 },
                                 Cmd::DismScan => {
-                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    self.history.push(format!("Cmd: {:?}", cmd));
                                     info!("Cmd: {cmd:?}");
                                 },
                                 Cmd::ChkDsk => {
-                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    self.history.push(format!("Cmd: {:?}", cmd));
                                     info!("Cmd: {cmd:?}");
                                 },
                                 Cmd::Mbr2Gpt => {
-                                    ui.label(format!("Cmd: {:?}", cmd));
+                                    self.history.push(format!("Cmd: {:?}", cmd));
                                     info!("Cmd: {cmd:?}");
                                 },
                                 Cmd::Quit => {
                                     self.connected = false;
                                 }
                                 _ => {
-                                    ui.label(format!("Raw Binary: {:?}", bin));
+                                    self.history.push(format!("Raw Binary: {:?}", bin));
                                 },
                             }
                         },
                         WsMessage::Text(txt) => {
-                            ui.label(format!("343Raw Command: {}", txt.clone()));
+                            self.history.push(format!("Raw Command: {}", txt.clone()));
                             let tx = self.command_tx.clone();
                             let text = txt.clone();
                             spawn(async move {
@@ -291,14 +269,200 @@ impl WebConsoleFrontend {
                         _ => {}
                     }
                 },
-                WsEvent::Error(e) => {
-                    ui.label(format!("Error: {e}"));
+                WsEvent::Opened => {
+                    connected = true;
                 },
-                _ => {}
+                WsEvent::Closed => {
+                    connected = false;
+                },
+                WsEvent::Error(e) => {
+                    connected = false;
+                    self.history.push(e.clone())
+                },
             }
         }
         self.events.clear();
-       Ok(())
+        connected
+    }
+
+    pub fn initialize_websocket(&mut self, ui: &mut Ui) -> bool {
+        ui.vertical_centered(|ui | ui.heading("Received events:"));
+        ui.separator();
+        let connected = self.handle_events();
+
+        ScrollArea::vertical()
+            .animated(true)
+            .max_height(ui.available_height() - 5.0)
+            .max_width(f32::INFINITY)
+            .auto_shrink(false)
+            .stick_to_bottom(true)
+            .show(ui, |ui| 
+        {
+            ui.set_width(ui.available_width());
+            let max_msg_width = ui.available_width() / 2.5;
+            let fixed_height = 50.0;
+            let min_width = 200.0;
+
+            for item in self.history.iter(){
+                let is_message_from_myself = if item.contains("You"){
+                    true
+                } else { false };
+
+                // Messages from the user are right-aligned.
+                let layout = if is_message_from_myself {
+                    Layout::top_down(Align::Max)
+                } else {
+                    Layout::top_down(Align::Min)
+                };
+
+                let msg_color = if is_message_from_myself {
+                    ui.style().visuals.widgets.inactive.bg_fill
+                } else {
+                    ui.style().visuals.widgets.active.weak_bg_fill
+                };
+
+                ui.with_layout(layout, |ui| {
+                    ui.set_max_width(max_msg_width);
+
+                    let rounding = 8.0;
+                    let margin = 8.0;
+                    
+                    // ui.set_min_width(min_width);
+                    let rnding = Rounding {
+                        ne: if is_message_from_myself { 0.0 } else { rounding },
+                        nw: if is_message_from_myself { rounding } else { 0.0 },
+                        se: rounding,
+                        sw: rounding,
+                    };
+
+                    let response = Frame::none()
+                        .rounding(rnding)
+                        .inner_margin(margin)
+                        .outer_margin(margin)
+                        .fill(msg_color)
+                        .show(ui, |ui| {
+                            ui.set_min_height(fixed_height);  // Set the fixed height for the message box
+                            ui.set_min_width(min_width / 2.5);
+                            // Use a vertical layout to stack the name and message content
+                            ui.with_layout(Layout::top_down(Align::Min), |ui| 
+                            {
+
+                                let mut shadow = Shadow::default();
+                                shadow.blur = 3.0;
+                                shadow.spread = 3.0;
+                                shadow.color = Color32::from_rgb(40,36,40);
+                                
+                                let mut b_panel_marg = Margin::default();
+                                b_panel_marg.top = 3.0;
+
+                                let color = Color32::from_rgb(10,10,12);
+
+                                let note_frame = Frame::none().fill(color)
+                                    .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+                                    .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
+
+                                let (from, txt) = if item.contains("Cmd"){
+                                    let text: (&str, &str) = item.split_once(":").unwrap_or(("Command", ""));
+                                    let cmd = text.1;
+                                    (
+                                        RichText::new("Cmd").strong().monospace().color(Color32::LIGHT_BLUE),
+                                        RichText::new(cmd).strong().monospace()
+                                    )
+                                } else if item.contains("Raw Command"){
+                                    let text: (&str, &str) = item.split_once(":").unwrap_or(("Raw Command", ""));
+                                    let cmd = text.1;
+                                    (
+                                        RichText::new("Raw Command").strong().monospace().color(Color32::LIGHT_BLUE),
+                                        RichText::new(cmd).strong().monospace()
+                                    )
+                                }else if item.contains("You"){
+                                    let text: (&str, &str) = item.split_once("\n").unwrap_or(("Raw Command", ""));
+                                    let cmd = text.1;
+                                    (
+                                        RichText::new("You").strong().monospace().color(Color32::LIGHT_BLUE),
+                                        RichText::new(cmd).strong().monospace()
+                                    )
+                                }else {
+                                    let text: (&str, &str) = item.split_once(":").unwrap_or(("Raw Binary", ""));
+                                    let cmd = text.1;
+                                    (
+                                        RichText::new("Raw Binary Payload").strong().monospace().color(Color32::LIGHT_BLUE),
+                                        RichText::new(cmd).strong().monospace()
+                                    )
+                                };
+                                
+
+                                if is_message_from_myself {
+                                    ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                        Direction::RightToLeft,
+                                        Align::Min,
+                                    ), |ui| {
+                                        ui.add_space(8.0);
+                                        Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30.0, 20.0)).sense(Sense::hover()).ui(ui);
+                                        
+                                    });
+                                }else{
+                                    ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                        Direction::LeftToRight,
+                                        Align::Min,
+                                    ), |ui| {
+                                        ui.add_space(8.0);
+                                        Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30.0, 20.0)).sense(Sense::hover()).ui(ui);
+                                    });
+                                }
+                                note_frame.show(ui, |ui| {
+                                    ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                        Direction::TopDown,
+                                        Align::Center,
+                                    ), |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(txt);
+                                    });
+                                });
+                        });
+                    })
+                    .response;
+
+                    let points = if !is_message_from_myself {
+                        let top = response.rect.left_top() + Vec2::splat(margin);
+                        let arrow_rect =
+                            Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
+
+                        vec![
+                            arrow_rect.left_top(),
+                            arrow_rect.right_top(),
+                            arrow_rect.right_bottom(),
+                        ]
+                    } else {
+                        let top = response.rect.right_top() + Vec2::new(-margin, margin);
+                        let arrow_rect =
+                            Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
+
+                        vec![
+                            arrow_rect.left_top(),
+                            arrow_rect.right_top(),
+                            arrow_rect.left_bottom(),
+                        ]
+                    };
+
+                    ui.painter()
+                        .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
+
+                });
+            };
+        });
+
+        ui.vertical_centered_justified(|ui| {
+            let text_edit = TextEdit::singleline(&mut self.input).hint_text("Send Message").ui(ui);
+            let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+            if text_edit.lost_focus() && key_press {
+                text_edit.request_focus();
+                self.history.push(format!("You\n{}", self.input.clone()));
+                self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
+            }
+        });
+
+      connected
     }
 
     

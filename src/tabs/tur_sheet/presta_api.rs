@@ -3,7 +3,7 @@ use reqwest::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE}, Client};
 use serde::Deserialize;
 use serde_json::{from_value, Value};
 use std::collections::HashMap;
-use crate::{app_state::MastertechContext, database::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order}, schema::{CustomerData, PrestashopPayload}}};
+use crate::{app_state::MastertechContext, database::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, ServiceOrder}, schema::{CustomerData, PrestashopPayload}}};
 use crate::database::prestashop_schema::SubResource;
 
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
@@ -24,17 +24,19 @@ impl MastertechContext {
                 query.clone()
             ).await.unwrap_or_default();
 
-
             let mut customer_messages: Vec<CustomerMessage> = Vec::new();
-            for thread in customer_threads.iter(){
-                for msg in thread.associations.customer_messages.iter(){
-                    customer_messages.push(
-                        api_call.request_subresources_by_id(
-                            "customer_messages", 
-                            "customer_message",
-                            msg.id.as_str()
-                        ).await.unwrap_or_default()
-                    );
+
+            if !customer_threads.is_empty(){
+                for thread in customer_threads.iter(){
+                    for msg in thread.associations.customer_messages.iter(){
+                        customer_messages.push(
+                            api_call.request_subresources_by_id(
+                                "customer_messages", 
+                                "customer_message",
+                                msg.id.as_str()
+                            ).await.unwrap_or_default()
+                        );
+                    }
                 }
             }
 
@@ -244,7 +246,7 @@ impl <'a>Prestashop<'a> {
             .await?;
         
         info!("response: {:#?}", response);
-        let x: Vec<T> = from_value(response[resource_name].clone()).unwrap();
+        let x: Vec<T> = from_value(response[resource_name].clone())?;
         info!("x: {x:#?}");
         
         Ok(x)

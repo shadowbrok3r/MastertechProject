@@ -176,7 +176,7 @@ impl eframe::App for MasterTechApp {
                 let installed_antivirus = ComputerData::get_antivirus()
                 .map_err(|e| 
                     *cps += format!("Error checking antivirus: {e}\n").as_str()
-                ).unwrap();
+                ).unwrap_or_default();
     
     
                 for (name, is_installed) in installed_antivirus {
@@ -192,7 +192,14 @@ impl eframe::App for MasterTechApp {
 
             // self.context.technician = data.employee.unwrap_or_default().firstname.clone();
             self.context.output_text += serde_json::to_string(&data).unwrap().as_str();
-            self.context.salesman = data.employee.unwrap_or_default().firstname.clone();
+            let employee = data.employee.unwrap_or_default(); // .to_uppercase()
+            let email = employee.email.split_once("@").clone().unwrap_or(("Error->Employee", "")).0.to_string();
+            self.context.salesman = email;
+            
+            if let Some(service) = data.order.associations.order_service{
+                info!("Service: {service:?}");
+            }
+
             let ticket = TicketData{
                 service_number: self.context.so_number.parse::<i32>().unwrap_or(0),
                 sales_rep: data.order.id_employee_sales_rep.clone(),
