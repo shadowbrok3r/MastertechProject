@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 use surrealdb::{sql::Thing, opt::RecordId};
 use uuid::Uuid;
 
-use super::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order}, SystemInformation};
+use super::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, ServiceOrder}, SystemInformation};
 
 pub const _NS: &str = "Mastertech";
 pub const _DB: &str = "MastertechDB";
