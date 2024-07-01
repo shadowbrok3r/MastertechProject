@@ -201,7 +201,7 @@ impl eframe::App for MasterTechApp {
             }
 
             let ticket = TicketData{
-                service_number: self.context.so_number.parse::<i32>().unwrap_or(0),
+                service_number: self.context.so_number.clone(),
                 sales_rep: data.order.id_employee_sales_rep.clone(),
                 recommendations: self.context.recommendations.clone(),
                 tech: self.context.technician.clone(),

@@ -143,7 +143,7 @@ pub struct TicketData{
     pub customer: Option<CustomerId>,
     pub computer: Option<ComputerId>,
     pub service_task: Option<TaskId>,
-    pub service_number: i32,
+    pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
     /// This is main initials on ticket
@@ -166,14 +166,13 @@ pub struct CustomerData{
     pub part_order_links: Option<Vec<String>>,
     pub computers: Option<Vec<ComputerId>>,
     pub services: Option<Vec<TicketId>>,
-    pub cust_code: i32,
     pub name: String,
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>
     pub email: String,
-    pub li_doc: i32,
+    pub li_doc: String,
     pub li_amnt: String,
-    pub num_inv: i32,
+    pub num_inv: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

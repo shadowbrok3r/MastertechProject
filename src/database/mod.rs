@@ -150,12 +150,17 @@ pub async fn send_payload(
     hardware_test_results: HardwareTests,
     database: Database
 )  -> anyhow::Result<Vec<Record>, anyhow::Error> {
-    let cust_code = pre_ticket.cust_code.parse::<i32>()?;
-    let customer_id: CustomerId = CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), cust_code.to_string().clone())));
+    let mut pre_ticket_clone = pre_ticket.clone();
+    let cust_code = if let Ok(code) = pre_ticket_clone.cust_code.parse::<i32>(){
+        format!("{code}")
+    }else{
+        pre_ticket_clone.cust_code
+    };
+    let customer_id: CustomerId = CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), cust_code.clone())));
 
     let ticket_id: TicketId = TicketId(Thing::from((TICKET_TABLE.to_string(), service_number.clone())));
 
-    let computer_customer_id: String = format!("{}-{}", computer_data.hostname.clone(), cust_code);
+    let computer_customer_id: String = format!("{}-{}", computer_data.hostname.clone(), cust_code.clone());
     let computer_id: ComputerId = ComputerId(Thing::from((COMPUTER_TABLE.to_string() , computer_customer_id)));
 
     let queried_salesman = query_user_from_initials(
@@ -168,7 +173,7 @@ pub async fn send_payload(
         tech.clone(),
     ).await?;
 
-    let mut pre_ticket_clone = pre_ticket.clone();
+    
 
     let mut current_antivirus: Vec<String> = Vec::new();
     current_antivirus.push("webroot".to_string());
@@ -196,23 +201,21 @@ pub async fn send_payload(
         id: Some(customer_id.clone()),
         computers: Some(owned_computers),
         services: Some(services),
-        cust_code: pre_ticket_clone.cust_code.parse::<i32>()?,
         name: pre_ticket_clone.customer_name,
         phone_number: pre_ticket_clone.customer_phone_1,
         phone_number_2: pre_ticket_clone.customer_phone_2,
         email: pre_ticket_clone.customer_email,
-        li_doc: pre_ticket_clone.last_invoice_number.parse::<i32>()?,
+        li_doc: pre_ticket_clone.last_invoice_number.to_string(),
         li_amnt: pre_ticket_clone.last_invoice_amount,
-        num_inv: pre_ticket_clone.total_invoice_count.parse::<i32>()?,
+        num_inv: pre_ticket_clone.total_invoice_count.to_string(),
         ..Default::default()
     };
 
-    // todo!(), // this sales rep shit is wild, and completely wrong, i need to look at this at work..
     let service_ticket = TicketData {
         id: Some(ticket_id.clone()),
         customer: Some(customer_id.clone()),
         computer: Some(computer_id.clone()),
-        service_number: service_number.parse::<i32>()?,
+        service_number: service_number.clone(),
         checkin_rep: pre_ticket_clone.checkin_rep,
         sales_rep: pre_ticket_clone.sales_rep,
         checkin_notes: pre_ticket_clone.checkin_notes,

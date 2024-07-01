@@ -97,7 +97,7 @@ impl MastertechContext {
             info!("address: {address:#?}");
             // 2059728
             let customer = CustomerData{
-                cust_code: address.id_customer.parse::<i32>().unwrap_or(0),
+                cust_code: address.id_customer.clone(),
                 name: format!("{} {}", &address.firstname, &address.lastname),
                 phone_number: address.phone.clone().to_string(),
                 // phone_number_2: address.phone_mobile.clone().unwrap_or(0).to_string(),
