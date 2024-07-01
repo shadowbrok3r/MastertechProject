@@ -156,9 +156,10 @@ pub struct CustomerData{
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>
     pub email: String,
-    // pub li_doc: String,
-    // pub li_amnt: String,
-    pub num_inv: String,
+    // pub cust_code: i32,
+    // pub li_doc: Option<String>,
+    pub li_amnt: String,
+    pub num_inv: i32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
