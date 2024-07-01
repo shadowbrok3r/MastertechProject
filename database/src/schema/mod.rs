@@ -152,14 +152,13 @@ pub struct CustomerData{
     pub part_order_links: Option<Vec<String>>,
     pub computers: Option<Vec<ComputerId>>,
     pub services: Option<Vec<TicketId>>,
-    pub cust_code: i32,
     pub name: String,
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>
     pub email: String,
-    pub li_doc: i32,
-    pub li_amnt: String,
-    pub num_inv: i32,
+    // pub li_doc: String,
+    // pub li_amnt: String,
+    pub num_inv: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -455,6 +454,7 @@ pub struct Employee{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Order{
+    pub order_type_name: String,
     pub id_address_delivery: String, // ✔️
     pub id_customer: String, // ✔️
     pub id_cart: String, // ✔️
@@ -474,23 +474,23 @@ pub struct Order{
     pub shipping_number: String, // Tracking number
     pub order_type: String, // Configurator / Sales Order
     // note: String, // ❌
-    // associations: Associations
+    pub associations: Associations
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Associations{
-    pub order_rows: OrderRow
+    pub order_rows: Vec<OrderRow>,
+    pub order_service: Option<Vec<ServiceOrder>>
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct OrderRow{
-    pub id: i32,
-    pub id_order_config: i32,
-    // pub product_id: String,
-    pub product_quantity: i32,
-    pub product_name: f32,
+    pub id: String,
+    pub id_order_config: String,
+    pub product_id: String,
+    pub product_quantity: String,
+    pub product_name: String,
     pub product_price: String,
-    // pub id_customization: String,
 }
 
 
@@ -533,6 +533,27 @@ pub struct CustMessageAssociation{
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct CustMessage{
     pub id: String
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ServiceOrder{
+    pub id: i32,
+    pub id_order_service: String,
+    pub id_cart: String,
+    pub id_order: String,
+    pub device_name: String,
+    pub device_mfg: String,
+    pub device_model: String,
+    pub device_serial: String,
+    pub device_password: String,
+    pub id_status_service: String,
+    pub device_power_supply: String,
+    pub other_hardware_software: String,
+    pub physical_damage: String,
+    pub check_in_notes: String,
+    pub intake_notes: String,
+    pub id_employee_qc_tech: String,
+    pub id_employee_qc_signoff: String,
 }
 
 #[derive(Serialize, Debug, Default)]
