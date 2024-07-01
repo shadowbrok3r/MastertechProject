@@ -46,7 +46,7 @@ pub struct MastertechContext {
     pub url: Option<String>,
     pub error: String,
     pub frontend: Option<WebConsoleFrontend>,
-    pub terminal: Terminal<RataguiBackend>,
+    // pub terminal: Terminal<RataguiBackend>,
     pub terminal_frontend: Option<TerminalFrontend>,
 
     pub ticket_info: PreTicketData,
@@ -177,7 +177,7 @@ impl NewCC for MasterTechApp {
             current_user: None,
             so_number: "".to_string(),
             recommendations: "".to_string(),
-            terminal: Terminal::new(backend).unwrap(),
+            // terminal: Terminal::new(backend).unwrap(),
             terminal_frontend: None,
 
             url: None,

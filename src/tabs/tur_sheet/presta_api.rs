@@ -2,8 +2,9 @@ use log::info;
 use reqwest::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE}, Client};
 use serde::Deserialize;
 use serde_json::{from_value, Value};
+use surrealdb::sql::Thing;
 use std::collections::HashMap;
-use crate::{app_state::MastertechContext, database::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, ServiceOrder}, schema::{CustomerData, PrestashopPayload}}};
+use crate::{app_state::MastertechContext, database::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, ServiceOrder}, schema::{CustomerData, CustomerId, PrestashopPayload, CUSTOMER_TABLE}}};
 use crate::database::prestashop_schema::SubResource;
 
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
@@ -44,7 +45,7 @@ impl MastertechContext {
                 "orders", 
                 "order", 
                 &input
-            ).await.unwrap();
+            ).await.unwrap_or_default();
             
             info!("order: {order:#?}");
 
@@ -97,6 +98,7 @@ impl MastertechContext {
             info!("address: {address:#?}");
             // 2059728
             let customer = CustomerData{
+                id: Some(CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), order.id_customer.clone())))),
                 cust_code: address.id_customer.clone(),
                 name: format!("{} {}", &address.firstname, &address.lastname),
                 phone_number: address.phone.clone().to_string(),
