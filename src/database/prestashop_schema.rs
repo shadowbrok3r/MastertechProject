@@ -79,7 +79,7 @@ pub struct OrderRow{
 
 
 #[derive(Serialize, Deserialize, Debug, Default)]
-pub struct Customer { 	 	
+pub struct Customer {
     pub lastname: String,    //  	isCustomerName 	✔️ 	✔️ 	255
     pub firstname: String,   //  	isCustomerName 	✔️ 	✔️ 	255
     pub email: String, 	     //  	isEmail 	✔️ 	✔️ 	255
@@ -121,7 +121,7 @@ pub struct CustMessage{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ServiceOrder{
-    pub id: i32,
+    // pub id: i32,
     pub id_order_service: String,
     pub id_cart: String,
     pub id_order: String,

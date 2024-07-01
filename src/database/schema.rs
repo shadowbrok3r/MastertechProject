@@ -163,6 +163,7 @@ pub struct TicketData{
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
+    pub cust_code: String,
     pub part_order_links: Option<Vec<String>>,
     pub computers: Option<Vec<ComputerId>>,
     pub services: Option<Vec<TicketId>>,

@@ -16,6 +16,7 @@ pub mod prestashop_schema;
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct PreTicketData{
+    pub cust_id: Option<CustomerId>,
     pub cust_code: String,
     pub sales_rep: String,
     pub due_date: Option<String>,
@@ -156,7 +157,8 @@ pub async fn send_payload(
     }else{
         pre_ticket_clone.cust_code
     };
-    let customer_id: CustomerId = CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), cust_code.clone())));
+
+    let customer_id: CustomerId =  pre_ticket_clone.cust_id.unwrap(); // CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), cust_code.clone())));
 
     let ticket_id: TicketId = TicketId(Thing::from((TICKET_TABLE.to_string(), service_number.clone())));
 
