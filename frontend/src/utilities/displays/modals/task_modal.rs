@@ -121,7 +121,11 @@ impl DisplayModal for TaskModal {
                             
 
                             if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked(){
-            
+                                let db = self.database.clone();
+                                
+                                spawn_local(async move {
+                                    let query = "DELETE ";
+                                });
                             }
 
                             ui.add_space(200.0);
@@ -322,8 +326,8 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                                         // });
                                         // ui.end_row();
 
-                                        ui.label("Customer Code:");
-                                        ui.label(format!("{}", customer.cust_code));
+                                        ui.label("Customer ID:");
+                                        ui.label(format!("{}", customer.id.as_ref().unwrap().0.id));
                                         ui.end_row();
 
                                         ui.label("Customer Name:");

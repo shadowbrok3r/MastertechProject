@@ -52,7 +52,7 @@ impl Database{
         match jwt{
             Some(jwt) => {
                 info!("We already have a jwt, attempting token auth");
-                let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url).await?;
+                let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
                 let auth = database.authenticate(jwt.clone()).await;
 
                 match auth{
@@ -75,7 +75,7 @@ impl Database{
             },
             None => {
                 info!("connecting");
-                let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url).await?;
+                let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
                 info!("signing in");
                 
                 database.use_ns(NS).use_db(DB).await?;
