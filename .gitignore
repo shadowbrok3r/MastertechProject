@@ -13,3 +13,4 @@ dist/mtechlogo.png
 dist/sw.js
 dist/pcllogo.png
 websocket_server/output.log
+rust-toolchain.toml
