@@ -143,17 +143,27 @@ impl DisplayModal for CreateTaskModal {
                                 let time = NaiveTime::from_hms_milli_opt(0,0,0,0).unwrap();
                                 let date = NaiveDateTime::new(self.due_date, time);
                                 let y = date.and_utc().to_rfc3339();
+                                let usr = self.assignee
+                                    .as_ref()
+                                    .unwrap_or(
+                                        self.store_users.clone().unwrap_or(Vec::new())
+                                        .get(0)
+                                        .as_ref()
+                                        .unwrap()
+                                )
+                                .clone();
+
                                 let task_payload = TaskPayload{
                                     task_name: self.task_name.clone(),
-                                    everest_initials: self.assignee.as_ref().unwrap().everest_initials.clone(),
+                                    everest_initials: usr.everest_initials,
                                     task_description: Some(self.description.clone()),
-                                    assignee: Some(self.assignee.as_ref().unwrap().id.clone()),
+                                    assignee: Some(usr.id),
                                     due_date: y,
                                     priority: self.task_priority.clone(),
                                     task_note: None,
                                     completed: false,
                                     status: Status::Todo,
-                                    dep: Some(format!("{:?}", self.assignee.as_ref().unwrap().store)),
+                                    dep: Some(format!("{:?}", usr.store)),
                                     ..Default::default()
                                 };
 

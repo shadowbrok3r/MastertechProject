@@ -70,7 +70,7 @@ pub struct TaskPayload{
     pub everest_initials: String,
     pub task_description: Option<String>, 
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
-    pub service_number: Option<i32>,
+    pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
     pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
@@ -88,7 +88,7 @@ pub struct LiveTaskPayload{
     pub everest_initials: String,
     pub task_description: Option<String>, 
     pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
-    pub service_number: Option<i32>,
+    pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
     pub task_note: Option<Vec<TaskNoteId>>, // 
@@ -101,11 +101,10 @@ pub struct LiveTaskPayload{
 pub struct TicketPayload{
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
-    // pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
     pub customer: Option<CustomerData>,
     pub computer: Option<ComputerData>,
-    pub service_task: Option<TaskId>,
-    pub service_number: i32,
+    pub service_ticket: Option<TaskId>,
+    pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
     /// This is main initials on ticket
@@ -128,8 +127,8 @@ pub struct TicketData{
     pub created_at: Option<String>,
     pub customer: Option<CustomerId>,
     pub computer: Option<ComputerId>,
-    pub service_task: Option<TaskId>,
-    pub service_number: i32,
+    // pub service_task: Option<TaskId>,
+    pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
     /// This is main initials on ticket
@@ -156,8 +155,8 @@ pub struct CustomerData{
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>
     pub email: String,
-    // pub li_doc: String,
-    // pub li_amnt: String,
+    pub li_doc: String,
+    pub li_amnt: String,
     pub num_inv: String,
 }
 
@@ -236,7 +235,6 @@ pub struct TaskNotePayload{
     pub id: Option<TaskNoteId>,
     pub task_id: Option<TaskId>,
     pub everest_initials: String,
-    // pub service_number: Option<i32>,
     pub created_at: String,
     pub note: String,
 }
@@ -418,7 +416,7 @@ impl Status{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Address{
-    pub id: i32,
+    pub id: String,
     pub id_customer: String,         // ❌     isNullOrUnsignedId  
     pub lastname: String,             // ✔️     isName  
     pub firstname: String,            // ✔️     isName  
@@ -432,7 +430,7 @@ pub struct Address{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Employee{
-    pub id: i32,
+    pub id: String,
     /// ✔️	isName	
     pub lastname: String, 
     /// ✔️	isName	
@@ -517,7 +515,7 @@ pub struct CustomerMessage {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct CustomerThread { 	
-    pub id: i32,     
+    pub id: String,     
     pub id_customer: String,    // isUnsignedId 	❌ 		Customer ID
     pub id_order: String,    	// isUnsignedId 	❌ 		Order ID
     pub date_add: String,    	// isDate 	        ❌ 		
@@ -537,7 +535,7 @@ pub struct CustMessage{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ServiceOrder{
-    pub id: i32,
+    pub id: String,
     pub id_order_service: String,
     pub id_cart: String,
     pub id_order: String,
