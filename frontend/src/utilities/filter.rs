@@ -78,7 +78,7 @@ impl FilterTasks for Vec<TaskPayload>{
                 .filter(
                     |task| 
                         task.task_name.contains(output.as_ref()) 
-                        || task.service_number.unwrap_or(0).to_string().contains(output.as_ref())
+                        || task.service_number.clone().unwrap_or_default().contains(output.as_ref())
                 )
                 .cloned()
                 .collect();

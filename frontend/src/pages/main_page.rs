@@ -92,7 +92,7 @@ impl MtechServer{
                     if let Some(tasks) = &self.context.tasks{
                         for task in tasks.iter(){
                             inputs.insert(task.task_name.clone());
-                            inputs.insert(format!("{}",task.service_number.unwrap_or(0)));
+                            inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
                         }
                         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_rgb(50, 2, 43));
                         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
@@ -117,7 +117,7 @@ impl MtechServer{
                             info!("selected? {}", self.context.search_input.clone());
                             if let Some(input) = inputs.get(&self.context.search_input){
                                 let task = tasks.iter().find(|&x| 
-                                    x.task_name == *input || format!("{}",x.service_number.unwrap_or(0)) == format!("{}",*input)
+                                    x.task_name == *input || format!("{}",x.service_number.clone().unwrap_or_default()) == format!("{}",*input)
                                 );
 
                                 if let Some(task) = task{

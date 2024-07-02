@@ -115,7 +115,7 @@ impl ColumnLayout for TaskLayout {
             tasks.sort_task_payloads();
             for task in tasks.iter(){
                 inputs.insert(task.task_name.clone());
-                inputs.insert(format!("{}",task.service_number.unwrap_or(0)));
+                inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
             }
             s.cell(|ui| {
                 column_frame.show(ui, |ui| {
