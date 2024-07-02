@@ -3,7 +3,6 @@ use database::{schema::{TaskNotePayload, TaskPayload, TicketPayload, TASK_TABLE,
 use egui::{epaint::Shadow, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
-use log::info;
 use serde::Serialize;
 use wasm_bindgen_futures::spawn_local;
 
@@ -122,7 +121,7 @@ impl DisplayModal for TaskModal {
 
                             
 
-                            if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
+                            // if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
                                 
                             if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
                                 
@@ -167,19 +166,7 @@ impl DisplayModal for TaskModal {
                                     }
                                     info!("deleting task_id: {task_id:?}");
                                     let y: Option<TaskPayload> = db.database.delete((TASK_TABLE, task_id.id)).await.unwrap();
-                                    let task_id = task_id.clone();
-                                    let ticket_id = ticket_id.clone();
-                                    let db = db.unwrap();
 
-                                    if ids.len() > 0 {
-                                        let query = "DELETE ";
-                                    } 
-                                    if let Some(id) = ticket_id {
-                                        info!("deleting task_id: {:?}", id.0.clone());
-                                        let x: Option<TicketPayload> = db.database.delete((TICKET_TABLE, id.0.id)).await.unwrap();
-                                    }
-                                    info!("deleting task_id: {task_id:?}");
-                                    let y: Option<TaskPayload> = db.database.delete((TASK_TABLE, task_id.id)).await.unwrap();
                                 });
                             }
 
