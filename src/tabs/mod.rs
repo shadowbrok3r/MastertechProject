@@ -1,4 +1,5 @@
 use eframe::egui::Ui;
+use log::info;
 use crate::app_state::MastertechContext;
 use std::{sync::atomic::Ordering, thread::spawn}; 
 use github::self_updater::run;
@@ -29,10 +30,10 @@ impl MastertechContext {
                     Ok(response) => {
                         match tx.send((response.0, response.1)){
                             Ok(_) => drop(tx),
-                            Err(e) => println!("{e}"),
+                            Err(e) => info!("{e}"),
                         }
                     },
-                    Err(e) => println!("err: {e}"),
+                    Err(e) => info!("err: {e}"),
                 }
             });
             

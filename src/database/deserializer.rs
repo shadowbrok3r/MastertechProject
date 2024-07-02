@@ -20,7 +20,21 @@ pub fn deserialize_to_string<'de, D: Deserializer<'de>>(deserializer: D)
             Ok(value.to_owned())
         }
 
-        fn visit_i32<E>(self, value: i32) -> Result<Self::Value, E>
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
+        fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
         where
             E: de::Error,
         {

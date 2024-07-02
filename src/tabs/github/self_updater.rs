@@ -25,14 +25,16 @@ pub fn run() -> core::result::Result<(String, String), Box<dyn ::std::error::Err
         .repo_owner("shadowbrok3r")
         .repo_name("Mastertech4.0")
         .bin_name("github")
+        .target("MasterTech")
         .show_download_progress(true)
-        .target("Mastertech")
-        //.bin_install_path(bin_install_path)
+        .show_output(true)
         .no_confirm(true)
         .auth_token(token)
         .current_version(cargo_crate_version!())
         .build()?
         .update()?;
+        // .bin_install_path(bin_install_path)
+        // .current_version(ver)
 
     info!("Update status: `{}`!", status.version());
 

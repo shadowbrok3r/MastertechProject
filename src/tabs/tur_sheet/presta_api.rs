@@ -58,7 +58,7 @@ impl MastertechContext {
                     "employees", 
                     "employee", 
                     &order.id_employee_sales_rep
-                ).await.unwrap_or_default();
+                ).await.unwrap();
 
                 info!("employee: {employee:#?}");
                 Some(employee)
@@ -70,7 +70,7 @@ impl MastertechContext {
                     "employees", 
                     "employee", 
                     &order.id_employee_split_rep
-                ).await.unwrap_or_default();
+                ).await.unwrap();
 
                 info!("employee: {sales_rep:#?}");
                 Some(employee_2)
@@ -83,7 +83,7 @@ impl MastertechContext {
                 "customers", 
                 "customer", 
                 &order.id_customer
-            ).await.unwrap_or_default();
+            ).await.unwrap();
 
             // info!("customer: {customer:#?}");
 
@@ -91,7 +91,7 @@ impl MastertechContext {
                 "addresses", 
                 "address", 
                 &order.id_address_delivery
-            ).await.unwrap_or_default();
+            ).await.unwrap();
 
             // let notes: CustomerThread = api_call.request_subresources_by_id(
             //     "customer_threads", 
@@ -167,7 +167,7 @@ impl <'a>Prestashop<'a> {
     ) -> Self { Self { client, display, filter, limit, schema } }
 
     pub fn query_args(&self, resource_name: &str, url_params: HashMap<&str, &str>) -> String {
-        let base_url = format!("https://pclaptops-dev.mojo11.com/api/{}", resource_name);
+        let base_url = format!("https://pclaptops.mojo11.com/api/{}", resource_name);
         
         let mut query_params = vec![];
 
@@ -215,7 +215,7 @@ impl <'a>Prestashop<'a> {
         -> anyhow::Result<T, anyhow::Error>
             where T: for <'de>Deserialize<'de> + std::fmt::Debug
     {
-        let url = format!("https://pclaptops-dev.mojo11.com/api/{resource}/{id}?output_format=JSON");
+        let url = format!("https://pclaptops.mojo11.com/api/{resource}/{id}?output_format=JSON");
         let response: Value = self.client 
             .get(url.clone())
             .header(CONTENT_TYPE, "application/json")
