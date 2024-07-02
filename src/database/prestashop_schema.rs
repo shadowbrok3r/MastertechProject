@@ -3,6 +3,7 @@ use super::deserializer::deserialize_to_string;
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Address{
+    #[serde(deserialize_with="deserialize_to_string")]
     pub id: String,
     pub id_customer: String,         // ❌     isNullOrUnsignedId  
     pub lastname: String,             // ✔️     isName  
@@ -40,7 +41,7 @@ pub struct Employee{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Order{
-    pub order_type_name: String,
+    pub order_type_name: Option<String>,
     pub id_address_delivery: String, // ✔️
     pub id_customer: String, // ✔️
     // pub id_cart: String, // ✔️

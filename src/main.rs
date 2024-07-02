@@ -200,6 +200,7 @@ impl eframe::App for MasterTechApp {
             }
 
             self.context.output_text = serde_json::to_string(&data).unwrap();
+            
             let sales_rep = data.sales_rep.unwrap_or_default();
             let split_rep = data.split_rep.unwrap_or_default();
             let email = sales_rep.email.split_once("@").clone().unwrap_or(("!! Getting Tech", "")).0.to_string();
