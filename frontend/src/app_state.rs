@@ -13,7 +13,7 @@ use serde::Serialize;
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, User}, Database};
+use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::{ClientDisplay, ClientConnection}}, 
@@ -94,6 +94,10 @@ pub struct MtechServerContext{
     pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
     #[serde(skip)]
     pub live_tasks_rx: Receiver<(Action, LiveTaskPayload)>,
+    #[serde(skip)]
+    pub new_ticket_tx: Sender<TicketPayload>,
+    #[serde(skip)]
+    pub new_ticket_rx: Receiver<TicketPayload>,
     #[serde(skip)]
     pub notes_tx: Sender<(Action, TaskNotePayload)>,
     #[serde(skip)]
@@ -233,6 +237,7 @@ impl NewCC for MtechServer{
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
+        let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<TicketPayload>();
 
         let context = MtechServerContext{
             current_user: None,
@@ -256,6 +261,7 @@ impl NewCC for MtechServer{
             ui_actions_tx, ui_actions_rx,
             connected_clients_tx, connected_clients_rx,
             client_connection_tx, client_connection_rx,
+            new_ticket_tx, new_ticket_rx,
             notes_tx, notes_rx,
 
             // MODALS / LAYOUTS

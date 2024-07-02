@@ -257,6 +257,8 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
         Some(_col)
     }
 
+    ui.add_space(15.0);
+
     if let Some(task) = task{
         let ticket = task.service_ticket.as_ref();
         if let Some(ticket) = ticket{
@@ -481,19 +483,22 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
         }else{_col = Color32::from_rgb(30, 30, 38);}
         Some(_col)
     }
-
+    ui.set_width(avail_size.x - 50.0);
     if let Some(task) = task.as_ref(){
         let ticket = task.service_ticket.as_ref().unwrap();
         let computer = ticket.computer.as_ref();
         if let Some(computer) = computer{
             let seb_info = computer.seb_info.as_ref();
-            ui.add_space(30.0);
+            ui.horizontal(|ui| ui.add_space(50.0));
 
             StripBuilder::new(ui)
                 .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
+                .size(Size::exact(20.0))
                 .size(Size::exact(avail_size.y))
+                .size(Size::exact(20.0))
                 .vertical(|mut s| 
             {
+                s.empty();
                 s.strip(|s| 
                 {
                     s
@@ -503,10 +508,10 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                     {
                         s.cell(|ui| 
                         {
-                            // ui.label(format!("ui.available_width() {}", ui.available_width()));
-                            ui.vertical_centered_justified(|ui|{
+                            // ui.vertical(|ui| ui.add_space(50.0));
+                            ui.vertical_centered(|ui|{
                                 ui.group(|ui| {
-                                    Grid::new("group2").min_col_width(avail_size.x / 2.0).with_row_color(|num, style| return_colors(num, style))
+                                    Grid::new("group2").min_col_width(avail_size.x / 2.5).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
                                         ui.label("hostname:");
                                         ui.label(&computer.hostname);
@@ -532,9 +537,10 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                                         // ui.end_row();
                                     });
                                 });
+                                
                                 ui.group(|ui| {
                                     // ui.label("Ticket Information");
-                                    Grid::new("group1").min_col_width(avail_size.x / 3.0).with_row_color(|num, style| return_colors(num, style))
+                                    Grid::new("group1").min_col_width(avail_size.x / 3.8).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
                                         ui.label("Letter");
                                         ui.label("Space Left / Total Size");
@@ -551,6 +557,7 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                                 });
                             });
                             ui.vertical_centered_justified(|ui|{
+
                                 ui.add_space(8.0);
                                 ui.separator();
                                 ui.add_space(8.0);
@@ -558,22 +565,24 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                                 ui.add_space(8.0);
                                 ui.separator();
                                 ui.add_space(8.0);
+
                                 ScrollArea::vertical()
                                     .max_height(avail_size.y)
                                     .max_width(f32::INFINITY)
+                                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                                     .show(ui, |ui| 
                                 {
                                     ui.group(|ui| {
                                         if let Some(seb_info) = seb_info{
                                             
                                             // ui.label("Order Details");
-                                            Grid::new("group3").min_col_width(avail_size.x / 2.0).with_row_color(|num, style| return_colors(num, style))
+                                            Grid::new("group3").min_col_width(avail_size.x / 2.5).with_row_color(|num, style| return_colors(num, style))
                                             .show(ui, |ui| {
                                                 ui.label("InstalledDeviceId:");
-                                                ui.label(RichText::new(&seb_info.InstalledDeviceId).small().font(FontId::proportional(8.0)));
+                                                ui.label(&seb_info.InstalledDeviceId);
                                                 ui.end_row();
                                                 ui.label("InstallInstanceId:");
-                                                ui.label(RichText::new(&seb_info.InstallInstanceId).small().font(FontId::proportional(8.0)));
+                                                ui.label(&seb_info.InstallInstanceId);
                                                 ui.end_row();
                                                 ui.label("HasIssues:");
                                                 ui.label(&seb_info.HasIssues);
@@ -604,7 +613,7 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                                         if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
                                             ui.group(|ui| {
                                                 // ui.label("Customer Information");
-                                                Grid::new("customer_data").min_col_width(avail_size.x / 2.0).with_row_color(|num, style| return_colors(num, style))
+                                                Grid::new("customer_data").min_col_width(avail_size.x / 2.5).with_row_color(|num, style| return_colors(num, style))
                                                 .show(ui, |ui| {
                                                     ui.label("email:");
                                                     ui.label(&extended_seb.email);
@@ -667,6 +676,7 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                         });
                     });
                 });
+                s.empty();
             });
         } else { ui.label("Computer information was not sent with ticket"); }
     }
@@ -675,12 +685,14 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
 }
 
 fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
-
     StripBuilder::new(ui)
         .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
-        .sizes(Size::remainder(), 2)
+        .size(Size::exact(50.0))
+        .size(Size::remainder())
+        .size(Size::remainder())
         .vertical(|mut s| 
     {
+        s.empty();
         s.strip(|s| 
         {
             s
@@ -753,6 +765,7 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
                 });
             });
         });
+        s.empty();
     });
     
     
