@@ -34,7 +34,7 @@ pub struct ModalResponse<R> {
 
 impl Default for ModalState {
     fn default() -> Self {
-        Self { title: Some("Modal".to_string()), min_width: None, min_height: None, default_height: None, full_span_content: false, page_state: ModalAction::default()}
+        Self { title: Some("Create Task".to_string()), min_width: None, min_height: None, default_height: None, full_span_content: false, page_state: ModalAction::default()}
     }
 }
 

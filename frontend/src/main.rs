@@ -1,4 +1,5 @@
 use app_state::{check_authentication, AppState, MainPages, MtechServer};
+use database::schema::{Record, TicketPayload};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::{debug, info};
 use ratframe::NewCC;
@@ -177,6 +178,36 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(ref new_task) = self.context.live_tasks_rx.try_recv(){
+            let database = &self.context.database.clone();
+            let tx = self.context.new_ticket_tx.clone();
+            if let Some(existing_tasks) = &mut self.context.tasks{
+                if let Some(service_num) = new_task.1.clone().service_number{
+                    if !service_num.is_empty() {
+                        let db = database.clone();
+                        if let Some(db) = db{
+
+                            spawn_local(async move {
+                                let query = "SELECT * FROM service_order WHERE service_number == $service_num";       
+                                db.database.set("service_num", service_num).await.unwrap();
+                                let x: Option<TicketPayload> = db.database.query(query).await.unwrap().take(0).unwrap();
+                                if let Some(x) = x{
+                                    match tx.try_send(x){
+                                        Ok(_) => info!("Sent ticket"),
+                                        Err(e) => debug!("Error sending ticket: {e:?}")
+                                    }
+                                } else {
+                                    info!("Did not retrieve any records");
+                                }
+                            });
+                        }
+                    }
+                }else {
+                    handle_live_data(new_task.to_owned(), existing_tasks).unwrap();
+                }
+            }
+        }
+
+        if let Ok(ticket) = self.context.new_ticket_rx.try_recv(){
             if let Some(existing_tasks) = &mut self.context.tasks{
                 handle_live_data(new_task.to_owned(), existing_tasks).unwrap();
             }
