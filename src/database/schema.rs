@@ -74,9 +74,9 @@ pub struct TaskPayload{
     pub service_ticket: Option<TicketPayload>,
     pub everest_initials: String,
     pub task_description: Option<String>, 
-    pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
-    pub service_number: Option<i32>,
-    pub due_date: String, // optional because if not provided, set due date to creation date
+    pub assignee: Option<UserId>, 
+    pub service_number: Option<String>,
+    pub due_date: String, 
     pub priority: Priority,
     pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
     pub completed: bool,
@@ -92,11 +92,11 @@ pub struct LiveTaskPayload{
     // #[serde(skip)]
     pub everest_initials: String,
     pub task_description: Option<String>, 
-    pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
-    pub service_number: Option<i32>,
-    pub due_date: String, // optional because if not provided, set due date to creation date
+    pub assignee: Option<UserId>,
+    pub service_number: Option<String>,
+    pub due_date: String, 
     pub priority: Priority,
-    pub task_note: Option<Vec<TaskNoteId>>, // 
+    pub task_note: Option<Vec<TaskNoteId>>,
     pub completed: bool,
     pub status: Status,
     pub dep: Option<String>
@@ -118,7 +118,7 @@ pub struct TicketPayload{
     pub customer: Option<CustomerData>,
     pub computer: Option<ComputerData>,
     pub service_task: Option<TaskId>,
-    pub service_number: i32,
+    pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
     /// This is main initials on ticket
@@ -246,11 +246,10 @@ pub struct HardwareTests{
     pub ram_test: String
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskNotePayload{
     pub task_id: Option<TaskId>,
     pub everest_initials: String,
-    // pub service_number: Option<i32>,
     pub created_at: String,
     pub note: String,
 }
@@ -259,7 +258,8 @@ pub struct TaskNotePayload{
 pub struct PrestashopPayload{
     pub customer: CustomerData,
     pub order: Order,
-    pub employee: Option<Employee>,
+    pub sales_rep: Option<Employee>,
+    pub split_rep: Option<Employee>,
     pub address: Address,
     pub customer_threads: Vec<CustomerThread>,
     pub customer_messages: Vec<CustomerMessage>

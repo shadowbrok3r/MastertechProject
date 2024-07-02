@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf, sync::{Mutex, atomic::AtomicBool, Arc}}; 
+use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
 use anyhow::Error;
 use chrono::{DateTime, Utc};
 use crossbeam::channel::{Receiver, Sender};
@@ -6,7 +6,7 @@ use eframe::egui::{Color32, Context, FontData, FontDefinitions, FontFamily, Stro
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, LocalSebData, PrestashopPayload, TaskPayload, TicketData, User}, GetKeysResponse, PreTicketData}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}};
+use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, LocalSebData, PrestashopPayload, TaskPayload, TicketData, User}, GetKeysResponse, PreTicketData}, pages::login_page::Login, tabs::{file_browser::FileBrowser, mastertech_website::task_layout::TaskLayout, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::TaskUiActions};
 use egui_file::FileDialog;
 use ratatui::Terminal;
 use ratframe::NewCC;
@@ -109,6 +109,9 @@ pub struct MastertechContext {
     pub ticket_data: Option<Vec<TaskPayload>>,
     pub ticket_payload: Option<TicketData>,
 
+    pub task_map: HashMap<String, Vec<TaskPayload>>,
+    pub task_layouts: HashMap<String, TaskLayout>,
+    
     pub db_data_receiver: Receiver<Vec<TaskPayload>>,
     pub db_data_sender: Sender<Vec<TaskPayload>>,
     // pub presta_data: PrestaDataChannel<T>,
@@ -125,8 +128,15 @@ pub struct MastertechContext {
     pub db_tx: Sender<anyhow::Result<Database, Error>>,
     pub cps_keys_tx: Sender<GetKeysResponse>,
     pub cps_keys_rx: Receiver<GetKeysResponse>,
+    pub ui_actions_tx: Sender<TaskUiActions>,
+    pub ui_actions_rx: Receiver<TaskUiActions>,
     pub github_issue_title: String,
     pub github_issue_descript: String,
+    pub store_users: Option<Vec<User>>,
+    pub store_users_tx: Sender<Vec<User>>,
+    pub store_users_rx: Receiver<Vec<User>>,
+    pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
+    pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
 }
 
 impl NewCC for MasterTechApp {
@@ -172,6 +182,9 @@ impl NewCC for MasterTechApp {
         let (cps_keys_tx,cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
         let (app_state_tx,app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let (connected_clients_tx, connected_clients_rx) = crossbeam::channel::unbounded::<Vec<ConnectedClient>>();
+        let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
+        let (store_users_tx,store_users_rx) = crossbeam::channel::unbounded::<Vec<User>>();
+        let (initial_tasks_tx, initial_tasks_rx) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
 
         let context = MastertechContext {
             current_user: None,
@@ -195,7 +208,7 @@ impl NewCC for MasterTechApp {
             system_info: ComputerData::default(),
             disks: Value::Array(vec![]),
             disk_num: 0,
-
+            store_users: None,
             scaffold_request: SendRequest{ tx: tx_scaffold },
             client: reqwest::Client::new(),
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
@@ -219,6 +232,9 @@ impl NewCC for MasterTechApp {
             client_uuid: None,
             rx,
 
+            task_layouts: HashMap::new(),
+            ui_actions_tx, ui_actions_rx,
+            task_map: HashMap::new(),
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
@@ -258,7 +274,8 @@ impl NewCC for MasterTechApp {
             connected_clients_tx, connected_clients_rx,
             db_tx, db_rx,
             cps_keys_tx, cps_keys_rx,
-
+            store_users_tx, store_users_rx,
+            initial_tasks_tx,  initial_tasks_rx,
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
         };

@@ -10,6 +10,7 @@ use crate::{database::schema::{CustomerData, TicketData}, tabs::websockets::Cmd}
 
 use self::schema::{ComputerData, HardwareTests};
 
+pub mod deserializer;
 pub mod database;
 pub mod schema;
 pub mod prestashop_schema;
@@ -265,7 +266,7 @@ pub async fn send_payload(
         task_name: format!("{} - {}", &customer.name, service_number),
         service_ticket: Some(ticket_id),
         assignee: Some(queried_salesman.id),
-        service_number: Some(service_number.parse::<i32>()?),
+        service_number: Some(service_number.clone()),
         due_date: pre_ticket_clone.due_date.unwrap(),
         priority: schema::Priority::Normal,
         task_note: None,
