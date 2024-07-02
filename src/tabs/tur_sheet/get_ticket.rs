@@ -185,7 +185,7 @@ impl SendRequest{
                 "user_password": "Poolparty1",
                 "action": ScaffoldActions::FetchKeys,
                 "application": ScaffoldApps::SoftwareLicenseFetch, 
-                "company": "pcl",
+                "company": if so_number.len() == 8 { "pcl" } else { "prestashop" },
                 "id_order": so_number,
             });
 

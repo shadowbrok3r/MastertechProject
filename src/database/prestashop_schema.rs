@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
+use super::deserializer::deserialize_to_string;
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Address{
-    pub id: i32,
+    pub id: String,
     pub id_customer: String,         // ❌     isNullOrUnsignedId  
     pub lastname: String,             // ✔️     isName  
     pub firstname: String,            // ✔️     isName  
@@ -16,7 +17,8 @@ pub struct Address{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Employee{
-    pub id: i32,
+    #[serde(deserialize_with="deserialize_to_string")]
+    pub id: String,
     /// ✔️	isName	
     pub lastname: String, 
     /// ✔️	isName	
@@ -41,7 +43,7 @@ pub struct Order{
     pub order_type_name: String,
     pub id_address_delivery: String, // ✔️
     pub id_customer: String, // ✔️
-    pub id_cart: String, // ✔️
+    // pub id_cart: String, // ✔️
     pub invoice_number: String, // ❌		
     pub invoice_date: String, // ❌		
     pub date_add: String, // ❌
@@ -54,7 +56,6 @@ pub struct Order{
     pub total_paid: String, // ✔️
     pub reference: String, // what prestashop sees since order id and reference are different...
     pub id_order_parent: String, // no idea
-    // #[serde(flatten)]
     pub shipping_number: String, // Tracking number
     pub order_type: String, // Configurator / Sales Order
     // note: String, // ❌
@@ -63,12 +64,17 @@ pub struct Order{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct Associations{
+    #[serde(default = "new_vec")]
     pub order_rows: Vec<OrderRow>,
     pub order_service: Option<Vec<ServiceOrder>>
+}
+fn new_vec() -> Vec<OrderRow> {
+    Vec::new()
 }
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct OrderRow{
+    #[serde(deserialize_with="deserialize_to_string")]
     pub id: String,
     pub id_order_config: String,
     pub product_id: String,
@@ -101,7 +107,8 @@ pub struct CustomerMessage {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct CustomerThread { 	
-    pub id: i32,     
+    #[serde(deserialize_with="deserialize_to_string")]
+    pub id: String,     
     pub id_customer: String,    // isUnsignedId 	❌ 		Customer ID
     pub id_order: String,    	// isUnsignedId 	❌ 		Order ID
     pub date_add: String,    	// isDate 	        ❌ 		
@@ -121,23 +128,23 @@ pub struct CustMessage{
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ServiceOrder{
-    // pub id: i32,
+    // #[serde(deserialize_with="deserialize_to_string")]
+    // pub id: String,
     pub id_order_service: String,
-    pub id_cart: String,
-    pub id_order: String,
+    // pub id_order: String,
     pub device_name: String,
     pub device_mfg: String,
     pub device_model: String,
     pub device_serial: String,
     pub device_password: String,
-    pub id_status_service: String,
+    // pub id_status_service: String, // This is fucky
     pub device_power_supply: String,
     pub other_hardware_software: String,
     pub physical_damage: String,
     pub check_in_notes: String,
     pub intake_notes: String,
-    pub id_employee_qc_tech: String,
-    pub id_employee_qc_signoff: String,
+    // pub id_employee_qc_tech: String,
+    // pub id_employee_qc_signoff: String,
 }
 
 #[derive(Serialize, Debug, Default)]
@@ -238,25 +245,3 @@ impl SubResource for Employee {
         "employee".to_string()
     }
 }
-
-
-
-// impl SubResource for Order{
-//     fn get_subresource(&self, field: &str) -> Option<String> {
-//         match field {
-//             "id_address_delivery" => Some(self.id_address_delivery.to_string()),
-//             "id_cart" => Some(self.id_cart.to_string()),
-//             // "id_customer" => Some(self.id_customer.to_string()),
-//             // "current_state" => Some(self.current_state.to_string()),
-//             // "module" => Some(self.module.to_string()),
-//             // "invoice_number" => Some(self.invoice_number.to_string()),
-//             // "invoice_date" => Some(self.invoice_date.to_string()),
-//             // "date_add" => Some(self.date_add.to_string()),
-//             // "date_upd" => Some(self.date_upd.to_string()),
-//             // "shipping_number" => Some(self.shipping_number.to_string()),
-//             // "note" => Some(self.note.to_string()),
-//             // "total_paid" => Some(self.total_paid.to_string()),
-//             _ => None,
-//         }
-//     }
-// }

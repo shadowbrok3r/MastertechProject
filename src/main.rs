@@ -1,14 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::{fs::File, sync:: Arc};
-use log::{debug, info};
+use crossbeam::channel::Sender;
+use log::{debug, error, info};
 use app_state::{AppState, MasterTechApp};
 use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use self_update::cargo_crate_version;
-use database::{database::Database, prestashop_schema::ServiceOrder, schema::{ClientId, ComputerData, Store, TicketData, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
+use database::{database::Database, prestashop_schema::ServiceOrder, schema::{ClientId, ComputerData, Store, TaskPayload, TicketData, User, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use tabs::tur_sheet::scaffold::AsanaResponse;
+use tokio::spawn;
 
 pub mod app_state;
 pub mod tabs;
@@ -16,6 +18,7 @@ mod filesystem;
 mod database;
 pub mod pages;
 pub mod viewports;
+pub mod utilities;
 
 // #[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
@@ -93,6 +96,12 @@ impl eframe::App for MasterTechApp {
                 Ok(db) => {
                     self.context.current_user = db.clone().user;
                     self.context.database = Some(db.clone());
+                    let initial_tasks_tx = self.context.initial_tasks_tx.clone();
+                    if let Some(usr) = db.clone().user{
+                        get_store_users(db.clone(), self.context.store_users_tx.clone(), usr.store);
+                        get_tasks(db.clone(), initial_tasks_tx);
+                    }
+                    
                 },
                 Err(e) => {
                     info!("Error with auth: {e:?}");
@@ -190,11 +199,15 @@ impl eframe::App for MasterTechApp {
                 }
             }
 
-            // self.context.technician = data.employee.unwrap_or_default().firstname.clone();
-            self.context.output_text += serde_json::to_string(&data).unwrap().as_str();
-            let employee = data.employee.unwrap_or_default(); // .to_uppercase()
-            let email = employee.email.split_once("@").clone().unwrap_or(("Error->Employee", "")).0.to_string();
-            self.context.salesman = email;
+            self.context.output_text = serde_json::to_string(&data).unwrap();
+            let sales_rep = data.sales_rep.unwrap_or_default();
+            let split_rep = data.split_rep.unwrap_or_default();
+            let email = sales_rep.email.split_once("@").clone().unwrap_or(("!! Getting Tech", "")).0.to_string();
+            let email_split_rep = split_rep.email.split_once("@").clone().unwrap_or(("!! Getting Salesman", "")).0.to_string();
+            self.context.technician = email_split_rep;
+            self.context.technician = email;
+            // self.context.ticket_info.customer_name = data.customer.name.clone();
+            // self.context.ticket_info.customer_phone_1
             let service_details = data.order.associations.order_service;
             let mut checkin_notes = String::new();
 
@@ -208,8 +221,10 @@ impl eframe::App for MasterTechApp {
                 }
             }
 
+            let cust = data.customer.clone();
+
             let ticket = TicketData{
-                customer: data.customer.id.clone(),
+                customer: cust.id.clone(),
                 service_number: self.context.so_number.clone(),
                 sales_rep: data.order.id_employee_sales_rep.clone(),
                 recommendations: self.context.recommendations.clone(),
@@ -226,29 +241,38 @@ impl eframe::App for MasterTechApp {
             
             self.context.ticket_payload = Some(ticket);
 
-            let pre_ticket = PreTicketData {
-                cust_code: data.customer.cust_code,
-                cust_id: data.customer.id,
+            // let cust = data.customer.clone();
+            // self.context.ticket_info.customer_name
+            info!("CUSTOMER DATA {:#?}", data.customer.clone());
+            self.context.ticket_info = PreTicketData {
+                cust_code: cust.cust_code,
+                cust_id: cust.id,
                 sales_rep: data.order.id_employee_sales_rep,
                 due_date: Some(self.context.date.unwrap_or_default().to_string()),
                 doc_alias: data.order.order_type,
-                dep: Store::RIV,
+                // dep: Store::RIV,
                 jurisdiction: data.order.id_store,
                 ticket_total: data.order.total_paid,
-                customer_name: data.customer.name,
-                customer_phone_1: data.customer.phone_number,
-                customer_phone_2: data.customer.phone_number_2,
-                customer_email: data.customer.email,
+                customer_name: cust.name,
+                customer_phone_1: cust.phone_number,
+                customer_phone_2: cust.phone_number_2,
+                customer_email: cust.email,
                 checkin_notes,
                 ..Default::default()
             };
-            self.context.ticket_info = pre_ticket;
         }
 
         if let Ok(connected_clients) = self.context.connected_clients_rx.try_recv(){
             //     info!("Connected clients: {:#?}", connected_clients.clone());
         }
 
+        if let Ok(users) = self.context.store_users_rx.try_recv(){
+            self.context.store_users = Some(users);
+        }
+
+        if let Ok(tasks) = self.context.initial_tasks_rx.try_recv(){
+            self.context.ticket_data = Some(tasks);
+        }
         self.viewport_loader(ctx);
     }
 }
@@ -319,7 +343,46 @@ fn set_style() -> Arc<Style>{
     arc_style
 }
 
+pub fn get_store_users(db: Database, tx: Sender<Vec<User>>, store: Store) {
+    spawn(async move {
+        db.database.set("store", store).await.unwrap();
+        let data: Vec<User> = db.database
+            .query("SELECT name, store, everest_initials, id, email FROM user WHERE store == $store")
+            .await
+            .unwrap()
+            .take(0)
+            .unwrap();
+        
+        match tx.try_send(data){
+            Ok(_) => info!("Sent Data from querying tasks"),
+            Err(e) => error!("Error sending Task Data: {e:?}")
+        };
+    });
+}
 
+pub fn get_tasks(db: Database, tx: Sender<Vec<TaskPayload>>){
+    spawn(async move {
+
+        let query = format!("SELECT * FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note");
+
+        let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = db
+            .database
+            .query(query)
+            .await
+            .unwrap()
+            .take(0);
+
+        match query_results{
+            Ok(data) => {
+                match tx.try_send(data){
+                    Ok(_) => drop(tx),
+                    Err(e) => error!("Error sending Task Data: {e:?}")
+                }
+            },
+            Err(e) => error!("Error unwrapping data: {e:?}"),
+        }
+    });
+}
 
 // #[cfg(feature = "compat_mode")]
 // #[tokio::main]

@@ -45,11 +45,15 @@ impl MastertechContext {
                 "orders", 
                 "order", 
                 &input
-            ).await.unwrap_or_default();
-            
+            ).await.unwrap();
+
+            if order.id_customer.is_empty(){
+                info!("Order is likely gonna fuKKKK");
+            }
+
             info!("order: {order:#?}");
 
-            let employee: Option<Employee> = if !order.id_employee_sales_rep.contains("0"){
+            let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0"){
                 let employee: Employee = api_call.request_subresources_by_id(
                     "employees", 
                     "employee", 
@@ -61,27 +65,27 @@ impl MastertechContext {
             }else{
                 None
             };
-            let _employee_2: Option<Employee> = if !order.id_employee_split_rep.contains("0"){
+            let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0"){
                 let employee_2: Employee = api_call.request_subresources_by_id(
                     "employees", 
                     "employee", 
                     &order.id_employee_split_rep
                 ).await.unwrap_or_default();
 
-                info!("employee: {employee:#?}");
+                info!("employee: {sales_rep:#?}");
                 Some(employee_2)
             }else{
                 None
             };
 
 
-            let customer: Customer = api_call.request_subresources_by_id(
+            let cust: Customer = api_call.request_subresources_by_id(
                 "customers", 
                 "customer", 
                 &order.id_customer
             ).await.unwrap_or_default();
 
-            info!("customer: {customer:#?}");
+            // info!("customer: {customer:#?}");
 
             let address: Address = api_call.request_subresources_by_id(
                 "addresses", 
@@ -99,18 +103,19 @@ impl MastertechContext {
             // 2059728
             let customer = CustomerData{
                 id: Some(CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), order.id_customer.clone())))),
-                cust_code: address.id_customer.clone(),
-                name: format!("{} {}", &address.firstname, &address.lastname),
+                cust_code: order.id_customer.clone(),
+                name: format!("{} {}", &cust.firstname, &cust.lastname),
                 phone_number: address.phone.clone().to_string(),
                 // phone_number_2: address.phone_mobile.clone().unwrap_or(0).to_string(),
-                email: customer.email,
+                email: cust.email,
                 ..Default::default()
             };
 
             let presta_payload = PrestashopPayload {
                 customer,
                 order,
-                employee,
+                sales_rep,
+                split_rep,
                 address,
                 customer_threads,
                 customer_messages
@@ -210,8 +215,9 @@ impl <'a>Prestashop<'a> {
         -> anyhow::Result<T, anyhow::Error>
             where T: for <'de>Deserialize<'de> + std::fmt::Debug
     {
+        let url = format!("https://pclaptops-dev.mojo11.com/api/{resource}/{id}?output_format=JSON");
         let response: Value = self.client 
-            .get(format!("https://pclaptops-dev.mojo11.com/api/{resource}/{id}?output_format=JSON"))   //  // .json(&params)
+            .get(url.clone())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, AUTH_TOKEN)
@@ -220,7 +226,7 @@ impl <'a>Prestashop<'a> {
             .json()
             .await?;
 
-        info!("response: {:#?}", response);
+        info!("query:{url}\nresponse: {:#?}", response);
 
         let x: T = from_value(response[name].clone())?;
         info!("x: {x:#?}");
