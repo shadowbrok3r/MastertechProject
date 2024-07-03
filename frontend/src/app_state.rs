@@ -1,7 +1,7 @@
 use std::{cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
 use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
-use egui::{Align2, Context, Ui, WidgetText};
+use eframe::egui::{Align2, Context, Ui, WidgetText};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use egui_toast::Toasts;
 use gloo_worker::Spawnable;

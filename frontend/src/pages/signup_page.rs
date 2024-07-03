@@ -2,7 +2,7 @@ use serde::Serialize;
 use crate::app_state::{AppState, MtechServer};
 use crossbeam::channel::Sender;
 use database::{schema::Store, Database};
-use egui::{Align, Button, CentralPanel, Color32, ComboBox, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;

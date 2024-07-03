@@ -1,5 +1,5 @@
 use super::parser as easy_mark;
-use egui::*;
+use eframe::egui::*;
 
 /// Parse and display a VERY simple and small subset of Markdown.
 pub fn easy_mark(ui: &mut Ui, easy_mark: &str) {

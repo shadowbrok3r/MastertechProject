@@ -2,7 +2,7 @@
 
 [package]
 name = "mtechserver"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
 # forced-target = "wasm32-unknown-unknown"
 
@@ -31,6 +31,7 @@ wasm-bindgen-futures = "0.4"
 crossbeam = "0.8"
 console_error_panic_hook = "0.1"
 gloo-worker = "0.5"
+gloo-net = {version = "0.5", features = ["http"]}
 futures = "0.3"
 egui-toast = "0.13"
 wasm-cookies = { version= "0.2" }

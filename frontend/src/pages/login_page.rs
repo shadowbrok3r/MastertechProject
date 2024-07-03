@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use database::Database;
-use egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Spinner, Stroke, TextEdit, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Spinner, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
@@ -95,7 +95,7 @@ impl MtechServer{
                     ui.add_space(50.0);
                     let font = FontId::proportional(30.0);
                     ui.style_mut().override_font_id = Some(font);
-                    ui.label("Mastertech Server");
+                    ui.label(format!("Mastertech Server {}", env!("CARGO_PKG_VERSION")));
                 });
                 s.strip(|s| 
                 {

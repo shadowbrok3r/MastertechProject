@@ -1,6 +1,6 @@
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use database::{schema::{Priority, Record, Status, TaskPayload, User, TASK_TABLE}, Database};
-use egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use log::info;
 use serde::Serialize;

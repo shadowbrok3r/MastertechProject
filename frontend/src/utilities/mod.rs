@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use displays::{modals::create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, modals::task_modal::{ModalAction, TaskModal}};
-use egui::{vec2, Align, Align2, Button, Color32, Context, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
+use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
 use database::{schema::{Priority, Status, Store, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};

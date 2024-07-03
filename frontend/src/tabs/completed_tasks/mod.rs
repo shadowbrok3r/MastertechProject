@@ -1,6 +1,6 @@
 use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, ColumnLayout, FilterTasks}};
 use database::schema::TaskPayload;
-use egui::Ui;
+use eframe::egui::Ui;
 
 impl MtechServerContext{
     pub fn completed_tasks(&mut self, ui: &mut Ui){ 

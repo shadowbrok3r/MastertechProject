@@ -135,7 +135,7 @@ fn format_from_style(
     egui_style: &egui::Style,
     emark_style: &parser::Style,
 ) -> egui::text::TextFormat {
-    use egui::{Align, Color32, Stroke, TextStyle};
+    use eframe::egui::{Align, Color32, Stroke, TextStyle};
 
     let color = if emark_style.strong || emark_style.heading {
         egui_style.visuals.strong_text_color()

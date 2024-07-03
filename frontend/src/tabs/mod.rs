@@ -5,8 +5,8 @@ pub mod my_tasks;
 pub mod completed_tasks;
 pub mod aging_tasks;
 pub mod quote_fulfilled_tasks;
-
-use egui::Ui;
+pub mod github_issue;
+use eframe::egui::Ui;
 use super::app_state::MtechServerContext;
 
 impl MtechServerContext{

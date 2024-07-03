@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 use database::Database;
 use eframe::egui::Ui;
-use egui::{Align, Button, CollapsingHeader, Direction, Widget};
-use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
+use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
+use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
 

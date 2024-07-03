@@ -1,5 +1,5 @@
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
-use egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
+use eframe::egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
 
 use database::{schema::{Priority, User, Status, TaskPayload}, Database};
 use egui_extras::DatePickerButton;

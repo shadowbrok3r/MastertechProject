@@ -1,5 +1,5 @@
 
-use egui::Ui;
+use eframe::egui::Ui;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use crate::app_state::MtechServerContext;
 use self::chart::render_chart1;
@@ -17,7 +17,7 @@ impl MtechServerContext {
                 render_chart1(frame, area, &app);
             })
         .expect("epic fail");
-      ui.add( self.terminal.backend_mut());
+      // ui.add( self.terminal.backend_mut());
     }
 }
 
