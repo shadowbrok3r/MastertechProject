@@ -1,8 +1,9 @@
 use eframe::egui::Ui;
 use log::info;
 use crate::app_state::MastertechContext;
-use std::{sync::atomic::Ordering, thread::spawn}; 
+use std::sync::atomic::Ordering; 
 use github::self_updater::run;
+use tokio::spawn;
 
 pub mod scripts;
 pub mod output_console;
@@ -25,8 +26,10 @@ impl MastertechContext {
         if ui.button("update").clicked(){
             let (tx, rx) = crossbeam::channel::bounded(1);
 
-            spawn(move ||{
-                match run(){
+            let client = self.client.clone();
+
+            std::thread::spawn(move || {
+                match run(client){
                     Ok(response) => {
                         match tx.send((response.0, response.1)){
                             Ok(_) => drop(tx),
