@@ -3,14 +3,16 @@ use std::{fs::File, sync:: Arc};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
 use app_state::{AppState, MasterTechApp};
+use pages::login_page::HASH;
 use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use self_update::cargo_crate_version;
-use database::{database::Database, prestashop_schema::ServiceOrder, schema::{ClientId, ComputerData, Store, TaskPayload, TicketData, User, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
+use database::{database::Database, schema::{ComputerData, Store, TaskPayload, TicketData, User, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use tabs::tur_sheet::scaffold::AsanaResponse;
 use tokio::spawn;
+use utilities::crypto::pass_hash::load_encrypted_user_data;
 
 pub mod app_state;
 pub mod tabs;
@@ -41,38 +43,42 @@ impl eframe::App for MasterTechApp {
 
         if self.context.specs_first_run{
             self.context.specs_first_run = false;
-            
-            let sysinfo_tx = self.context.computer_specs_tx.clone();
-            tokio::spawn(async move {
-                let _ = ComputerData::get_computer_data(sysinfo_tx).await.unwrap_or(());
-                // let database = Database::new().await;
-                // match db_tx.try_send(database){
-                //     Ok(_) => info!("Sent db connection across thread"),
-                //     Err(err) => debug!("Error sending db connection: {err:?}"),
-                // }
-            });
 
-            
+            let loaded_data = load_encrypted_user_data(HASH);
+            match loaded_data{
+                Some(login) => {
+                    self.state = AppState::Authenticated(app_state::MainPages::Tasks);
+                    let tx = self.context.db_tx.clone();
+                    let sysinfo_tx = self.context.computer_specs_tx.clone();
+                    spawn(async move {
+                        tx.try_send(
+                            Database::new(login.username, login.password, None).await
+                        ).unwrap();
+                        let _ = ComputerData::get_computer_data(sysinfo_tx).await.unwrap_or(());
+                    });
 
-            #[cfg(target_os="windows")]
-            {
-                let mut cps = self.context.current_antivirus.clone();
-    
-                let installed_antivirus = ComputerData::get_antivirus()
-                .map_err(|e| 
-                    cps += format!("Error checking antivirus: {e}\n").as_str()
-                ).unwrap_or(Vec::new());
-    
-    
-                for (name, is_installed) in installed_antivirus {
-                    match is_installed {
-                        Some(true) => {
-                            cps += "\n";
-                            cps += &format!("{name}");
-                        },
-                        _ => {},
+                    #[cfg(target_os="windows")]
+                    {
+                        let mut cps = self.context.current_antivirus.clone();
+            
+                        let installed_antivirus = ComputerData::get_antivirus()
+                        .map_err(|e| 
+                            cps += format!("Error checking antivirus: {e}\n").as_str()
+                        ).unwrap_or(Vec::new());
+            
+            
+                        for (name, is_installed) in installed_antivirus {
+                            match is_installed {
+                                Some(true) => {
+                                    cps += "\n";
+                                    cps += &format!("{name}");
+                                },
+                                _ => {},
+                            }
+                        }
                     }
-                }
+                },
+                None => { self.state = AppState::NoAuth("No User returned from decryption phase".to_string()); },
             }
         }
         
@@ -101,7 +107,6 @@ impl eframe::App for MasterTechApp {
                         get_store_users(db.clone(), self.context.store_users_tx.clone(), usr.store);
                         get_tasks(db.clone(), initial_tasks_tx);
                     }
-                    
                 },
                 Err(e) => {
                     info!("Error with auth: {e:?}");
@@ -125,7 +130,7 @@ impl eframe::App for MasterTechApp {
                 }
             },
             app_state::AppState::NoAuth(reason) => {
-                // info!("No auth: {reason}");
+                info!("No auth: {reason}");
                 self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             },
             _ => {}
@@ -263,7 +268,7 @@ impl eframe::App for MasterTechApp {
             };
         }
 
-        if let Ok(connected_clients) = self.context.connected_clients_rx.try_recv(){
+        if let Ok(_connected_clients) = self.context.connected_clients_rx.try_recv(){
             //     info!("Connected clients: {:#?}", connected_clients.clone());
         }
 

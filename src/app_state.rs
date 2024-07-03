@@ -164,7 +164,7 @@ impl NewCC for MasterTechApp {
             }
         }
 
-        let backend = RataguiBackend::new_with_fonts(
+        let _backend = RataguiBackend::new_with_fonts(
             10,
             10,
             "Regular".into(),

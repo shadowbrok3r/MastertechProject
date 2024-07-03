@@ -2,10 +2,13 @@ use crossbeam::channel::Sender;
 use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Spinner, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
+use serde::{Deserialize, Serialize};
 use tokio::spawn;
 
-use crate::{app_state::{AppState, MainPages, MasterTechApp}, database::database::Database};
+use crate::{app_state::{AppState, MainPages, MasterTechApp}, database::database::Database, utilities::crypto::pass_hash::save_encrypted_user_data};
+pub const HASH: &[u8; 31] = b"TheUltimagicalSecretestPassword";
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Login {
     pub username: String,
     pub password: String,
@@ -24,6 +27,8 @@ impl Login{
     pub fn login(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>){
         let user = self.username.clone();
         let pass = self.password.clone();
+        let _ = save_encrypted_user_data(&self, HASH);
+
         spawn(async move {
             let database = Database::new(user, pass, None).await;
 
