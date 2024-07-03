@@ -90,7 +90,7 @@ impl MastertechContext {
             let address: Address = api_call.request_subresources_by_id(
                 "addresses", 
                 "address", 
-                &order.id_address_delivery
+                &order.id_address_invoice
             ).await.unwrap();
 
             // let notes: CustomerThread = api_call.request_subresources_by_id(
