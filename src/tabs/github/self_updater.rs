@@ -5,9 +5,10 @@ use futures::StreamExt;
 use log::info;
 use reqwest::{header::{ACCEPT, CONTENT_TYPE, USER_AGENT}, Client};
 use serde_json::Value;
-use tokio::{fs::File, io::{self, AsyncWriteExt}};
+use tokio::{fs::File, io::{self, AsyncWriteExt}, process::Command};
 
 const TOKEN: &str = "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";
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
     let mut downloaded_bytes: u64 = 0;
@@ -72,7 +73,8 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
                 #[cfg(target_os="windows")]{    
                     let cmd_stdout = Command::new(tmp_tarball_path)
                         .creation_flags(CREATE_NO_WINDOW)
-                        .spawn()?
+                        .output()
+                        .await?
                         .stdout;
                 
                     info!("cmd_stdout: {:?}", cmd_stdout);
