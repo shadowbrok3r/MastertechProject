@@ -28,8 +28,8 @@ impl MastertechContext {
 
             let client = self.client.clone();
 
-            std::thread::spawn(move || {
-                match run(client){
+            spawn(async move {
+                match run(client).await{
                     Ok(response) => {
                         match tx.send((response.0, response.1)){
                             Ok(_) => drop(tx),
