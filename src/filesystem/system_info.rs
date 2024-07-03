@@ -94,10 +94,7 @@ impl ComputerData{
                 hostname,
                 seb_info
             };
-            match tx.try_send(system_info){
-                Ok(_) => info!("Sent computer data"),
-                Err(e) => info!("Error sending computer data: {e:?}"),
-            }
+            tx.try_send(system_info)?;
             Ok(())
         }
 
@@ -114,6 +111,7 @@ impl ComputerData{
                     .await?
                     .stdout
             );
+            
             if let Some(captures) = re.captures(gpu.clone().unwrap_or("empty".to_string()).as_str()){
                 let full_gpu_name = &captures[1];
                 gpu_name = full_gpu_name.split_whitespace().take(3).collect::<Vec<&str>>().join(" ");
@@ -130,10 +128,7 @@ impl ComputerData{
                 id: None,
                 customer: None,
             };
-            match tx.try_send(system_info){
-                Ok(_) => info!("Sent computer data"),
-                Err(e) => info!("Error sending computer data: {e:?}"),
-            }
+            tx.try_send(system_info)?;
             Ok(())
         }
     }
@@ -169,7 +164,7 @@ impl ComputerData{
             let sender = sender.clone();
             let antivirus_mapping = Arc::clone(&antivirus_mapping);
 
-            tokio::spawn(async move {
+            spawn(async move {
 
                 let where_cmd = ["where", "/r", "C:\\Program Files", antivirus];
 
