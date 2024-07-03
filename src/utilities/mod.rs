@@ -5,6 +5,8 @@ use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
+pub mod crypto;
+
 #[derive(Debug)]
 pub enum TaskUiActions{
     OpenTaskModal(TaskPayload),

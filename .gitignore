@@ -9,3 +9,4 @@
 .idea/codeStyles/codeStyleConfig.xml
 Cargo.lock
 output.log
+data.enc
