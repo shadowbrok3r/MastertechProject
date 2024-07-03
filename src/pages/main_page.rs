@@ -1,7 +1,9 @@
-use eframe::egui::{Button, Context, RichText, Widget};
+use eframe::egui::{Button, Context, Layout, ProgressBar, RichText, Stroke, Widget};
 use eframe::egui::{CentralPanel, Color32, Frame, TopBottomPanel};
 use egui_dock::{DockArea, Style as DockStyle};
+use tokio::spawn;
 use crate::app_state::MasterTechApp;
+use crate::tabs::github::self_updater::run;
 
 
 impl MasterTechApp {
@@ -37,16 +39,45 @@ impl MasterTechApp {
                         }
                     }
                 });
-                ui.add_space(20.0);
-                if let Some(usr) = self.context.current_user.as_ref(){
-                    let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
-                    ui.colored_label(Color32::from_rgb(100,50,100), welcome_msg);
-                }
-                if self.context.current_user.is_none(){
-                    if Button::new("Login").ui(ui).clicked(){
-                        let _ = self.context.app_state_tx.send(crate::app_state::AppState::NoAuth("Needs Login".to_string()));
+                ui.with_layout(Layout::right_to_left(eframe::egui::Align::Max), |ui| {
+                    if Button::new("Update Mastertech")
+                        .stroke(
+                            Stroke::new(1.0, Color32::LIGHT_RED)
+                        )
+                        .ui(ui)
+                        .clicked()
+                    {
+                        let client = self.context.client.clone();
+                        let tx = self.context.bytes_tx.clone();
+
+                        spawn(async move {
+                            let _ = run(client, tx.clone()).await;
+                        });
+                        
+                        while let Ok(res) = self.context.bytes_rx.try_recv(){
+                            self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
+                            
+                            if res.0 == res.1{
+                                self.context.output_text += "\nFinished";
+                            }
+
+                            let _ = ProgressBar::new(res.0 as f32 / res.1 as f32)
+                                .show_percentage()
+                                .fill(Color32::from_rgb(255, 77, 210))
+                                .animate(true).ui(ui);
+                        }
                     }
-                }
+                    ui.add_space(20.0);
+                    if let Some(usr) = self.context.current_user.as_ref(){
+                        let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
+                        ui.colored_label(Color32::from_rgb(100,50,100), welcome_msg);
+                    }
+                    if self.context.current_user.is_none(){
+                        if Button::new("Login").ui(ui).clicked(){
+                            let _ = self.context.app_state_tx.send(crate::app_state::AppState::NoAuth("Needs Login".to_string()));
+                        }
+                    }
+                });
             })
         });
     

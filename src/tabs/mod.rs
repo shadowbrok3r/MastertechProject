@@ -24,25 +24,17 @@ impl MastertechContext {
             ui.label("(.)(.)");
         });
         if ui.button("update").clicked(){
-            let (tx, rx) = crossbeam::channel::bounded(1);
+            // let (tx, rx) = crossbeam::channel::unbounded();
 
-            let client = self.client.clone();
+            // let client = self.client.clone();
 
-            spawn(async move {
-                match run(client).await{
-                    Ok(response) => {
-                        match tx.send((response.0, response.1)){
-                            Ok(_) => drop(tx),
-                            Err(e) => info!("{e}"),
-                        }
-                    },
-                    Err(e) => info!("err: {e}"),
-                }
-            });
+            // spawn(async move {
+            //     let _ = run(client, tx.clone()).await;
+            // });
             
-            if let Ok(res) = rx.recv(){
-                self.output_text = format!("Status: \n     {}\nReleases:\n     {}", &res.1.to_string(), &res.0.to_string());
-            }
+            // while let Ok(res) = rx.recv(){
+            //     self.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
+            // }
         }
     }
 

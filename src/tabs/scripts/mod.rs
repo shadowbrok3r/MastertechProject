@@ -185,7 +185,6 @@ impl Scripts{
                 file.write_all(&chunk).await?;
                 sha.update(&chunk);
                 downloaded_bytes += chunk.len() as u64;
-                
             }
 
             if downloaded_bytes == total_length {

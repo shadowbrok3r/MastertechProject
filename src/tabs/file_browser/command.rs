@@ -4,6 +4,7 @@ use crossbeam::channel;
 use fs_extra::dir::get_size;
 use log::debug;
 use tokio::fs;
+use tracing::info;
 
 use crate::tabs::file_browser::{io::MetaData, read_folder};
 
@@ -61,6 +62,7 @@ impl FileBrowser{
             },
 
             Command::Copy(source, destination, progress_tx) => {
+                info!("Source: {source:?}");
                 std::thread::spawn(move ||{
                     for entry in source{
                         CopyBuilder::new(entry, destination.clone())

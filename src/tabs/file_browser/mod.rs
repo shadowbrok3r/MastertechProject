@@ -149,6 +149,25 @@ impl FileBrowser{
 
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
+                let response = ui.add_sized(
+                    ui.available_size_before_wrap(),
+                    TextEdit::singleline(&mut self.path_edit)
+                        .id(Id::new("path_edit"))
+                        .cursor_at_end(true),
+                ).on_hover_text(&self.path_edit);
+
+                if response.lost_focus() {
+                    let path = PathBuf::from(&self.path_edit);
+                    println!("Lost focus on self.path_edit");
+
+                    match command_tx.send(Some(Command::OpenPath(path))){
+                        Ok(_) => println!("sent task successfully"),
+                        Err(e) => println!("{e}")
+                    };
+                }
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
                 ui.add_enabled_ui(
                     self.path != env::current_dir().unwrap_or_default(),
                     |ui | {
@@ -161,6 +180,7 @@ impl FileBrowser{
                         }
                     }
                 );
+                
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
@@ -171,45 +191,17 @@ impl FileBrowser{
                     }
                 });
 
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                
-                    let response = ui.button("⟲").on_hover_text("Refresh"); //
-                    if response.clicked() {
-                        match command_tx.send(Some(Command::Refresh)){
-                            Ok(_) => println!("sent task successfully"),
-                            Err(e) => println!("{e}")
-                        }
+                let response = ui.button("⟲").on_hover_text("Refresh");
+                if response.clicked() {
+                    match command_tx.send(Some(Command::Refresh)){
+                        Ok(_) => println!("sent task successfully"),
+                        Err(e) => println!("{e}")
                     }
+                }
 
-                    ScrollArea::new([false, false])
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| 
-                    {
-                        let response = ui.add_sized(
-                            ui.available_size_before_wrap(),
-                            TextEdit::singleline(&mut self.path_edit)
-                                .id(Id::new("path_edit"))
-                                .cursor_at_end(true),
-                        ).on_hover_text(&self.path_edit);
-
-                        if response.lost_focus() {
-                            let path = PathBuf::from(&self.path_edit);
-                            println!("Lost focus on self.path_edit");
-
-                            match command_tx.send(Some(Command::OpenPath(path))){
-                                Ok(_) => println!("sent task successfully"),
-                                Err(e) => println!("{e}")
-                            };
-
-                        }
-
-                    });
-                    // if ui.rect_contains_pointer(top_bar){}
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.checkbox(&mut self.read_dirs_only, RichText::new("Directories Only")); // ui.checkbox(&mut self.show_hidden, "Show Hidden");
                 });
-            });
-            
-            ui.horizontal_top(|ui| {
-                ui.checkbox(&mut self.read_dirs_only, RichText::new("Directories Only").small()); // ui.checkbox(&mut self.show_hidden, "Show Hidden");
             });
             ui.add_space(ui.spacing().item_spacing.y);
         });
@@ -259,14 +251,14 @@ impl FileBrowser{
             });
 
             ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if self.new_folder && ui.button(RichText::new("📁 New Folder").small())
-                        .clicked()
-                    {
-                        match command_tx.send(Some(Command::CreateDirectory)){
-                            Ok(_) => println!("ok"),
-                            Err(e) => print!("{e}")
-                        }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let result = ui.add(
+                        TextEdit::singleline(&mut self.filename_edit).id(Id::new("file_name_edit"))
+                            .desired_width(ui.available_width() / 3.0),
+                    );
+
+                    if result.lost_focus() && !self.filename_edit.is_empty(){
+                        let _ = self.path.join(&self.filename_edit);
                     }
 
                     if self.rename {
@@ -275,9 +267,7 @@ impl FileBrowser{
                                 RichText::new("Rename").small()
                             ).clicked() {
                                 if let Some(from) = self.selected_item.clone() {
-                                    
                                     let to = from.with_file_name(&self.filename_edit);
-
                                     match command_tx.send(Some(Command::Rename(from, to))){
                                         Ok(_) => {
                                             println!("ok");
@@ -290,29 +280,31 @@ impl FileBrowser{
                             }
                         });
                     }
-                    
-                    let result = ui.add(
-                        TextEdit::singleline(&mut self.filename_edit).id(Id::new("file_name_edit")),
-                    );
 
-                    if result.lost_focus() && !self.filename_edit.is_empty(){
-                        let _ = self.path.join(&self.filename_edit);
+                    if self.new_folder && ui.button(RichText::new("📁 New Folder").small())
+                        .clicked()
+                    {
+                        match command_tx.send(Some(Command::CreateDirectory)){
+                            Ok(_) => println!("ok"),
+                            Err(e) => print!("{e}")
+                        }
                     }
+
                 });
             });
 
-            ui.add( // Update the progress bar
-                ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
-                    .show_percentage()
-                    .fill(Color32::from_rgb(255, 77, 210))
-                    .animate(self.animated_progress)
-            );
+            ProgressBar::new(self.progress as f32 / self.source_dir_size as f32)
+                .show_percentage()
+                .desired_width(ui.available_size_before_wrap().x / 1.6)
+                .fill(Color32::from_rgb(255, 77, 210))
+                .animate(self.animated_progress)
+                .ui(ui);
         });
 
         CentralPanel::default().show_inside(ui, |ui| 
         {
             ui.shrink_width_to_current();ui.shrink_height_to_current();
-            ui.add_space(ui.spacing().item_spacing.y * 2.0);
+            ui.add_space(ui.spacing().item_spacing.y * 1.5);
 
             if self.first_refresh_contents{
                 self.refresh_contents();
@@ -320,8 +312,9 @@ impl FileBrowser{
                 self.first_refresh_contents = false;
             }
             
-            ScrollArea::new([true, true])
+            ScrollArea::new([false, true])
             .id_source("file_browser_scroll")
+            .max_width(f32::INFINITY)
             .auto_shrink([false, false])
             .show_rows(ui,
             ui.text_style_height(&TextStyle::Body),
@@ -403,7 +396,7 @@ impl FileBrowser{
                     .show_header(ui, |ui| 
                     {
                         let is_selected = self.selected_items.borrow().contains(path);
-                        let selectable_label = ui.selectable_label(is_selected, RichText::new(&label).small());
+                        let selectable_label = ui.selectable_label(is_selected, RichText::new(&label));
                     
                         if selectable_label.secondary_clicked() && !self.folder_metadata.borrow().contains_key(path){
                             match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
@@ -467,7 +460,7 @@ impl FileBrowser{
                 let is_selected = self.selected_items.borrow().contains(path);
                 let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
                 
-                let selectable_label = ui.selectable_label(is_selected, RichText::new(&label).small());
+                let selectable_label = ui.selectable_label(is_selected, RichText::new(&label));
                 if selectable_label.clicked() {
                     match command_sender3.send(Some(Command::Select(path.clone()))) {
                         Ok(_) => drop(command_sender3),
@@ -624,6 +617,13 @@ impl FileBrowser{
             info!("Copied Items: {:?}", self.copied_items_src);
             let command_tx = command_tx.clone();
 
+            if self.copied_items_src.len() == 1 {
+                info!("Path == {:?}", self.copied_items_src[0].file_name());
+                
+                if let Some(path) = self.copied_items_src[0].file_name(){
+
+                }
+            }
             for path in &self.copied_items_src{
                 match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
                     Ok(_) => info!("Getting file size"),
