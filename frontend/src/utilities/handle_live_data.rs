@@ -11,16 +11,16 @@ use std::{collections::HashMap, fmt::Debug};
 use super::LiveUpdate;
 
 
-pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
+pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
     match action{
         Action::Create => {
-            data.handle_live_create(existing_tasks)?;
+            data.handle_live_create(existing_tasks, new_ticket)?;
         },
         Action::Update => {
-            data.handle_live_delete(existing_tasks)?;
+            data.handle_live_delete(existing_tasks, new_ticket)?;
         },
         Action::Delete => {
-            data.handle_live_update(existing_tasks)?;
+            data.handle_live_update(existing_tasks, new_ticket)?;
         },
         _ => {},
     }
@@ -87,20 +87,20 @@ pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug>(existi
 
 
 impl LiveUpdate for LiveTaskPayload {
-    fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
         info!("Data was Created: {:?}", self);
-        update_or_insert(existing_tasks, self)?;
+        update_or_insert(existing_tasks, self, new_ticket)?;
         Ok(())
     }
     
-    fn handle_live_update(self, _existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_update(self, _existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
         info!("Data was Updated: {:?}", self);
         Ok(())
     }
     
-    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
         // info!("Data was Deleted: {:?}", self);
-        update_or_insert(existing_tasks, self)?;
+        update_or_insert(existing_tasks, self, new_ticket)?;
         Ok(())
     }
 }
@@ -143,6 +143,7 @@ pub fn update_or_insert_notes(
 pub fn update_or_insert(
     tasks: &mut Vec<TaskPayload>, 
     new_task: LiveTaskPayload,
+    new_ticket: Option<TicketPayload>
 ) -> anyhow::Result<(), anyhow::Error>{
 
     if let Some(ref id) = new_task.id {
@@ -163,7 +164,11 @@ pub fn update_or_insert(
         if !updated {
             info!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
             // todo!();
-            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default());    
+            let mut new_task_converted = convert_live_to_task(new_task, &TaskPayload::default());  
+            if let Some(ticket) = new_ticket{
+                new_task_converted.service_ticket = Some(ticket.clone());
+                new_task_converted.service_number = Some(ticket.service_number);
+            }
             info!("new_task_converted: {new_task_converted:?}");
             // Insert the new task if it does not exist
             tasks.push(new_task_converted);
