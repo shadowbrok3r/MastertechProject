@@ -1,4 +1,4 @@
-use app_state::{check_authentication, AppState, MainPages, MtechServer};
+use app_state::{check_authentication, AppState, MainPages, MtechServer, NewTicketChannel};
 use database::schema::{Record, TicketPayload};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::{debug, info};
@@ -185,13 +185,17 @@ impl eframe::App for MtechServer {
                     if !service_num.is_empty() {
                         let db = database.clone();
                         if let Some(db) = db{
-
+                            let n_task = new_task.clone();
                             spawn_local(async move {
                                 let query = "SELECT * FROM service_order WHERE service_number == $service_num";       
                                 db.database.set("service_num", service_num).await.unwrap();
                                 let x: Option<TicketPayload> = db.database.query(query).await.unwrap().take(0).unwrap();
-                                if let Some(x) = x{
-                                    match tx.try_send(x){
+                                if let Some(ticket) = x{
+                                    let chnnl = NewTicketChannel {
+                                        new_ticket: ticket,
+                                        new_task: n_task,
+                                    };
+                                    match tx.try_send(chnnl){
                                         Ok(_) => info!("Sent ticket"),
                                         Err(e) => debug!("Error sending ticket: {e:?}")
                                     }
@@ -202,14 +206,14 @@ impl eframe::App for MtechServer {
                         }
                     }
                 }else {
-                    handle_live_data(new_task.to_owned(), existing_tasks).unwrap();
+                    handle_live_data(new_task.to_owned(), existing_tasks, None).unwrap();
                 }
             }
         }
 
-        if let Ok(ticket) = self.context.new_ticket_rx.try_recv(){
+        if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
             if let Some(existing_tasks) = &mut self.context.tasks{
-                handle_live_data(new_task.to_owned(), existing_tasks).unwrap();
+                handle_live_data(channel.new_task.to_owned(), existing_tasks, Some(channel.new_ticket)).unwrap();
             }
         }
 

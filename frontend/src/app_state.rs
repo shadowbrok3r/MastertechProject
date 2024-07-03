@@ -57,6 +57,12 @@ impl Default for AppState{
         Self::NoAuth("Not Authenticated".to_string())
     }
 }
+
+pub struct NewTicketChannel {
+    pub new_ticket: TicketPayload,
+    pub new_task: (Action, LiveTaskPayload)
+}
+
 #[derive(Serialize)]
 pub struct MtechServerContext{
     #[serde(skip)]
@@ -95,9 +101,9 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub live_tasks_rx: Receiver<(Action, LiveTaskPayload)>,
     #[serde(skip)]
-    pub new_ticket_tx: Sender<TicketPayload>,
+    pub new_ticket_tx: Sender<NewTicketChannel>,
     #[serde(skip)]
-    pub new_ticket_rx: Receiver<TicketPayload>,
+    pub new_ticket_rx: Receiver<NewTicketChannel>,
     #[serde(skip)]
     pub notes_tx: Sender<(Action, TaskNotePayload)>,
     #[serde(skip)]
@@ -237,7 +243,7 @@ impl NewCC for MtechServer{
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
-        let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<TicketPayload>();
+        let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
 
         let context = MtechServerContext{
             current_user: None,
