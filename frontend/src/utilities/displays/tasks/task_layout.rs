@@ -10,8 +10,8 @@ use wasm_bindgen_futures::spawn_local;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
-use egui::{popup_below_widget, Align, Button, FontId, RichText, ScrollArea, Sense, TextEdit, Vec2, Widget};
-use egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
+use eframe::egui::{popup_below_widget, Align, Button, FontId, RichText, ScrollArea, Sense, TextEdit, Vec2, Widget};
+use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
 

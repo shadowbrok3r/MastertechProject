@@ -1,16 +1,16 @@
 use app_state::{check_authentication, AppState, MainPages, MtechServer, NewTicketChannel};
-use database::schema::{Record, TicketPayload};
+use database::schema::{TicketPayload, TICKET_TABLE};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::{debug, info};
 use ratframe::NewCC;
 use surrealdb::Action;
 use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{disconnect_client, get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
-use wasm_cookies::CookieOptions;
+// use wasm_cookies::CookieOptions;
 use web_time::Instant;
 use std::sync::Arc;
-use egui::{Color32, FontId, Stroke, Style, Vec2};
+use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 
 pub mod tabs;
@@ -187,20 +187,26 @@ impl eframe::App for MtechServer {
                         if let Some(db) = db{
                             let n_task = new_task.clone();
                             spawn_local(async move {
-                                let query = "SELECT * FROM service_order WHERE service_number == $service_num";       
-                                db.database.set("service_num", service_num).await.unwrap();
-                                let x: Option<TicketPayload> = db.database.query(query).await.unwrap().take(0).unwrap();
-                                if let Some(ticket) = x{
-                                    let chnnl = NewTicketChannel {
-                                        new_ticket: ticket,
-                                        new_task: n_task,
-                                    };
-                                    match tx.try_send(chnnl){
-                                        Ok(_) => info!("Sent ticket"),
-                                        Err(e) => debug!("Error sending ticket: {e:?}")
-                                    }
-                                } else {
-                                    info!("Did not retrieve any records");
+                                // let query = "SELECT * FROM service_order WHERE service_number == $service_num";       
+                                // db.database.set("service_num", service_num).await.unwrap();
+                                info!("service_num: {service_num:?}");
+                                let x: Result<Option<TicketPayload>, surrealdb::Error> = db.database.select((TICKET_TABLE, service_num)).await;
+                                match x{
+                                    Ok(data) => {
+                                        if let Some(ticket) = data{
+                                            let chnnl = NewTicketChannel {
+                                                new_ticket: ticket,
+                                                new_task: n_task,
+                                            };
+                                            match tx.try_send(chnnl){
+                                                Ok(_) => info!("Sent ticket"),
+                                                Err(e) => debug!("Error sending ticket: {e:?}")
+                                            }
+                                        } else {
+                                            info!("Did not retrieve any records");
+                                        }
+                                    },
+                                    Err(e) => info!("ERROR: {e:?}"),
                                 }
                             });
                         }
@@ -298,18 +304,19 @@ impl eframe::App for MtechServer {
 
                 // info!("Login page state");
             },
+            AppState::Authenticated(MainPages::Downloads) => {
+                self.downloads_page(ctx);
+            },
             AppState::Authenticated(_) => {
                 self.main_page(ctx);
-                // info!("Authed state");
             },
             AppState::CreateAccount => {
                 // info!("Create Account state");
                 self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             }
         }
-
+        self.menu_bar(ctx);
         self.context.handle_modals(ctx);
-
         self.context.toasts.show(ctx);
     }
 

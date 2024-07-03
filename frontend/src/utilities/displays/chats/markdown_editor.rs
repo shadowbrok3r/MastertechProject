@@ -1,4 +1,4 @@
-use egui::{text::CCursorRange, *};
+use eframe::egui::{text::CCursorRange, *};
 use super::highlighter;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]

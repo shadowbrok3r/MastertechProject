@@ -1,4 +1,4 @@
-use egui::{epaint::Shadow, Button, Color32, Frame, Margin, Rangef, Rounding, SidePanel, Stroke, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Button, Color32, Frame, Margin, Rangef, Rounding, SidePanel, Stroke, TopBottomPanel, Ui, Vec2, Widget};
 use log::info;
 // use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use wasm_bindgen_futures::spawn_local;

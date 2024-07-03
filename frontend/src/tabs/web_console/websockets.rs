@@ -2,7 +2,7 @@
 use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, fmt::Display, str::from_utf8};
 use crossbeam::channel::Sender;
 use database::schema::ConnectedClient;
-use egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};

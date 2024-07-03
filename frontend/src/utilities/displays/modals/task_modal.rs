@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use database::{schema::{TaskNotePayload, TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, Database};
-use egui::{epaint::Shadow, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use serde::Serialize;
