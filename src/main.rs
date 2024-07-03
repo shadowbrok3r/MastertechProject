@@ -130,7 +130,7 @@ impl eframe::App for MasterTechApp {
                 }
             },
             app_state::AppState::NoAuth(reason) => {
-                info!("No auth: {reason}");
+                // info!("No auth: {reason}");
                 self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             },
             _ => {}
