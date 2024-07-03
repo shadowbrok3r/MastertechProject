@@ -137,6 +137,8 @@ pub struct MastertechContext {
     pub store_users_rx: Receiver<Vec<User>>,
     pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
     pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
+    pub bytes_tx: Sender<(u64, u64)>,
+    pub bytes_rx: Receiver<(u64, u64)>,
 }
 
 impl NewCC for MasterTechApp {
@@ -185,6 +187,7 @@ impl NewCC for MasterTechApp {
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (store_users_tx,store_users_rx) = crossbeam::channel::unbounded::<Vec<User>>();
         let (initial_tasks_tx, initial_tasks_rx) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
+        let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
 
         let context = MastertechContext {
             current_user: None,
@@ -272,6 +275,7 @@ impl NewCC for MasterTechApp {
             computer_specs_tx, computer_specs_rx,
             app_state_tx, app_state_rx,
             connected_clients_tx, connected_clients_rx,
+            bytes_tx, bytes_rx,
             db_tx, db_rx,
             cps_keys_tx, cps_keys_rx,
             store_users_tx, store_users_rx,

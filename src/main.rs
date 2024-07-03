@@ -7,7 +7,6 @@ use pages::login_page::HASH;
 use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
-use self_update::cargo_crate_version;
 use database::{database::Database, schema::{ComputerData, Store, TaskPayload, TicketData, User, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use tabs::tur_sheet::scaffold::AsanaResponse;
@@ -300,7 +299,7 @@ async fn main() -> eframe::Result<()> {
     ).unwrap();
 
     eframe::run_native(
-        format!("Mastertech-{}",cargo_crate_version!()).as_str(),
+        format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
         eframe::NativeOptions {
             viewport: ViewportBuilder::default()
                 .with_inner_size([945.0, 750.0])
