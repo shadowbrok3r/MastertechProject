@@ -162,9 +162,7 @@ impl Scripts{
         info!("running install_webroot!");
         
         if let Some(service_number) = &self.service_number{
-            let response = self.client.get(
-                format!("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe")
-                ) 
+            let response = self.client.get("https://anywhere.webrootcloudav.com/zerol/wsainstall.exe") 
                 .send()
                 .await?;
                 
