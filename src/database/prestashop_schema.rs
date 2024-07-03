@@ -43,6 +43,7 @@ pub struct Employee{
 pub struct Order{
     pub order_type_name: Option<String>,
     pub id_address_delivery: String, // ✔️
+    pub id_address_invoice: String, // ✔️
     pub id_customer: String, // ✔️
     // pub id_cart: String, // ✔️
     pub invoice_number: String, // ❌		
