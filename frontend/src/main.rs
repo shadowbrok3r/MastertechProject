@@ -1,9 +1,9 @@
 use app_state::{check_authentication, AppState, MainPages, MtechServer, NewTicketChannel};
-use database::schema::{TicketPayload, TICKET_TABLE};
+use database::schema::{TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::{debug, info};
 use ratframe::NewCC;
-use surrealdb::Action;
+use surrealdb::{Action, Response};
 use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
@@ -187,23 +187,25 @@ impl eframe::App for MtechServer {
                         if let Some(db) = db{
                             let n_task = new_task.clone();
                             spawn_local(async move {
-                                // let query = "SELECT * FROM service_order WHERE service_number == $service_num";       
-                                // db.database.set("service_num", service_num).await.unwrap();
-                                info!("service_num: {service_num:?}");
-                                let x: Result<Option<TicketPayload>, surrealdb::Error> = db.database.select((TICKET_TABLE, service_num)).await;
+                                let x: Result<Response, surrealdb::Error> = db.database
+                                    .query(
+                                        format!("SELECT * FROM service_order WHERE service_number == {}", service_num.clone())
+                                    )
+                                    .await;
+                                
                                 match x{
-                                    Ok(data) => {
-                                        if let Some(ticket) = data{
-                                            let chnnl = NewTicketChannel {
-                                                new_ticket: ticket,
-                                                new_task: n_task,
-                                            };
-                                            match tx.try_send(chnnl){
-                                                Ok(_) => info!("Sent ticket"),
-                                                Err(e) => debug!("Error sending ticket: {e:?}")
-                                            }
-                                        } else {
-                                            info!("Did not retrieve any records");
+                                    Ok(mut data) => {
+                                        info!("data: {:?}", data);
+                                        let ticket: Option<TicketPayload> = data.take(0).unwrap();
+
+
+                                        let chnnl = NewTicketChannel {
+                                            new_ticket: ticket.unwrap_or_default(),
+                                            new_task: n_task,
+                                        };
+                                        match tx.try_send(chnnl){
+                                            Ok(_) => info!("Sent ticket"),
+                                            Err(e) => info!("Error sending ticket: {e:?}")
                                         }
                                     },
                                     Err(e) => info!("ERROR: {e:?}"),
@@ -219,7 +221,27 @@ impl eframe::App for MtechServer {
 
         if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
             if let Some(existing_tasks) = &mut self.context.tasks{
-                handle_live_data(channel.new_task.to_owned(), existing_tasks, Some(channel.new_ticket)).unwrap();
+                let live_task = channel.new_task.1;
+                let service_num = channel.new_ticket.service_number.clone();
+                let check = existing_tasks.iter().any(|x| x.service_number == Some(service_num.clone()));
+                info!("existing_tasks.service_num matches new task.service_num: {check}");
+                if !check{
+                    existing_tasks.push(TaskPayload {
+                        id: live_task.id,
+                        task_name: live_task.task_name,
+                        service_ticket: Some(channel.new_ticket),
+                        everest_initials: live_task.everest_initials,
+                        task_description: live_task.task_description,
+                        assignee: live_task.assignee,
+                        service_number: live_task.service_number,
+                        due_date: live_task.due_date,
+                        priority: live_task.priority,
+                        task_note: None,
+                        completed: live_task.completed,
+                        status: live_task.status,
+                        dep: live_task.dep,
+                    });
+                }
             }
         }
 
