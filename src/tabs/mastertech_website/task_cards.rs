@@ -16,15 +16,14 @@ impl Displayable for TaskPayload{
         store_users: &Vec<User>
     )  -> Option<TaskUiActions>{
         let mut res: Option<TaskUiActions> = None;
-        // let task_frame_color = if self.due_date.parse::<>
         let frame_color = date_colors(self.due_date.clone(), self.completed);
 
         Frame::default()
-            .fill(Color32::from_rgb(22,22,26))
+            .fill(Color32::from_rgb(14,14,18))
             .inner_margin(Margin::same(8.0))
             .outer_margin(Margin::same(5.0))
             .rounding(Rounding::same(15.0))
-            .stroke(Stroke::new(1.0, frame_color))
+            .stroke(Stroke::new(0.5, frame_color))
             .show(ui, |ui| 
         {
             ui.set_max_height(300.0);
