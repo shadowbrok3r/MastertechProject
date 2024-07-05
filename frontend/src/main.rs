@@ -29,29 +29,22 @@ impl eframe::App for MtechServer {
         // i have no god damn idea what this is really doing. it was a 
         // wasm example for using web workers.. i dont even know if its required???
         let data_update = self.context.data_update.as_mut().unwrap();
-        if let Some(update) = data_update.take() {
-            info!("Received update: {update:?}")
-        }
+        if let Some(update) = data_update.take() { info!("Received update: {update:?}") }
 
         // For updating our Ratatui chart in the RataGuiBackend terminal
-        if self.context.last_tick.elapsed() >= self.context.tick_rate {
-            self.context.chart_app.on_tick();
-            self.context.last_tick = Instant::now();
-        }
+        // if self.context.last_tick.elapsed() >= self.context.tick_rate {
+        //     self.context.chart_app.on_tick();
+        //     self.context.last_tick = Instant::now();
+        // }
 
         // do some setting up in the initial frame of our update loop for 
         // 1. Getting database connection
         if self.context.first_run{ // || or if refresh button is hit
             self.context.first_run = false;
-            // wasm_cookies::set("Cross-Origin-Embedder-Policy","require-corp", &CookieOptions::default().with_same_site(wasm_cookies::SameSite::None));
-            // wasm_cookies::set("Cross-Origin-Opener-Policy", "same-origin", &CookieOptions::default().with_same_site(wasm_cookies::SameSite::None));
             match check_authentication(self.context.db_tx.clone()){
                 Ok(d) => {
                     self.state = d.0;
                     if let Some(ref _usr) = d.1{
-                        // let toast = &mut self.context.toasts;
-                        // let auth_toast = Toast{ kind: ToastKind::Success, text: format!("Welcome, {}", usr.name).into(), options: ToastOptions::default().show_progress(true).duration_in_seconds(6.0) };
-                        // toast.add(auth_toast);
                         self.context.current_user = d.1;
                     }
                 },
@@ -290,7 +283,16 @@ impl eframe::App for MtechServer {
                         }
                         Err(error) => {
                             log::error!("Failed to connect to {:?}: {}", &url, error);
-                            // self.error = error;
+                            let toast = &mut self.context.toasts;
+    
+                            let error_toast = Toast{
+                                kind: ToastKind::Error,
+                                text: format!("{error:?}").into(),
+                                options: ToastOptions::default()
+                                    .show_progress(true)
+                                    .duration_in_seconds(6.0)
+                            };
+                            toast.add(error_toast);
                         }
                     };
                 },                

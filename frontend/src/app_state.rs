@@ -190,7 +190,7 @@ impl NewCC for MtechServer{
 
         let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), "Quote Fullfilled".to_owned(), 
             "Aging Tasks".to_owned(), "Web Console".to_owned()]);
-        let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned()]);
+        let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned(), "Bug Report".to_owned()]);
         let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned()]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
         let mut open_tabs = HashSet::new();
@@ -433,6 +433,7 @@ impl TabViewer for MtechServerContext {
             "My Tasks" => self.my_tasks(ui),
             "Web Console" => self.web_console(ui),
             "Completed Tasks" => self.completed_tasks(ui),
+            "Bug Report" => self.github(ui),
             _ => { } 
         }
     }
@@ -463,6 +464,7 @@ impl TabViewer for MtechServerContext {
     fn add_popup(&mut self, ui: &mut Ui, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
         ui.set_width(100.0);
         let tabs = &[
+            &"Bug Report".to_string(),
             &"Terminal".to_string(),
             &"Web Console".to_string(),
             &"Store Tasks".to_string(),

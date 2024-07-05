@@ -44,7 +44,6 @@ pub struct ClientDisplay{
     pub client_names: Vec<String>,
     pub connected_client: Option<ConnectedClient>,
     pub websocket_client: Option<WebSocketClient>,
-    pub connected: bool
 }
 
 pub struct WebSocketClient {
@@ -62,7 +61,6 @@ pub struct WebSocketClient {
     pub sysinfo: Option<SystemInformation>,
     pub history: Vec<String>,
     pub loading: bool,
-    pub connected: bool,
 }
 
 impl WebSocketClient{
@@ -81,7 +79,6 @@ impl WebSocketClient{
             history: Vec::new(),
             temps: VecDeque::new(),
             loading: false, 
-            connected: false
         }
     }
     
@@ -93,7 +90,7 @@ impl WebSocketClient{
         for event in &self.events {
             match event{
                 WsEvent::Message(msg) => {
-                    self.connected = true;
+                    // self.connected = true;
                     match msg{
                         WsMessage::Binary(bin) => {
                             info!("Binary: {bin:?}");
@@ -149,21 +146,18 @@ impl WebSocketClient{
                     }
                 },
                 WsEvent::Opened => {
-                    self.connected = true;
+                    // self.connected = true;
                 },
                 WsEvent::Closed => {
-                    self.connected = false;
+                    // self.connected = false;
                 },
                 WsEvent::Error(e) => {
-                    self.connected = false;
+                    // self.connected = false;
                     self.history.push(e.clone());
                 },
             }
         }
         self.events.clear();
-        if !self.connected{
-            info!("DISCONNECTED");
-        }
     }
     
     pub fn show(&mut self, mut strip: Strip, name: String) {
@@ -457,7 +451,6 @@ impl ClientDisplay{
             client_names,
             connected_client: None,
             websocket_client: None,
-            connected: false
         }
     }
 
@@ -472,7 +465,6 @@ impl ClientDisplay{
             client_names,
             connected_client: None,
             websocket_client: Some(websocket_client),
-            connected: true
         }
     }
 
@@ -545,7 +537,7 @@ impl ClientDisplay{
 
     pub fn columns(&mut self, strip: &mut egui_extras::Strip) {
         for (name, client) in self.clients.iter(){
-            let color = if self.connected{
+            let color = if client.connected{
                 Color32::LIGHT_BLUE
             }else{ Color32::LIGHT_RED };
             let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 18))
@@ -570,10 +562,7 @@ impl ClientDisplay{
                                     .vertical(| strip| 
                                 {
                                     if let Some(ws_client) = &mut self.websocket_client{
-                                        // if *connected{
-                                        
-                                            ws_client.show(strip, name.clone());
-                                        // }    
+                                        ws_client.show(strip, name.clone());
                                     }
                                 });
                             });
@@ -592,7 +581,7 @@ impl ClientDisplay{
             .rounding(Rounding::same(5.0))
             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
-        for (name, client) in self.clients.iter(){
+        for (name, client) in self.clients.iter_mut(){
             s.cell(|ui|
             {
                 header_frame.show(ui, |ui|
@@ -612,12 +601,15 @@ impl ClientDisplay{
                             if button.clicked(){ // CONNECT
                                 // let url = format!("{}/websocket?role=master&room_id={}", dotenv::from_filename("WS_URL").unwrap(), name.clone());
                                 let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
-                                if client.connected{
+
+                                client.connected = false;
+
+                                // if client.connected{
                                     self.connected_client = Some(client.clone());
-                                }
+                                // }
                                 tx.send(ClientConnection::Disconnect(url)).unwrap();
                             }
-                            ui.add_space(ui.available_width() / 4.0)
+                            ui.add_space(20.0)
                         });
 
                         ui.with_layout(Layout::left_to_right(Align::Center), 
@@ -634,16 +626,33 @@ impl ClientDisplay{
                                 .min_size(Vec2::new(30.0, 20.0))
                                 .ui(ui);
 
-                            ui.add_space(30.0);
+                            
 
                             if button.clicked(){ // CONNECT
                                 // let url = format!("{}/websocket?role=master&room_id={}", dotenv::from_filename("WS_URL").unwrap(), name.clone());
                                 let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
+                                client.connected = true;
                                 if client.connected{
                                     self.connected_client = Some(client.clone());
                                 }
                                 tx.send(ClientConnection::ClientUrl(url)).unwrap();
                             }
+
+                            ui.add_space(10.0);
+
+                            let export = Button::new(
+                                RichText::new("Export")
+                                    .raised()
+                                    .color(Color32::LIGHT_RED)
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .min_size(Vec2::new(30.0, 20.0))
+                                .ui(ui);
+
+                            if export.clicked() {
+
+                            }
+                            ui.add_space(45.0);
                         });
                     });
                 });
@@ -652,6 +661,10 @@ impl ClientDisplay{
     }
 }
 
+pub trait ClientHandler { 
+    fn connect_client(&mut self);
+    fn export_logs(&mut self);
+}
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Option<Vec<u8>> {
     if let Ok(data) = bincode::serialize(system_info){
