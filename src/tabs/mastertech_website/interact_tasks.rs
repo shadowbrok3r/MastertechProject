@@ -53,41 +53,14 @@ impl Interaction for TaskPayload {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
 
-        let mut description = self.task_description.take().unwrap_or_else(String::new);
-
-        let text_edit = TextEdit::multiline(&mut description)
+        let text_edit = TextEdit::multiline(&mut self.task_description)
             .desired_rows(6)
             .desired_width(ui.available_width())
             .horizontal_align(Align::Center)
             .ui(ui);
 
         if text_edit.changed() {
-            self.update_task_description(Some(description), database.clone());
-        }
-        None
-    }
-
-    fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
-
-        if let Some(service_ticket) = &mut self.service_ticket{
-            let text_edit = TextEdit::multiline(&mut service_ticket.recommendations)
-                .desired_rows(6)
-                .desired_width(ui.available_width())
-                .horizontal_align(Align::Center)
-                .ui(ui);
-
-            if text_edit.changed() {
-                let rec = service_ticket.recommendations.clone();
-                self.update_recommendations(Some(rec), database.clone());
-            }
-        }else{
-            let _text_edit = TextEdit::multiline(&mut "No recommendations")
-            .desired_rows(5)
-            .desired_width(ui.available_width())
-            .horizontal_align(Align::Center)
-            .ui(ui);
+            self.update_task_description(self.task_description.clone(), database.clone());
         }
         None
     }

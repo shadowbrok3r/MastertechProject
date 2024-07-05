@@ -4,11 +4,12 @@ use crossbeam::channel::Sender;
 use log::{debug, error, info};
 use app_state::{AppState, MasterTechApp};
 use pages::login_page::HASH;
-use ratframe::NewCC;
+// use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{style::Style, Color32, Context, FontId, IconData, Stroke, Vec2, ViewportBuilder};
-use database::{database::Database, schema::{ComputerData, Store, TaskPayload, TicketData, User, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, PreTicketData};
+use eframe::egui::{style::Style, Color32, Context, FontId, Stroke, Vec2, ViewportBuilder};
+use database::{database::Database, schema::{ComputerData, ComputerId, HardwareTests, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
+use surrealdb::sql::Thing;
 use tabs::tur_sheet::scaffold::AsanaResponse;
 use tokio::spawn;
 use utilities::crypto::pass_hash::load_encrypted_user_data;
@@ -27,18 +28,6 @@ impl eframe::App for MasterTechApp {
         // most important part of the whole app.. setting up our styling
         let arc_style = set_style();
         ctx.set_style(arc_style);
-        
-        if self.context.connect_to_ws || self.context.disconnect_ws{
-            let socket_disconnect = self.context.disconnect_ws.clone();
-            info!("Socket_disconnect: {:?}", socket_disconnect);
-            // tokio::spawn(async move{
-                // let _x = WebSocket::new_websocket_connection(uuid.clone(), socket_disconnect).await;
-            // });
-
-            // self.context.output_text += &x;
-            self.context.connect_to_ws = false;
-            self.context.disconnect_ws = false;
-        }
 
         if self.context.specs_first_run{
             self.context.specs_first_run = false;
@@ -53,13 +42,14 @@ impl eframe::App for MasterTechApp {
                         tx.try_send(
                             Database::new(login.username, login.password, None).await
                         ).unwrap();
-                        let _ = ComputerData::get_computer_data(sysinfo_tx).await.unwrap_or(());
+                        let _ = ComputerData::default().get_computer_data(sysinfo_tx).await;
                     });
 
                     #[cfg(target_os="windows")]
                     {
                         let mut cps = self.context.current_antivirus.clone();
-            
+                        // let sysinfo = self.context.computer_data;
+                        // let installed_antivirus = sysinfo.get_antivirus()
                         let installed_antivirus = ComputerData::get_antivirus()
                         .map_err(|e| 
                             cps += format!("Error checking antivirus: {e}\n").as_str()
@@ -83,15 +73,15 @@ impl eframe::App for MasterTechApp {
         
 
         if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
-            self.context.system_info = computer_data;
-            for disk in &self.context.system_info.drives{
+            self.context.computer_data = computer_data;
+            for disk in &self.context.computer_data.drives{
                 self.context.disk_num += 1;
                 if let Some(disks_arr) = self.context.disks.as_array_mut() {
                     let disk_json = serde_json::to_value(&disk).unwrap();
                     disks_arr.push(disk_json);
                 } else { debug!("Expected self.context.drives to be an Array"); }
             }
-            self.context.output_text += format!("{:#?}", &self.context.system_info.seb_info.as_mut()).as_str();
+            self.context.output_text += format!("{:#?}", &self.context.computer_data.seb_info.as_mut()).as_str();
         };
 
         if let Ok(db) = self.context.db_rx.try_recv(){
@@ -128,35 +118,15 @@ impl eframe::App for MasterTechApp {
                     app_state::MainPages::WebConsole => self.main_page(ctx),
                 }
             },
-            app_state::AppState::NoAuth(reason) => {
+            app_state::AppState::NoAuth(_reason) => {
                 // info!("No auth: {reason}");
                 self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             },
             _ => {}
         }
 
-        while let Ok(message) = self.context.rx.try_recv() {
-            if let Ok(info) = serde_json::from_str::<database::PreTicketData>(&message) {
-                self.context.output_text.clear();
-    
-                // Handle PreTicketData
-                self.context.ticket_info = info;
-                debug!("ticket information: {:#?}", self.context.ticket_info);
-
-                if self.context.ticket_info.checkin_rep  == "DMK"{self.context.salesman = self.context.ticket_info.checkin_rep.clone();}
-                else if self.context.ticket_info.checkin_rep  == "JDH2"{self.context.salesman = self.context.ticket_info.checkin_rep.clone();}
-                self.context.technician = self.context.ticket_info.sales_rep.clone();
-
-                let code = &self.context.ticket_info.cust_code;
-                let email = &self.context.ticket_info.customer_email;
-                let codes = &self.context.ticket_info.item_codes;
-                let store = &self.context.ticket_info.jurisdiction;
-
-                self.context.output_text += &format!("Store: {store:?}\n\nCustomer Code: {code}\nCustomer Email: {email}\n\nItem on order:\n{codes}");
-                self.context.spinner = false;
-    
-            }             
-            else if let Ok(info) = serde_json::from_str::<database::GetKeysResponse>(&message) {
+        while let Ok(message) = self.context.rx.try_recv() {       
+            if let Ok(info) = serde_json::from_str::<database::GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
                     self.context.keys = info;
                 }
@@ -183,88 +153,81 @@ impl eframe::App for MasterTechApp {
         }
     
         if let Ok(data) = self.context.prestashop_api_rx.try_recv(){
+            let customer = &mut self.context.customer_data;
+            let ticket = &mut self.context.ticket_data;
+            let task = &mut self.context.task_data;
+            let task_notes = &mut self.context.task_notes;
+            let computer = &mut self.context.computer_data;
+
+            let hdd_test = format!("{:?}", &self.context.hdd_test_cbox);
+            let ram_test = format!("{:?}", &self.context.ram_test_cbox);
+            let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
+            
+            let service_details = data.order.associations.order_service;
+            let mut owned_computers: Vec<ComputerId> = Vec::new();
+            let mut services: Vec<TicketId> = Vec::new();
+
             #[cfg(target_os="windows")]
             {
                 let cps = &mut self.context.current_antivirus;
+                let mut cps_v = Vec::new();
                 let installed_antivirus = ComputerData::get_antivirus()
                 .map_err(|e| 
                     *cps += format!("Error checking antivirus: {e}\n").as_str()
                 ).unwrap_or_default();
     
     
-                for (name, is_installed) in installed_antivirus {
-                    match is_installed {
-                        Some(true) => {
-                            *cps += "\n";
-                            *cps += &format!("{name}");
-                        },
-                        _ => {},
-                    }
+                for (name, _is_installed) in installed_antivirus {
+                    cps_v.push(name);
                 }
+                ticket.current_antivirus = Some(cps_v);
             }
 
-            self.context.output_text = serde_json::to_string(&data).unwrap();
-            
             let sales_rep = data.sales_rep.unwrap_or_default();
             let split_rep = data.split_rep.unwrap_or_default();
-            let email = sales_rep.email.split_once("@").clone().unwrap_or(("!! Getting Tech", "")).0.to_string();
-            let email_split_rep = split_rep.email.split_once("@").clone().unwrap_or(("!! Getting Salesman", "")).0.to_string();
-            self.context.technician = email_split_rep;
-            self.context.technician = email;
-            // self.context.ticket_info.customer_name = data.customer.name.clone();
-            // self.context.ticket_info.customer_phone_1
-            let service_details = data.order.associations.order_service;
-            let mut checkin_notes = String::new();
+            let email = sales_rep.email.split_once("@").clone().unwrap_or(("!! Getting Tech !!", "")).0.to_string();
+            let email_split_rep = split_rep.email.split_once("@").clone().unwrap_or(("!! Getting Salesman !!", "")).0.to_string();
+
+            for msg in data.customer_messages{
+                task_notes.push(TaskNotePayload{
+                    everest_initials: msg.id_employee,
+                    note: msg.message,
+                    ..Default::default()
+                })
+            }
+
+            customer.id = data.customer.id;
+            customer.cust_code = data.customer.cust_code;
+            customer.email = data.customer.email;
+            customer.name = data.customer.name.clone();
+            customer.phone_number = data.customer.phone_number;
+            computer.customer = customer.id.clone();
+            owned_computers.push(computer.id.clone().unwrap());
+            customer.computers = Some(owned_computers);
+            ticket.salesman = email_split_rep;
+            ticket.tech = email;
+            ticket.customer = customer.id.clone();
+            ticket.computer = computer.id.clone();
+            ticket.hardware_test_results = HardwareTests{ hdd_test, ssd_test, ram_test };
+            ticket.doc_alias = data.order.order_type_name.unwrap_or(String::new());
+
+            ticket.id = Some(TicketId(Thing::from((TICKET_TABLE.to_string(), ticket.service_number.clone()))));
+            services.push(ticket.id.clone().unwrap());
 
             if let Some(service) = service_details{
                 if service.len() == 1{
                     let svc = service.get(0).unwrap();
-                    checkin_notes = svc.check_in_notes.clone();
-                    // svc.intake_notes
+                    ticket.checkin_notes = svc.check_in_notes.clone();
                 }else{
                     info!("Theres a couple.... {:?}", service);
                 }
             }
 
-            let cust = data.customer.clone();
+            customer.services = Some(services);
 
-            let ticket = TicketData{
-                customer: cust.id.clone(),
-                service_number: self.context.so_number.clone(),
-                sales_rep: data.order.id_employee_sales_rep.clone(),
-                recommendations: self.context.recommendations.clone(),
-                tech: self.context.technician.clone(),
-                salesman: self.context.salesman.clone(),
-                dep: data.order.id_store.clone(),
-                ticket_total: data.order.total_paid.clone(),
-                doc_alias: data.order.order_type.clone(),
-                // hardware_test_results: self.context.,
-                // #[cfg(target_os="windows")]
-                // current_antivirus: Some(self.context.current_antivirus),
-                ..Default::default()
-            };
-            
-            self.context.ticket_payload = Some(ticket);
-
-            // let cust = data.customer.clone();
-            // self.context.ticket_info.customer_name
-            info!("CUSTOMER DATA {:#?}", data.customer.clone());
-            self.context.ticket_info = PreTicketData {
-                cust_code: cust.cust_code,
-                cust_id: cust.id,
-                sales_rep: data.order.id_employee_sales_rep,
-                due_date: Some(self.context.date.unwrap_or_default().to_string()),
-                doc_alias: data.order.order_type,
-                // dep: Store::RIV,
-                jurisdiction: data.order.id_store,
-                ticket_total: data.order.total_paid,
-                customer_name: cust.name,
-                customer_phone_1: cust.phone_number,
-                customer_phone_2: cust.phone_number_2,
-                customer_email: cust.email,
-                checkin_notes,
-                ..Default::default()
-            };
+            self.context.output_text += &serde_json::to_string_pretty(&ticket).unwrap_or("".to_string());
+            self.context.output_text += &serde_json::to_string_pretty(&customer).unwrap_or("".to_string());
+            self.context.output_text += &serde_json::to_string_pretty(&computer).unwrap_or("".to_string());
         }
 
         if let Ok(_connected_clients) = self.context.connected_clients_rx.try_recv(){
@@ -276,7 +239,7 @@ impl eframe::App for MasterTechApp {
         }
 
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv(){
-            self.context.ticket_data = Some(tasks);
+            self.context.task_payload = Some(tasks);
         }
         self.viewport_loader(ctx);
     }
@@ -285,7 +248,7 @@ impl eframe::App for MasterTechApp {
 // #[cfg(not(feature = "compat_mode"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
-    puffin::set_scopes_on(true);
+    // puffin::set_scopes_on(true);
     
     // Configure log level and log file
     let log_level = LevelFilter::Info; 
@@ -514,7 +477,7 @@ pub fn get_tasks(db: Database, tx: Sender<Vec<TaskPayload>>){
 // }
 
 
-pub(crate) fn load_icon() -> IconData {
+pub(crate) fn load_icon() -> eframe::egui::IconData {
 	let (icon_rgba, icon_width, icon_height) = {
 		let icon = include_bytes!("assets/masterlogoV2.ico");
 		let image = image::load_from_memory(icon)

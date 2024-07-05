@@ -15,8 +15,8 @@ use log::{info, debug, trace, error};
 use std::result::Result;
 use std::fmt::Debug;
 use crate::database::schema::Store;
-use crate::database::{PreTicketData, GetKeysResponse, schema::{ExtendedSeb, LocalSebData}};
-use crate::tabs::tur_sheet::scaffold::{AddressObject, GetTicketResponse, ScaffoldActions, ScaffoldApps};
+use crate::database::{GetKeysResponse, schema::{ExtendedSeb, LocalSebData}};
+use crate::tabs::tur_sheet::scaffold::{ScaffoldActions, ScaffoldApps};
 
 use super::email_builder::AsanaTask;
 
@@ -24,158 +24,7 @@ pub struct SendRequest {
     pub tx: crossbeam::channel::Sender<String>,
 }
 
-impl SendRequest{
-    pub fn get_ticket(
-        so_number: String, 
-        tx: crossbeam::channel::Sender<String>, 
-        client: reqwest::Client)
-    {
-        debug!("Getting Ticket");
-        tokio::spawn(async move{
-            // Await the response 
-            let response: Result<GetTicketResponse, Box<dyn Error>> = request_ticket_info(so_number, client).await;
-
-            // Handle the response
-            match response { // Successfully received GetTicketResponse
-                Ok(get_ticket_response) => {
-                    debug!("get_ticket_response -> {get_ticket_response:?}");
-                    let header = get_ticket_response.header;
-                    let customer = get_ticket_response.customer;
-                    let addresses = get_ticket_response.addresses;
-                    let items_objects = get_ticket_response.items;
-                    //let transactions = &get_ticket_response.transactions;
-
-                    let mut checkin_note = String::new();
-                    let mut itemcodes = String::new();
-
-                    // iterates through the array of objects, gets note if not null and not empty, parses, assigns to checkin_note
-                    for object in items_objects{
-                        let x = object.clone();
-                        // If i want to....
-                        // "COST": "7.100000", this is our cost
-                        // ITEM_PR_FEX is what we charge the customer, although AMOUNT is the same value
-                        x
-                        .unwrap_or("empty".into())
-                        .get("NOTE")
-                        .and_then(|v| v.as_str())
-                        .map(|note| {
-                            if note != "null" && !note.is_empty() {
-                                let parts: Vec<&str> = note.split("Symptoms (Details):").collect();
-                                if parts.len() > 1{
-                                    let note = &parts[1].trim().to_string();
-                                    checkin_note = note.to_string();
-                                }
-                            }
-                        });
-                        
-
-                        object
-                            .unwrap_or("".into())
-                            .get("ITEM_CODE")
-                            .and_then(|v| v.as_str())
-                            .map(|item_code| {
-                                itemcodes += &format!("{item_code}\n").to_string();
-                            });
-                    }
-
-                    /// Collects non-None values into a vector.
-                    /// 
-                    /// # Arguments
-                    /// * `values` - A mutable reference to a vector of strings where the values will be collected.
-                    /// * `value` - An Option<String> that may contain a value to be collected.
-                    fn collect_values(values: &mut Vec<String>, value: Option<String>) {
-                        // Check if the value is Some and, if so, push it into the provided vector.
-                        // The `if let` syntax is a concise way to handle `Option` types that are `Some`.
-                        if let Some(v) = value {
-                            values.push(v);
-                        }
-                    }
-
-
-                    // Temporary vectors to collect all non-None values for each field.
-                    let mut temp_tel1 = Vec::new();
-                    let mut temp_tel2 = Vec::new();
-                    let mut temp_email = Vec::new();
-
-                    // Iterate through the addresses and collect all non-None values.
-                    for address in addresses.into_iter().flatten() {
-                        // Collect non-None TEL1 values.
-                        collect_values(&mut temp_tel1, address.TEL1);
-                        // Collect non-None TEL2 values.
-                        collect_values(&mut temp_tel2, address.TEL2);
-                        // Collect non-None EMAIL values.
-                        collect_values(&mut temp_email, address.EMAIL);
-                    }
-
-                    // Initialize address_object with the last value from each collection,
-                    // which is assumed to be the most recent or relevant.
-                    let address_object = AddressObject {
-                        TEL1: temp_tel1.pop(), // Get and remove the last TEL1 value, if any.
-                        TEL2: temp_tel2.pop(), // Get and remove the last TEL2 value, if any.
-                        EMAIL: temp_email.pop(), // Get and remove the last EMAIL value, if any.
-                    };
-
-                    // The remaining values in the temporary vectors are assigned to the extra vectors.
-                    // These are the primary phone numbers and emails, excluding the most recent ones assigned to address_object.
-                    let extra_tel1 = temp_tel1;
-                    let extra_tel2 = temp_tel2;
-                    let extra_email = temp_email;
-                    
-                    let mut originating_store: Store = Store::None;
-                    if let Some(store) = header.DEP{
-                        originating_store = store;
-                    }
-
-                    let ticket_information = PreTicketData{
-                        cust_code: header.CUST_CODE.unwrap_or("empty".to_string()),
-                        checkin_rep: header.USER_ID.unwrap_or("empty".to_string()),
-                        customer_phone_1: address_object.TEL1.unwrap_or("empty".to_string()),
-                        customer_phone_2: address_object.TEL2.unwrap_or("empty".to_string()),
-                        customer_email: address_object.EMAIL.unwrap_or("empty".to_string()),
-                        last_invoice_amount: customer.LI_AMT.unwrap_or("empty".to_string()),
-                        terms: header.TERMS.unwrap_or("empty".to_string()),
-                        doc_alias: header.DOC_ALIAS.unwrap_or("empty".to_string()),
-                        dep: originating_store ,
-                        jurisdiction: header.JURISCODE.unwrap_or("empty".to_string()),
-                        ticket_total: header.INV_AMOUNT.unwrap_or("empty".to_string()),
-                        customer_name: customer.NAME.unwrap_or("empty".to_string()),
-                        checkin_notes: checkin_note,
-                        last_invoice_number: customer.LI_DOC.unwrap_or("empty".to_string()),
-                        item_codes: itemcodes.clone(),
-                        total_invoice_count: customer.NUM_INV.unwrap_or("empty".to_string()),
-                        due_date: None,
-                        sales_rep: header.SALES_REP.unwrap_or("empty".to_string()),
-                        ..Default::default()
-                    };
-                    
-                    let ticket_info_json = serde_json::to_string(&ticket_information).unwrap_or("No Ticket Information".to_string());
-
-                    match tx.send(ticket_info_json) {
-                        Ok(_) => drop(tx),
-                        Err(e) => {
-                            debug!("Error while sending ticket information: {}", e.to_string());
-                            drop(tx)
-                        }
-                    }
-                    
-                },
-                Err(e) => { 
-                    debug!("response error -> {e:?}");
-                    match tx.send(e.to_string()) {
-                        Ok(_) => {
-                            drop(tx)
-                        },
-                        Err(e) => {
-                            debug!("Error while sending error message: {}", e);
-                            drop(tx)
-                        }
-                    }
-                }
-            }
-        });
-        
-    }
-       
+impl SendRequest{       
     pub async fn get_cps(so_number: String, client: reqwest::Client) 
         -> anyhow::Result<GetKeysResponse, anyhow::Error>
     {
@@ -317,44 +166,6 @@ impl SendRequest{
     }
 }
 
-async fn request_ticket_info(so_number: String, client: reqwest::Client)  
--> core::result::Result<GetTicketResponse, Box<dyn Error>> {
-    info!("request_ticket_info");
-
-    let params: Value = serde_json::json!({
-        "user_email": "logan.lees@pclaptops.com",
-        "user_password": "Poolparty1",
-        "action": "everest_call",
-        "application": "everest",
-        "call": "getOrder",
-        "company": "pcl",
-        "arg1": so_number.as_str(),
-        "arg2": "false"
-    });
-
-    debug!("request_ticket_info -> params -> {params:?}");
-
-    let response = client
-        .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-        .header(CONTENT_TYPE, "application/json")
-        .header(ACCEPT, "application/json")
-        .json(&params)
-        .send()
-        .await;
-
-    match response {
-        Ok(res) => {
-            let json_response: GetTicketResponse  = res.json().await?;
-            debug!("request_ticket_info -> Json_response -> {json_response:?}");
-
-            Ok(json_response)
-        },
-        Err(e) => {
-            debug!("Boxed error: {e:?}");
-            Err(Box::new(e))
-        },
-    }
-}
 
 pub async fn request_seb_info<T>(client: reqwest::Client, customer_email: Option<String>) 
 -> anyhow::Result<T, anyhow::Error> 

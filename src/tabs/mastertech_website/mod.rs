@@ -40,10 +40,10 @@ impl MastertechContext {
         // }
 
         if let Ok(data) = self.db_data_receiver.try_recv(){
-            self.ticket_data = Some(data);
+            self.task_payload = Some(data);
         }
 
-        if let Some(tasks) = self.ticket_data.clone(){
+        if let Some(tasks) = self.task_payload.clone(){
             if let Some(users) = self.store_users.as_ref(){
                 let page = "my_tasks";
                 let col_names = vec!["Todo".to_string(), "In Repair".to_string(), "Complete".to_string()];
@@ -73,7 +73,7 @@ impl MastertechContext {
                 }
             }
         }
-        // if let Some(tasks) = &self.ticket_data{
+        // if let Some(tasks) = &self.task_payload{
         //     let task_layout = TaskLayout::new();
         //     let _ = task_layout.task_card(tasks, ui);
         // }

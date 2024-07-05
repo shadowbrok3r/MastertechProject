@@ -1,18 +1,17 @@
 use std::{collections::HashMap, env, process::Stdio, time::Duration};
 use anyhow::Context;
 use crossbeam::channel::{Receiver, Sender};
-use eframe::{egui::{Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Id, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
+use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use shell_words::split;
 use surrealdb::sql::Thing;
 use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::Command, spawn, time::sleep};
+use tokio::{io::AsyncReadExt, process::Command, spawn, time::sleep};
 use tracing::info;
 
-use crate::{app_state::MastertechContext, database::{deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}};
+use crate::{app_state::MastertechContext, database::{deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}, filesystem::system_info::{generate_client_id, get_sysinfo}};
 pub mod websocket;
 
 impl MastertechContext{
@@ -39,10 +38,10 @@ impl MastertechContext{
             if ui.button("Connect").clicked()
             {
                 if let Some(db) = self.database.clone(){
-                    let client_hash = generate_client_id(self.system_info.hostname.clone(), self.system_info.cpu.trim().to_string());
-                    let url_string = format!("{}:{}", self.system_info.hostname.clone(), client_hash.split_at(9).0);
+                    let client_hash = generate_client_id(self.computer_data.hostname.clone(), self.computer_data.cpu.trim().to_string());
+                    let url_string = format!("{}:{}", self.computer_data.hostname.clone(), client_hash.split_at(9).0);
                     self.url = Some(format!("wss://sock.master-tech.app/websocket?room_id={}&role=client",  url_string.clone()));
-                    let computer_id = &self.system_info.id.clone().unwrap_or( // i need to first check if a computer exists with a customer id or something..
+                    let computer_id = &self.computer_data.id.clone().unwrap_or( // i need to first check if a computer exists with a customer id or something..
                         ComputerId(
                             Thing::from(
                                 (COMPUTER_TABLE,  url_string.clone().as_str())
@@ -113,20 +112,6 @@ impl MastertechContext{
         });
     }
 }
-
-// Function to generate client ID
-fn generate_client_id(hostname: String, cpu: String) -> String {
-    let cpu_id = env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown-cpu".to_string());
-    let combined = format!("{}-{}-{}", hostname, cpu, cpu_id);
-    info!("combined: {}", combined.clone());
-    let mut hasher = Sha256::new();
-    hasher.update(combined.as_bytes());
-    let result = hasher.finalize();
-    let hex_string = hex::encode(result);
-    info!("hex_string: {}", hex_string.clone());
-    hex_string
-}
-
 
 pub struct WebConsoleFrontend {
     pub ws_sender: WsSender,
@@ -582,81 +567,3 @@ async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>)
     Ok(())
 }
 
-async fn get_sysinfo() 
-    -> anyhow::Result<SystemInformation, anyhow::Error> 
-{
-    let mut sys = System::new_all();
-    let sysinf: SystemInformation;
-
-    // First we update all information of our `System` struct.
-    sys.refresh_all();
-
-    let mut cpu_percentage = f32::default();
-    let mut cpu_clock = u64::default();
-    let mut disks = String::new();
-    let disk_list = Disks::new_with_refreshed_list();
-    // let component_temp = String::new();
-    let mut network_interfaces: HashMap<String, String> = HashMap::new();
-    let mut component_temps: HashMap<String, f32> = HashMap::new();
-    // Components temperature:
-    let components = Components::new_with_refreshed_list();
-    // Network interfaces name, total data received and total data transmitted:
-    let networks = Networks::new_with_refreshed_list();
-    // RAM and swap information:
-    let total_memory = sys.total_memory();
-    let used_memory = sys.used_memory();
-
-    // Display system information:
-    let name = System::name().context("Could not retrieve system name")?;
-    let kernel_version = System::kernel_version().context("Could not retrieve kernel_version")?;
-    let os_version = System::os_version().context("Could not retrieve os_version")?;
-    let hostname = System::host_name().context("Could not retrieve hostname")?;
-
-    // Number of CPUs:
-    let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
-
-    // Display processes ID, name na disk usage:
-    // for (pid, process) in sys.processes() {println!("[{pid}] {} {:?}", process.name(), process.disk_usage());}
-
-    for disk in &disk_list {disks += format!("{disk:?}").as_str();}
-
-    for (interface_name, data) in &networks {
-        if data.total_received() > 1 {
-            let up_down = format!("{}/{}", data.total_received(), data.total_transmitted());
-            network_interfaces.insert(interface_name.clone(), up_down);
-        }
-    }
-    
-    for component in &components {
-        // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
-        component_temps.insert(component.label().to_string(), component.temperature());
-        // comps += format!("{component:#?} \n", component.).as_str();
-    }
-
-    let mut s = System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
-
-    std::thread::sleep(Duration::from_millis(200));
-
-    s.refresh_cpu(); // Refreshing CPU information.
-    for cpu in s.cpus() {
-        cpu_percentage = cpu.cpu_usage();
-        cpu_clock = cpu.frequency();
-    }
-
-    sysinf = SystemInformation {
-        cpu_percentage,
-        cpu_clock: cpu_clock as f32,
-        component_temps,
-        disks,
-        total_memory: total_memory as f32,
-        used_memory: used_memory as f32,
-        name,
-        kernel_version,
-        os_version,
-        hostname,
-        number_of_cpus,
-        network_interfaces,
-    };
-
-    Ok(sysinf)
-}

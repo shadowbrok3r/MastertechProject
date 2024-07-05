@@ -8,15 +8,15 @@ use super::email_builder::{email_builder, Info};
 
 impl MastertechContext{
     pub fn submit_tur_email(&mut self) {
-        let cust = &self.ticket_info.customer_name;
-        let so_num = &self.so_number;
+        let cust = &self.customer_data.name;
+        let so_num = &self.ticket_data.service_number;
 
         let mut salesman_map = HashMap::new();
         let mut tech_map = HashMap::new();
 
-        let salesman = &self.salesman; // &format!("{:?}", &self.salesman_cbox);
-        let checkin_rep = &self.ticket_info.checkin_rep;
-        let technician = &self.technician; // &format!("{:?}", &self.techs_cbox);
+        let salesman = &self.ticket_data.salesman; // &format!("{:?}", &self.salesman_cbox);
+        let checkin_rep = &self.ticket_data.checkin_rep;
+        let technician = &self.ticket_data.tech; // &format!("{:?}", &self.techs_cbox);
 
         salesman_map.insert("Jake", "1202792432658520");
         salesman_map.insert("Danny", "1202791016369879");
@@ -31,8 +31,8 @@ impl MastertechContext{
         let ram_test = &format!("{:?}", &self.ram_test_cbox);
         let ssd_test = &format!("{:?}", &self.ssd_test_cbox);
 
-        let checkin_notes = &self.ticket_info.checkin_notes;
-        let recommendations = &self.recommendations;   
+        let checkin_notes = &self.ticket_data.checkin_notes;
+        let recommendations = &self.task_data.task_description;   
 
         let mut _attached_file: Option<PathBuf> = None;
         if let Some(file) = &self.opened_file{
@@ -48,17 +48,17 @@ impl MastertechContext{
         let mut final_disk = String::new();
         let mut each_disk = String::new();
                                                 
-        let cust_code = &self.ticket_info.cust_code;
-        let doc_alias = &self.ticket_info.doc_alias;
-        let _department = &self.ticket_info.dep;
-        //let juris = &self.ticket_info.juris;
-        let ticket_total = &self.ticket_info.ticket_total;
-        let cust_email = &self.ticket_info.customer_email;
-        let last_inv_num = &self.ticket_info.last_invoice_number;
-        let last_inv_amt = &self.ticket_info.last_invoice_amount;
-        let total_inv_num = &self.ticket_info.total_invoice_count;
-        let phone1 = &self.ticket_info.customer_phone_1;
-        let phone2 = &self.ticket_info.customer_phone_2;
+        let cust_code = &self.customer_data.cust_code;
+        let doc_alias = &self.ticket_data.doc_alias;
+        let _department = &self.ticket_data.dep;
+        //let juris = &self.ticket_data.juris;
+        let ticket_total = &self.ticket_data.ticket_total;
+        let cust_email = &self.customer_data.email;
+        let last_inv_num = &self.customer_data.li_doc;
+        let last_inv_amt = &self.customer_data.li_amnt;
+        let total_inv_num = &self.customer_data.num_inv;
+        let phone1 = &self.customer_data.phone_number;
+        let phone2 = &self.customer_data.phone_number_2;
         let mut phone_2 = String::new();
         if !phone2.is_empty(){
             phone_2 = format!("<tr>
@@ -102,11 +102,11 @@ impl MastertechContext{
         if self.send_specs == true{
             self.output_text.clear();
             self.output_text += "pulling system information. Please wait a moment..\n";
-            let system_name = &self.system_info.hostname.trim().to_string();
-            let os = &self.system_info.operating_system.trim().to_string();
-            let cpu_name = &self.system_info.cpu.trim().to_string();
-            let total_ram = &self.system_info.ram.trim().to_string();
-            let gpu = &self.system_info.gpu.clone().trim().to_string();
+            let system_name = &self.computer_data.hostname.trim().to_string();
+            let os = &self.computer_data.operating_system.trim().to_string();
+            let cpu_name = &self.computer_data.cpu.trim().to_string();
+            let total_ram = &self.computer_data.ram.trim().to_string();
+            let gpu = &self.computer_data.gpu.clone().trim().to_string();
 
             for index in 0..self.disk_num
             {
@@ -186,16 +186,16 @@ impl MastertechContext{
             _specs = "Computer information was not sent with ticket".to_string();
         }
         
-        let store: &Store = &self.ticket_info.dep;
+        let store: &Store = todo!(); // &self.ticket_data.dep
 
         let _mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
         let _mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
         let store_email = store.store_email();
 
-        let system_name = &self.system_info.hostname;
-        let cpu_name = &self.system_info.cpu.trim().to_string();
-        let total_ram = &self.system_info.ram.trim().to_string();
-        let gpu = &self.system_info.gpu.clone().trim().to_string();
+        let system_name = &self.computer_data.hostname;
+        let cpu_name = &self.computer_data.cpu.trim().to_string();
+        let total_ram = &self.computer_data.ram.trim().to_string();
+        let gpu = &self.computer_data.gpu.clone().trim().to_string();
         let mut final_disk = String::new();
         let mut each_disk = String::new();
 

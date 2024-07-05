@@ -42,7 +42,7 @@ impl MasterTechApp {
                 ui.with_layout(Layout::right_to_left(eframe::egui::Align::Max), |ui| {
                     if Button::new("Update Mastertech")
                         .stroke(
-                            Stroke::new(1.0, Color32::LIGHT_RED)
+                            Stroke::new(0.5, Color32::LIGHT_RED)
                         )
                         .ui(ui)
                         .clicked()
@@ -77,6 +77,12 @@ impl MasterTechApp {
                             let _ = self.context.app_state_tx.send(crate::app_state::AppState::NoAuth("Needs Login".to_string()));
                         }
                     }
+                    ui.add_space(20.0);
+
+                    if let Some(sys_id) = &self.context.computer_data.id{
+                        ui.colored_label(Color32::LIGHT_RED, sys_id.0.id.to_raw());
+                        ui.colored_label(Color32::WHITE, "Client ID: ");
+                    }
                 });
             })
         });
@@ -97,11 +103,11 @@ impl MasterTechApp {
 
             DockArea::new(&mut self.tree)
                 .style(style)
-                .show_close_buttons(self.context.show_close_buttons)
-                .show_add_buttons(self.context.show_add_buttons)
+                .show_close_buttons(true)
+                .show_add_buttons(true)
                 .show_add_popup(true)
-                .draggable_tabs(self.context.draggable_tabs)
-                .show_tab_name_on_hover(self.context.show_tab_name_on_hover)
+                .draggable_tabs(true)
+                .show_tab_name_on_hover(false)
                 .show_inside(ui, &mut self.context);
         });
     }

@@ -1,10 +1,14 @@
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Id, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
+use egui_autocomplete::AutoCompleteTextEdit;
 use get_ticket::SendRequest;
+use std::collections::BTreeSet;
 use std::path::PathBuf; 
 use log::{debug, info};
 use tokio::spawn;
 use egui_extras::{*, DatePickerButton};
 use egui_file::FileDialog;
+use crate::database::schema::{CustomerData, LiveTaskPayload, TicketData};
+use crate::tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamPass, RamNotTested, SsdFail, SsdNotTested, SsdPass};
 use crate::{database::GetKeysResponse, app_state::MastertechContext};
 
 
@@ -67,38 +71,13 @@ impl MastertechContext {
                                 strip
                                 .cell(|ui| // get_ticket button
                                 {
-                                    let check = !self.so_number.is_empty();
+                                    let check = !self.ticket_data.service_number.is_empty();
 
-                                    ui.horizontal_top(|ui|{
-                                        if ui.add_enabled(
-                                            check,
-                                            Button::new(
-                                                RichText::new("Get Ticket")
-                                                    .color(Color32::from_rgb(255, 204, 255))  
-                                            )
-                                            .stroke(
-                                                Stroke::new(1.0, Color32::from_rgb(191, 33, 101))
-                                            ).min_size(Vec2::new(145.0, 25.0))
-                                        )
-                                        .clicked()
-                                        { 
-                                            self.output_text.clear();
-                                            let service_num = self.so_number.clone();
-                                            if !service_num.is_empty() && service_num.len() == 8{
-                                                self.output_text = "Its Everest, this may take a 'moment'".to_string();
-                                                self.spinner = true;
- 
-                                                SendRequest::get_ticket(service_num, self.scaffold_request.tx.clone(), self.client.clone()); 
-                                            }else{
-                                                self.output_text = "Didn't enter SO number or SO number < 8 digits".to_string();
-                                            }
-
-                                        } 
-                                    
+                                    ui.vertical_centered(|ui|{                                    
                                         if ui.add_enabled(
                                             check, 
                                             Button::new( 
-                                                RichText::new("Get PrestaShop")
+                                                RichText::new("Get PrestaShop Order")
                                                 .color(Color32::from_rgb(255, 204, 255)) 
                                             )
                                             .stroke(
@@ -107,7 +86,13 @@ impl MastertechContext {
                                                 Vec2::new(145.0, 25.0)
                                             )
                                         ).clicked() {
+                                            let service_num = self.ticket_data.service_number.clone();
                                             self.presta_api();
+                                            self.ticket_data = TicketData::default();
+                                            self.task_data = LiveTaskPayload::default();
+                                            self.customer_data = CustomerData::default();
+                                            self.task_notes = Vec::new();
+                                            self.ticket_data.service_number = service_num;
                                         }
                                     });// horizontal_top
                                 }); // strip cell
@@ -133,17 +118,19 @@ impl MastertechContext {
                                                 .show(ui, |ui| 
                                                 {
                                                                         /*     ROW 1     */
-                                                    ui.add(
-                                                        TextEdit::singleline(&mut self.so_number)
+                                                    if ui.add(
+                                                        TextEdit::singleline(&mut self.ticket_data.service_number)
                                                         .hint_text("Service #  ")
                                                         .char_limit(8)
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
                                                         .min_size(vec2(self.widget_size+2.0,14.0))
-                                                    );
+                                                    ).changed(){
+                                                        info!("Data changed: {}", self.ticket_data.service_number);
+                                                    };
 
                                                     ui.add(
-                                                        TextEdit::singleline(&mut self.ticket_info.customer_name)
+                                                        TextEdit::singleline(&mut self.customer_data.name)
                                                         .hint_text("Customer Name  ")
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
@@ -154,14 +141,14 @@ impl MastertechContext {
 
                                                                         /*     ROW 2     */
                                                     ui.add(
-                                                        TextEdit::singleline(&mut self.ticket_info.customer_phone_1)
+                                                        TextEdit::singleline(&mut self.customer_data.phone_number)
                                                         .hint_text("Phone Number 1")
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
                                                         .min_size(vec2(self.widget_size+2.0,14.0))
                                                     );
                                                     ui.add(
-                                                        TextEdit::singleline(&mut self.ticket_info.customer_phone_2)
+                                                        TextEdit::singleline(&mut self.customer_data.phone_number_2)
                                                         .hint_text("Phone Number 2")
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
@@ -171,26 +158,63 @@ impl MastertechContext {
                                                     ui.end_row();
 
                                                                         /*     ROW 3     */
-                                                    ui.add(
-                                                        TextEdit::singleline(&mut self.salesman)
-                                                        .hint_text("Salesman initials")
-                                                        .vertical_align(Align::Center)
-                                                        .margin(vec2(4.0, 4.0))
-                                                        .min_size(vec2(self.widget_size+2.0,14.0))
-                                                    );    
-                                                    ui.add(
-                                                        TextEdit::singleline(&mut self.technician)
-                                                        .hint_text("Technician initials")
-                                                        .vertical_align(Align::Center)
-                                                        .margin(vec2(4.0, 4.0))
-                                                        .min_size(vec2(self.widget_size+2.0,14.0))
-                                                    );
+                                                    let mut inputs = BTreeSet::new();
+                                                    if let Some(users) = &self.store_users{
+
+                                                        for user in users.iter(){
+                                                            let parsed = user.email.split_once("@").unwrap_or(("","")).0;
+                                                            inputs.insert(parsed.to_string());
+                                                        }
+                                                        let size = vec2( self.widget_size + 2.0, 14.0 );
+                                                        let result = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
+                                                            .highlight_matches(true)
+                                                            .max_suggestions(3)
+                                                            .set_text_edit_properties(move |text_edit| 
+                                                        {
+                                                            text_edit
+                                                                .hint_text("Assignee")
+                                                                .min_size(size)
+                                                                .font(FontId::proportional(12.0))
+                                                                .frame(true)
+                                                                // .horizontal_align(egui::Align::Center)
+                                                        })
+                                                        .ui(ui);
+                                                        let result = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
+                                                            .highlight_matches(true)
+                                                            .max_suggestions(3)
+                                                            .set_text_edit_properties(move |text_edit| 
+                                                        {
+                                                            text_edit
+                                                                .hint_text("Tech")
+                                                                .min_size(size)
+                                                                .font(FontId::proportional(12.0))
+                                                                .frame(true)
+                                                                // .horizontal_align(egui::Align::Center)
+                                                        })
+                                                        .ui(ui);
+
+                                                    } else {
+
+                                                        TextEdit::singleline(&mut self.ticket_data.salesman)
+                                                            .hint_text("Assignee")
+                                                            .vertical_align(Align::Center)
+                                                            .margin(vec2(4.0, 4.0))
+                                                            .min_size(vec2(self.widget_size+2.0,14.0))
+                                                            .ui(ui);
+                                                        
+                                                        TextEdit::singleline(&mut self.ticket_data.tech)
+                                                            .hint_text("Tech")
+                                                            .vertical_align(Align::Center)
+                                                            .margin(vec2(4.0, 4.0))
+                                                            .min_size(vec2(self.widget_size+2.0,14.0))
+                                                            .ui(ui);
+                                                    }
                                                     
                                                     ui.end_row();
                                                                         /*     ROW 4     */
-                                                    if ui.add_enabled(!self.so_number.is_empty(), Button::new("Get Keys").min_size(vec2(self.widget_size, 3.0)))
+                                                    if ui.add_enabled(!self.ticket_data.service_number.is_empty(), Button::new("Get Keys").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
-                                                        let service_num = self.so_number.clone();
+                                                        let service_num = self.ticket_data.service_number.clone();
                                                         self.spinner = true;
 
                                                         let cps_request = SendRequest::get_cps(service_num, self.client.clone());
@@ -216,7 +240,7 @@ impl MastertechContext {
                                                         }
                                                     }
                                                     
-                                                    if ui.add_enabled(!self.so_number.is_empty(), Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
+                                                    if ui.add_enabled(!self.ticket_data.service_number.is_empty(), Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
                                                         // request_seb_info(self.client, Some(self.ticket_info.customer_email)).await.unwrap();
                                                     }
@@ -273,9 +297,9 @@ impl MastertechContext {
                                             ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 5.0)
                                             .selected_text(format!("{}", self.ssd_test_cbox.as_str()))
                                             .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdFail, "SSD Fail");
-                                                ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdPass, "SSD Pass");
-                                                ui.selectable_value(&mut self.ssd_test_cbox, scaffold::HardwareTest::SsdNotTested, "SSD Not Tested");
+                                                ui.selectable_value(&mut self.ssd_test_cbox, SsdFail, "SSD Fail");
+                                                ui.selectable_value(&mut self.ssd_test_cbox, SsdPass, "SSD Pass");
+                                                ui.selectable_value(&mut self.ssd_test_cbox, SsdNotTested, "SSD Not Tested");
                                             }); // Combo Box
                                         });
 
@@ -287,9 +311,9 @@ impl MastertechContext {
                                             ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 5.0)
                                             .selected_text(format!("{}", self.hdd_test_cbox.as_str()))
                                             .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddFail, "HDD Fail");
-                                                ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddPass, "HDD Pass");
-                                                ui.selectable_value(&mut self.hdd_test_cbox, scaffold::HardwareTest::HddNotTested, "HDD Not Tested");
+                                                ui.selectable_value(&mut self.hdd_test_cbox, HddFail, "HDD Fail");
+                                                ui.selectable_value(&mut self.hdd_test_cbox, HddPass, "HDD Pass");
+                                                ui.selectable_value(&mut self.hdd_test_cbox, HddNotTested, "HDD Not Tested");
                                             }); // Combo Box
                                         });
 
@@ -300,9 +324,9 @@ impl MastertechContext {
                                             ComboBox::from_id_source("ram_cbox").width(self.widget_size - 5.0)
                                             .selected_text(format!("{}", self.ram_test_cbox.as_str()))
                                             .show_ui(ui, |ui| {
-                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamFail, "RAM Fail");
-                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamPass, "RAM Pass");
-                                                ui.selectable_value(&mut self.ram_test_cbox, scaffold::HardwareTest::RamNotTested, "RAM Not Tested");
+                                                ui.selectable_value(&mut self.ram_test_cbox, RamFail, "RAM Fail");
+                                                ui.selectable_value(&mut self.ram_test_cbox, RamPass, "RAM Pass");
+                                                ui.selectable_value(&mut self.ram_test_cbox, RamNotTested, "RAM Not Tested");
                                             }); // Combo Box
                                         });
 
@@ -343,7 +367,7 @@ impl MastertechContext {
                                             .clicked()
                                             {
                                                 let mut dialog = FileDialog::open_file(self.opened_file.clone())
-                                                .id(Id::new("File Dialog"));
+                                                .id("File Dialog");
                                                 dialog.open();
                                                 self.open_file_dialog = Some(dialog);
                                             };
@@ -358,20 +382,18 @@ impl MastertechContext {
                                 ui
                                 .horizontal_top(|ui|
                                 {
-                                    let check = !self.so_number.is_empty() 
-                                        && !self.ticket_info.customer_name.is_empty() 
-                                        && !self.ticket_info.customer_phone_1.is_empty() 
-                                        && !self.salesman.is_empty() 
-                                        && !self.technician.is_empty();                                    
+                                    let width = ui.available_width() / 2.0;
+                                    let check = !self.ticket_data.service_number.is_empty()
+                                        && !self.customer_data.name.is_empty()
+                                        && !self.customer_data.phone_number.is_empty()
+                                        && !self.ticket_data.salesman.is_empty()
+                                        && !self.ticket_data.tech.is_empty();
                                     if ui
                                     .add_enabled(
                                         check,
-                                        Button::new
-                                        (
-                                            RichText::new("Submit TUR")
-                                                .color(Color32::from_rgb(255, 204, 255))
-                                        )
-                                            .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
+                                        Button::new(RichText::new("Submit TUR").color(Color32::from_rgb(255, 204, 255)))
+                                        .min_size(Vec2::new(width, 20.0))
+                                        .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
                                     )
                                     .clicked()
                                     {  
@@ -379,30 +401,17 @@ impl MastertechContext {
                                     }
 
 
-                                    let check = !self.so_number.is_empty() 
-                                        && !self.ticket_info.customer_name.is_empty() 
-                                        && !self.ticket_info.customer_phone_1.is_empty() 
-                                        && !self.salesman.is_empty() 
-                                        && !self.technician.is_empty();    
+                                    let check = !self.ticket_data.service_number.is_empty()
+                                        && !self.customer_data.name.is_empty()
+                                        && !self.customer_data.phone_number.is_empty()
+                                        && !self.ticket_data.tech.is_empty();
                                     if ui
-                                        .add_enabled(check, Button::new( RichText::new("Master-Tech.app")))
+                                        .add_enabled(check, 
+                                            Button::new( RichText::new("Master-Tech.app"))
+                                            .min_size(Vec2::new(width, 20.0)))
                                         .clicked()
                                     {  
                                        self.submit_tur_mastertech(); 
-                                    }
-                                    
-                                    let connect_to_websocket = ui.add(
-                                        Button::new(
-                                            RichText::new("Connect WS")
-                                        )
-                                    );
-                                    if connect_to_websocket.clicked(){
-                                        self.connect_to_ws = true;
-                                        self.disconnect_ws = false;
-                                    }
-                                    if connect_to_websocket.secondary_clicked(){
-                                        self.disconnect_ws = true;
-                                        self.connect_to_ws = false;
                                     }
                                 }); // horizontal_top
                             }); // vertical center
@@ -428,7 +437,7 @@ impl MastertechContext {
                             .show(ui, |ui|{
                                 ui.add_sized(
                                     vec2(ui.available_width()-4.0, ui.available_height() - 80.0),
-                                    TextEdit::multiline(&mut self.ticket_info.checkin_notes)
+                                    TextEdit::multiline(&mut self.ticket_data.checkin_notes)
                                     .hint_text(RichText::new("Checkin Notes").weak())
                                     .font(FontId::proportional(15.0))
                                     .desired_rows(4)
@@ -446,7 +455,7 @@ impl MastertechContext {
                             .show(ui, |ui|{
                                 ui.add_sized(
                                     vec2(ui.available_width()-4.0, ui.available_height() - 80.0), 
-                                    TextEdit::multiline(&mut self.recommendations)
+                                    TextEdit::multiline(&mut self.task_data.task_description)
                                     .hint_text(RichText::new("Recommendations").weak())
                                     .font(FontId::proportional(15.0))
                                     .desired_rows(4)
