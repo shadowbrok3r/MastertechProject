@@ -13,7 +13,7 @@ impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(110));
-        let text_edit = TextEdit::singleline(&mut self.task_name).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
+        let text_edit = TextEdit::singleline(&mut self.task_name).desired_width(ui.available_width() - 10.0).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
         if text_edit.changed(){
             self.update_task_name(self.task_name.clone(), database);
         }
@@ -67,8 +67,8 @@ impl Interaction for TaskPayload {
 
     fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let frame_color = date_colors(self.due_date.clone(), self.completed);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, frame_color);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, frame_color);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(0.5, frame_color);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(0.5, frame_color);
         let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
         
         let id = self.id.clone().unwrap().0.id.to_string();
@@ -101,7 +101,7 @@ impl Interaction for TaskPayload {
             let color_complete = Color32::LIGHT_GREEN;
             // let color_incomplete = Color32::LIGHT_RED;
 
-            let stroke = Stroke::new(2.0, color_complete);
+            let stroke = Stroke::new(1.0, color_complete);
             let button = Button::new(hover_txt).stroke(stroke).small();
             let res = ui.add_sized(ui.available_size(), button);
            
@@ -117,7 +117,7 @@ impl Interaction for TaskPayload {
             // let color_complete = Color32::LIGHT_GREEN;
             let color_incomplete = Color32::LIGHT_RED;
 
-            let stroke = Stroke::new(2.0, color_incomplete);
+            let stroke = Stroke::new(1.0, color_incomplete);
             let button = Button::new(hover_txt).stroke(stroke).small();
             let res = ui.add_sized(ui.available_size(), button);
             // if res.hovered(){
