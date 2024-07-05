@@ -66,6 +66,7 @@ impl eframe::App for MtechServer {
         // Retrieve our database connection, and 
         // 2. Requesting some task data
         if let Ok(db) = self.context.db_rx.try_recv(){
+            info!("Got db");
             match db{
                 Ok(db) => {
                     self.context.database = Some(db.clone());
@@ -78,6 +79,7 @@ impl eframe::App for MtechServer {
                     let tx = self.context.connected_clients_tx.clone();
                     let notes_tx = self.context.notes_tx.clone();
                     if let Some(usr) = self.context.current_user.as_ref(){
+                        info!("Getting Initial data");
                         get_tasks(db.clone(), initial_tasks_tx);
                         get_store_users(db.clone(), store_users_tx, usr.store);
                         listen_tasks(db.clone(), live_tasks_tx);
@@ -147,10 +149,12 @@ impl eframe::App for MtechServer {
         }
         
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv(){
+            info!("Got tasks? {tasks:?}");
             self.context.tasks = Some(tasks);
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
+            info!("Got users");
             self.context.store_users = Some(users);
         }
 
@@ -222,8 +226,7 @@ impl eframe::App for MtechServer {
         if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
             if let Some(existing_tasks) = &mut self.context.tasks{
                 let live_task = channel.new_task.1;
-                let service_num = channel.new_ticket.service_number.clone();
-                let check = existing_tasks.iter().any(|x| x.service_number == Some(service_num.clone()));
+                let check = existing_tasks.iter().any(|x| x.id == live_task.id);
                 info!("existing_tasks.service_num matches new task.service_num: {check}");
                 if !check{
                     existing_tasks.push(TaskPayload {
@@ -313,6 +316,7 @@ impl eframe::App for MtechServer {
 
         }
         
+        self.menu_bar(ctx);
         // Always checking authentication.
         match &self.state{
             //if auth'd, user shall be allowed
@@ -337,7 +341,6 @@ impl eframe::App for MtechServer {
                 self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             }
         }
-        self.menu_bar(ctx);
         self.context.handle_modals(ctx);
         self.context.toasts.show(ctx);
     }

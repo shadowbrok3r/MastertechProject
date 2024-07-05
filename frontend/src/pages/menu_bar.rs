@@ -82,43 +82,53 @@ impl MtechServer{
             if let Some(usr) = &self.context.current_user{
                 ui.vertical_centered(|ui| {
                     if ui.add(Button::new(format!("Mastertech Server {}", env!("CARGO_PKG_VERSION")))).clicked(){
-                        
+                        self.state = AppState::Authenticated(MainPages::Tasks);
+                        match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
+                            Ok(_) => info!("AppState::Authenticated(MainPages::Tasks)"),
+                            Err(e) => info!("Error: {e:?}"),
+                        }
                     }
                 });
 
                 ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
                     ui.add_space(10.0);
-                    if ui.add(Button::new("Logout")).clicked(){
-                        wasm_cookies::delete("user");
-                        wasm_cookies::delete("jwt");
-                        let logout_msg = "Logged out".to_string();
-                        self.state = AppState::NoAuth(logout_msg.clone());
-                        match self.context.app_state_tx.try_send(AppState::NoAuth(logout_msg)){
-                            Ok(_) => info!("Logged out"),
-                            Err(e) => info!("Error: {e:?}"),
+                    let txt = RichText::new(format!("Welcome, {}", usr.name)).color(Color32::from_rgb(100,50,100));
+                    ui.menu_button(txt, |ui| {
+                        if ui.add(Button::new("Account Settings")).clicked(){
+                        
                         }
-                    }
+                        if ui.add(Button::new("ChatGPT")).clicked(){
+                            // self.state = AppState::Authenticated(MainPages::ChatGpt);
+                            // match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::ChatGpt)){
+                            //     Ok(_) => info!("Logged out"),
+                            //     Err(e) => info!("Error: {e:?}"),
+                            // }
+                        }
+                        if ui.add(Button::new("Downloads")).clicked(){
+                            self.state = AppState::Authenticated(MainPages::Downloads);
+                            match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads)){
+                                Ok(_) => info!("Switching to Downloads Page"),
+                                Err(e) => info!("Error: {e:?}"),
+                            }
+                        }
+                        
+                        if ui.add(Button::new("Logout")).clicked(){
+                            wasm_cookies::delete("user");
+                            wasm_cookies::delete("jwt");
+                            let logout_msg = "Logged out".to_string();
+                            self.state = AppState::NoAuth(logout_msg.clone());
+                            match self.context.app_state_tx.try_send(AppState::NoAuth(logout_msg)){
+                                Ok(_) => info!("Logged out"),
+                                Err(e) => info!("Error: {e:?}"),
+                            }
+                        }
+                    });
+                    
                     // if ui.add(Button::new("Web Console")).clicked(){
                     //     self.state = AppState::Authenticated(MainPages::WebConsole);
                     // }
                     
-                    if ui.add(Button::new("Downloads")).clicked(){
-                        self.state = AppState::Authenticated(MainPages::Downloads);
-                        match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads)){
-                            Ok(_) => info!("Switching to Downloads Page"),
-                            Err(e) => info!("Error: {e:?}"),
-                        }
-                    }
-                    ui.add_space(30.0);
-                    let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
-                    ui.colored_label(Color32::from_rgb(100,50,100), welcome_msg);
-                    // if ui.add(Button::new("ChatGPT")).clicked(){
-                    //     self.state = AppState::Authenticated(MainPages::ChatGpt);
-                    //     match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::ChatGpt)){
-                    //         Ok(_) => info!("Logged out"),
-                    //         Err(e) => info!("Error: {e:?}"),
-                    //     }
-                    // }
+
                 });
             }else{
                 ui.add(Button::new("Login"));

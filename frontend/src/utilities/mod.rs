@@ -55,8 +55,7 @@ pub trait Updatable { // This is correctly implemented
     fn update_status(&self, status: Status, db: Database);
     fn update_dep(&self, store: Store, db: Database);
     fn update_priority(&self, priority: Option<Priority>, db: Database);
-    fn update_task_description(&self, description: Option<String>, db: Database);
-    fn update_recommendations(&self, recommendations: Option<String>, db: Database);
+    fn update_task_description(&self, description: String, db: Database);
     fn update_checkin_notes(&self, checkin_notes: Option<String>, db: Database);
     fn update_task_notes(&self, new_msg: String, db: Database);
 }
@@ -65,7 +64,6 @@ pub trait Interaction{ // This is correctly implemented
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_checkin_notes(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_completed(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
     fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;

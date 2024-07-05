@@ -2,7 +2,7 @@
 
 [package]
 name = "mtechserver"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2021"
 # forced-target = "wasm32-unknown-unknown"
 

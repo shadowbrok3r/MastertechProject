@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use database::{schema::{TaskNotePayload, TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, Database};
-use eframe::egui::{epaint::Shadow, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
+use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, Database};
+use eframe::egui::{Align, Button, Color32, ComboBox, Direction, Grid, Layout, Margin, RichText, ScrollArea, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use serde::Serialize;
@@ -427,7 +427,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                                 s.cell(|ui|{
                                     ui.vertical_centered_justified(|ui| {
                                         ui.label("Recommendations:");
-                                        TextEdit::multiline(&mut ticket.recommendations.to_string())
+                                        TextEdit::multiline(&mut task.task_description.to_string())
                                             .margin(Margin::same(5.0))
                                             .desired_rows(8)
                                             .desired_width(ui.available_width())
@@ -441,36 +441,6 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                 });
 
             });
-        } else{
-            if let Some(ref mut description) = task.task_description{
-                StripBuilder::new(ui)
-                    .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
-                    .sizes(Size::remainder(), 2)
-                    .vertical(|mut s| 
-                {
-                    s.strip(|s| 
-                    {
-                        s
-                            .cell_layout(Layout::centered_and_justified(Direction::TopDown))
-                            .size(Size::exact(avail_size.x / 3.2))
-                            .size(Size::exact(200.0))
-                            .horizontal(|mut s| 
-                        {
-                            s.empty();
-                            s.cell(|ui| 
-                            {
-                                ui.vertical_centered(|ui| {
-                                    TextEdit::multiline( description)
-                                        .margin(Margin::same(5.0))
-                                        .desired_rows(3)
-                                        .code_editor()
-                                        .ui(ui);
-                                });
-                            });
-                        });
-                    });
-                });   
-            }   
         }
     }
 }

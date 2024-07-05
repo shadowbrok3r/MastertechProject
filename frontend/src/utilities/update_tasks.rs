@@ -168,13 +168,13 @@ impl Updatable for TaskPayload {
         })
     }
 
-    fn update_task_description(&self, description: Option<String>, db: Database) {
+    fn update_task_description(&self, description: String, db: Database) {
         let id: RecordId = self.id.clone().unwrap().0;
         spawn_local(async move {
             let query = format!("UPDATE task SET task_description=$description WHERE id=$id");
 
             db.database.set("id", id).await.unwrap();
-            db.database.set("description", description.unwrap()).await.unwrap();
+            db.database.set("description", description).await.unwrap();
 
             let _update_task: Vec<Record> = db
                 .database
@@ -183,27 +183,6 @@ impl Updatable for TaskPayload {
                 .unwrap()
                 .take(0)
                 .unwrap();
-        })
-    }
-    
-    fn update_recommendations(&self, recommendations: Option<String>, db: Database) {
-        let id = self.service_ticket.as_ref();
-        let x = id.unwrap().id.clone().unwrap().0;
-        spawn_local(async move {
-            let query = format!("UPDATE service_order SET recommendations=$recommendations WHERE id=$id");
-            info!("Recommendations changed: {}", query);
-
-            db.database.set("recommendations", recommendations.unwrap()).await.unwrap();
-            db.database.set("id", x).await.unwrap();
-
-            let _update_task: Vec<Record> = db
-                .database
-                .query(query)
-                .await
-                .unwrap()
-                .take(0)
-                .unwrap();
-            info!("update_task: {:?}", _update_task);
         })
     }
     

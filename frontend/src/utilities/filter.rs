@@ -10,11 +10,7 @@ impl FilterTasks for Vec<TaskPayload>{
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| 
-                // let mut res = false;
-                // for user in assignees{
-                    task.everest_initials == assignee.everest_initials
-                // }
-                // res
+                    task.assignee == assignee.id
             )
             .cloned()
             .collect()

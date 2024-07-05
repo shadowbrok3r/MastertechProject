@@ -16,15 +16,14 @@ impl Displayable for TaskPayload{
         store_users: &Vec<User>
     )  -> Option<TaskUiActions>{
         let mut res: Option<TaskUiActions> = None;
-        // let task_frame_color = if self.due_date.parse::<>
         let frame_color = date_colors(self.due_date.clone(), self.completed);
 
         Frame::default()
-            .fill(Color32::from_rgb(22,22,26))
+            .fill(Color32::from_rgb(14,14,18))
             .inner_margin(Margin::same(8.0))
             .outer_margin(Margin::same(5.0))
             .rounding(Rounding::same(15.0))
-            .stroke(Stroke::new(1.0, frame_color))
+            .stroke(Stroke::new(0.5, frame_color))
             .show(ui, |ui| 
         {
             ui.set_max_height(300.0);
@@ -108,56 +107,18 @@ impl Displayable for TaskPayload{
                 strip.empty();
                 strip.strip(|strip| 
                 {
-                    if let Some(service_ticket) = &self.service_ticket {
-                        if service_ticket.checkin_notes.is_empty() && service_ticket.recommendations.is_empty() {
-                            strip
-                                .cell_layout(Layout::top_down(Align::Center))
-                                .size(Size::remainder())
-                                .horizontal( |mut s| 
-                            {
-                                s.cell(|ui|
-                                {
-                                    let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}", self.id.as_ref().unwrap().0.id));
-                                    let task_descrip_head = CollapsingHeader::new("Task Description").id_source(task_descrip_header);
-                                    task_descrip_head.show_unindented(ui, |ui| self.interact_task_description(ui, database.clone()));
-                                });
-                            });
-                        } else{
-                            strip
-                                .cell_layout(Layout::left_to_right(Align::Min))
-                                .size(Size::remainder())
-                                .size(Size::remainder())
-                                .horizontal( |mut s| 
-                            {
-                                s.cell(|ui|
-                                {
-                                    let checkin_header = ui.make_persistent_id(format!("checkin_notes {:?}", self.id.as_ref().unwrap().0.id));
-                                    let checkin_head = CollapsingHeader::new("Checkin Notes").id_source(checkin_header);
-                                    checkin_head.show_unindented(ui, |ui| self.interact_checkin_notes(ui, database.clone()));
-                                });
-                                s.cell(|ui| 
-                                {
-                                    let rec_header = ui.make_persistent_id(format!("recommendations {:?}", self.id.as_ref().unwrap().0.id));
-                                    let rec_head = CollapsingHeader::new("Recommendations").id_source(rec_header);
-                                    rec_head.show_unindented(ui, |ui| self.interact_recommendations(ui, database.clone()));
-                                });
-                            });  
-                        }
-
-                    }else{
-                        strip
-                            .cell_layout(Layout::top_down(Align::Center))
-                            .size(Size::remainder())
-                            .horizontal( |mut s| 
+                    strip
+                        .cell_layout(Layout::top_down(Align::Center))
+                        .size(Size::remainder())
+                        .horizontal( |mut s| 
+                    {
+                        s.cell(|ui|
                         {
-                            s.cell(|ui|
-                            {
-                                let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}", self.id.as_ref().unwrap().0.id));
-                                let task_descrip_head = CollapsingHeader::new("Task Description").id_source(task_descrip_header);
-                                task_descrip_head.show_unindented(ui, |ui| self.interact_task_description(ui, database.clone()));
-                            });
+                            let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}", self.id.as_ref().unwrap().0.id));
+                            let task_descrip_head = CollapsingHeader::new("Task Description").id_source(task_descrip_header);
+                            task_descrip_head.show_unindented(ui, |ui| self.interact_task_description(ui, database.clone()));
                         });
-                    }
+                    });
                 });
             });
         });
