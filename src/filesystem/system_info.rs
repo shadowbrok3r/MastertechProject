@@ -24,7 +24,7 @@ use crate::{database::{schema::{ComputerData, ComputerId, DriveData, LocalSebDat
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 impl ComputerData{
-    pub async fn get_computer_data(&mut self, tx: Sender<ComputerData>) -> anyhow::Result<(), anyhow::Error>{
+    pub async fn get_computer_data(&mut self, tx: Sender<ComputerData>) -> anyhow::Result<Self, anyhow::Error>{
         info!("Getting sysinfo");
         let sys = System::new_all();
         let mut disks = Disks::new_with_refreshed_list();
@@ -95,8 +95,8 @@ impl ComputerData{
             self.seb_info = Some(seb);
         }
 
-        self.cpu = sys.cpus()[0].brand().to_string();
-        self.ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_formatted_string(&Locale::en);
+        self.cpu = sys.cpus()[0].brand().trim().to_string();
+        self.ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_formatted_string(&Locale::en).trim().to_string();
         self.operating_system = System::long_os_version().unwrap_or_default(); //sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
         self.hostname = System::host_name().unwrap_or_default();
         self.drives = data.drives;
@@ -104,11 +104,7 @@ impl ComputerData{
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
 
-        self.id = Some(ComputerId(
-            Thing::from(
-                (COMPUTER_TABLE,  id.clone().as_str())
-            )
-        ));
+        self.id = Some(ComputerId(Thing::from((COMPUTER_TABLE,  id.clone().as_str()))));
 
         match tx.try_send(self.to_owned()) {
             Ok(_) => {
@@ -118,7 +114,7 @@ impl ComputerData{
             Err(e) => info!("Couldnt send sysinfo: {e:?}")
         }
 
-        Ok(())
+        Ok(self.to_owned())
     }
 
     #[cfg(target_os="windows")]

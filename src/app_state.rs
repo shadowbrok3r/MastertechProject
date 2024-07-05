@@ -2,7 +2,8 @@ use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicB
 use anyhow::Error;
 use chrono::{DateTime, Utc};
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
+use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
+use egui_toast::Toasts;
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, LocalSebData, PrestashopPayload, TaskNotePayload, TaskPayload, TicketData, User}, GetKeysResponse}, pages::login_page::Login, tabs::{file_browser::FileBrowser, mastertech_website::task_layout::TaskLayout, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::TaskUiActions};
@@ -79,6 +80,7 @@ pub struct MastertechContext {
     
     pub reader_bytes: u32,
 
+    pub toasts: Toasts,
     pub animate_progress_bar: bool,
     pub specs_first_run: bool,
     pub file_browse_run: bool,
@@ -110,6 +112,7 @@ pub struct MastertechContext {
     pub github_issue_title: String,
     pub github_issue_descript: String,
 
+    
     // pub presta_data: PrestaDataChannel<T>,
     pub db_data_receiver: Receiver<Vec<TaskPayload>>,
     pub db_data_sender: Sender<Vec<TaskPayload>>,
@@ -235,6 +238,7 @@ impl MasterTechApp {
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
             //////////////////////////////////////////
+            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             ctx: Context::default(),
             widget_size: 135.0,
             open_tabs,

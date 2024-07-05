@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 use lettre::{{Message, SmtpTransport, Transport}, transport::smtp::authentication::Credentials, message::header::ContentType};
 use serde_json::Value;
 
-use crate::{app_state::MastertechContext, database::schema::Store};
+use crate::{app_state::MastertechContext, database::schema::{Store, User}};
 
 use super::email_builder::{email_builder, Info};
 
@@ -99,6 +99,7 @@ impl MastertechContext{
             <td colspan=\"2\" data-cell-widths=\"150,150\" style=\"padding:1px 1px\">{total_inv_num}</td>
         </tr>
         ");
+
         if self.send_specs == true{
             self.output_text.clear();
             self.output_text += "pulling system information. Please wait a moment..\n";
@@ -186,7 +187,7 @@ impl MastertechContext{
             _specs = "Computer information was not sent with ticket".to_string();
         }
         
-        let store: &Store = todo!(); // &self.ticket_data.dep
+        let store: &Store = &self.current_user.clone().unwrap_or(User::default()).store; // &self.ticket_data.dep
 
         let _mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
         let _mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());
@@ -257,8 +258,6 @@ impl MastertechContext{
             </td>
         </tr>
         ");
-
-
 
         let info = Info{
             customer_name: cust.to_string(),
