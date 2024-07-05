@@ -78,8 +78,10 @@ pub fn get_tasks(db: Database, tx: Sender<Vec<TaskPayload>>){
             .unwrap()
             .take(0);
 
+        // info!("query_results: {query_results:?}");
         match query_results{
             Ok(data) => {
+                info!("Main page state");
                 match tx.try_send(data){
                     Ok(_) => drop(tx),
                     Err(e) => error!("Error sending Task Data: {e:?}")

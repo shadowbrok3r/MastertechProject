@@ -11,8 +11,8 @@ use super::{displays::tasks::task_cards::date_colors, Interaction};
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(110));
-        let text_edit = TextEdit::singleline(&mut self.task_name).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
+        let text_edit = TextEdit::singleline(&mut self.task_name).desired_width(ui.available_width() - 10.0).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
         if text_edit.changed(){
             self.update_task_name(self.task_name.clone(), database);
         }
@@ -52,49 +52,22 @@ impl Interaction for TaskPayload {
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
 
-        let mut description = self.task_description.take().unwrap_or_else(String::new);
-
-        let text_edit = TextEdit::multiline(&mut description)
+        let text_edit = TextEdit::multiline(&mut self.task_description)
             .desired_rows(6)
             .desired_width(ui.available_width())
             .horizontal_align(egui::Align::Center)
             .ui(ui);
 
         if text_edit.changed() {
-            self.update_task_description(Some(description), database.clone());
-        }
-        None
-    }
-
-    fn interact_recommendations(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
-        ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
-
-        if let Some(service_ticket) = &mut self.service_ticket{
-            let text_edit = TextEdit::multiline(&mut service_ticket.recommendations)
-                .desired_rows(6)
-                .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
-                .ui(ui);
-
-            if text_edit.changed() {
-                let rec = service_ticket.recommendations.clone();
-                self.update_recommendations(Some(rec), database.clone());
-            }
-        }else{
-            let _text_edit = TextEdit::multiline(&mut "No recommendations")
-            .desired_rows(5)
-            .desired_width(ui.available_width())
-            .horizontal_align(egui::Align::Center)
-            .ui(ui);
+            self.update_task_description(self.task_description.clone(), database.clone());
         }
         None
     }
 
     fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response> {
         let frame_color = date_colors(self.due_date.clone(), self.completed);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, frame_color);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, frame_color);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(0.5, frame_color);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(0.5, frame_color);
         let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
         
         let id = self.id.clone().unwrap().0.id.to_string();
@@ -127,7 +100,7 @@ impl Interaction for TaskPayload {
             let color_complete = Color32::LIGHT_GREEN;
             // let color_incomplete = Color32::LIGHT_RED;
 
-            let stroke = Stroke::new(2.0, color_complete);
+            let stroke = Stroke::new(1.0, color_complete);
             let button = Button::new(hover_txt).stroke(stroke).small();
             let res = ui.add_sized(ui.available_size(), button);
            
@@ -143,7 +116,7 @@ impl Interaction for TaskPayload {
             // let color_complete = Color32::LIGHT_GREEN;
             let color_incomplete = Color32::LIGHT_RED;
 
-            let stroke = Stroke::new(2.0, color_incomplete);
+            let stroke = Stroke::new(1.0, color_incomplete);
             let button = Button::new(hover_txt).stroke(stroke).small();
             let res = ui.add_sized(ui.available_size(), button);
             // if res.hovered(){
@@ -211,14 +184,9 @@ impl Interaction for TaskPayload {
     }
     
     fn interact_dep(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
-        if let Some(ref mut dep) = self.dep {
-            ui.label("Store:");
-            let dep = ui.text_edit_singleline(dep);
-            Some(dep)
-        } else {
-            ui.label("No department specified.");
-            None
-        }
-        
+
+        ui.label("Store:");
+        let dep = ui.text_edit_singleline(&mut self.dep);
+        None
     }
 }

@@ -149,14 +149,14 @@ impl DisplayModal for CreateTaskModal {
                 let task_payload = TaskPayload{
                     task_name: self.task_name.clone(),
                     everest_initials: usr.everest_initials,
-                    task_description: Some(self.description.clone()),
-                    assignee: Some(usr.id),
+                    task_description: self.description.clone(),
+                    assignee: usr.id,
                     due_date: y,
                     priority: self.task_priority.clone(),
                     task_note: None,
                     completed: false,
                     status: Status::Todo,
-                    dep: Some(format!("{:?}", usr.store)),
+                    dep: format!("{:?}", usr.store),
                     ..Default::default()
                 };
 

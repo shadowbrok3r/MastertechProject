@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use surrealdb::{sql::Thing, opt::RecordId};
+use surrealdb::{opt::RecordId, sql::{Id, Thing}};
 use uuid::Uuid;
 
 pub const NS: &str = "Mastertech";
@@ -60,6 +60,18 @@ pub struct RecordSuccess{
     pub success: bool
 }
 
+// A specific sentinel value for default initialization
+const DEFAULT_USER_ID: RecordId = RecordId {
+    tb: String::new(),
+    id: Id::String(String::new()),
+};
+
+impl Default for UserId {
+    fn default() -> Self {
+        UserId(DEFAULT_USER_ID.clone())
+    }
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskPayload{
@@ -68,33 +80,33 @@ pub struct TaskPayload{
     pub service_ticket: Option<TicketPayload>,
     // #[serde(skip)]
     pub everest_initials: String,
-    pub task_description: Option<String>, 
-    pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
+    pub task_description: String, 
+    pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
     pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
     pub completed: bool,
     pub status: Status,
-    pub dep: Option<String>
+    pub dep: String
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct LiveTaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
     pub service_ticket: Option<TicketId>,
     // #[serde(skip)]
     pub everest_initials: String,
-    pub task_description: Option<String>, 
-    pub assignee: Option<UserId>, // should i use a user id here or will email and name be enough for tracking?
+    pub task_description: String, 
+    pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
     pub task_note: Option<Vec<TaskNoteId>>, // 
     pub completed: bool,
     pub status: Status,
-    pub dep: Option<String>
+    pub dep: String
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -110,7 +122,6 @@ pub struct TicketPayload{
     /// This is main initials on ticket
     pub sales_rep: String,
     pub checkin_notes: String,
-    pub recommendations: String,
     pub tech: String,
     pub salesman: String,
     pub dep: String, // Store
@@ -134,7 +145,6 @@ pub struct TicketData{
     /// This is main initials on ticket
     pub sales_rep: String,
     pub checkin_notes: String,
-    pub recommendations: String,
     pub tech: String,
     pub salesman: String,
     pub dep: String, // Store

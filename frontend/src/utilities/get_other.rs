@@ -13,9 +13,8 @@ pub fn get_store_users(db: Database, tx: Sender<Vec<User>>, store: Store) {
             .unwrap()
             .take(0)
             .unwrap();
-        
         match tx.try_send(data){
-            Ok(_) => info!("Sent Data from querying tasks"),
+            Ok(_) => info!("Sent Store User Info"),
             Err(e) => error!("Error sending Task Data: {e:?}")
         };
     });
