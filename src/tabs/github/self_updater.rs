@@ -70,15 +70,15 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
                 drop(tx);
                 info!("DONE");
 
-                #[cfg(target_os="windows")]{    
-                    let cmd_stdout = Command::new(tmp_tarball_path)
-                        .creation_flags(CREATE_NO_WINDOW)
-                        .output()
-                        .await?
-                        .stdout;
+                // #[cfg(target_os="windows")]{    
+                //     let cmd_stdout = Command::new(tmp_tarball_path)
+                //         .creation_flags(CREATE_NO_WINDOW)
+                //         .output()
+                //         .await?
+                //         .stdout;
                 
-                    info!("cmd_stdout: {:?}", cmd_stdout);
-                }
+                //     info!("cmd_stdout: {:?}", cmd_stdout);
+                // }
             }
         }
     }

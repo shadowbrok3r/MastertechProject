@@ -1,5 +1,6 @@
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Id, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
 use egui_autocomplete::AutoCompleteTextEdit;
+use egui_toast::{Toast, ToastKind, ToastOptions};
 use get_ticket::SendRequest;
 use std::collections::BTreeSet;
 use std::path::PathBuf; 
@@ -223,19 +224,38 @@ impl MastertechContext {
                                                         spawn(async move{
                                                             let unwrapped_request =  cps_request.await.unwrap_or(GetKeysResponse::default());
 
-                                                            match cps_tx.send(unwrapped_request){
+                                                            match cps_tx.try_send(unwrapped_request){
                                                                 Ok(_) => info!("GetKeysClick -> sent keys successfully"),
                                                                 Err(err) => debug!("GetKeysClick -> Error propogating GetKeysResponse to callee -> {err:?}")
                                                             }
                                                         });
 
-                                                        if let Ok(keys) = self.cps_keys_rx.recv(){
+                                                        if let Ok(keys) = self.cps_keys_rx.try_recv(){
+                                                            
                                                             if keys.webroot_key.contains("Error"){
+                                                                let toast = &mut self.toasts;
                                                                 self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
+                                                                let error_toast = Toast{
+                                                                    kind: ToastKind::Error,
+                                                                    text: "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".into(),
+                                                                    options: ToastOptions::default()
+                                                                        .show_progress(true)
+                                                                        .duration_in_seconds(6.0)
+                                                                };
+                                                                toast.add(error_toast);
                                                             }
                                                             self.keys = keys;
                                                         }else{
                                                             debug!("GetKeysClick Receive Error");
+                                                            let toast = &mut self.toasts;
+                                                            let error_toast = Toast{
+                                                                kind: ToastKind::Error,
+                                                                text: "GetKeysClick Receive Error".into(),
+                                                                options: ToastOptions::default()
+                                                                    .show_progress(true)
+                                                                    .duration_in_seconds(6.0)
+                                                            };
+                                                            toast.add(error_toast);
                                                             self.output_text = format!("GetKeysClick -> Error receiving keys");
                                                         }
                                                     }
@@ -400,7 +420,6 @@ impl MastertechContext {
                                         self.submit_tur();
                                     }
 
-
                                     let check = !self.ticket_data.service_number.is_empty()
                                         && !self.customer_data.name.is_empty()
                                         && !self.customer_data.phone_number.is_empty()
@@ -445,9 +464,7 @@ impl MastertechContext {
                             });
                             ui.shrink_height_to_current(); 
                         }); // cell
-
                         strip.empty();
-
                         strip.cell(|ui|
                         {
                             ScrollArea::new([false, true])

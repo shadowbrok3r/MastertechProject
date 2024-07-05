@@ -2,7 +2,7 @@ use chrono::{DateTime, SecondsFormat};
 use log::{debug, info};
 use tokio::spawn;
 
-use crate::{app_state::MastertechContext, database::{schema::HardwareTests, send_payload}};
+use crate::{app_state::MastertechContext, database::send_payload};
 
 
 
@@ -19,7 +19,7 @@ impl MastertechContext{
         let computer_data = self.computer_data.clone();
         let task_notes = self.task_notes.clone();
         
-        task_data.due_date = due_date.unwrap();
+        task_data.due_date = due_date.unwrap_or_default();
 
         match self.database{
             Some(ref database) => {

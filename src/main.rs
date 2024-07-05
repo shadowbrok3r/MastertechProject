@@ -1,13 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::{fs::File, sync:: Arc};
 use crossbeam::channel::Sender;
+use egui_toast::{Toast, ToastKind, ToastOptions};
+use futures::FutureExt;
 use log::{debug, error, info};
 use app_state::{AppState, MasterTechApp};
 use pages::login_page::HASH;
 // use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, Stroke, Vec2, ViewportBuilder};
-use database::{database::Database, schema::{ComputerData, ComputerId, HardwareTests, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
+use database::{database::Database, prestashop_schema::ServiceOrder, schema::{ComputerData, ComputerId, HardwareTests, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
 use surrealdb::sql::Thing;
 use tabs::tur_sheet::scaffold::AsanaResponse;
@@ -38,13 +40,15 @@ impl eframe::App for MasterTechApp {
                     self.state = AppState::Authenticated(app_state::MainPages::Tasks);
                     let tx = self.context.db_tx.clone();
                     let sysinfo_tx = self.context.computer_specs_tx.clone();
-                    spawn(async move {
-                        tx.try_send(
-                            Database::new(login.username, login.password, None).await
-                        ).unwrap();
-                        let _ = ComputerData::default().get_computer_data(sysinfo_tx).await;
+                    let x = spawn(async move {
+                        match tx.try_send(Database::new(login.username, login.password, None).await){
+                            Ok(_) => drop(tx),
+                            Err(e) => info!("Error sending specs: {e:?}"),
+                        }
+                        ComputerData::default().get_computer_data(sysinfo_tx).await
                     });
 
+                    // match x.poll_unpin(cx)
                     #[cfg(target_os="windows")]
                     {
                         let mut cps = self.context.current_antivirus.clone();
@@ -67,7 +71,19 @@ impl eframe::App for MasterTechApp {
                         }
                     }
                 },
-                None => { self.state = AppState::NoAuth("No User returned from decryption phase".to_string()); },
+                None => { 
+                    let toast = &mut self.context.toasts;
+    
+                    let error_toast = Toast{
+                        kind: ToastKind::Error,
+                        text: "Could not get login from encoded data".into(),
+                        options: ToastOptions::default()
+                            .show_progress(true)
+                            .duration_in_seconds(6.0)
+                    };
+                    toast.add(error_toast);
+                    self.state = AppState::NoAuth("No User returned from decryption phase".to_string()); 
+                },
             }
         }
         
@@ -77,7 +93,7 @@ impl eframe::App for MasterTechApp {
             for disk in &self.context.computer_data.drives{
                 self.context.disk_num += 1;
                 if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                    let disk_json = serde_json::to_value(&disk).unwrap();
+                    let disk_json = serde_json::to_value(&disk).unwrap_or_default();
                     disks_arr.push(disk_json);
                 } else { debug!("Expected self.context.drives to be an Array"); }
             }
@@ -118,8 +134,17 @@ impl eframe::App for MasterTechApp {
                     app_state::MainPages::WebConsole => self.main_page(ctx),
                 }
             },
-            app_state::AppState::NoAuth(_reason) => {
-                // info!("No auth: {reason}");
+            app_state::AppState::NoAuth(reason) => {
+                let toast = &mut self.context.toasts;
+    
+                let error_toast = Toast{
+                    kind: ToastKind::Error,
+                    text: reason.into(),
+                    options: ToastOptions::default()
+                        .show_progress(true)
+                        .duration_in_seconds(6.0)
+                };
+                toast.add(error_toast);
                 self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             },
             _ => {}
@@ -202,8 +227,6 @@ impl eframe::App for MasterTechApp {
             customer.name = data.customer.name.clone();
             customer.phone_number = data.customer.phone_number;
             computer.customer = customer.id.clone();
-            owned_computers.push(computer.id.clone().unwrap());
-            customer.computers = Some(owned_computers);
             ticket.salesman = email_split_rep;
             ticket.tech = email;
             ticket.customer = customer.id.clone();
@@ -212,12 +235,20 @@ impl eframe::App for MasterTechApp {
             ticket.doc_alias = data.order.order_type_name.unwrap_or(String::new());
 
             ticket.id = Some(TicketId(Thing::from((TICKET_TABLE.to_string(), ticket.service_number.clone()))));
-            services.push(ticket.id.clone().unwrap());
+            if let Some(computer_id) = computer.id.clone() {
+                owned_computers.push(computer_id);
+            }
+            customer.computers = Some(owned_computers);
+            if let Some(ticket_id) = &ticket.id {
+                services.push(ticket_id.clone());
+            }
 
             if let Some(service) = service_details{
                 if service.len() == 1{
-                    let svc = service.get(0).unwrap();
-                    ticket.checkin_notes = svc.check_in_notes.clone();
+                    let svc = service.get(0);
+                    if let Some(service) = svc {
+                        ticket.checkin_notes = service.check_in_notes.clone();
+                    }
                 }else{
                     info!("Theres a couple.... {:?}", service);
                 }
@@ -241,6 +272,8 @@ impl eframe::App for MasterTechApp {
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv(){
             self.context.task_payload = Some(tasks);
         }
+        
+        self.context.toasts.show(ctx);
         self.viewport_loader(ctx);
     }
 }
@@ -351,131 +384,6 @@ pub fn get_tasks(db: Database, tx: Sender<Vec<TaskPayload>>){
         }
     });
 }
-
-// #[cfg(feature = "compat_mode")]
-// #[tokio::main]
-// async fn main(){
-//     puffin::set_scopes_on(true); // Remember to call this, or puffin will be disabled!
-//     // cannot run this logger because the minidump module already uses a logger
-//     let log_level = LevelFilter::Error; // Configure log level and log file
-//     let log_file = File::create("output.log").unwrap();
-//     WriteLogger::init( // Init the logger
-//         log_level,
-//         Config::default(),
-//         log_file
-//     ).unwrap();
-
-//     let mut app = MasterTechApp::default();
-//     run_software(move |ctx| {
-//         app.update(&ctx);
-//     });
-// }
-
-// #[cfg(feature = "compat_mode")]
-// impl MasterTechApp{
-//     fn update(&mut self, ctx: &Context){}
-
-// #[cfg(all(feature="winit", feature="compat_mode"))]
-// fn run_software(mut ui: impl FnMut(&Context) + 'static) {
-//     use std::num::NonZeroU32;
-//     use skia_safe::{Surface, surfaces};
-//     use egui_skia::EguiSkiaWinit;
-//     use egui_winit::winit::dpi::LogicalSize;
-//     use egui_winit::winit::event::{Event, WindowEvent};
-//     use egui_winit::winit::event_loop::{ControlFlow, EventLoop};
-//     use egui_winit::winit::window::WindowBuilder;
-
-//     let ev_loop = EventLoop::new();
-//     let window = WindowBuilder::new()
-//         .with_title(format!("Mastertech-{}",cargo_crate_version!()).as_str())
-//         .with_inner_size(LogicalSize::new(925.0, 740.0))
-//         .build(&ev_loop)
-//         .unwrap();
-
-//     let context = unsafe { softbuffer::Context::new(&window) }.unwrap();
-//     let mut softbuffer_surface = unsafe {
-//         softbuffer::Surface::new(&context, &window)
-//     }.unwrap();
-//     let mut egui_skia = EguiSkiaWinit::new(&ev_loop);
-
-//     egui_skia
-//         .egui_winit
-//         .set_pixels_per_point(window.scale_factor() as f32);
-
-//     let size = window.inner_size();
-//     let size = size.to_logical::<i32>(window.scale_factor());
-//     let mut surface = surfaces::raster_n32_premul(
-//         (size.width, size.height)
-//     ).unwrap();
-
-//     ev_loop.run(move |ev, _, control_flow| {
-//         *control_flow = ControlFlow::Wait;
-
-//         match ev {
-//             Event::WindowEvent {
-//                 event: WindowEvent::CloseRequested,
-//                 ..
-//             } => {
-//                 *control_flow = ControlFlow::Exit;
-//             }
-//             Event::WindowEvent {
-//                 event: WindowEvent::Resized(size),
-//                 ..
-//             } => {
-//                 surface = surfaces::raster_n32_premul(
-//                     (size.width as i32, size.height as i32)
-//                 ).unwrap();
-//                 window.request_redraw();
-//             }
-//             Event::WindowEvent { event, .. } => {
-//                 let response = egui_skia.on_event(&event);
-//                 if response.repaint {
-//                     window.request_redraw();
-//                 }
-//             }
-//             Event::RedrawRequested(window_id) if window_id == window.id() => {
-//                 let canvas = surface.canvas();
-//                 canvas.clear(skia_safe::Color::TRANSPARENT);
-
-//                 let repaint_after = egui_skia.run(&window, &mut ui);
-
-//                 *control_flow = if repaint_after.is_zero() {
-//                     window.request_redraw();
-//                     ControlFlow::Poll
-//                 } else if let Some(repaint_after_instant) =
-//                     std::time::Instant::now().checked_add(repaint_after)
-//                 {
-//                     ControlFlow::WaitUntil(repaint_after_instant)
-//                 } else {
-//                     ControlFlow::Wait
-//                 };
-                
-//                 egui_skia.paint(&mut canvas);
-                
-//                 let snapshot = surface.image_snapshot();
-//                 let peek = snapshot.peek_pixels().unwrap();
-//                 let pixels: &[u32] = peek.pixels().unwrap();
-
-//                 let (width, height) = {
-//                     let size = window.inner_size();
-//                     (size.width, size.height)
-//                 };
-//                 softbuffer_surface
-//                     .resize(
-//                         NonZeroU32::new(width).unwrap(),
-//                         NonZeroU32::new(height).unwrap(),
-//                     )
-//                     .unwrap();
-
-//                 let mut buffer = softbuffer_surface.buffer_mut().unwrap();
-//                 buffer.copy_from_slice(pixels);  // Copy Skia pixels to Softbuffer surface
-//                 buffer.present().unwrap();
-//             }
-//             _ => {}
-//         }
-//     })
-// }
-
 
 pub(crate) fn load_icon() -> eframe::egui::IconData {
 	let (icon_rgba, icon_width, icon_height) = {

@@ -20,7 +20,7 @@ impl MasterTechApp {
                         &"System Information".to_string(),
                         &"File Browser 📂".to_string(),
                         &"Minidump Analysis".to_string(),
-                        &"Profiler".to_string(),
+                        // &"Profiler".to_string(),
                         &"QC".to_string(),
                         &"Tasks".to_string(),
                         &"Websockets".to_string()
@@ -54,20 +54,9 @@ impl MasterTechApp {
                             let _ = run(client, tx.clone()).await;
                         });
                         
-                        while let Ok(res) = self.context.bytes_rx.try_recv(){
-                            self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
-                            
-                            if res.0 == res.1{
-                                self.context.output_text += "\nFinished";
-                            }
-
-                            let _ = ProgressBar::new(res.0 as f32 / res.1 as f32)
-                                .show_percentage()
-                                .fill(Color32::from_rgb(255, 77, 210))
-                                .animate(true).ui(ui);
-                        }
                     }
                     ui.add_space(20.0);
+
                     if let Some(usr) = self.context.current_user.as_ref(){
                         let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
                         ui.colored_label(Color32::from_rgb(100,50,100), welcome_msg);
@@ -83,6 +72,20 @@ impl MasterTechApp {
                         ui.colored_label(Color32::LIGHT_RED, sys_id.0.id.to_raw());
                         ui.colored_label(Color32::WHITE, "Client ID: ");
                     }
+
+                    while let Ok(res) = self.context.bytes_rx.try_recv(){
+                        self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
+                        
+                        if res.0 == res.1{
+                            self.context.output_text += "\nFinished";
+                        }
+
+                        let _ = ProgressBar::new(res.0 as f32 / res.1 as f32)
+                            .show_percentage()
+                            .fill(Color32::from_rgb(255, 77, 210))
+                            .animate(true).ui(ui);
+                    }
+
                 });
             })
         });

@@ -2,7 +2,7 @@
 use std::fmt::Display;
 
 use serde::{Serialize, Deserialize};
-use surrealdb::{sql::Thing, opt::RecordId};
+use surrealdb::{opt::RecordId, sql::{Id, Thing}};
 use uuid::Uuid;
 
 use super::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, ServiceOrder}, SystemInformation};
@@ -66,6 +66,17 @@ pub struct RecordSuccess{
     pub success: bool
 }
 
+// A specific sentinel value for default initialization
+const DEFAULT_USER_ID: RecordId = RecordId {
+    tb: String::new(),
+    id: Id::String(String::new()),
+};
+
+impl Default for UserId {
+    fn default() -> Self {
+        UserId(DEFAULT_USER_ID.clone())
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskPayload{
@@ -396,7 +407,7 @@ pub struct ConnectedClient{ // <'a>
     pub connected: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct User {
     pub id: UserId,
     pub name: String,
