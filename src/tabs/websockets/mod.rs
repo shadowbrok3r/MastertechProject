@@ -209,31 +209,63 @@ impl WebConsoleFrontend {
                                 },
                                 Cmd::Tuneup => {
                                     self.history.push(format!("Cmd: {:?}", cmd));
+                                    let tx = self.tx.clone();
                                     info!("Cmd: {cmd:?}");
+                                    
+                                    // spawn(async move {
+                                    //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                                    // });
                                 },
                                 Cmd::Cps => {
                                     self.history.push(format!("Cmd: {:?}", cmd));
+                                    let tx = self.tx.clone();
                                     info!("Cmd: {cmd:?}");
+                                    spawn(async move {
+                                        handle_command_payload("SELECT * FROM Win32_OperatingSystem".to_string(), tx.clone()).await.unwrap();
+                                    });
                                 },
                                 Cmd::Qc => {
                                     self.history.push(format!("Cmd: {:?}", cmd));
+                                    let tx = self.tx.clone();
                                     info!("Cmd: {cmd:?}");
+                                    spawn(async move {
+                                        handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                                    });
                                 },
                                 Cmd::SfcScan => {
                                     self.history.push(format!("Cmd: {:?}", cmd));
+                                    let tx = self.tx.clone();
                                     info!("Cmd: {cmd:?}");
+                                    
+                                    spawn(async move {
+                                        handle_command_payload("sfc /scannow".to_string(), tx.clone()).await.unwrap();
+                                    });
                                 },
                                 Cmd::DismScan => {
                                     self.history.push(format!("Cmd: {:?}", cmd));
+                                    let tx = self.tx.clone();
                                     info!("Cmd: {cmd:?}");
+
+                                    spawn(async move {
+                                        handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                                    });
                                 },
                                 Cmd::ChkDsk => {
                                     self.history.push(format!("Cmd: {:?}", cmd));
+                                    let tx = self.tx.clone();
                                     info!("Cmd: {cmd:?}");
+                                    
+                                    // spawn(async move {
+                                    //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                                    // });
                                 },
                                 Cmd::Mbr2Gpt => {
                                     self.history.push(format!("Cmd: {:?}", cmd));
+                                    let tx = self.tx.clone();
                                     info!("Cmd: {cmd:?}");
+                                    // spawn(async move {
+                                    //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                                    // });
                                 },
                                 Cmd::Quit => {
                                     self.connected = false;
