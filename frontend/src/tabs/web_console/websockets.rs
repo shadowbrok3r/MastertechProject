@@ -177,25 +177,26 @@ impl WebSocketClient{
                 s.cell(|ui|{
                     if Button::new("Tuneup").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
-                        self.history.push(format!("You\nCommand::Tuneup"))
+                        self.history.push(format!("You\nCommand::Tuneup"));
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("CPS").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
-                        self.history.push(format!("You\nCommand::Cps"))
+                        self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
+                        self.input = "SELECT * FROM Win32_OperatingSystem".to_string();
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("QC").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Qc)));
-                        self.history.push(format!("You\nCommand::Qc"))
+                        self.history.push(format!("You\nCommand::Qc"));
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("Live Data").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::LiveData)));
-                        self.history.push(format!("You\nCommand::LiveData"))
+                        self.history.push(format!("You\nCommand::LiveData"));
                     }
                 });
             });
@@ -209,25 +210,32 @@ impl WebSocketClient{
                 s.cell(|ui|{
                     if Button::new("SFC Scan").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
-                        self.history.push(format!("You\nCommand::SfcScan"))
+                        self.history.push(format!("You\nCommand::SfcScan"));
+                        self.input = "sfc /scannow".to_string();
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("Dism Scan").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
-                        self.history.push(format!("You\nCommand::DismScan"))
+                        self.history.push(format!("You\nCommand::DismScan"));
+                        self.input = "dism /online /cleanup-image /scanhealth
+                        dism /online /cleanup-image /checkhealth
+                        dism /online /cleanup-image /restorehealth".to_string();
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("ChkDsk").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
-                        self.history.push(format!("You\nCommand::ChkDsk"))
+                        self.history.push(format!("You\nCommand::ChkDsk"));
+                        self.input = "chkdsk /f /x /r".to_string();
+                        
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("Mbr2Gpt").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
-                        self.history.push(format!("You\nCommand::Mbr2Gpt"))
+                        self.history.push(format!("You\nCommand::Mbr2Gpt"));
+                        self.input = "mbr2gpt /Convert /AllowFullOS /disk:0".to_string();
                     }
                 });
             });
@@ -538,8 +546,8 @@ impl ClientDisplay{
     pub fn columns(&mut self, strip: &mut egui_extras::Strip) {
         for (name, client) in self.clients.iter(){
             let color = if self.connected{
-                Color32::GREEN
-            }else{ Color32::RED };
+                Color32::LIGHT_BLUE
+            }else{ Color32::LIGHT_RED };
             let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 18))
                 .inner_margin(Margin::same(4.0)).rounding(Rounding::same(10.0))
                 .stroke(Stroke::new(1.0, color));

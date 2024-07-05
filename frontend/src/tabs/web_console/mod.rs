@@ -77,10 +77,28 @@ impl MtechServerContext {
         }
         
         ui.add_space(8.0);
-        if let Some(client_display) = &mut self.client_layout {
-            client_display.layout_cols(ui, self.client_connection_tx.clone());
-        } else {
-            ClientDisplay::new(self.clients.clone()).layout_cols(ui, self.client_connection_tx.clone());
+        let page = "client_page";
+        let mut col_names = Vec::new();
+        
+        for (name, _) in self.clients.clone(){
+            col_names.push(name);
         }
+
+        // self.clients.clear();
+        // let clients_by_column = &mut self.clients;
+
+        if !self.clients_layout.contains_key(page) {
+            info!("Inserting client display");
+            let client_layout = ClientDisplay::new(self.clients.clone());
+            self.clients_layout.insert(page.to_string(), client_layout);
+        } else if let Some(client_layout) = self.clients_layout.get_mut(page) {
+            info!("We have a  client display");
+            client_layout.layout_cols(ui, self.client_connection_tx.clone());
+        }
+        // if let Some(client_display) = &mut self.client_layout {
+        //     client_display.layout_cols(ui, self.client_connection_tx.clone());
+        // } else {
+        //     ClientDisplay::new(self.clients.clone()).layout_cols(ui, self.client_connection_tx.clone());
+        // }
     }
 }

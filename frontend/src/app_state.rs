@@ -158,6 +158,8 @@ pub struct MtechServerContext{
     pub error: String,
     #[serde(skip)]
     pub client_layout: Option<ClientDisplay>,
+    #[serde(skip)]
+    pub clients_layout: HashMap<String, ClientDisplay>,
     pub text_to_send: String,
 
     /// Widgets / Modals / Ui for portions throughout the app
@@ -233,7 +235,7 @@ impl NewCC for MtechServer{
         // }
 
         let (db_tx, db_rx) = channel::unbounded();
-        let (initial_tasks_tx, initial_tasks_rx) = channel::unbounded::<Vec<TaskPayload>>();
+        let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(1);
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
         let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
@@ -243,7 +245,7 @@ impl NewCC for MtechServer{
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
-        let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
+        let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
 
         let context = MtechServerContext{
             current_user: None,
@@ -272,6 +274,7 @@ impl NewCC for MtechServer{
 
             // MODALS / LAYOUTS
             task_layouts: HashMap::new(),
+            clients_layout: HashMap::new(),
             current_modal: ModalType::Null,
             task_modal_handler: ModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
