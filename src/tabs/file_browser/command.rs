@@ -112,7 +112,6 @@ impl FileBrowser{
             },
 
             Command::ReadDirectory(path) => {
-                puffin::profile_scope!("Command::ReadDirectory");
                 let new_contents = read_folder(
                     &path,
                     self.depth,

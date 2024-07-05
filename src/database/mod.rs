@@ -2,44 +2,18 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use database::{Database, Record};
 use log::info;
-use schema::{ComputerId, CustomerId, LiveTaskPayload, Status, Store, TicketId, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE};
+use schema::{ComputerId, LiveTaskPayload, TaskNotePayload, TicketId, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
-use surrealdb::sql::Thing;
+// use surrealdb::sql::Thing;
 use crate::{database::schema::{CustomerData, TicketData}, tabs::websockets::Cmd};
 
-use self::schema::{ComputerData, HardwareTests};
+use self::schema::ComputerData;  // HardwareTests
 
 pub mod deserializer;
 pub mod database;
 pub mod schema;
 pub mod prestashop_schema;
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct PreTicketData{
-    pub cust_id: Option<CustomerId>,
-    pub cust_code: String,
-    pub sales_rep: String,
-    pub due_date: Option<String>,
-    pub checkin_rep: String, // "USER_ID": "BP3", //checkin rep
-    pub terms: String, // "TERMS": "CC",
-    pub doc_alias: String, // "DOC_ALIAS": "SERVICE ORDER",
-    pub dep: Store, // "DEP": "LTN"
-    pub jurisdiction: String, //"JURISCODE": "LTN",
-    pub ticket_total: String,
-
-    pub customer_name: String, // "NAME": "Timber Ridge Fireplace LLC",
-    pub customer_phone_1: String,
-    pub customer_phone_2: String,
-    pub customer_email: String,
-    pub last_invoice_number: String, // "LI_DOC": "53745333",
-    pub last_invoice_amount: String,  // "LI_AMT": "53.6100", //I COULD USE THIS TO CHECK LAST TUNEUP
-    pub total_invoice_count: String,
-    pub checkin_notes: String,
-    pub item_codes: String,
-    //last_tuneup_date: String, // <-- HERE
-    //last_checkin_date: String, // "DW_UPDATE_DATE": "2023-06-27 13:38:50.440",
-}
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct GetKeysResponse{
@@ -75,227 +49,96 @@ pub struct SystemInformation {
     pub network_interfaces: HashMap<String, String>,
 }
 
-// impl TicketPayload{
-//     pub fn serialize_payload(
-//         pre_ticket: &PreTicketData, 
-//         computer_data: &ComputerData,
-//         service_number: &String,
-//         _antivirus_installed: &String,
-//         recommendations: &String,
-//         tech: String,
-//         salesman: String, 
-//         hardware_test_results: HardwareTests,
-//     ) -> Self{
-//         let pre_ticket_clone = pre_ticket.clone();
-//         let customer_data = CustomerData{
-//             id: None,
-//             computers: None,
-//             services: None,
-//             cust_code: pre_ticket_clone.cust_code.parse::<i32>().unwrap_or(0),
-//             name: pre_ticket_clone.customer_name,
-//             phone_number: pre_ticket_clone.customer_phone_1,
-//             phone_number_2: pre_ticket_clone.customer_phone_2,
-//             email: pre_ticket_clone.customer_email,
-//             li_doc: pre_ticket_clone.last_invoice_number.parse::<i32>().unwrap_or(0),
-//             li_amnt: pre_ticket_clone.last_invoice_amount,
-//             num_inv: pre_ticket_clone.total_invoice_count.parse::<i32>().unwrap_or(0),
-//             part_order_links: None,
-//         };
-//         let mut current_antivirus: Vec<String> = Vec::new();
-//         current_antivirus.push("webroot".to_string());
-//         current_antivirus.push("superantiSpyware".to_string());
-//         let service_ticket = TicketData {
-//             service_number: service_number.parse::<i32>().unwrap(),
-//             checkin_rep: pre_ticket_clone.checkin_rep,
-//             sales_rep: pre_ticket_clone.sales_rep,
-//             checkin_notes: pre_ticket_clone.checkin_notes,
-//             recommendations: recommendations.to_string(),
-//             tech,
-//             salesman,
-//             dep: pre_ticket_clone.dep.as_str().to_string(),
-//             terms: pre_ticket_clone.terms,
-//             ticket_total: pre_ticket_clone.ticket_total,
-//             doc_alias: pre_ticket_clone.doc_alias,
-//             current_antivirus: Some(current_antivirus),
-//             hardware_test_results,
-//             ..Default::default()
-//         }; 
-//         // due_date: pre_ticket_clone.due_date.unwrap(),
-//         let _ticket_payload = TicketPayload { 
-//             id: None,
-//             created_at: None,
-//             service_task: None, 
-//             customer: Some(customer_data.clone()),
-//             computer: Some(computer_data.clone()),
-//             service_number: service_ticket.service_number, 
-//             checkin_rep: todo!(), 
-//             sales_rep: todo!(), 
-//             checkin_notes: todo!(), 
-//             recommendations: todo!(), 
-//             tech, salesman, dep: todo!(), 
-//             terms: todo!(), ticket_total: todo!(), 
-//             doc_alias: todo!(), current_antivirus: todo!(), 
-//             hardware_test_results };
-//         info!("Ticket Response: {ticket_payload:#?}");
-//         ticket_payload
-//     }
-//  }
-
-pub async fn send_payload(        
-    pre_ticket: PreTicketData, 
+pub async fn send_payload(
+    ticket_data: TicketData,
+    customer_data: CustomerData,
     computer_data: ComputerData,
-    service_number: String,
-    _antivirus_installed: String,
-    recommendations: String,
-    tech: String,
-    salesman: String, 
-    hardware_test_results: HardwareTests,
+    mut task_data: LiveTaskPayload,
+    mut task_notes: Vec<TaskNotePayload>,
     database: Database
 )  -> anyhow::Result<Vec<Record>, anyhow::Error> {
-    let mut pre_ticket_clone = pre_ticket.clone();
-    let cust_code = if let Ok(code) = pre_ticket_clone.cust_code.parse::<i32>(){
-        format!("{code}")
-    }else{
-        pre_ticket_clone.cust_code
-    };
 
-    let customer_id: CustomerId =  pre_ticket_clone.cust_id.unwrap(); // CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), cust_code.clone())));
-
-    let ticket_id: TicketId = TicketId(Thing::from((TICKET_TABLE.to_string(), service_number.clone())));
-
-    let computer_customer_id: String = format!("{}-{}", computer_data.hostname.clone(), cust_code.clone());
-    let computer_id: ComputerId = ComputerId(Thing::from((COMPUTER_TABLE.to_string() , computer_customer_id)));
-
-    let queried_salesman = query_user_from_initials(
+    let queried_salesman = query_user_from_email(
         database.clone(), 
-        salesman.clone(),
+        ticket_data.salesman.clone(),
     ).await?;
 
-    let queried_tech = query_user_from_initials(
+    let queried_tech = query_user_from_email(
         database.clone(), 
-        tech.clone(),
+        ticket_data.tech.clone(),
     ).await?;
-
     
+    let task_id = task_data.id.clone();
+    let ticket_id = ticket_data.id.clone();
+    let customer_id = customer_data.id.clone();
+    let computer_id = computer_data.id.clone();
 
-    let mut current_antivirus: Vec<String> = Vec::new();
-    current_antivirus.push("webroot".to_string());
-    current_antivirus.push("superantiSpyware".to_string());
+    task_data.task_name = format!("{} - {}", &customer_data.name, ticket_data.service_number.clone());
+    task_data.service_ticket = ticket_id.clone();
+    task_data.service_number = Some(ticket_data.service_number.clone());
+    task_data.priority = schema::Priority::Normal;
+    task_data.dep = Some(queried_salesman.store.clone().as_str().to_string());
+    task_data.everest_initials = queried_salesman.everest_initials;
+    task_data.assignee = Some(queried_salesman.id);
 
-    let mut owned_computers: Vec<ComputerId> = Vec::new();
-    let mut services: Vec<TicketId> = Vec::new();
 
-    owned_computers.push(computer_id.clone());
-    services.push(ticket_id.clone());
-
-    let computer = ComputerData {
-        id: Some(computer_id.clone()),
-        customer: Some(customer_id.clone()),
-        seb_info: computer_data.seb_info,
-        hostname: computer_data.hostname,
-        operating_system: computer_data.operating_system.trim().to_string(),
-        cpu: computer_data.cpu.trim().to_string(),
-        gpu: computer_data.gpu.trim().to_string(),
-        ram: computer_data.ram.trim().to_string(),
-        drives: computer_data.drives,
-    };
-
-    let customer = CustomerData{
-        id: Some(customer_id.clone()),
-        computers: Some(owned_computers),
-        services: Some(services),
-        name: pre_ticket_clone.customer_name,
-        phone_number: pre_ticket_clone.customer_phone_1,
-        phone_number_2: pre_ticket_clone.customer_phone_2,
-        email: pre_ticket_clone.customer_email,
-        li_doc: pre_ticket_clone.last_invoice_number.to_string(),
-        li_amnt: pre_ticket_clone.last_invoice_amount,
-        num_inv: pre_ticket_clone.total_invoice_count.to_string(),
-        ..Default::default()
-    };
-
-    let service_ticket = TicketData {
-        id: Some(ticket_id.clone()),
-        customer: Some(customer_id.clone()),
-        computer: Some(computer_id.clone()),
-        service_number: service_number.clone(),
-        checkin_rep: pre_ticket_clone.checkin_rep,
-        sales_rep: pre_ticket_clone.sales_rep,
-        checkin_notes: pre_ticket_clone.checkin_notes,
-        recommendations: recommendations.to_string(),
-        tech: queried_tech.everest_initials.clone(),
-        salesman: queried_salesman.everest_initials,
-        dep: pre_ticket_clone.dep.as_str().to_string(),
-        terms: pre_ticket_clone.terms,
-        ticket_total: pre_ticket_clone.ticket_total,
-        doc_alias: pre_ticket_clone.doc_alias,
-        current_antivirus: Some(current_antivirus),
-        hardware_test_results,
-        ..Default::default()
-    };
-    
     if let Some(cust) = query_id(database.clone(), CUSTOMER_TABLE, customer_id).await?{
-        let update_cust_record: Option<Record> = database.database.update(cust.id).content(customer.clone()).await.unwrap();
+        let update_cust_record: Option<Record> = database.database.update(cust.id).content(customer_data.clone()).await.unwrap();
         info!("Customer updated: {update_cust_record:?}");
 
         if let Some(computer_record) = query_id(database.clone(), COMPUTER_TABLE, computer_id).await?{
-            let create_computer_record: Option<Record> = database.database.update(computer_record.id).content(computer).await.unwrap();
+            let create_computer_record: Option<Record> = database.database.update(computer_record.id).content(computer_data).await.unwrap();
             info!("create_computer_record: {create_computer_record:?}");
         }else{
-            let create_computer_record: Vec<Record> = database.database.create(COMPUTER_TABLE).content(computer).await.unwrap();
+            let create_computer_record: Vec<Record> = database.database.create(COMPUTER_TABLE).content(computer_data).await.unwrap();
             info!("create_computer_record: {create_computer_record:?}");
         }
-        if let Some(ticket) = query_id(database.clone(), TICKET_TABLE, ticket_id.clone()).await?{
-            let service_ticket_record: Option<Record> = database.database.update(ticket.id).content(service_ticket).await?;
+        if let Some(ticket) = query_id(database.clone(), TICKET_TABLE, ticket_id).await?{
+            let service_ticket_record: Option<Record> = database.database.update(ticket.id).content(ticket_data).await?;
             info!("service_ticket_record: {service_ticket_record:?}");
         }else{
-            let service_ticket_record: Vec<Record> = database.database.create(TICKET_TABLE).content(service_ticket).await?;
+            let service_ticket_record: Vec<Record> = database.database.create(TICKET_TABLE).content(ticket_data).await?;
             info!("service_ticket_record: {service_ticket_record:?}");
         }
     }else{
-        let create_cust_record: Vec<Record> = database.database.create(CUSTOMER_TABLE).content(customer.clone()).await.unwrap();
+        let create_cust_record: Vec<Record> = database.database.create(CUSTOMER_TABLE).content(customer_data.clone()).await.unwrap();
         info!("create_cust_record created: {create_cust_record:?}");
-        let create_computer_record: Vec<Record> = database.database.create(COMPUTER_TABLE).content(computer).await?;
+        let create_computer_record: Vec<Record> = database.database.create(COMPUTER_TABLE).content(computer_data).await?;
         info!("create_computer_record created: {create_computer_record:?}");
-        let service_ticket_record: Vec<Record> = database.database.create(TICKET_TABLE).content(service_ticket).await?;
+        let service_ticket_record: Vec<Record> = database.database.create(TICKET_TABLE).content(ticket_data).await?;
         info!("service_ticket_record created: {service_ticket_record:?}");
     }
     
-
-    let task = LiveTaskPayload {
-        task_name: format!("{} - {}", &customer.name, service_number),
-        service_ticket: Some(ticket_id),
-        assignee: Some(queried_salesman.id),
-        service_number: Some(service_number.clone()),
-        due_date: pre_ticket_clone.due_date.unwrap(),
-        priority: schema::Priority::Normal,
-        task_note: None,
-        completed: false,
-        status: Status::Todo,
-        dep: Some(queried_salesman.store.clone().as_str().to_string()),
-        everest_initials: queried_tech.everest_initials,
-        // task_description: todo!(),
-        ..Default::default()
-    };
-
-    let create_task_record: Vec<Record> = database
-        .database
-        .create(TASK_TABLE)
-        .content(task)
-        .await?;
-
+    let create_task_record: Vec<Record> = database.database.create(TASK_TABLE).content(task_data).await?;
     info!("create_task_record: {create_task_record:?}");
+
+    if task_notes.len() > 0 {
+        info!("Task Notes: {:?}", task_notes);
+        for note in task_notes.iter_mut() {
+            note.task_id = task_id.clone();
+            let create_task_note_record: Vec<Record> = database.database.create(TASK_NOTE_TABLE).content(note).await?;
+            info!("create_task_note_record: {:?}", create_task_note_record);
+        }
+    }
 
     Ok(create_task_record)
 }
 
 
-pub async fn query_user_from_initials(database: Database, initials: String) -> anyhow::Result<User, anyhow::Error>{
-    let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE everest_initials == $everest_initials");
-    database.database.set("everest_initials", initials).await?;
-    let user: Vec<Value> = database.database.query(query).await?.take(0)?;
-    let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
-    Ok(usr)
+pub async fn query_user_from_email(database: Database, email: String) -> anyhow::Result<User, anyhow::Error>{
+    let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE email == $email"); //  OR email == $email
+
+    if email.contains("@pclaptops.com"){
+        database.database.set("email", email.clone()).await?;
+    } else {
+        database.database.set("email", format!("{}@pclaptops.com", email.clone())).await?;
+    }
+
+    info!("Email: {}", email);
+    let user: Option<User> = database.database.query(query).await?.take(0)?;
+    info!("user: {:?}", user.clone());
+    // let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
+    Ok(user.unwrap())
 }
 
 pub async fn query_id<'a, T>(database: Database, table: &'a str, id: T) 

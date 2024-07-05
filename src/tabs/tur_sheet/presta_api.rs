@@ -11,121 +11,123 @@ const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 
 impl MastertechContext {
     pub fn presta_api(&mut self){ 
-        let input = self.so_number.clone();
+        let input = self.ticket_data.service_number.clone();
         let tx = self.prestashop_api_tx.clone();
-        tokio::spawn(async move {
-            let api_call = Prestashop::default();
-            let mut query = HashMap::new();
+        if !input.is_empty() {
+            tokio::spawn(async move {
+                let api_call = Prestashop::default();
+                let mut query = HashMap::new();
 
-            query.insert("filter[id_order]", input.as_str());
-            query.insert("output_format", "JSON");
-            
-            let customer_threads: Vec<CustomerThread> = api_call.request_resources(
-                "customer_threads",
-                query.clone()
-            ).await.unwrap_or_default();
+                query.insert("filter[id_order]", input.as_str());
+                query.insert("output_format", "JSON");
+                
+                let customer_threads: Vec<CustomerThread> = api_call.request_resources(
+                    "customer_threads",
+                    query.clone()
+                ).await.unwrap_or_default();
 
-            let mut customer_messages: Vec<CustomerMessage> = Vec::new();
+                let mut customer_messages: Vec<CustomerMessage> = Vec::new();
 
-            if !customer_threads.is_empty(){
-                for thread in customer_threads.iter(){
-                    for msg in thread.associations.customer_messages.iter(){
-                        customer_messages.push(
-                            api_call.request_subresources_by_id(
-                                "customer_messages", 
-                                "customer_message",
-                                msg.id.as_str()
-                            ).await.unwrap_or_default()
-                        );
+                if !customer_threads.is_empty(){
+                    for thread in customer_threads.iter(){
+                        for msg in thread.associations.customer_messages.iter(){
+                            customer_messages.push(
+                                api_call.request_subresources_by_id(
+                                    "customer_messages", 
+                                    "customer_message",
+                                    msg.id.as_str()
+                                ).await.unwrap_or_default()
+                            );
+                        }
                     }
                 }
-            }
 
-            let order: Order = api_call.request_subresources_by_id(
-                "orders", 
-                "order", 
-                &input
-            ).await.unwrap();
+                let order: Order = api_call.request_subresources_by_id(
+                    "orders", 
+                    "order", 
+                    &input
+                ).await.unwrap_or_default();
 
-            if order.id_customer.is_empty(){
-                info!("Order is likely gonna fuKKKK");
-            }
+                if order.id_customer.is_empty(){
+                    info!("Order is likely gonna fuKKKK");
+                }
 
-            info!("order: {order:#?}");
+                info!("order: {order:#?}");
 
-            let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0"){
-                let employee: Employee = api_call.request_subresources_by_id(
-                    "employees", 
-                    "employee", 
-                    &order.id_employee_sales_rep
-                ).await.unwrap();
+                let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0"){
+                    let employee: Employee = api_call.request_subresources_by_id(
+                        "employees", 
+                        "employee", 
+                        &order.id_employee_sales_rep
+                    ).await.unwrap_or_default();
 
-                info!("employee: {employee:#?}");
-                Some(employee)
-            }else{
-                None
-            };
-            let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0"){
-                let employee_2: Employee = api_call.request_subresources_by_id(
-                    "employees", 
-                    "employee", 
-                    &order.id_employee_split_rep
-                ).await.unwrap();
+                    info!("employee: {employee:#?}");
+                    Some(employee)
+                }else{
+                    None
+                };
+                let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0"){
+                    let employee_2: Employee = api_call.request_subresources_by_id(
+                        "employees", 
+                        "employee", 
+                        &order.id_employee_split_rep
+                    ).await.unwrap_or_default();
 
-                info!("employee: {sales_rep:#?}");
-                Some(employee_2)
-            }else{
-                None
-            };
+                    info!("employee: {sales_rep:#?}");
+                    Some(employee_2)
+                }else{
+                    None
+                };
 
 
-            let cust: Customer = api_call.request_subresources_by_id(
-                "customers", 
-                "customer", 
-                &order.id_customer
-            ).await.unwrap();
+                let cust: Customer = api_call.request_subresources_by_id(
+                    "customers", 
+                    "customer", 
+                    &order.id_customer
+                ).await.unwrap_or_default();
 
-            // info!("customer: {customer:#?}");
+                // info!("customer: {customer:#?}");
 
-            let address: Address = api_call.request_subresources_by_id(
-                "addresses", 
-                "address", 
-                &order.id_address_invoice
-            ).await.unwrap();
+                let address: Address = api_call.request_subresources_by_id(
+                    "addresses", 
+                    "address", 
+                    &order.id_address_invoice
+                ).await.unwrap_or_default();
 
-            // let notes: CustomerThread = api_call.request_subresources_by_id(
-            //     "customer_threads", 
-            //     "customer_thread", 
-            //     &order.id_address_delivery
-            // ).await.unwrap();
+                // let notes: CustomerThread = api_call.request_subresources_by_id(
+                //     "customer_threads", 
+                //     "customer_thread", 
+                //     &order.id_address_delivery
+                // ).await.unwrap();
 
-            info!("address: {address:#?}");
-            // 2059728
-            let customer = CustomerData{
-                id: Some(CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), order.id_customer.clone())))),
-                cust_code: order.id_customer.clone(),
-                name: format!("{} {}", &cust.firstname, &cust.lastname),
-                phone_number: address.phone.clone().to_string(),
-                // phone_number_2: address.phone_mobile.clone().unwrap_or(0).to_string(),
-                email: cust.email,
-                ..Default::default()
-            };
+                info!("address: {address:#?}");
+                // 2059728
+                let customer = CustomerData{
+                    id: Some(CustomerId(Thing::from((CUSTOMER_TABLE.to_string(), order.id_customer.clone())))),
+                    cust_code: order.id_customer.clone(),
+                    name: format!("{} {}", &cust.firstname, &cust.lastname),
+                    phone_number: address.phone.clone().to_string(),
+                    // phone_number_2: address.phone_mobile.clone().unwrap_or(0).to_string(),
+                    email: cust.email,
+                    ..Default::default()
+                };
 
-            let presta_payload = PrestashopPayload {
-                customer,
-                order,
-                sales_rep,
-                split_rep,
-                address,
-                customer_threads,
-                customer_messages
-            };
+                let presta_payload = PrestashopPayload {
+                    customer,
+                    order,
+                    sales_rep,
+                    split_rep,
+                    address,
+                    customer_threads,
+                    customer_messages
+                };
 
-            match tx.try_send(presta_payload){
-                Ok(_) => drop(tx),
-                Err(err) => info!("Error: {err:?}"),
-            };
-        });
+                match tx.try_send(presta_payload){
+                    Ok(_) => drop(tx),
+                    Err(err) => info!("Error: {err:?}"),
+                };
+            });
+        }
     }
 }
 

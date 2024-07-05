@@ -361,7 +361,6 @@ impl FileBrowser{
         path: &PathBuf,
         command_tx: channel::Sender<Option<Command>>,
     ){
-        puffin::profile_scope!("display_path");
         // ui.separator();
         let command_sender = command_tx.clone();
         let command_sender2 = command_tx.clone();
@@ -525,7 +524,6 @@ impl FileBrowser{
         a folder
     */ 
     fn refresh_contents(&mut self) {
-        puffin::profile_scope!("refresh_contents");
         let new_contents = read_folder(
             &self.path,
             self.depth,

@@ -8,7 +8,7 @@ impl MastertechContext{
     pub fn system_information(&mut self, ui: &mut Ui){
         self.specs_first_run = false;
 
-        let computer_data = &self.system_info;
+        let computer_data = &self.computer_data;
         let gpu = computer_data.gpu.clone();
     
         ui.push_id("sysinfo_table",|ui|{

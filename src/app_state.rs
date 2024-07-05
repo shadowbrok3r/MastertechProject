@@ -5,12 +5,13 @@ use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
 use serde_json::Value;
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
-use uuid::Uuid;
-use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, LocalSebData, PrestashopPayload, TaskPayload, TicketData, User}, GetKeysResponse, PreTicketData}, pages::login_page::Login, tabs::{file_browser::FileBrowser, mastertech_website::task_layout::TaskLayout, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::TaskUiActions};
+use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, LocalSebData, PrestashopPayload, TaskNotePayload, TaskPayload, TicketData, User}, GetKeysResponse}, pages::login_page::Login, tabs::{file_browser::FileBrowser, mastertech_website::task_layout::TaskLayout, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::TaskUiActions};
 use egui_file::FileDialog;
-use ratatui::Terminal;
 use ratframe::NewCC;
 use egui_ratatui::RataguiBackend;
+// use uuid::Uuid;
+// use ratatui::Terminal;
+
 pub struct MasterTechApp {
     pub context: MastertechContext,
     pub tree: DockState<String>,
@@ -40,54 +41,39 @@ impl Default for AppState{
 }
 
 pub struct MastertechContext { 
+    pub app_state_tx: Sender<AppState>,
+    pub app_state_rx: Receiver<AppState>,
+
     pub current_user: Option<User>,
-    pub so_number: String,
-    pub recommendations: String,
     pub url: Option<String>,
     pub error: String,
     pub frontend: Option<WebConsoleFrontend>,
-    // pub terminal: Terminal<RataguiBackend>,
-    pub terminal_frontend: Option<TerminalFrontend>,
-
-    pub ticket_info: PreTicketData,
-    pub keys: GetKeysResponse,
-
+    pub minidump_app: MiniDumpApp,
     pub file_browser: Arc<Mutex<FileBrowser>>,
-    pub client: reqwest::Client,
+    pub terminal_frontend: Option<TerminalFrontend>,
+    // pub terminal: Terminal<RataguiBackend>,
 
+    pub keys: GetKeysResponse,
+    pub client: reqwest::Client,
     /// Sends requests and retrieves data from scaffold
     pub scaffold_request: SendRequest,
-
+    
     pub current_antivirus: String,
     pub seb_info: Option<LocalSebData>,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
-    pub minidump_app: MiniDumpApp,
 
-    pub salesman: String,
-    pub technician: String,
     pub ram_test_cbox: HardwareTest, // We just need one of these...
     pub hdd_test_cbox: HardwareTest,
     pub ssd_test_cbox: HardwareTest,
 
     pub output_text: String,
-    
-    pub client_uuid: Option<ClientId>,
-    pub connect_to_ws: bool,
-    pub disconnect_ws: bool,
-    pub system_info: ComputerData,
-    pub disks: Value,
-    pub disk_num: usize,
 
     pub database: Option<Database>,
     pub rx: Receiver<String>,
     pub ctx: Context,
     pub widget_size: f32,
     pub open_tabs: HashSet<String>,
-    pub show_close_buttons: bool,
-    pub show_add_buttons: bool,
-    pub draggable_tabs: bool,
-    pub show_tab_name_on_hover: bool,
 
     pub date: Option<DateTime<Utc>>,
     
@@ -106,21 +92,32 @@ pub struct MastertechContext {
     pub border_stroke_color: Stroke,
     pub frame_counter: u64,
     pub show_deferred_viewport: Arc<AtomicBool>,
-    pub ticket_data: Option<Vec<TaskPayload>>,
-    pub ticket_payload: Option<TicketData>,
 
     pub task_map: HashMap<String, Vec<TaskPayload>>,
     pub task_layouts: HashMap<String, TaskLayout>,
-    
+
+    pub task_payload: Option<Vec<TaskPayload>>,
+    pub task_data: LiveTaskPayload,
+    pub ticket_data: TicketData,
+    pub customer_data: CustomerData,
+    pub computer_data: ComputerData,
+    pub task_notes: Vec<TaskNotePayload>,
+
+    pub client_uuid: Option<ClientId>,
+    pub disks: Value,
+    pub disk_num: usize,
+
+    pub github_issue_title: String,
+    pub github_issue_descript: String,
+
+    // pub presta_data: PrestaDataChannel<T>,
     pub db_data_receiver: Receiver<Vec<TaskPayload>>,
     pub db_data_sender: Sender<Vec<TaskPayload>>,
-    // pub presta_data: PrestaDataChannel<T>,
     pub prestashop_api_rx: Receiver<PrestashopPayload>,
     pub prestashop_api_tx: Sender<PrestashopPayload>, 
     pub computer_specs_tx: Sender<ComputerData>,
     pub computer_specs_rx: Receiver<ComputerData>,
-    pub app_state_tx: Sender<AppState>,
-    pub app_state_rx: Receiver<AppState>,
+
     pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
     pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
 
@@ -130,8 +127,7 @@ pub struct MastertechContext {
     pub cps_keys_rx: Receiver<GetKeysResponse>,
     pub ui_actions_tx: Sender<TaskUiActions>,
     pub ui_actions_rx: Receiver<TaskUiActions>,
-    pub github_issue_title: String,
-    pub github_issue_descript: String,
+
     pub store_users: Option<Vec<User>>,
     pub store_users_tx: Sender<Vec<User>>,
     pub store_users_rx: Receiver<Vec<User>>,
@@ -141,19 +137,19 @@ pub struct MastertechContext {
     pub bytes_rx: Receiver<(u64, u64)>,
 }
 
-impl NewCC for MasterTechApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+impl MasterTechApp {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
 
         let mut tree = DockState::new(
-            vec!["TUR Sheet".to_owned(), "Minidump Analysis".to_owned()]
+            vec!["TUR Sheet".to_owned(), "Tasks".to_owned(), "Minidump Analysis".to_owned()]
         );
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
         let [_a, _b] = tree.main_surface_mut()
             .split_left(NodeIndex::root(),0.30, vec!["File Browser 📂".to_owned(),]);
         let [_a, b] = tree.main_surface_mut()
-            .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(),"Tasks".to_owned(),"Websockets".to_owned()]);
+            .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(),"Websockets".to_owned()]);
         let [_, _] = tree.main_surface_mut()
             .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned()]);
         let [_, _] = tree.main_surface_mut()
@@ -191,8 +187,6 @@ impl NewCC for MasterTechApp {
 
         let context = MastertechContext {
             current_user: None,
-            so_number: "".to_string(),
-            recommendations: "".to_string(),
             // terminal: Terminal::new(backend).unwrap(),
             terminal_frontend: None,
 
@@ -200,15 +194,20 @@ impl NewCC for MasterTechApp {
             error: Default::default(),
             frontend: None,
 
-            ticket_info: PreTicketData::default(),
-
             keys: GetKeysResponse { 
                 webroot_key: "Webroot Key".to_string(), 
                 superanti_key: "SuperAnti Key".to_string() 
             },
 
+            task_payload: None,
+            task_data: LiveTaskPayload::default(),
+            computer_data: ComputerData::default(),
+            ticket_data: TicketData::default(),
+            customer_data: CustomerData::default(),
+            task_notes: Vec::new(),
+
             seb_info: None,
-            system_info: ComputerData::default(),
+
             disks: Value::Array(vec![]),
             disk_num: 0,
             store_users: None,
@@ -220,9 +219,6 @@ impl NewCC for MasterTechApp {
             open_file_dialog: None,
 
             database: None,
-
-            salesman: String::new(),
-            technician: String::new(),
             
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
@@ -230,8 +226,6 @@ impl NewCC for MasterTechApp {
             minidump_app: MiniDumpApp::default(),
             output_text: "".to_string(),
 
-            connect_to_ws: false,
-            disconnect_ws: false,
             client_uuid: None,
             rx,
 
@@ -244,10 +238,6 @@ impl NewCC for MasterTechApp {
             ctx: Context::default(),
             widget_size: 135.0,
             open_tabs,
-            show_close_buttons: true,
-            show_add_buttons: true,
-            draggable_tabs: true,
-            show_tab_name_on_hover: false,
     
             date: None,
             animate_progress_bar: false,
@@ -267,8 +257,7 @@ impl NewCC for MasterTechApp {
 
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
-            ticket_data: None,
-            ticket_payload: None,
+
 
             db_data_receiver,  db_data_sender,
             prestashop_api_tx, prestashop_api_rx,
@@ -312,7 +301,7 @@ impl TabViewer for MastertechContext {
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
             "Minidump Analysis" => self.mini_dump(ui),
-            "Profiler" => self.puffin_profiler(ui),
+            // "Profiler" => self.puffin_profiler(ui),
             "QC ☑️" => self.quality_check(ui),
             "Tasks" => self.mastertech_website(ui),
             "Bug Tracker" => self.github(ui),

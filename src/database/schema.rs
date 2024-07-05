@@ -16,7 +16,7 @@ pub const CUSTOMER_TABLE: &str = "customer";
 pub const COMPUTER_TABLE: &str = "computer";
 pub const TASK_TABLE: &str = "task";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
-pub const _TASK_NOTE_TABLE: &str = "task_note";
+pub const TASK_NOTE_TABLE: &str = "task_note";
 pub const _SEB_TABLE: &str = "seb_data";
 pub const _USER_TABLE: &str = "user";
 pub const _NOTIFICATION_TABLE: &str = "notification";
@@ -73,7 +73,7 @@ pub struct TaskPayload{
     pub task_name: String,
     pub service_ticket: Option<TicketPayload>,
     pub everest_initials: String,
-    pub task_description: Option<String>, 
+    pub task_description: String, 
     pub assignee: Option<UserId>, 
     pub service_number: Option<String>,
     pub due_date: String, 
@@ -89,9 +89,8 @@ pub struct LiveTaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
     pub service_ticket: Option<TicketId>,
-    // #[serde(skip)]
     pub everest_initials: String,
-    pub task_description: Option<String>, 
+    pub task_description: String, 
     pub assignee: Option<UserId>,
     pub service_number: Option<String>,
     pub due_date: String, 
@@ -102,19 +101,10 @@ pub struct LiveTaskPayload{
     pub dep: Option<String>
 }
 
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub struct TicketPayload{
-//     pub service_ticket: TicketData,
-//     pub customer_data: CustomerData,
-//     pub computer_data: ComputerData
-// }
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TicketPayload{
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
-    // pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
     pub customer: Option<CustomerData>,
     pub computer: Option<ComputerData>,
     pub service_task: Option<TaskId>,
@@ -124,7 +114,6 @@ pub struct TicketPayload{
     /// This is main initials on ticket
     pub sales_rep: String,
     pub checkin_notes: String,
-    pub recommendations: String,
     pub tech: String,
     pub salesman: String,
     pub dep: String, // Store
@@ -135,7 +124,7 @@ pub struct TicketPayload{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct TicketData{
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
@@ -149,7 +138,6 @@ pub struct TicketData{
     /// This is main initials on ticket
     pub sales_rep: String,
     pub checkin_notes: String,
-    pub recommendations: String,
     pub tech: String,
     pub salesman: String,
     pub dep: String, // Store
@@ -169,7 +157,7 @@ pub struct CustomerData{
     pub services: Option<Vec<TicketId>>,
     pub name: String,
     pub phone_number: String,
-    pub phone_number_2: String, // Option<String>
+    pub phone_number_2: String,
     pub email: String,
     pub li_doc: String,
     pub li_amnt: String,

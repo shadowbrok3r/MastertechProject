@@ -62,7 +62,7 @@ impl MastertechContext{
         ui.vertical(|ui|{ui.add_space(6.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
 
-        let scripts = Arc::new(Scripts::new(self.so_number.to_string()));
+        let scripts = Arc::new(Scripts::new(self.ticket_data.service_number.to_string()));
         let scripts_list  = scripts.get_scripts();
         // Collect keys and sort them
         let mut keys: Vec<&'static str> = scripts_list.keys().cloned().collect();
@@ -103,7 +103,7 @@ impl MastertechContext{
                             // println!("{:?}", reader.read_event());
 
                             let action_clone = action.clone();
-                            let so_num = Arc::new(self.so_number.clone());
+                            let so_num = Arc::new(self.ticket_data.service_number.clone());
                             let scripts = scripts.clone();
                             info!("SO number: {}", &so_num);
                             tokio::spawn(async move {
