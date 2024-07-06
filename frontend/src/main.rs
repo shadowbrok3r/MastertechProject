@@ -4,11 +4,10 @@ use egui_toast::{Toast, ToastKind, ToastOptions};
 use log::{debug, info};
 use ratframe::NewCC;
 use surrealdb::{Action, Response};
-use tabs::web_console::websockets::{ClientConnection, ClientDisplay, WebSocketClient};
+use tabs::web_console::websockets::WebSocketClient;
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
 // use wasm_cookies::CookieOptions;
-use web_time::Instant;
 use std::sync::Arc;
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
 use egui_aesthetix::{themes::CarlDark, Aesthetix};
@@ -272,51 +271,7 @@ impl eframe::App for MtechServer {
             }
         }
 
-        if let Ok(connection) = self.context.client_connection_rx.try_recv(){
-            match connection{
-                ClientConnection::ClientUrl(url) => {
-                    // let wakeup = move || ctx.request_repaint();
-                    match ewebsock::connect(&url, Default::default()) {
-                        Ok((ws_sender, ws_receiver)) => {
-                            let ws_client = WebSocketClient::new(ws_sender, ws_receiver);
-                            self.context.client_layout = Some(ClientDisplay::new_client(self.context.clients.clone(), ws_client));
-                        }
-                        Err(error) => {
-                            log::error!("Failed to connect to {:?}: {}", &url, error);
-                            let toast = &mut self.context.toasts;
-    
-                            let error_toast = Toast{
-                                kind: ToastKind::Error,
-                                text: format!("{error:?}").into(),
-                                options: ToastOptions::default()
-                                    .show_progress(true)
-                                    .duration_in_seconds(6.0)
-                            };
-                            toast.add(error_toast);
-                        }
-                    };
-                },                
-                
-                ClientConnection::Disconnect(url) => {
-                    spawn_local(async move {
-                        // disconnect_client(db, tx, user).await.unwrap();
-                    });
-                    // let wakeup = move || ctx.request_repaint();
-                    // match ewebsock::connect(&url, Default::default()) {
-                    //     Ok((ws_sender, ws_receiver)) => {
-                    //         ws_sender.close()
-                    //         let ws_client = WebSocketClient::new(ws_sender, ws_receiver);
-                    //         self.context.client_layout = Some(ClientDisplay::new_client(self.context.clients.clone(), ws_client));
-                    //     }
-                    //     Err(error) => {
-                    //         log::error!("Failed to connect to {:?}: {}", &url, error);
-                    //         // self.error = error;
-                    //     }
-                    // };
-                },
-            }
 
-        }
         
         self.menu_bar(ctx);
         // Always checking authentication.

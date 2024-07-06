@@ -1,12 +1,11 @@
 use eframe::egui::{epaint::Shadow, Button, Color32, Frame, Margin, Rangef, Rounding, SidePanel, Stroke, TopBottomPanel, Ui, Vec2, Widget};
-use log::info;
 // use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use wasm_bindgen_futures::spawn_local;
-use websockets::ClientDisplay;
-use crate::{app_state::MtechServerContext, utilities::{get_other::get_connected_clients, ColumnLayout}};
+use crate::{app_state::MtechServerContext, utilities::get_other::get_connected_clients};
 
 pub mod websockets;
 pub mod charts;
+pub mod display;
 
 impl MtechServerContext {
     pub fn web_console(&mut self, ui: &mut Ui){
@@ -42,7 +41,7 @@ impl MtechServerContext {
         .width_range(Rangef::new(50.0, 200.0))
         .show_animated_inside(ui, true, |ui |{
             ui.vertical_centered(|ui |{
-                let x = Button::new("Some other things").min_size(Vec2::new(ui.available_width(), 15.0)).ui(ui);
+                let _x = Button::new("Some other things").min_size(Vec2::new(ui.available_width(), 15.0)).ui(ui);
             });
         });
 
@@ -77,28 +76,8 @@ impl MtechServerContext {
         }
         
         ui.add_space(8.0);
-        let page = "client_page";
-        let mut col_names = Vec::new();
         
-        for (name, _) in self.clients.clone(){
-            col_names.push(name);
-        }
-
-        // self.clients.clear();
-        // let clients_by_column = &mut self.clients;
-
-        if !self.clients_layout.contains_key(page) {
-            info!("Inserting client display");
-            let client_layout = ClientDisplay::new(self.clients.clone());
-            self.clients_layout.insert(page.to_string(), client_layout);
-        } else if let Some(client_layout) = self.clients_layout.get_mut(page) {
-            info!("We have a  client display");
-            client_layout.layout_cols(ui, self.client_connection_tx.clone());
-        }
-        // if let Some(client_display) = &mut self.client_layout {
-        //     client_display.layout_cols(ui, self.client_connection_tx.clone());
-        // } else {
-        //     ClientDisplay::new(self.clients.clone()).layout_cols(ui, self.client_connection_tx.clone());
-        // }
+        self.client_display(ui);
     }
 }
+

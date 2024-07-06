@@ -16,7 +16,7 @@ use web_time::{Duration, Instant};
 use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
-    pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::{ClientDisplay, ClientConnection}}, 
+    pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::WebSocketClient}, 
     utilities::{
         displays::{
             chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalHandler}, tasks::task_layout::TaskLayout
@@ -126,10 +126,10 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub db_tx:  Sender<anyhow::Result<Database, Error>>,
 
-    #[serde(skip)]
-    pub client_connection_tx: Sender<ClientConnection>,
-    #[serde(skip)]
-    pub client_connection_rx: Receiver<ClientConnection>,
+    // #[serde(skip)]
+    // pub client_connection_tx: Sender<ClientConnection>,
+    // #[serde(skip)]
+    // pub client_connection_rx: Receiver<ClientConnection>,
     #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
     #[serde(skip)]
@@ -157,9 +157,8 @@ pub struct MtechServerContext{
     pub url: String,
     pub error: String,
     #[serde(skip)]
-    pub client_layout: Option<ClientDisplay>,
+    pub ws_client: Option<WebSocketClient>,
     #[serde(skip)]
-    pub clients_layout: HashMap<String, ClientDisplay>,
     pub text_to_send: String,
 
     /// Widgets / Modals / Ui for portions throughout the app
@@ -243,7 +242,7 @@ impl NewCC for MtechServer{
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
-        let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
+        // let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
 
@@ -268,13 +267,13 @@ impl NewCC for MtechServer{
             store_users_tx, store_users_rx,
             ui_actions_tx, ui_actions_rx,
             connected_clients_tx, connected_clients_rx,
-            client_connection_tx, client_connection_rx,
+            // client_connection_tx, client_connection_rx,
             new_ticket_tx, new_ticket_rx,
             notes_tx, notes_rx,
 
             // MODALS / LAYOUTS
             task_layouts: HashMap::new(),
-            clients_layout: HashMap::new(),
+            // clients_layout: HashMap::new(),
             current_modal: ModalType::Null,
             task_modal_handler: ModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
@@ -287,8 +286,9 @@ impl NewCC for MtechServer{
             last_tick: Instant::now(),
             // url: format!("{}websocket?room_id=0&role=master", dotenv::var("WS_URL").unwrap()),
             url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_string(),
+            ws_client: None,
             error: Default::default(),
-            client_layout: None,
+            // client_layout: None,
             text_to_send: Default::default(),
             // MISC / EVERYTHING ELSE
             bridge: Some(bridge),
