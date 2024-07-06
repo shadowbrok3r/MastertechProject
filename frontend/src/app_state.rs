@@ -119,17 +119,11 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub app_state_rx: Receiver<AppState>,
 
-    /// Receives Database connection over crossbeam channel
+    /// Receives / Sends Database connection over crossbeam channel
     #[serde(skip)]
     pub db_rx: Receiver<anyhow::Result<Database, Error>>,
-    /// Sends Database connection over crossbeam channel
     #[serde(skip)]
     pub db_tx:  Sender<anyhow::Result<Database, Error>>,
-
-    // #[serde(skip)]
-    // pub client_connection_tx: Sender<ClientConnection>,
-    // #[serde(skip)]
-    // pub client_connection_rx: Receiver<ClientConnection>,
     #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
     #[serde(skip)]
@@ -141,7 +135,8 @@ pub struct MtechServerContext{
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
-    pub data_update: Option<Rc<Cell<Option<u32>>>>,
+    #[serde(skip)]
+    pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
 
     /// Terminal setup for console tab
     #[serde(skip)]
@@ -189,7 +184,7 @@ impl NewCC for MtechServer{
 
         let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), "Quote Fullfilled".to_owned(), 
             "Aging Tasks".to_owned(), "Web Console".to_owned()]);
-        let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned(), "Bug Report".to_owned()]);
+        let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned(), "Bug Report".to_owned(), "My Tools".to_owned()]);
         let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned()]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
         let mut open_tabs = HashSet::new();
@@ -215,23 +210,10 @@ impl NewCC for MtechServer{
         let sender = data_update.clone();
         let bridge = <WebWorker as Spawnable>::spawner()
             .callback(move |response| {
-                sender.set(Some(response.0));
+                sender.set(Some(response.buckets));
                 ctx.request_repaint();
             })
             .spawn("./dummy_worker.js");
-
-        // match check_authentication(db_tx.clone()){
-        //     Ok(d) => {
-        //         info!("Got auth ok");
-        //         _state = d.0;
-        //         _current_user = d.1;
-        //     },
-        //     Err(e) => {
-        //         info!("Error with auth: {e:?}");
-        //         _state = AppState::NoAuth;
-        //         _current_user = None;
-        //     },
-        // }
 
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(1);
@@ -242,7 +224,6 @@ impl NewCC for MtechServer{
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
-        // let (client_connection_tx, client_connection_rx) = channel::unbounded::<ClientConnection>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
 
@@ -429,6 +410,7 @@ impl TabViewer for MtechServerContext {
         match tab.as_str() {
             "Lil menu" => self.simple_demo_menu(ui),
             "Terminal" => self.terminal(ui),
+            "My Tools" => self.toolbox(ui),
             "Store Tasks" => self.store_tasks(ui),
             "My Tasks" => self.my_tasks(ui),
             "Web Console" => self.web_console(ui),
@@ -466,6 +448,7 @@ impl TabViewer for MtechServerContext {
         let tabs = &[
             &"Bug Report".to_string(),
             &"Terminal".to_string(),
+            &"My Tools".to_string(),
             &"Web Console".to_string(),
             &"Store Tasks".to_string(),
             &"My Tasks".to_string(),
