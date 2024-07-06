@@ -1,16 +1,22 @@
 
 use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, fmt::Display, str::from_utf8};
 use crossbeam::channel::Sender;
-use database::schema::ConnectedClient;
+use database::{schema::ConnectedClient, Database};
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
 use log::info;
+use wasm_bindgen_futures::spawn_local;
 
 use crate::utilities::ColumnLayout;
 
 use super::charts::LinePlot;
+
+pub trait ClientHandler { 
+    fn connect(&mut self);
+    fn export_logs(&mut self, db: Database);
+}
 
 pub enum ClientConnection{
     ClientUrl(String),
@@ -31,22 +37,8 @@ pub enum Cmd{
     None
 }
 
-pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
-    if let Ok(cmd) = bincode::deserialize(bytes){
-        Some(cmd)
-    }else{ None }
-}
-pub fn serialize_command(bytes: &Cmd) -> Vec<u8> {
-    bincode::serialize(bytes).expect("Failed to deserialize Cmd")
-}
-pub struct ClientDisplay{
-    pub clients: HashMap<String, ConnectedClient>,
-    pub client_names: Vec<String>,
-    pub connected_client: Option<ConnectedClient>,
-    pub websocket_client: Option<WebSocketClient>,
-}
-
 pub struct WebSocketClient {
+    // pub client: ConnectedClient,
     pub ws_sender: WsSender,
     pub ws_receiver: WsReceiver,
     pub events: Vec<WsEvent>,
@@ -66,6 +58,7 @@ pub struct WebSocketClient {
 impl WebSocketClient{
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
         Self{
+            // client,
             ws_sender,
             ws_receiver,
             events: Default::default(),
@@ -438,256 +431,43 @@ impl WebSocketClient{
 }
 
 
-impl ClientDisplay{
-    pub fn new(clients: HashMap<String, ConnectedClient>) -> Self { 
-        let mut client_names = Vec::new();
-        for (name, _) in clients.iter(){
-            
-            client_names.push(name.clone());
-        }
 
-        Self {
-            clients,
-            client_names,
-            connected_client: None,
-            websocket_client: None,
-        }
-    }
+impl ClientHandler for ConnectedClient {
+    fn connect(&mut self) { }
 
-    pub fn new_client(clients: HashMap<String, ConnectedClient>, websocket_client: WebSocketClient) -> Self { 
-        let mut client_names = Vec::new();
-        for (name, _) in clients.iter(){
-            client_names.push(name.clone());
-        }
+    fn export_logs(&mut self, db: Database) {
+        let id = self.id.clone().unwrap();
+        let history = "";
+        spawn_local(async move {
 
-        Self {
-            clients,
-            client_names,
-            connected_client: None,
-            websocket_client: Some(websocket_client),
-        }
-    }
-
-    pub fn layout_cols(
-        &mut self,
-        ui: &mut egui::Ui,
-        tx: Sender<ClientConnection>
-    ){
-        let mut shadow = Shadow::default();
-        shadow.blur = 10.0;
-        shadow.spread = 2.0;
-        shadow.color = Color32::from_rgb_additive(36, 156, 158);
-
-        let mut outer_margin = Margin::default();
-        outer_margin.left = 8.0;
-
-        let mut inner_margin = Margin::default();
-        inner_margin.top = 2.0;
-        inner_margin.left = 2.0;
-        inner_margin.right = 2.0;
-
-        let panel_frame = Frame::default()
-            .fill(Color32::from_rgb(8, 7, 10))
-            .inner_margin(Margin::same(5.0))
-            .rounding(Rounding::same(5.0))
-            .shadow(shadow)
-            .stroke(Stroke::new(1.0, Color32::from_rgb_additive(20, 1, 20)));
-
-        ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
-        let column_width = Size::exact(450.0);
-        
-        CentralPanel::default().frame(panel_frame)
-            .show_inside(ui, |ui| 
-        {
-            ScrollArea::horizontal()
-                .show_viewport(ui, |ui, _|
-            {
-                let x: f32 = ui.available_height() - 40.0;
-                StripBuilder::new(ui)
-                    .cell_layout(Layout::top_down_justified(egui::Align::Center))
-                    .size(Size::exact(30.0))
-                    .size(Size::exact(5.0))
-                    .size(Size::exact(x))
-                    .vertical(|mut strip| 
-                {
-                    strip
-                        .strip(|strip| 
-                    {
-                        strip
-                            .sizes(column_width, self.client_names.len())
-                            .horizontal( |strip| self.headers(strip, tx.clone()));
-                    });
-                    strip.empty();
-                    strip
-                        .strip(|strip| 
-                    {
-                        strip
-                            .sizes(column_width, self.client_names.len())
-                            .horizontal( |mut strip| 
-                        {
-                            self.columns(
-                                strip.borrow_mut(),
-                            );
-                        });
-                    });
-                });
-            });
         });
-    }
-
-    pub fn columns(&mut self, strip: &mut egui_extras::Strip) {
-        for (name, client) in self.clients.iter(){
-            let color = if client.connected{
-                Color32::LIGHT_BLUE
-            }else{ Color32::LIGHT_RED };
-            let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 18))
-                .inner_margin(Margin::same(4.0)).rounding(Rounding::same(10.0))
-                .stroke(Stroke::new(1.0, color));
-
-            strip.strip(|s | 
-            {
-                s
-                    .size(Size::remainder())
-                    .vertical(|mut s| 
-                {
-                    s.cell(|ui| 
-                    {
-                        column_frame.show(ui, |ui| {
-                            ui.vertical_centered_justified(|ui| {
-                                let height = ui.available_height();
-                                StripBuilder::new(ui)
-                                    .size(Size::exact(25.0))
-                                    .size(Size::exact(25.0))
-                                    .size(Size::remainder().at_most(height - 15.0))
-                                    .vertical(| strip| 
-                                {
-                                    if let Some(ws_client) = &mut self.websocket_client{
-                                        ws_client.show(strip, name.clone());
-                                    }
-                                });
-                            });
-                        });
-                    });
-                });
-            });
-        }
-    }
-
-    pub fn headers(&mut self, mut s: egui_extras::Strip, tx: Sender<ClientConnection>) {
-        let header_frame = Frame::default()
-            .fill(Color32::from_rgb(12, 12, 18))
-            .inner_margin(Margin::same(4.0))
-            .outer_margin(Margin::symmetric(0.0, 0.0))
-            .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
-
-        for (name, client) in self.clients.iter_mut(){
-            s.cell(|ui|
-            {
-                header_frame.show(ui, |ui|
-                {
-                    ui.horizontal_top(|ui| 
-                    {
-                        ui.with_layout(Layout::left_to_right(Align::Min), 
-                        |ui| {
-                            let button = Button::new(
-                                RichText::new("X")
-                                    .raised()
-                                    .color(Color32::LIGHT_RED)
-                                )
-                                .fill(Color32::TRANSPARENT)
-                                .min_size(Vec2::new(30.0, 20.0))
-                                .ui(ui);
-                            if button.clicked(){ // CONNECT
-                                // let url = format!("{}/websocket?role=master&room_id={}", dotenv::from_filename("WS_URL").unwrap(), name.clone());
-                                let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
-
-                                client.connected = false;
-
-                                // if client.connected{
-                                    self.connected_client = Some(client.clone());
-                                // }
-                                tx.send(ClientConnection::Disconnect(url)).unwrap();
-                            }
-                            ui.add_space(20.0)
-                        });
-
-                        ui.with_layout(Layout::left_to_right(Align::Center), 
-                        |ui| ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading()));
-                        
-                        ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
-                        {
-                            let button = Button::new(
-                                RichText::new("⮫")
-                                    .raised()
-                                    .color(Color32::LIGHT_RED)
-                                )
-                                .fill(Color32::TRANSPARENT)
-                                .min_size(Vec2::new(30.0, 20.0))
-                                .ui(ui);
-
-                            
-
-                            if button.clicked(){ // CONNECT
-                                // let url = format!("{}/websocket?role=master&room_id={}", dotenv::from_filename("WS_URL").unwrap(), name.clone());
-                                let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
-                                client.connected = true;
-                                if client.connected{
-                                    self.connected_client = Some(client.clone());
-                                }
-                                tx.send(ClientConnection::ClientUrl(url)).unwrap();
-                            }
-
-                            ui.add_space(10.0);
-
-                            let export = Button::new(
-                                RichText::new("Export")
-                                    .raised()
-                                    .color(Color32::LIGHT_RED)
-                                )
-                                .fill(Color32::TRANSPARENT)
-                                .min_size(Vec2::new(30.0, 20.0))
-                                .ui(ui);
-
-                            if export.clicked() {
-
-                            }
-                            ui.add_space(45.0);
-                        });
-                    });
-                });
-            });
-        }
-    }
-}
-
-pub trait ClientHandler { 
-    fn connect_client(&mut self);
-    fn export_logs(&mut self);
+     }
 }
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Option<Vec<u8>> {
     if let Ok(data) = bincode::serialize(system_info){
         Some(data)
-    } else {
-        None
-    }
-    
+    } else { None }
 }
 
 pub fn deserialize_system_info(bytes: &[u8]) -> Option<SystemInformation> {
     if let Ok(data) = bincode::deserialize(bytes){
         Some(data)
-    } else {
-        None
-    }
-    
+    } else { None }
 }
 
 fn normalize(value: f32, min: f32, max: f32) -> f32 {
     (value - min) / (max - min)
 }
 
+pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
+    if let Ok(cmd) = bincode::deserialize(bytes){
+        Some(cmd)
+    }else{ None }
+}
+pub fn serialize_command(bytes: &Cmd) -> Vec<u8> {
+    bincode::serialize(bytes).expect("Failed to deserialize Cmd")
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SystemInformation {
