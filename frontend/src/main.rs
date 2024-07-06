@@ -25,8 +25,6 @@ impl eframe::App for MtechServer {
         let arc_style = set_style();
         ctx.set_style(arc_style);
 
-        // i have no god damn idea what this is really doing. it was a 
-        // wasm example for using web workers.. i dont even know if its required???
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(update) = data_update.take() { info!("Received update: {update:?}") }
 
