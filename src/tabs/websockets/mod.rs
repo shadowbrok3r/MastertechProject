@@ -83,7 +83,8 @@ impl MastertechContext{
                         let ctx = ui.ctx().clone();
                         let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
                         match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
-                            Ok((ws_sender, ws_receiver)) => {
+                            Ok((mut ws_sender, ws_receiver)) => {
+                                ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
                                 self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
                                 self.error.clear();
                             }
