@@ -109,10 +109,19 @@ impl FileSystem {
         
                             }).body(|ui| 
                             {
-                                self.display_path(
-                                    ui,
-                                    &node,
-                                );
+                                match node {
+                                    Node::File(label) => {
+                                    },
+                                    Node::Folder(node) => {
+                                        for (label, node) in node.iter(){
+                                            let selectable_label = ui.selectable_label(true, RichText::new(format!("🗀   {}", label)));
+                                            self.display_path(
+                                                ui,
+                                                &node,
+                                            );
+                                        }
+                                    },
+                                }
                             });
                         }
                     });
