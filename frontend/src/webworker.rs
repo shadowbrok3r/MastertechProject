@@ -58,9 +58,9 @@ impl gloo_worker::Worker for WebWorker {
 }
 
 async fn list_buckets(url: String, access_key: String, secret_key: String) -> Result<Vec<String>, Error> {
-    let name = "test";
+    let name = "logan";
     let region = "us-west";
-    let bucket = Bucket::new(url.parse::<Url>().unwrap(), rusty_s3::UrlStyle::VirtualHost, name, region).expect("Url has a valid scheme and host");
+    let bucket = Bucket::new(url.parse::<Url>().unwrap(), rusty_s3::UrlStyle::Path, name, region).expect("Url has a valid scheme and host");
     
     let credentials = Credentials::new(access_key, secret_key);
     
