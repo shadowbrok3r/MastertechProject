@@ -1,9 +1,6 @@
 use eframe::egui::Ui;
-use log::info;
 use crate::app_state::MastertechContext;
 use std::sync::atomic::Ordering; 
-use github::self_updater::run;
-use tokio::spawn;
 
 pub mod scripts;
 pub mod output_console;

@@ -1,16 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::{fs::File, sync:: Arc};
 use crossbeam::channel::Sender;
-use egui_toast::{Toast, ToastKind, ToastOptions};
-use futures::FutureExt;
+use crate::utilities::toasts::{Toast, ToastKind, ToastOptions};
 use log::{debug, error, info};
 use app_state::{AppState, MasterTechApp};
 use pages::login_page::HASH;
-// use ratframe::NewCC;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontId, Stroke, Vec2, ViewportBuilder};
-use database::{database::Database, prestashop_schema::ServiceOrder, schema::{ComputerData, ComputerId, HardwareTests, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
-use egui_aesthetix::{themes::CarlDark, Aesthetix};
+use database::{database::Database, schema::{ComputerData, ComputerId, HardwareTests, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
+use crate::utilities::themes::carl_dark::{Aesthetix, CarlDark};
 use surrealdb::sql::Thing;
 use tabs::tur_sheet::scaffold::AsanaResponse;
 use tokio::spawn;
@@ -40,7 +38,7 @@ impl eframe::App for MasterTechApp {
                     self.state = AppState::Authenticated(app_state::MainPages::Tasks);
                     let tx = self.context.db_tx.clone();
                     let sysinfo_tx = self.context.computer_specs_tx.clone();
-                    let x = spawn(async move {
+                    let _x = spawn(async move {
                         match tx.try_send(Database::new(login.username, login.password, None).await){
                             Ok(_) => drop(tx),
                             Err(e) => info!("Error sending specs: {e:?}"),
@@ -134,19 +132,7 @@ impl eframe::App for MasterTechApp {
                     app_state::MainPages::WebConsole => self.main_page(ctx),
                 }
             },
-            app_state::AppState::NoAuth(reason) => {
-                let toast = &mut self.context.toasts;
-    
-                let error_toast = Toast{
-                    kind: ToastKind::Error,
-                    text: reason.into(),
-                    options: ToastOptions::default()
-                        .show_progress(true)
-                        .duration_in_seconds(6.0)
-                };
-                toast.add(error_toast);
-                self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
-            },
+            app_state::AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
             _ => {}
         }
 
@@ -180,7 +166,7 @@ impl eframe::App for MasterTechApp {
         if let Ok(data) = self.context.prestashop_api_rx.try_recv(){
             let customer = &mut self.context.customer_data;
             let ticket = &mut self.context.ticket_data;
-            let task = &mut self.context.task_data;
+            let _task = &mut self.context.task_data;
             let task_notes = &mut self.context.task_notes;
             let computer = &mut self.context.computer_data;
 
@@ -303,7 +289,7 @@ async fn main() -> eframe::Result<()> {
                 .with_icon(load_icon()),
             ..Default::default()
         },
-        Box::new(|cc| Box::new(MasterTechApp::new(cc))),
+        Box::new(|cc| Ok(Box::new(MasterTechApp::new(cc)))),
     )
 }
 
@@ -317,27 +303,31 @@ fn set_style() -> Arc<Style>{
     custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
     font.size = 12.0;
     custom_style.override_font_id = Some(font);
+    custom_style.spacing.button_padding.x = 2.0;
+    custom_style.spacing.button_padding.y = 2.0;
+    custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
     custom_style.spacing.combo_height = 60.0; 
     custom_style.spacing.combo_width = 100.0;
     custom_style.interaction.multi_widget_text_select = false;
     custom_style.interaction.selectable_labels = false;
     custom_style.explanation_tooltips = false;
-    custom_style.url_in_tooltip = false;
-    custom_style.interaction.interact_radius = 15.0;
-    custom_style.interaction.resize_grab_radius_side = 15.0;
-    custom_style.interaction.resize_grab_radius_corner = 18.0;
+    custom_style.url_in_tooltip = true;
+    custom_style.interaction.interact_radius = 10.0;
+    custom_style.interaction.resize_grab_radius_side = 10.0;
+    custom_style.interaction.resize_grab_radius_corner = 10.0;
     custom_style.visuals.window_shadow.spread = 8.0;
     custom_style.visuals.window_shadow.blur = 10.0;
-    custom_style.visuals.selection.stroke.color =  Color32::BLACK;
+    custom_style.visuals.selection.stroke.color =  Color32::from_rgb(29, 209, 161);
     custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-    // custom_style.visuals.widgets.inactive.bg_fill =  Color32::GOLD;
+    // custom_style.visuals.widgets.inactive.
+    custom_style.visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(15,15,19);
+    custom_style.visuals.widgets.inactive.bg_fill =  Color32::from_rgb(15,14,18); // Color32::from_rgb(10,10,10);
     custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
     custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
-    custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+    custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(60,35,65));
     custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
     custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
-    custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
-    custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+    custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(28,28,28);
     custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
     custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
     let arc_style = Arc::new(custom_style);

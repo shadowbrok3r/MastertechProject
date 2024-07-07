@@ -7,7 +7,7 @@ use tokio::spawn;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
-use eframe::egui::{popup_below_widget, Align, Button, FontId, RichText, ScrollArea, Sense, TextEdit, Ui, Vec2, Widget, Color32, Frame, Layout, Margin, Rounding, Stroke};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Sense, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::database::database::Database;
 use crate::database::schema::{Priority, Record, TaskPayload, User};
@@ -191,7 +191,7 @@ impl ColumnLayout for TaskLayout {
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
                             }
                             
-                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, |ui| { // egui::PopupCloseBehavior::CloseOnClick
+                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, PopupCloseBehavior::CloseOnClick, |ui: &mut Ui| {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
                                     if ui.button("Mark all Complete").clicked(){

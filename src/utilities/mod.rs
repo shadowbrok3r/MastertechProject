@@ -9,6 +9,8 @@ pub mod themes;
 pub mod crypto;
 pub mod ui_action;
 pub mod data_channels;
+pub mod toasts;
+pub mod autocomplete;
 
 #[derive(Debug)]
 pub enum TaskUiActions{
