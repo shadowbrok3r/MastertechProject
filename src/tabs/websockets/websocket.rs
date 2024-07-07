@@ -1,16 +1,15 @@
-
-use eframe::egui::{Key, Ui};
-use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
-use log::info;
-use ratatui::{
-    layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
-    terminal::Frame,
-    text::{Line, Span, Text},
-    widgets::{block::{Position, Title}, Block, Borders, List, ListItem, Paragraph},
-};
-use ratatui::symbols::border;
 use tui_input::Input;
+use ewebsock::{WsEvent, WsReceiver, WsSender};
+// use eframe::egui::{Key, Ui};
+// use log::info;
+// use ratatui::{
+    //     layout::{Alignment, Constraint, Layout, Rect},
+    //     style::{Color, Modifier, Style, Stylize},
+    //     terminal::Frame,
+    //     text::{Line, Span, Text},
+    //     widgets::{block::{Position, Title}, Block, Borders, List, ListItem, Paragraph},
+    // };
+    // use ratatui::symbols::border;
 
 pub enum InputMode {
     Normal,

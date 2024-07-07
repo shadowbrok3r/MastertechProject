@@ -1,4 +1,4 @@
-use eframe::egui::{Button, Context, Layout, ProgressBar, RichText, Stroke, Widget};
+use eframe::egui::{Button, Context, FontId, Layout, ProgressBar, RichText, Stroke, Vec2, Widget};
 use eframe::egui::{CentralPanel, Color32, Frame, TopBottomPanel};
 use egui_dock::{DockArea, Style as DockStyle};
 use tokio::spawn;
@@ -40,10 +40,12 @@ impl MasterTechApp {
                     }
                 });
                 ui.with_layout(Layout::right_to_left(eframe::egui::Align::Max), |ui| {
-                    if Button::new("Update Mastertech")
+                    if Button::new(RichText::new("Update").monospace().font(FontId::proportional(14.0)))
                         .stroke(
                             Stroke::new(0.5, Color32::LIGHT_RED)
                         )
+                        .min_size(Vec2::new(36.0, 20.0))
+                        // .small()
                         .ui(ui)
                         .clicked()
                     {
