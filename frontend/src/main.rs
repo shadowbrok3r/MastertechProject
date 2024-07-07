@@ -25,8 +25,10 @@ impl eframe::App for MtechServer {
         let arc_style = set_style();
         ctx.set_style(arc_style);
 
-        let data_update = self.context.data_update.as_mut().unwrap();
-        if let Some(update) = data_update.take() { info!("Received update: {update:?}") }
+        // let data_update = self.context.data_update.as_mut().unwrap();
+        // if let Some(update) = data_update.take() { 
+        //     info!("Received update: {update:?}")
+        // }
 
         // For updating our Ratatui chart in the RataGuiBackend terminal
         // if self.context.last_tick.elapsed() >= self.context.tick_rate {

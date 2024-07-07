@@ -16,7 +16,7 @@ use web_time::{Duration, Instant};
 use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use mtechserver::webworker::WebWorker;
 use crate::{
-    pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::WebSocketClient}, 
+    pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, toolbox::storage_api::FileSystem, web_console::websockets::WebSocketClient}, 
     utilities::{
         displays::{
             chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalHandler}, tasks::task_layout::TaskLayout
@@ -138,6 +138,8 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
 
+    #[serde(skip)]
+    pub file_system: FileSystem,
     /// Terminal setup for console tab
     #[serde(skip)]
     pub terminal: Terminal<RataguiBackend>,
@@ -260,6 +262,7 @@ impl NewCC for MtechServer{
             create_task_modal_handler: ModalHandler::default(),
             chat_modal: None,
 
+            file_system: FileSystem::new(),
             // TERMINAL STUFF
             terminal: Terminal::new(backend).unwrap(),
             tick_rate: Duration::from_millis(30),
