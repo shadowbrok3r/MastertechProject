@@ -1,5 +1,6 @@
 pub mod create_task_modal;
 pub mod task_modal;
+pub mod ai_chat; 
 
 use serde::Serialize;
 use task_modal::ModalAction;

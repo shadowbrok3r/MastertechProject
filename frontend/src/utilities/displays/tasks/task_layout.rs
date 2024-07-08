@@ -179,15 +179,23 @@ impl ColumnLayout for TaskLayout {
                         ui.with_layout(Layout::left_to_right(Align::Min), |ui| 
                         {
                             let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
+                            let mut margin = Margin::default();
+                            margin.top = 6.0;
+                            margin.left = 4.0;
+                            
                             TextEdit::singleline(search_input)
                                 .hint_text("Search for task")
                                 .desired_width(100.0)
-                                .font(FontId::new(10.0, egui::FontFamily::Name("Regular".into())))
+                                .margin(margin)
+                                .font(FontId::new(11.0, egui::FontFamily::Name("Regular".into())))
                                 .ui(ui);
 
                             ui.add_space(ui.available_width() / 3.4);
-                            let response = Button::new(RichText::new(name.to_owned()).color(Color32::LIGHT_BLUE))
-                                .fill(Color32::TRANSPARENT).min_size(Vec2::new(50.0, 20.0)).ui(ui);
+                            
+                            let response = Button::new(RichText::new(name.to_owned())
+                                    .color(Color32::LIGHT_BLUE)
+                                    .size(10.5).monospace()
+                                ).fill(Color32::TRANSPARENT).min_size(Vec2::new(50.0, 15.0)).ui(ui);
 
                             if response.clicked(){
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
@@ -239,8 +247,8 @@ impl ColumnLayout for TaskLayout {
                                         let db = self.database.clone();
                                         spawn_local(async move {
                                             let query = "fn::mark_all_completion($ids, $completion)";
-                                            db.database.set("ids", id);
-                                            db.database.set("completion", true);
+                                            let _ = db.database.set("ids", id);
+                                            let _ = db.database.set("completion", true);
 
                                             let x: Vec<Record> = db.sql(query).await.unwrap();
                                         });
@@ -255,11 +263,10 @@ impl ColumnLayout for TaskLayout {
                         {
                             let button = Button::new(
                                 RichText::new("✚")
-                                    .raised()
                                     .color(Color32::LIGHT_RED)
                                 )
                                 .fill(Color32::TRANSPARENT)
-                                .min_size(Vec2::new(30.0, 20.0))
+                                .min_size(Vec2::new(30.0, 15.0))
                                 .ui(ui);
 
                             ui.add_space(30.0);

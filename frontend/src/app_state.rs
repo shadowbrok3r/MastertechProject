@@ -4,11 +4,11 @@ use crossbeam::channel::{self, Receiver, Sender};
 use eframe::egui::{Align2, Context, Ui, WidgetText};
 use egui::FontFamily;
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use crate::{tabs::github_issue::GithubIssue, utilities::ui_tools::toasts::Toasts};
+use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::ui_tools::toasts::Toasts};
 use gloo_worker::Spawnable;
 use log::info;
 use ratatui::Terminal;
-use ratframe::NewCC;
+// use ratframe::NewCC;
 use egui_ratatui::RataguiBackend;
 use serde::Serialize;
 use surrealdb::Action;
@@ -168,6 +168,8 @@ pub struct MtechServerContext{
     pub search_input: String,
     pub task_layouts: HashMap<String, TaskLayout>,
     #[serde(skip)]
+    pub ai_playground: AiPlayground,
+    #[serde(skip)]
     pub current_modal: ModalType,
     pub task_modal_handler: ModalHandler<TaskModal>,
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
@@ -191,8 +193,9 @@ impl MtechServer{
 
         let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), "Quote Fullfilled".to_owned(), 
             "Aging Tasks".to_owned(), "Web Console".to_owned()]);
-        let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["Terminal".to_owned(), "Bug Report".to_owned(), "My Tools".to_owned()]);
-        let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned()]);
+        let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["My Tools".to_owned(), "Bug Report".to_owned()]);
+        //"Terminal".to_owned(), 
+        let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned(), "Ai Playground".to_owned()]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
         let mut open_tabs = HashSet::new();
         for node in tree[SurfaceIndex::main()].iter() {
@@ -266,6 +269,7 @@ impl MtechServer{
             notes_tx, notes_rx,
 
             // MODALS / LAYOUTS
+            ai_playground: AiPlayground::default(),
             task_layouts: HashMap::new(),
             // clients_layout: HashMap::new(),
             current_modal: ModalType::Null,
@@ -347,7 +351,7 @@ impl MtechServerContext{
                         // create_task_modal.set_state(action);
                     }
                 }
-            }
+            },
             // ModalType::ChatView(task_notes) => {
             //     let notes = task_notes.clone();
             //     if let Some(current_user) = self.current_user.as_ref(){
@@ -355,7 +359,7 @@ impl MtechServerContext{
             //             ctx, 
             //             || ChatView::new(notes, current_user),
             //             move |ui, _stay_open, _page_state| chat_modal.ui(ui));
-            //         }
+            //     }
             // }
             _ => {},
         }
@@ -428,6 +432,7 @@ impl TabViewer for MtechServerContext {
             "My Tools" => self.toolbox(ui),
             "Store Tasks" => self.store_tasks(ui),
             "My Tasks" => self.my_tasks(ui),
+            "Ai Playground" => self.ai_playground(ui),
             "Web Console" => self.web_console(ui),
             "Completed Tasks" => self.completed_tasks(ui),
             "Bug Report" => self.github(ui),
@@ -467,6 +472,7 @@ impl TabViewer for MtechServerContext {
             &"Web Console".to_string(),
             &"Store Tasks".to_string(),
             &"My Tasks".to_string(),
+            &"Ai Playground".to_string(),
             &"Completed Tasks".to_string()
         ];
 

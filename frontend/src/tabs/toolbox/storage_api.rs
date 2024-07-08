@@ -1,10 +1,10 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-
 use egui::collapsing_header::CollapsingState;
-use egui::{Layout, RichText, ScrollArea, Ui};
+use egui::{Layout, RichText, ScrollArea, Ui, popup_below_widget, PopupCloseBehavior::CloseOnClickOutside};
 use log::info;
 use serde::Serialize;
+
 
 #[derive(Debug, Serialize)]
 pub struct FileSystem {
@@ -78,28 +78,72 @@ impl FileSystem {
                 });
 
                 for (label, node) in entries{
+                    let is_selected = self.selected_items.borrow().contains(label);
+                    let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+
                     if let Node::Folder(_) = node {
                         let id = ui.make_persistent_id(format!("{label}+++{:?}", count + 1));
                         CollapsingState::load_with_default_open(ui.ctx(), id, false)
                         .show_header(ui, |ui| 
                         {
-                            let is_selected = self.selected_items.borrow().contains(label);
+                            
                             let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗀   {}", label)));
-                        
                             if selectable_label.clicked() { // If the item was already selected, deselect it
-                                if self.selected_items.borrow().contains(label) { 
-                                    self.selected_items.borrow_mut().remove(label); 
+                                if modifiers.ctrl { self.selected_items.borrow_mut().insert(label.clone());} 
+                                if self.selected_items.borrow().contains(label) {
+                                    // If the item was already selected, deselect it
+                                    self.selected_items.borrow_mut().remove(label);
                                 } 
+                                else { // If the control key is not down, clear previous selection and select the current item
+                                    self.selected_items.borrow_mut().clear();
+                                    self.selected_items.borrow_mut().insert(label.clone());
+                                }
                             }
+                            
+                            if selectable_label.secondary_clicked(){
+                                ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",label).into()));
+                            }
+                            
+                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",label).into(), &selectable_label, CloseOnClickOutside, |ui| {
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.set_width(200.0);
+                                    if ui.button("Download").clicked(){
+                                        
+                                    }
+                                }).inner
+                            });
+
                         })
                         .body(|ui| self.display_path(ui, &node));
 
                     } else if let Node::File(label) = node{
-                        let is_selected = self.selected_items.borrow().contains(label);
                         let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗋   {}", label)));
+                        if selectable_label.clicked() {
+                            if modifiers.ctrl { self.selected_items.borrow_mut().insert(label.clone());} 
+                            if self.selected_items.borrow().contains(label) {
+                                // If the item was already selected, deselect it
+                                self.selected_items.borrow_mut().remove(label);
+                            } 
+                            else { // If the control key is not down, clear previous selection and select the current item
+                                self.selected_items.borrow_mut().clear();
+                                self.selected_items.borrow_mut().insert(label.clone());
+                            }
+                        }
                         if selectable_label.double_clicked() {
 
                         }
+                        if selectable_label.secondary_clicked(){
+                            ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",label).into()));
+                        }
+                        
+                        let res = popup_below_widget(ui, format!("sub_menu-{:?}",label).into(), &selectable_label, CloseOnClickOutside, |ui| {
+                            ui.vertical_centered_justified(|ui| {
+                                ui.set_width(200.0);
+                                if ui.button("Download").clicked(){
+                                    
+                                }
+                            }).inner
+                        });
                     }
                 }
             }

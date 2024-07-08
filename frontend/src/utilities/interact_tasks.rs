@@ -2,6 +2,7 @@ use chrono::{DateTime, NaiveDate, Utc, Datelike};
 use eframe::egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
 
 use database::{schema::{Priority, User, Status, TaskPayload}, Database};
+use egui::Vec2;
 use egui_extras::DatePickerButton;
 use log::info;
 
@@ -98,34 +99,22 @@ impl Interaction for TaskPayload {
         if self.completed{
             let hover_txt = "✔";
             let color_complete = Color32::LIGHT_GREEN;
-            // let color_incomplete = Color32::LIGHT_RED;
-
             let stroke = Stroke::new(1.0, color_complete);
-            let button = Button::new(hover_txt).stroke(stroke).small();
-            let res = ui.add_sized(ui.available_size(), button);
-           
-            // if res.hovered(){
-            //     res.stroke(Stroke::new(2.0, color_incomplete));
-            // }
-            if res.clicked(){
+            let button = Button::new(hover_txt).stroke(stroke).small().min_size(Vec2::new(25.0, 20.0)).ui(ui);
+            if button.clicked(){
                 self.update_completed(false, database);
             }
-            Some(res)
+            Some(button)
         }else{
             let hover_txt = "✖";
-            // let color_complete = Color32::LIGHT_GREEN;
             let color_incomplete = Color32::LIGHT_RED;
-
             let stroke = Stroke::new(1.0, color_incomplete);
-            let button = Button::new(hover_txt).stroke(stroke).small();
-            let res = ui.add_sized(ui.available_size(), button);
-            // if res.hovered(){
-            //     button.stroke(Stroke::new(2.0, color_complete));
-            // }
-            if res.clicked(){
+            let button = Button::new(hover_txt).stroke(stroke).small().min_size(Vec2::new(25.0, 20.0)).ui(ui);
+            
+            if button.clicked(){
                 self.update_completed(true, database);
             }
-            Some(res)
+            Some(button)
         }
     }
 

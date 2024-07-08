@@ -311,7 +311,7 @@ pub fn __run_test_ui_with_toasts(mut add_contents: impl FnMut(&mut Ui, &mut Toas
 }
 
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, PartialOrd, Eq, PartialEq, Hash)]
 pub enum ToastKind {
     Info,
     Warning,

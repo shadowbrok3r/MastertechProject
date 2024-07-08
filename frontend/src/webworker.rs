@@ -71,7 +71,7 @@ async fn list_buckets(url: String, access_key: String, secret_key: String) -> Re
     let resp = client.get(signed_url).send().await?.error_for_status()?;
     let text = resp.text().await?;
     let parsed = ListObjectsV2::parse_response(&text).unwrap();
-    println!("response: {parsed:?}");
+    info!("response: {parsed:?}");
     info!("response: {parsed:?}");
 
     let mut vec = Vec::new();
