@@ -107,7 +107,11 @@ impl MastertechContext{
             if let Some(frontend) = &mut self.frontend {
                 let connected = frontend.initialize_websocket(ui);
                 if !connected{
-                    info!("Connected: {connected}");
+                    // if let Some(db) = self.database {
+                    //     spawn(async move {
+                            
+                    //     });
+                    // }
                 } 
             }
         });
@@ -124,12 +128,9 @@ pub struct WebConsoleFrontend {
     pub command_rx: Receiver<Vec<u8>>,
 
     pub events: Vec<WsEvent>,
-    /// Position of cursor in the editor area.
-    pub character_index: usize,
     /// Current value of the input box
     pub input: String,
     /// Current input mode
-    // pub input_mode: InputMode,
     /// History of recorded messages
     pub messages: Vec<String>,
     pub command: Cmd,
@@ -165,7 +166,6 @@ impl WebConsoleFrontend {
             events: Default::default(),
             input: String::new(),
             messages: Vec::new(),
-            character_index: 0,
             command: Cmd::None,
             history: Vec::new(),
             send_specs: false,
@@ -292,6 +292,7 @@ impl WebConsoleFrontend {
                 },
                 WsEvent::Closed => {
                     connected = false;
+
                 },
                 WsEvent::Error(e) => {
                     connected = false;

@@ -360,11 +360,16 @@ fn setup_custom_fonts(ctx: &Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = FontDefinitions::default();
 
-    // Install my own font (maybe supporting non-latin characters).
-    // .ttf and .otf files supported.
+    fonts.font_data.insert("Monaspace".to_owned(),
+    FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Light.otf"))); // .ttf and .otf supported
+
+    // Put my font first (highest priority):
+    fonts.families.get_mut(&FontFamily::Proportional).unwrap()
+        .insert(0, "Monaspace".to_owned());
+
     fonts.font_data.insert(
         "Regular".to_owned(),
-        FontData::from_static(include_bytes!("./assets/fonts/Iosevka-Regular.ttf")),
+        FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Regular.otf")),
     );
     fonts.families.insert(
         FontFamily::Name("Regular".into()),
@@ -372,31 +377,11 @@ fn setup_custom_fonts(ctx: &Context) {
     );
     fonts.font_data.insert(
         "Bold".to_owned(),
-        FontData::from_static(include_bytes!("./assets/fonts/Iosevka-Bold.ttf")),
+        FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Bold.otf")),
     );
     fonts.families.insert(
         FontFamily::Name("Bold".into()),
         vec!["Bold".to_owned()],
-    );
-
-    fonts.font_data.insert(
-        "Oblique".to_owned(),
-        FontData::from_static(include_bytes!("./assets/fonts/Iosevka-Oblique.ttf")),
-    );
-    fonts.families.insert(
-        FontFamily::Name("Oblique".into()),
-        vec!["Oblique".to_owned()],
-    );
-
-    fonts.font_data.insert(
-        "BoldOblique".to_owned(),
-        FontData::from_static(include_bytes!(
-            "./assets/fonts/Iosevka-BoldOblique.ttf"
-        )),
-    );
-    fonts.families.insert(
-        FontFamily::Name("BoldOblique".into()),
-        vec!["BoldOblique".to_owned()],
     );
 
     // Tell egui to use these fonts:
