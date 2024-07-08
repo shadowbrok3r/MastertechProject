@@ -26,21 +26,6 @@ impl MastertechContext {
         ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
-        // ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
-        // ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        // ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
-        // ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
-        // ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(60,40,60));
-        // // ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::RED;
-        // ui.style_mut().visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(15,15,19);
-        // // ui.style_mut().visuals.widgets.noninteractive.bg_fill = Color32::GOLD;
-        // ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
-        // ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
-        //
-        // ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
-        // ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
-        // ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
-
         ui.vertical(|ui|{ui.add_space(8.0);});
         
         ui.with_layout(
