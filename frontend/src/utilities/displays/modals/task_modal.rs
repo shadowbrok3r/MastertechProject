@@ -3,7 +3,9 @@ use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, D
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, Grid, Layout, Margin, RichText, ScrollArea, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
+use reqwest_wasm::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use serde::Serialize;
+use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes, Updatable};
@@ -25,7 +27,8 @@ pub struct TaskModal{
     pub default_height: Option<f32>,
     pub full_span_content: bool,
 
-    pub state: ModalState
+    pub state: ModalState,
+    pub spo: SpecialPartOrder
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -49,7 +52,8 @@ impl Default for TaskModal{
             default_height: Some(800.0),
             full_span_content: false,
             state: ModalState::default(),
-            chat_view: ChatView::default()
+            chat_view: ChatView::default(),
+            spo: SpecialPartOrder::default()
         }
     }
 }
@@ -65,7 +69,8 @@ impl TaskModal{
             default_height: Some(800.0),
             full_span_content: false,
             state: ModalState::default(),
-            chat_view: chats
+            chat_view: chats,
+            spo: SpecialPartOrder::default()
         }
     }
 
@@ -84,6 +89,23 @@ impl ModalTypes for TaskModal{
     }
 }
 
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct SpecialPartOrder {
+    customer_name: String,          //  "kathleen Hoffmon",
+    customer_phone_number: String,          //  "801-888-8888",
+    notes: String,          //  "These are some notes",
+    system_order_number: String,            //  "123456",
+    id_location: String,            //  "Riverdale",
+    request_type: String,           //  "Any",
+    shipping_method: String,            //  "2 - 2-3 Day Express",
+    part_manufacturer: String,          //  "PC Laptops",
+    manufacturer_model_number: String,          //  "12345Test",
+    manufacturer_serial_number: String,             //  "123456789",
+    manufacturer_part_number: String,           //  "324657687",
+    part_color: String,             //  "N/A",
+    part_description: String,           //  "Test",
+    part_lcd_toggle: String,            //  "0"
+}
 
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>{
@@ -219,7 +241,7 @@ impl DisplayModal for TaskModal {
                                     match current_page_state{
                                         ModalAction::TicketInfoPage => display_task_page(ui, self.task.as_mut(), avail_size),
                                         ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref(), avail_size),
-                                        ModalAction::PartOrderPage => display_part_order_page(ui, avail_size),
+                                        ModalAction::PartOrderPage => display_part_order_page(self.spo.clone(), ui, avail_size),
                                         ModalAction::TaskNotePage => {
                                             ui.set_width(avail_size.x);
                                             // ui.add_space(15.0);
@@ -652,7 +674,7 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
     
 }
 
-fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
+fn display_part_order_page(mut spo: SpecialPartOrder, ui: &mut Ui, avail_size: Vec2){
     StripBuilder::new(ui)
         .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
         .size(Size::exact(50.0))
@@ -683,10 +705,10 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
                                 ui.selectable_value(&mut "Awaiting Quote".to_string(), "Awaiting Quote".to_string(), "Awaiting Quote");
                             });
                             ComboBox::new("ManufacturerCombo", "")
-                                .selected_text("PCL")
+                                .selected_text("PC Laptops")
                                 .show_ui(ui, |ui| 
                             {
-                                ui.selectable_value(&mut "PCL".to_string(), "PCL".to_string(), "PCL");
+                                ui.selectable_value(&mut "PC Laptops".to_string(), "PCL".to_string(), "PCL");
                                 ui.selectable_value(&mut "Other".to_string(), "Other".to_string(), "Other");
                                 
                             });
@@ -694,26 +716,30 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
 
                         ui.add_space(15.0);
 
-                        TextEdit::singleline(&mut "MFG Model #".to_string())
+                        TextEdit::singleline(&mut spo.manufacturer_model_number)
+                            .hint_text("MFG Model #".to_string())
                             .margin(Margin::same(5.0))
                             .ui(ui);
 
                         ui.add_space(15.0);
 
-                        TextEdit::singleline(&mut "MFG P/N".to_string())
+                        TextEdit::singleline(&mut spo.manufacturer_part_number)
+                            .hint_text("MFG P/N".to_string())
                             .margin(Margin::same(5.0))
                             .frame(true)
                             .ui(ui);
                     
                         ui.add_space(15.0);
 
-                        TextEdit::singleline(&mut "Part Description".to_string())
+                        TextEdit::singleline(&mut spo.part_description)
+                            .hint_text("Part Description".to_string())
                             .margin(Margin::same(5.0))
                             .ui(ui);
                         
                         ui.add_space(15.0);
 
-                        TextEdit::multiline(&mut "Notes".to_string())
+                        TextEdit::multiline(&mut spo.notes)
+                            .hint_text("Notes".to_string())
                             .margin(Margin::same(5.0))
                             .desired_rows(3)
                             .ui(ui);
@@ -724,6 +750,33 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
                             let _ = ui.radio(false, "LCD?");
                             ui.add_space(ui.available_width() / 2.0);
                             ui.label("Upload Picture");
+                        });
+
+                        ui.add_space(15.0);
+
+                        ui.horizontal(|ui| { 
+                            if ui.button("Submit").clicked() {
+                                spawn_local(async move {
+                                    // let params: Value = serde_json::json!({
+                                    //     "user_email": "logan.lees@pclaptops.com", 
+                                    //     "user_password": "Poolparty1",
+                                    //     "format_data": "text",
+                                    //     "action": "create",
+                                    //     "application": "customer_request_order", 
+                                    //     "payload": spo,
+                                    // });
+
+                                    // let client = Client::new();
+                                    // client.post("https://scaffold.pclaptops.com/api/index")
+                                    //     .header(CONTENT_TYPE, "application/json")
+                                    //     .header(ACCEPT, "application/json")
+                                    //     .json(&params)
+                                    //     .send()
+                                    //     .await
+                                    //     .unwrap();
+
+                                });
+                            }
                         });
                     });
                 });
