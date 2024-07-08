@@ -98,13 +98,13 @@ impl MtechServer{
                         if ui.add(Button::new("Account Settings")).clicked(){
                         
                         }
-                        if ui.add(Button::new("ChatGPT")).clicked(){
+                        // if ui.add(Button::new("ChatGPT")).clicked(){
                             // self.state = AppState::Authenticated(MainPages::ChatGpt);
                             // match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::ChatGpt)){
                             //     Ok(_) => info!("Logged out"),
                             //     Err(e) => info!("Error: {e:?}"),
                             // }
-                        }
+                        // }
                         if ui.add(Button::new("Downloads")).clicked(){
                             self.state = AppState::Authenticated(MainPages::Downloads);
                             match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads)){

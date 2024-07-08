@@ -24,7 +24,8 @@ impl MtechServerContext{
 
         let panel_frame = Frame::default()
             .fill(Color32::from_rgb(8, 7, 10))
-            .inner_margin(Margin::same(5.0))
+            .inner_margin(Margin::same(2.0))
+            .outer_margin(Margin::symmetric(5.0, 0.0))
             .rounding(Rounding::same(5.0))
             .shadow(shadow)
             .stroke(Stroke::new(1.0, Color32::from_rgb_additive(20, 1, 20)));
@@ -73,9 +74,8 @@ impl MtechServerContext{
 
     pub fn columns(&mut self, strip: &mut egui_extras::Strip) {
         for (name, client) in self.clients.iter(){
-            let color = if client.connected{
-                Color32::LIGHT_BLUE
-            }else{ Color32::LIGHT_RED };
+            let color = if client.connected{ Color32::LIGHT_BLUE } else { Color32::LIGHT_RED };
+            
             let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 18))
                 .inner_margin(Margin::same(4.0)).rounding(Rounding::same(10.0))
                 .stroke(Stroke::new(1.0, color));
@@ -115,7 +115,7 @@ impl MtechServerContext{
         let header_frame = Frame::default()
             .fill(Color32::from_rgb(12, 12, 18))
             .inner_margin(Margin::same(4.0))
-            .outer_margin(Margin::symmetric(0.0, 0.0))
+            .outer_margin(Margin::symmetric(3.0, 0.0))
             .rounding(Rounding::same(5.0))
             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
@@ -129,8 +129,7 @@ impl MtechServerContext{
                         ui.with_layout(Layout::left_to_right(Align::Min), 
                         |ui| {
                             let button = Button::new(
-                                RichText::new("X")
-                                    .raised()
+                                RichText::new("✖")
                                     .color(Color32::LIGHT_RED)
                                 )
                                 .fill(Color32::TRANSPARENT)
@@ -148,13 +147,12 @@ impl MtechServerContext{
                         });
 
                         ui.with_layout(Layout::left_to_right(Align::Center), 
-                        |ui| ui.colored_label(Color32::WHITE, RichText::new(name.to_owned())));
+                        |ui| ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).size(14.0)));
                         
                         ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
                         {
                             let button = Button::new(
                                 RichText::new("⮫")
-                                    .raised()
                                     .color(Color32::LIGHT_RED)
                                 )
                                 .fill(Color32::TRANSPARENT)
@@ -191,7 +189,7 @@ impl MtechServerContext{
 
                             let export = Button::new(
                                 RichText::new("Export")
-                                    .raised()
+                                    .size(10.0)
                                     .color(Color32::LIGHT_RED)
                                 )
                                 .fill(Color32::TRANSPARENT)

@@ -1,7 +1,8 @@
 use eframe::egui::{epaint::Shadow, Button, Color32, Frame, Margin, Rangef, Rounding, SidePanel, Stroke, TopBottomPanel, Ui, Vec2, Widget};
+use log::info;
 // use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use wasm_bindgen_futures::spawn_local;
-use crate::{app_state::MtechServerContext, utilities::get_other::get_connected_clients};
+use crate::{app_state::MtechServerContext, utilities::{ai::tool_call::call_with_response, get_other::get_connected_clients}};
 
 pub mod websockets;
 pub mod charts;
@@ -41,7 +42,13 @@ impl MtechServerContext {
         .width_range(Rangef::new(50.0, 200.0))
         .show_animated_inside(ui, true, |ui |{
             ui.vertical_centered(|ui |{
-                let _x = Button::new("Some other things").min_size(Vec2::new(ui.available_width(), 15.0)).ui(ui);
+                // let x = Button::new("Some other things").min_size(Vec2::new(ui.available_width(), 15.0)).ui(ui);
+                // if x.clicked() {
+                //     spawn_local(async move {
+                //         let y = call_with_response().await;
+                //         info!("{y:?}");
+                //     });
+                // }
             });
         });
 

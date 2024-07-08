@@ -270,9 +270,8 @@ impl eframe::App for MtechServer {
             }
         }
 
-
-        
         self.menu_bar(ctx);
+        
         // Always checking authentication.
         match &self.state{
             //if auth'd, user shall be allowed
@@ -283,7 +282,6 @@ impl eframe::App for MtechServer {
             // if no auth, appstate will be login_page
             AppState::NoAuth(_reason) => {
                 self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
-
                 // info!("Login page state");
             },
             AppState::Authenticated(MainPages::Downloads) => {
@@ -297,6 +295,7 @@ impl eframe::App for MtechServer {
                 self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
             }
         }
+
         self.context.handle_modals(ctx);
         self.context.toasts.show(ctx);
     }
@@ -374,8 +373,8 @@ fn set_style() -> Arc<Style>{
     custom_style.interaction.resize_grab_radius_corner = 10.0;
     custom_style.visuals.window_shadow.spread = 8.0;
     custom_style.visuals.window_shadow.blur = 10.0;
-    custom_style.visuals.selection.stroke.color =  Color32::from_rgb(29, 209, 161);
-    custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
+    custom_style.visuals.selection.stroke.color =  Color32::from_rgb_additive(200, 100, 200);
+    custom_style.visuals.selection.bg_fill = Color32::from_rgba_premultiplied(40,40,40,20);
     custom_style.visuals.widgets.inactive.bg_fill =  Color32::from_rgb(15,14,18);
     custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
     custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);

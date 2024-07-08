@@ -7,6 +7,7 @@ pub mod aging_tasks;
 pub mod quote_fulfilled_tasks;
 pub mod github_issue;
 pub mod toolbox;
+pub mod ai_playground;
 
 use eframe::egui::Ui;
 use super::app_state::MtechServerContext;

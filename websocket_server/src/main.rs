@@ -271,7 +271,7 @@ async fn main() {
         TerminalMode::Mixed,
         ColorChoice::Auto
     );
-    println!("Starting the WebSocket server");
+    info!("Starting the WebSocket server");
 
     // Create the WebSocket server
     let (server, _) = Server::create(|handle| ChatServer {
@@ -289,7 +289,7 @@ async fn main() {
 
     // Spawn a new async task to run the server
     // tokio::spawn(async move {
-        println!("Listening on {}", address);
+        info!("Listening on {}", address);
         axum::Server::bind(&address)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await
