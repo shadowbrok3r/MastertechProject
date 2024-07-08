@@ -42,20 +42,20 @@ impl<'a> LinePlot<'a> {
     }
 
     pub fn ui(&mut self, ui: &mut Ui, plot_name: &str, line: Line) -> Response {
-        let time_formatter = |mark: GridMark, _digits, _range: &RangeInclusive<f64>| {
-            let minutes = mark.value;
-            if minutes < 0.0 || 5.0 * MINS_PER_DAY <= minutes {
-                String::new() // No labels outside value bounds
-            } else { // Hours and minutes
-                format!("{h}:{m:02}", h = hour(minutes), m = minute(minutes))
-            }
-        };
+        // let time_formatter = |mark: GridMark, _digits, _range: &RangeInclusive<f64>| {
+        //     let minutes = mark.value;
+        //     if minutes < 0.0 || 5.0 * MINS_PER_DAY <= minutes {
+        //         String::new() // No labels outside value bounds
+        //     } else { // Hours and minutes
+        //         format!("{h}:{m:02}", h = hour(minutes), m = minute(minutes))
+        //     }
+        // };
 
         let label_fmt = |_s: &str, val: &PlotPoint| {
             format!("{h}:{m:02}\n{p:.2}%", h = hour(val.x), m = minute(val.x), p = percent(val.y))
         };
 
-        let x_axes = vec![AxisHints::new_x().formatter(time_formatter)];
+        // let x_axes = vec![AxisHints::new_x().formatter(time_formatter)];
 
         if self.animate {
             ui.ctx().request_repaint();
@@ -68,7 +68,7 @@ impl<'a> LinePlot<'a> {
 
         let mut plot = Plot::new(plot_name)
             .legend(Legend::default().position(Corner::RightBottom).text_style(egui::TextStyle::Small))
-            .custom_x_axes(x_axes)
+            // .custom_x_axes(x_axes)
             .label_formatter(label_fmt)
             .show_axes(true)
             .allow_drag(Vec2b::new(false, false))

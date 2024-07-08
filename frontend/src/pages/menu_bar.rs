@@ -1,6 +1,6 @@
 use eframe::egui::menu;
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
-use egui_autocomplete::AutoCompleteTextEdit;
+use crate::utilities::ui_tools::autocomplete::AutoCompleteTextEdit;
 use std::collections::BTreeSet;
 use log::info;
 use crate::{app_state::{AppState, MainPages, MtechServer}, utilities::TaskUiActions};

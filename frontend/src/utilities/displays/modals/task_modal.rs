@@ -419,7 +419,6 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                                             .margin(Margin::same(5.0))
                                             .desired_rows(8)
                                             .desired_width(ui.available_width())
-                                            .code_editor()
                                             .ui(ui);
                                     });
                                 });
@@ -431,7 +430,6 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Ve
                                             .margin(Margin::same(5.0))
                                             .desired_rows(8)
                                             .desired_width(ui.available_width())
-                                            .code_editor()
                                             .ui(ui);
                                     });
                                 });
@@ -698,7 +696,6 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
 
                         TextEdit::singleline(&mut "MFG Model #".to_string())
                             .margin(Margin::same(5.0))
-                            .code_editor()
                             .ui(ui);
 
                         ui.add_space(15.0);
@@ -706,14 +703,12 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
                         TextEdit::singleline(&mut "MFG P/N".to_string())
                             .margin(Margin::same(5.0))
                             .frame(true)
-                            .code_editor()
                             .ui(ui);
                     
                         ui.add_space(15.0);
 
                         TextEdit::singleline(&mut "Part Description".to_string())
                             .margin(Margin::same(5.0))
-                            .code_editor()
                             .ui(ui);
                         
                         ui.add_space(15.0);
@@ -721,7 +716,6 @@ fn display_part_order_page(ui: &mut Ui, avail_size: Vec2){
                         TextEdit::multiline(&mut "Notes".to_string())
                             .margin(Margin::same(5.0))
                             .desired_rows(3)
-                            .code_editor()
                             .ui(ui);
 
                         ui.add_space(15.0);

@@ -1,16 +1,15 @@
 use app_state::{check_authentication, AppState, MainPages, MtechServer, NewTicketChannel};
 use database::schema::{TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
-use egui_toast::{Toast, ToastKind, ToastOptions};
+use egui::FontFamily;
 use log::{debug, info};
 use ratframe::NewCC;
 use surrealdb::{Action, Response};
 use tabs::web_console::websockets::WebSocketClient;
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
-// use wasm_cookies::CookieOptions;
 use std::sync::Arc;
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
-use egui_aesthetix::{themes::CarlDark, Aesthetix};
+use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 
 pub mod tabs;
 pub mod app_state;
@@ -25,10 +24,10 @@ impl eframe::App for MtechServer {
         let arc_style = set_style();
         ctx.set_style(arc_style);
 
-        // let data_update = self.context.data_update.as_mut().unwrap();
-        // if let Some(update) = data_update.take() { 
-        //     info!("Received update: {update:?}")
-        // }
+        let data_update = self.context.data_update.as_mut().unwrap();
+        if let Some(items) = data_update.take() { 
+            self.context.file_system.build_file_system(items);
+        }
 
         // For updating our Ratatui chart in the RataGuiBackend terminal
         // if self.context.last_tick.elapsed() >= self.context.tick_rate {
@@ -141,7 +140,7 @@ impl eframe::App for MtechServer {
         }
         
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv(){
-            info!("Got tasks? {tasks:?}");
+            // info!("Got tasks? {tasks:?}");
             self.context.tasks = Some(tasks);
         }
 
@@ -311,12 +310,12 @@ impl eframe::App for MtechServer {
 // When compiling to web using trunk:
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    use eframe::wgpu::PowerPreference;
+    // use eframe::wgpu::PowerPreference;
     // use eframe::wgpu::{Backends, PowerPreference};
     use log::LevelFilter;
     eframe::WebLogger::init(LevelFilter::Info).ok();
     let mut web_options = eframe::WebOptions::default();
-    web_options.wgpu_options.power_preference = PowerPreference::HighPerformance;
+    // web_options.wgpu_options.power_preference = PowerPreference::HighPerformance;
     // web_options.wgpu_options.supported_backends = Backends::METAL;
     // web_options.wgpu_options.supported_backends = eframe::wgpu::Instance::
 
@@ -325,7 +324,7 @@ fn main() {
             .start(
                 "mtech_canvas", // hardcode it
                 web_options,
-                Box::new(|cc| Box::new(MtechServer::new(cc))),
+                Box::new(|cc| Ok(Box::new(MtechServer::new(cc)))),
             )
             .await
             .expect("failed to start eframe");
@@ -349,7 +348,7 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "MtechServer",
         native_options,
-        Box::new(|cc| Box::new(MtechServer::new(cc))),
+        Box::new(|cc| Ok(Box::new(MtechServer::new(cc)))),
     )
 }
 
@@ -357,12 +356,14 @@ fn set_style() -> Arc<Style>{
     let theme = CarlDark;
     let mut custom_style: Style = theme.custom_style();
     let mut font = FontId::default();
-    font.size = 12.0;
+    font.size = 10.5;
+    font.family = FontFamily::Proportional;
+    
     custom_style.override_font_id = Some(font);
-    custom_style.spacing.button_padding.x = 2.0;
+    custom_style.spacing.button_padding.x = 3.0;
     custom_style.spacing.button_padding.y = 2.0;
-    custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
-    custom_style.spacing.combo_height = 60.0; 
+    custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+    custom_style.spacing.combo_height = 55.0; 
     custom_style.spacing.combo_width = 100.0;
     custom_style.interaction.multi_widget_text_select = false;
     custom_style.interaction.selectable_labels = false;
