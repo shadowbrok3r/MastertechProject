@@ -1,7 +1,6 @@
 use async_openai_wasm::{
     config::OpenAIConfig, types::{
-        ChatCompletionFunctionsArgs, ChatCompletionRequestFunctionMessageArgs,
-        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
+        ChatCompletionFunctionsArgs, ChatCompletionRequestFunctionMessageArgs, ChatCompletionRequestUserMessageArgs, ChatCompletionToolArgs, ChatCompletionToolType, CreateChatCompletionRequestArgs, FunctionObjectArgs
     }, Client
 };
 use serde_json::json;
@@ -14,29 +13,37 @@ async fn tests() -> Result<(), Box<dyn Error>> {
     let config = OpenAIConfig::new().with_api_key(OPENAI_API_KEY);
     let client = Client::with_config(config);
 
+    let user_prompt = "What's the weather like in Boston and Atlanta?";
+
     let request = CreateChatCompletionRequestArgs::default()
         .max_tokens(512u16)
-        .model("gpt-4o")
-        .messages([ChatCompletionRequestUserMessageArgs::default()
-            .content("What's the weather like in Boston?")
-            .build()?
-            .into()])
-        .functions([ChatCompletionFunctionsArgs::default()
-            .name("get_current_weather")
-            .description("Get the current weather in a given location")
-            .parameters(json!({
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA",
-                    },
-                    "unit": { "type": "string", "enum": ["celsius", "fahrenheit"] },
-                },
-                "required": ["location"],
-            }))
+        .model("gpt-4-1106-preview")
+        .messages([
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(user_prompt)
+                .build()?
+                .into()
+        ])
+        .tools(vec![ChatCompletionToolArgs::default()
+            .r#type(ChatCompletionToolType::Function)
+            .function(
+                FunctionObjectArgs::default()
+                    .name("get_current_weather")
+                    .description("Get the current weather in a given location")
+                    .parameters(json!({
+                        "type": "object",
+                        "properties": {
+                            "location": {
+                                "type": "string",
+                                "description": "The city and state, e.g. San Francisco, CA",
+                            },
+                            "unit": { "type": "string", "enum": ["celsius", "fahrenheit"] },
+                        },
+                        "required": ["location"],
+                    }))
+                    .build()?,
+            )
             .build()?])
-        .function_call("auto")
         .build()?;
 
     let response_message = client
