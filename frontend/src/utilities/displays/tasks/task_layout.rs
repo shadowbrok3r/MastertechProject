@@ -182,7 +182,7 @@ impl ColumnLayout for TaskLayout {
                             TextEdit::singleline(search_input)
                                 .hint_text("Search for task")
                                 .desired_width(100.0)
-                                .font(FontId::proportional(14.0))
+                                .font(FontId::new(10.0, egui::FontFamily::Name("Regular".into())))
                                 .ui(ui);
 
                             ui.add_space(ui.available_width() / 3.4);
@@ -193,7 +193,7 @@ impl ColumnLayout for TaskLayout {
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
                             }
                             
-                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, |ui| {
+                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
                                     if ui.button("Mark all Complete").clicked(){
@@ -281,9 +281,9 @@ impl ColumnLayout for TaskLayout {
                                 }
                             }
                             if count > 0{
-                                ui.label("Overdue Tasks");
+                                ui.label("Overdue");
                                 ui.add_space(5.0);
-                                ui.colored_label(Color32::RED, format!("{count}"));
+                                ui.colored_label(Color32::LIGHT_RED, format!("{count}"));
                             }
                         });
                     });

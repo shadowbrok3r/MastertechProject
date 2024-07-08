@@ -2,8 +2,9 @@ use std::{cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
 use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
 use eframe::egui::{Align2, Context, Ui, WidgetText};
+use egui::FontFamily;
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use egui_toast::Toasts;
+use crate::{tabs::github_issue::GithubIssue, utilities::ui_tools::toasts::Toasts};
 use gloo_worker::Spawnable;
 use log::info;
 use ratatui::Terminal;
@@ -14,7 +15,7 @@ use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
-use mtechserver::webworker::WebWorker;
+use mtechserver::webworker::{Input, WebWorker};
 use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, toolbox::storage_api::FileSystem, web_console::websockets::WebSocketClient}, 
     utilities::{
@@ -24,6 +25,9 @@ use crate::{
         DisplayModal, ModalType, ModalTypes, TaskUiActions
     }
 };
+
+pub const SECRET_KEY: &str = "lUVgT6KPAR7uPZriAC1QPqSTB9aW12oAmgegk6gO";
+pub const ACCESS_KEY: &str = "DMAZwz4511ezKqEiF2vy";
 
 #[derive(Serialize)]
 pub struct MtechServer{
@@ -138,8 +142,9 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
 
-    #[serde(skip)]
     pub file_system: FileSystem,
+    #[serde(skip)]
+    pub github_issue: GithubIssue,
     /// Terminal setup for console tab
     #[serde(skip)]
     pub terminal: Terminal<RataguiBackend>,
@@ -179,8 +184,8 @@ pub struct MtechServerContext{
     pub toasts: Toasts,
 }
 
-impl NewCC for MtechServer{
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+impl MtechServer{
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         setup_custom_fonts(&cc.egui_ctx);
 
@@ -216,6 +221,12 @@ impl NewCC for MtechServer{
                 ctx.request_repaint();
             })
             .spawn("./dummy_worker.js");
+
+        bridge.send(Input {
+            url: "https://storage-api.master-tech.app".to_string(),
+            access_key: ACCESS_KEY.to_string(),
+            secret_key: SECRET_KEY.to_string(),
+        });
 
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(1);
@@ -263,6 +274,7 @@ impl NewCC for MtechServer{
             chat_modal: None,
 
             file_system: FileSystem::new(),
+            github_issue: GithubIssue::new(),
             // TERMINAL STUFF
             terminal: Terminal::new(backend).unwrap(),
             tick_rate: Duration::from_millis(30),
@@ -475,11 +487,16 @@ fn setup_custom_fonts(ctx: &egui::Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = egui::FontDefinitions::default();
 
-    // Install my own font (maybe supporting non-latin characters).
-    // .ttf and .otf files supported.
+    fonts.font_data.insert("Monaspace".to_owned(),
+   egui::FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Light.otf"))); // .ttf and .otf supported
+
+    // Put my font first (highest priority):
+    fonts.families.get_mut(&FontFamily::Proportional).unwrap()
+        .insert(0, "Monaspace".to_owned());
+
     fonts.font_data.insert(
         "Regular".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Regular.ttf")),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf")),
     );
     fonts.families.insert(
         egui::FontFamily::Name("Regular".into()),
@@ -487,32 +504,32 @@ fn setup_custom_fonts(ctx: &egui::Context) {
     );
     fonts.font_data.insert(
         "Bold".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Bold.ttf")),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Bold.otf")),
     );
     fonts.families.insert(
         egui::FontFamily::Name("Bold".into()),
         vec!["Bold".to_owned()],
     );
 
-    fonts.font_data.insert(
-        "Oblique".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Oblique.ttf")),
-    );
-    fonts.families.insert(
-        egui::FontFamily::Name("Oblique".into()),
-        vec!["Oblique".to_owned()],
-    );
+    // fonts.font_data.insert(
+    //     "Oblique".to_owned(),
+    //     egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Oblique.ttf")),
+    // );
+    // fonts.families.insert(
+    //     egui::FontFamily::Name("Oblique".into()),
+    //     vec!["Oblique".to_owned()],
+    // );
 
-    fonts.font_data.insert(
-        "BoldOblique".to_owned(),
-        egui::FontData::from_static(include_bytes!(
-            "../assets/fonts/Iosevka-BoldOblique.ttf"
-        )),
-    );
-    fonts.families.insert(
-        egui::FontFamily::Name("BoldOblique".into()),
-        vec!["BoldOblique".to_owned()],
-    );
+    // fonts.font_data.insert(
+    //     "BoldOblique".to_owned(),
+    //     egui::FontData::from_static(include_bytes!(
+    //         "../assets/fonts/Iosevka-BoldOblique.ttf"
+    //     )),
+    // );
+    // fonts.families.insert(
+    //     egui::FontFamily::Name("BoldOblique".into()),
+    //     vec!["BoldOblique".to_owned()],
+    // );
 
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);

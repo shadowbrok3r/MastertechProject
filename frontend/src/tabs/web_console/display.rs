@@ -1,7 +1,8 @@
 use std::borrow::BorrowMut;
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Frame, Layout, Margin, RichText, Rounding, ScrollArea,  Stroke, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
-use egui_toast::{Toast, ToastKind, ToastOptions};
+use log::info;
+use crate::utilities::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use crate::app_state::MtechServerContext;
 
 use super::websockets::{ClientHandler, WebSocketClient};
@@ -147,7 +148,7 @@ impl MtechServerContext{
                         });
 
                         ui.with_layout(Layout::left_to_right(Align::Center), 
-                        |ui| ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading()));
+                        |ui| ui.colored_label(Color32::WHITE, RichText::new(name.to_owned())));
                         
                         ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
                         {
@@ -198,8 +199,11 @@ impl MtechServerContext{
                                 .ui(ui);
 
                             if export.clicked() {
-                                if let Some(db) = &self.database{
-                                    client.export_logs(db.clone());
+                                if let Some(ws_client) = &self.ws_client {
+                                    if let Some(db) = &self.database{
+                                        // info!("History: {:?}", ws_client.history.clone());
+                                        client.export_logs(db.clone(), ws_client.history.clone());
+                                    }
                                 }
                             }
 

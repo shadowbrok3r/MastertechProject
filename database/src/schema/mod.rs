@@ -132,7 +132,7 @@ pub struct TicketPayload{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct TicketData{
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
@@ -276,6 +276,7 @@ pub struct ConnectedClient{ // <'a>
     pub assigned_user: Option<UserId>,
     pub client_hash: String,
     pub connection_string: String,
+    pub command_history: Option<Vec<String>>,
     pub connected: bool,
 }
 

@@ -1,6 +1,8 @@
 use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
+use reqwest_wasm::{header::{ACCEPT, AUTHORIZATION, USER_AGENT}, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
+use wasm_bindgen_futures::spawn_local;
 use std::error::Error;
 use log::info;
 
@@ -29,48 +31,60 @@ impl MtechServerContext{
         ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
         ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
 
+        self.github_issue.display(ui);
+    }
+}
+
+impl GithubIssue {
+    pub fn new() -> Self {
+        Self {
+            github_issue_descript: String::new(),
+            github_issue_title: String::new(),
+        }
+    }
+
+    fn display(&mut self, ui: &mut Ui) {
         ui.with_layout(Layout::top_down(Align::Center), |ui| {  // vertical_centered(|ui| {
 
-            ui.heading("Mastertech bug report");
-            // TextEdit::singleline(&mut self.github_issue_title)
-            //     .hint_text("Issue Title")
-            //     .show(ui);
+            ui.heading("MtechServer Bug Report");
+            TextEdit::singleline(&mut self.github_issue_title)
+                .hint_text("Issue Title")
+                .show(ui);
 
             ui.add_space(12.0); 
 
             ui.heading("Description");
-            // TextEdit::multiline(&mut self.github_issue_descript)
-            //     .hint_text("Explain your issue")
-            //     .show(ui);
-
-
+            TextEdit::multiline(&mut self.github_issue_descript)
+                .hint_text("Explain your issue")
+                .show(ui);
             
 
-            // let submit = ui.add_enabled(
-            //     !self.github_issue_descript.is_empty() 
-            //     && !self.github_issue_title.is_empty(), 
-            //     Button::new("Submit")
-            // );
+            let submit = ui.add_enabled(
+                !self.github_issue_descript.is_empty() 
+                && !self.github_issue_title.is_empty(), 
+                Button::new("Submit")
+            );
 
-            // if submit.clicked(){
-            //     let github_issue_title = self.github_issue_title.clone();
-            //     let github_issue_descript = self.github_issue_descript.clone();
-            //     let client = self.client.clone();
-            //     spawn(async move {
-            //         let create_issue = create_new_issue(github_issue_title, github_issue_descript, client).await;
+            if submit.clicked(){
+                let github_issue_title = self.github_issue_title.clone();
+                let github_issue_descript = self.github_issue_descript.clone();
 
-            //         match create_issue{
-            //             Ok(val) => info!("Sent request ok: {val:?}"),
-            //             Err(e) => info!("Error creating issue: {e:?}")
-            //         }
-            //     });
-            // }
+                spawn_local(async move {
+                    let client = Client::new();
+                    
+                    let create_issue = create_new_issue(github_issue_title, github_issue_descript, client).await;
+
+                    match create_issue{
+                        Ok(val) => info!("Sent request ok: {val:?}"),
+                        Err(e) => info!("Error creating issue: {e:?}")
+                    }
+                });
+            }
         });
-    
     }
 }
 
-pub async fn create_new_issue(title: String, body: String)  
+pub async fn create_new_issue(title: String, body: String, client: Client)  
     -> anyhow::Result<(), anyhow::Error> 
 {
     // Now you can use the method on the instance of ScaffoldRequestBuilder
@@ -83,16 +97,16 @@ pub async fn create_new_issue(title: String, body: String)
         ]
     });
 
-    // let res = client
-    //     .post("https://api.github.com/repos/shadowbrok3r/Mastertech4.0/issues")
-    //     .header(AUTHORIZATION, TOKEN)
-    //     .header(ACCEPT, "application/vnd.github+json")
-    //     .header(USER_AGENT, "Mastertech")
-    //     .json(&params)
-    //     .send()
-    //     .await?
-    //     .text()
-    //     .await?;
+    let res = client
+        .post("https://api.github.com/repos/shadowbrok3r/Mtechserver2.0/issues")
+        .header(AUTHORIZATION, TOKEN)
+        .header(ACCEPT, "application/vnd.github+json")
+        .header(USER_AGENT, "MtechServer")
+        .json(&params)
+        .send()
+        .await?
+        .text()
+        .await?;
 
     Ok(())
 }

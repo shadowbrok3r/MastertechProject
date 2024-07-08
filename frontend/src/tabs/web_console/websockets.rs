@@ -1,12 +1,13 @@
 
 use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, fmt::Display, str::from_utf8};
 use crossbeam::channel::Sender;
-use database::{schema::ConnectedClient, Database};
+use database::{schema::{ConnectedClient, Record}, Database};
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
 use log::info;
+use surrealdb::Response;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::utilities::ColumnLayout;
@@ -15,7 +16,7 @@ use super::charts::LinePlot;
 
 pub trait ClientHandler { 
     fn connect(&mut self);
-    fn export_logs(&mut self, db: Database);
+    fn export_logs(&mut self, db: Database, history: Vec<String>);
 }
 
 pub enum ClientConnection{
@@ -261,157 +262,160 @@ impl WebSocketClient{
 
             scroll.show_background(true).show_unindented(ui, |ui| 
             {
+                ui.allocate_ui(Vec2::new(ui.available_width(), ui.available_height() - 20.0), |ui| {
+
                 
-                ScrollArea::vertical()
-                    .animated(true)
-                    .max_height(ui.available_height() - 5.0)
-                    .max_width(f32::INFINITY)
-                    .auto_shrink(false)
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| 
-                {
-                    ui.set_width(ui.available_width());
-                    let max_msg_width = ui.available_width() / 2.5;
-                    let fixed_height = 50.0;
-                    let min_width = 200.0;
-        
-                    for item in self.history.iter(){
-                        let is_message_from_myself = if item.contains("You"){
-                            true
-                        } else { false };
-        
-                        // Messages from the user are right-aligned.
-                        let layout = if is_message_from_myself {
-                            Layout::top_down(Align::Max)
-                        } else {
-                            Layout::top_down(Align::Min)
-                        };
-        
-                        let msg_color = if is_message_from_myself {
-                            ui.style().visuals.widgets.inactive.bg_fill
-                        } else {
-                            ui.style().visuals.widgets.active.weak_bg_fill
-                        };
-        
-                        ui.with_layout(layout, |ui| {
-                            ui.set_max_width(max_msg_width);
-        
-                            let rounding = 8.0;
-                            let margin = 8.0;
-                            
-                            // ui.set_min_width(min_width);
-                            let rnding = Rounding {
-                                ne: if is_message_from_myself { 0.0 } else { rounding },
-                                nw: if is_message_from_myself { rounding } else { 0.0 },
-                                se: rounding,
-                                sw: rounding,
-                            };
-        
-                            let response = Frame::none()
-                                .rounding(rnding)
-                                .inner_margin(margin)
-                                .outer_margin(margin)
-                                .fill(msg_color)
-                                .show(ui, |ui| {
-                                    ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-                                    ui.set_min_width(min_width / 2.5);
-                                    // Use a vertical layout to stack the name and message content
-                                    ui.with_layout(Layout::top_down(Align::Min), |ui| 
-                                    {
-        
-                                        let mut shadow = Shadow::default();
-                                        shadow.blur = 3.0;
-                                        shadow.spread = 3.0;
-                                        shadow.color = Color32::from_rgb(40,36,40);
-                                        
-                                        let mut b_panel_marg = Margin::default();
-                                        b_panel_marg.top = 3.0;
-        
-                                        let color = Color32::from_rgb(10,10,12);
-        
-                                        let note_frame = Frame::none().fill(color)
-                                            .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-                                            .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
-        
-                                        let (from, txt) = if item.contains("You"){
-                                            let text: (&str, &str) = item.split_once("\n").unwrap_or(("", ""));
-                                            let cmd = text.1;
-                                            (
-                                                RichText::new("Command Sent:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                                RichText::new(cmd).strong().monospace()
-                                            )
-                                        }else {
-                                            (
-                                                RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                                RichText::new(item).strong().monospace()
-                                            )
-                                        };
-                                        
-        
-                                        if is_message_from_myself {
-                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                                Direction::RightToLeft,
-                                                Align::Min,
-                                            ), |ui| {
-                                                Button::new(from)
-                                                    .fill(Color32::TRANSPARENT)
-                                                    .min_size(Vec2::new(30.0, 20.0))
-                                                    .sense(Sense::hover())
-                                                    .ui(ui);
-                                                
-                                            });
-                                        } else {
-                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                                Direction::LeftToRight,
-                                                Align::Min,
-                                            ), |ui| {
-                                                Button::new(from)
-                                                    .fill(Color32::TRANSPARENT)
-                                                    .min_size(Vec2::new(30.0, 20.0))
-                                                    .sense(Sense::hover())
-                                                    .ui(ui);
-                                            });
-                                        }
-                                        note_frame.show(ui, |ui| {
-                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                                Direction::TopDown,
-                                                Align::Center,
-                                            ), |ui| {
-                                                ui.set_width(ui.available_width());
-                                                ui.label(txt);
-                                            });
-                                        });
-                                });
-                            })
-                            .response;
-        
-                            let points = if !is_message_from_myself {
-                                let top = response.rect.left_top() + Vec2::splat(margin);
-                                let arrow_rect =
-                                    Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
-        
-                                vec![
-                                    arrow_rect.left_top(),
-                                    arrow_rect.right_top(),
-                                    arrow_rect.right_bottom(),
-                                ]
+                    ScrollArea::vertical()
+                        .animated(true)
+                        .max_height(ui.available_height())
+                        .max_width(f32::INFINITY)
+                        .auto_shrink(false)
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| 
+                    {
+                        ui.set_width(ui.available_width());
+                        let max_msg_width = ui.available_width() / 2.5;
+                        let fixed_height = 50.0;
+                        let min_width = 200.0;
+            
+                        for item in self.history.iter(){
+                            let is_message_from_myself = if item.contains("You"){
+                                true
+                            } else { false };
+            
+                            // Messages from the user are right-aligned.
+                            let layout = if is_message_from_myself {
+                                Layout::top_down(Align::Max)
                             } else {
-                                let top = response.rect.right_top() + Vec2::new(-margin, margin);
-                                let arrow_rect =
-                                    Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
-        
-                                vec![
-                                    arrow_rect.left_top(),
-                                    arrow_rect.right_top(),
-                                    arrow_rect.left_bottom(),
-                                ]
+                                Layout::top_down(Align::Min)
                             };
-        
-                            ui.painter()
-                                .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
-        
-                        });
-                    };
+            
+                            let msg_color = if is_message_from_myself {
+                                ui.style().visuals.widgets.inactive.bg_fill
+                            } else {
+                                ui.style().visuals.widgets.active.weak_bg_fill
+                            };
+            
+                            ui.with_layout(layout, |ui| {
+                                ui.set_max_width(max_msg_width);
+            
+                                let rounding = 8.0;
+                                let margin = 8.0;
+                                
+                                // ui.set_min_width(min_width);
+                                let rnding = Rounding {
+                                    ne: if is_message_from_myself { 0.0 } else { rounding },
+                                    nw: if is_message_from_myself { rounding } else { 0.0 },
+                                    se: rounding,
+                                    sw: rounding,
+                                };
+            
+                                let response = Frame::none()
+                                    .rounding(rnding)
+                                    .inner_margin(margin)
+                                    .outer_margin(margin)
+                                    .fill(msg_color)
+                                    .show(ui, |ui| {
+                                        ui.set_min_height(fixed_height);  // Set the fixed height for the message box
+                                        ui.set_min_width(min_width / 2.5);
+                                        // Use a vertical layout to stack the name and message content
+                                        ui.with_layout(Layout::top_down(Align::Min), |ui| 
+                                        {
+            
+                                            let mut shadow = Shadow::default();
+                                            shadow.blur = 3.0;
+                                            shadow.spread = 3.0;
+                                            shadow.color = Color32::from_rgb(40,36,40);
+                                            
+                                            let mut b_panel_marg = Margin::default();
+                                            b_panel_marg.top = 3.0;
+            
+                                            let color = Color32::from_rgb(10,10,12);
+            
+                                            let note_frame = Frame::none().fill(color)
+                                                .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+                                                .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
+            
+                                            let (from, txt) = if item.contains("You"){
+                                                let text: (&str, &str) = item.split_once("\n").unwrap_or(("", ""));
+                                                let cmd = text.1;
+                                                (
+                                                    RichText::new("Command Sent:").strong().monospace().color(Color32::LIGHT_BLUE),
+                                                    RichText::new(cmd).strong().monospace()
+                                                )
+                                            }else {
+                                                (
+                                                    RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_BLUE),
+                                                    RichText::new(item).strong().monospace()
+                                                )
+                                            };
+                                            
+            
+                                            if is_message_from_myself {
+                                                ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                    Direction::RightToLeft,
+                                                    Align::Min,
+                                                ), |ui| {
+                                                    Button::new(from)
+                                                        .fill(Color32::TRANSPARENT)
+                                                        .min_size(Vec2::new(30.0, 20.0))
+                                                        .sense(Sense::hover())
+                                                        .ui(ui);
+                                                    
+                                                });
+                                            } else {
+                                                ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                    Direction::LeftToRight,
+                                                    Align::Min,
+                                                ), |ui| {
+                                                    Button::new(from)
+                                                        .fill(Color32::TRANSPARENT)
+                                                        .min_size(Vec2::new(30.0, 20.0))
+                                                        .sense(Sense::hover())
+                                                        .ui(ui);
+                                                });
+                                            }
+                                            note_frame.show(ui, |ui| {
+                                                ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                    Direction::TopDown,
+                                                    Align::Center,
+                                                ), |ui| {
+                                                    ui.set_width(ui.available_width());
+                                                    ui.label(txt);
+                                                });
+                                            });
+                                    });
+                                })
+                                .response;
+            
+                                let points = if !is_message_from_myself {
+                                    let top = response.rect.left_top() + Vec2::splat(margin);
+                                    let arrow_rect =
+                                        Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
+            
+                                    vec![
+                                        arrow_rect.left_top(),
+                                        arrow_rect.right_top(),
+                                        arrow_rect.right_bottom(),
+                                    ]
+                                } else {
+                                    let top = response.rect.right_top() + Vec2::new(-margin, margin);
+                                    let arrow_rect =
+                                        Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
+            
+                                    vec![
+                                        arrow_rect.left_top(),
+                                        arrow_rect.right_top(),
+                                        arrow_rect.left_bottom(),
+                                    ]
+                                };
+            
+                                ui.painter()
+                                    .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
+            
+                            });
+                        };
+                    });
                 });
 
                 ui.vertical_centered_justified(|ui| {
@@ -435,11 +439,16 @@ impl WebSocketClient{
 impl ClientHandler for ConnectedClient {
     fn connect(&mut self) { }
 
-    fn export_logs(&mut self, db: Database) {
-        let id = self.id.clone().unwrap();
-        let history = "";
+    fn export_logs(&mut self, db: Database, history: Vec<String>) {
+        let id = self.id.clone().unwrap().0;
         spawn_local(async move {
+            // db.database.set("id", id).await.unwrap();
+            // db.database.set("history", history.clone()).await.unwrap();
+            let query = format!("UPDATE {id:?} SET command_history = {history:?}");
+            let update_history: Result<Response, surrealdb::Error> = db.database.query(query)
+                .await;
 
+            info!("History: {update_history:#?}");
         });
      }
 }
