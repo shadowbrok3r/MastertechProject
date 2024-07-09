@@ -141,7 +141,7 @@ pub struct MtechServerContext{
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
     #[serde(skip)]
     pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
-
+    #[serde(skip)]
     pub file_system: FileSystem,
     #[serde(skip)]
     pub github_issue: GithubIssue,
