@@ -145,10 +145,10 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
 	let first_choice = chat::first_choice(chat_response)?;
 
 	// -- If message.content, end early
-	// if let Some(response_content) = first_choice.message.content {
-	// 	let res = format!("\nResponse early (no tools):\n\n{response_content}");
-	// 	return Ok(res);
-	// }
+	if let Some(response_content) = first_choice.message.content {
+		info!("\nResponse early (no tools):\n\n{response_content}");
+		// return Ok(res);
+	}
 
 	// -- Otherwise, get/call tools/rpc calls and capture the Tool Responses
 	struct ToolResponse {

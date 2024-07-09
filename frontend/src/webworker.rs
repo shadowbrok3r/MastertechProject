@@ -3,7 +3,7 @@ use log::info;
 use rusty_s3::{actions::ListObjectsV2, Bucket, Credentials, S3Action};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
-use reqwest_wasm::{Client, Error, Url};
+use reqwest::{Client, Error, Url};
 use web_time::Duration;
 
 const ONE_HOUR: Duration = Duration::from_secs(3600);

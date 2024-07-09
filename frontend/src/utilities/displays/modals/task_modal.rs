@@ -3,7 +3,7 @@ use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, D
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, Grid, Layout, Margin, RichText, ScrollArea, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
-use reqwest_wasm::{header::{ACCEPT, CONTENT_TYPE}, Client};
+use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use serde::Serialize;
 use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;

@@ -1,5 +1,5 @@
 use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
-use reqwest_wasm::{header::{ACCEPT, AUTHORIZATION, USER_AGENT}, Client};
+use reqwest::{header::{ACCEPT, AUTHORIZATION, USER_AGENT}, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use wasm_bindgen_futures::spawn_local;
