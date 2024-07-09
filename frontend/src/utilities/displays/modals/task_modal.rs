@@ -245,7 +245,7 @@ impl DisplayModal for TaskModal {
                                         ModalAction::TaskNotePage => {
                                             ui.set_width(avail_size.x);
                                             // ui.add_space(15.0);
-
+                                            // eframe::egui
                                             if let Some(new_message) = self.chat_view.ui(ui){
                                                 if let (Some(db), Some(task)) = (self.database.clone(), self.task.clone()){
                                                     

@@ -33,17 +33,17 @@ impl MtechServerContext {
         
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
 
-        TopBottomPanel::top("FileBrowserTop").frame(top_panel_frame)
-            .show_separator_line(false)
-            .show_inside(ui, |ui| 
-        {
-            ui.vertical_centered(|ui |
-            {
-                if ui.button(RichText::new("Upload").size(9.0)).clicked() {
+        // TopBottomPanel::top("FileBrowserTop").frame(top_panel_frame)
+        //     .show_separator_line(false)
+        //     .show_inside(ui, |ui| 
+        // {
+        //     ui.vertical_centered(|ui |
+        //     {
+        //         if ui.button(RichText::new("Upload").size(9.0)).clicked() {
 
-                }
-            })
-        });
+        //         }
+        //     })
+        // });
 
         TopBottomPanel::bottom("FileBrowserBottom").frame(top_panel_frame)
             .show_separator_line(false)
@@ -63,7 +63,6 @@ impl MtechServerContext {
             //     self.file_system.build_file_system(items);
             // }
 
-            
             self.file_system.display(ui);
         });
     }

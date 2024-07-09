@@ -169,6 +169,11 @@ impl eframe::App for MtechServer {
                     self.context.create_task_modal_handler.open();
                 },
                 TaskUiActions::Response(_res) => { }
+                TaskUiActions::OpenChatModal(pld) => {
+                    self.context.current_modal = ModalType::ChatView(pld);
+                    self.context.chat_modal_handler.open();
+                    // self.context.chat = ModalType::ChatView(pld);
+                },
             }
         }
 

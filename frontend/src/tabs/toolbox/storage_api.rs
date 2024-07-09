@@ -1,17 +1,15 @@
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::{iter, cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
-use egui::collapsing_header::CollapsingState;
-use egui::{Color32, ProgressBar, Widget};
-use egui::{Layout, RichText, ScrollArea, Ui, popup_below_widget, PopupCloseBehavior::CloseOnClickOutside};
+use egui::{Layout, RichText, ScrollArea, Ui, popup_below_widget, PopupCloseBehavior::CloseOnClickOutside, Color32, ProgressBar, Widget, collapsing_header::CollapsingState};
 use futures::StreamExt;
 use log::info;
-use reqwest::{header::CONTENT_TYPE, Client, Url};
-use rusty_s3::actions::CreateMultipartUpload;
-use rusty_s3::{actions::GetObject, Bucket, Credentials, S3Action};
+use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
+use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use wasm_bindgen_futures::spawn_local;
 use web_time::Duration;
 use mime_guess::from_path;
+use bytes::Bytes;
+
 use crate::app_state::{ACCESS_KEY, SECRET_KEY};
 
 const ONE_HOUR: Duration = Duration::from_secs(3600);
@@ -25,7 +23,8 @@ pub struct FileSystem {
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
     progress: f64,
     total_size: f64,
-    paths: Vec<String>
+    paths: Vec<String>,
+    directory_paths: HashSet<String>
 }
 
 #[derive(Debug)]
@@ -44,7 +43,8 @@ impl FileSystem {
             selected_items: RefCell::new(HashSet::new()),
             progress: 0.0,
             total_size: 0.0,
-            paths: Vec::new()
+            paths: Vec::new(),
+            directory_paths: HashSet::new()
         }
     }
 
@@ -52,6 +52,7 @@ impl FileSystem {
         self.paths = paths.clone();
         for path in paths {
             let parts: Vec<&str> = path.split('/').collect();
+            let mut current_path = String::new();
             let mut current = &mut self.root;
 
             for (i, part) in parts.iter().enumerate() {
@@ -61,11 +62,19 @@ impl FileSystem {
                         folder.insert(part.clone(), Node::File(part.to_string()));
                     }
                 } else { // It's a folder
-                    current = current.as_folder_mut().unwrap().entry(part)
+                    current = current.as_folder_mut().unwrap().entry(part.clone())
                         .or_insert_with(|| Node::Folder(HashMap::new()));
+
+                    if !current_path.is_empty() {
+                        current_path.push('/');
+                    }
+                    current_path.push_str(&part);
+                    self.directory_paths.insert(current_path.clone());
+
                 }
             }
         }
+         
     }
 
     pub fn display(&self, ui: &mut Ui) {
@@ -79,16 +88,6 @@ impl FileSystem {
                 self.display_path(ui, &self.root, "".to_string());
             });
         });
-    }
-
-    pub fn show_progress(&mut self, ui: &mut Ui) {
-        while let Ok(x) = self.bytes_rx.try_recv() {
-            self.total_size = x.1 as f64;
-            for y in x.0 {
-                self.progress += y as f64;
-            }
-        }
-        ProgressBar::new(self.progress as f32/ self.total_size as f32).show_percentage().fill(Color32::from_rgb(200, 50, 200)).ui(ui);
     }
 
     fn display_path(&self, ui: &mut Ui, node: &Node, current_path: String) {      
@@ -108,11 +107,6 @@ impl FileSystem {
                 });
 
                 for (label, node) in entries {
-                    // let full_path = if current_path.is_empty() {
-                    //     label.clone()
-                    // } else {
-                    //     format!("{}/{}", current_path, label)
-                    // };
 
                     let is_selected = self.selected_items.borrow().contains(label);
                     let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
@@ -148,6 +142,12 @@ impl FileSystem {
                                         if let Some(path) = path {
                                             info!("Path: {:?}", path.clone());
                                             self.download_selection(path, label.clone());
+                                        }
+                                    }
+                                    if ui.button("Upload").clicked(){
+                                        if let Some(dir) = self.find_directory_full_path(&label){
+                                            info!("Dir: {:?}", dir.clone());
+                                            self.upload(dir);
                                         }
                                     }
                                 }).inner
@@ -194,59 +194,108 @@ impl FileSystem {
         });
     }
 
+    pub fn show_progress(&mut self, ui: &mut Ui) {
+        while let Ok(x) = self.bytes_rx.try_recv() {
+            self.total_size = x.1 as f64;
+            for y in x.0 {
+                self.progress += y as f64;
+            }
+        }
+        ProgressBar::new(self.progress as f32/ self.total_size as f32).show_percentage().fill(Color32::from_rgb(200, 50, 200)).ui(ui);
+    }
+
     fn path_lookup(&self, file_name: &str) -> Option<String> {
         self.paths.iter()
             .find(|path| path.ends_with(file_name))
             .cloned() // returns a clone of the matching path, if found
     }
+    
+    fn find_directory_full_path(&self, label: &str) -> Option<String> {
+        self.directory_paths.iter().find(|path| path.ends_with(label)).cloned()
+    }
 
     pub fn upload(&self, path: String) {
+
         let task = rfd::AsyncFileDialog::new().pick_files();
         let tx = self.bytes_tx.clone();
+        // self.total_size = bytes.len() as f64;
         spawn_local(async move {
             let name = "logan";
             let region = "us-west";
+            let client = Client::new();
+            let credentials = Credentials::new(ACCESS_KEY, SECRET_KEY);
+            let mut bytes: Bytes = Bytes::new();
+            let files = task.await.unwrap();
+            let mut file_name = String::new();
+
             let bucket = Bucket::new(
                 "https://storage-api.master-tech.app".to_string().parse::<Url>().unwrap(), 
                 rusty_s3::UrlStyle::Path, name, region
             )
             .expect("Url has a valid scheme and host");
 
-            let credentials = Credentials::new(ACCESS_KEY, SECRET_KEY);
-            
-            let files = task.await.unwrap();
             for file_handle in files {
-                let bytes: Vec<u8> = file_handle.read().await;
+                file_name = format!("{path}/{}", file_handle.file_name());
+                bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
             }
 
-            let mut action = CreateMultipartUpload::new(&bucket, Some(&credentials), &path);
-            action
-                .query_mut()
-                .insert("response-cache-control", "no-cache, no-store");
+            
+            // self.progress = 
+            let action = CreateMultipartUpload::new(&bucket, Some(&credentials), &file_name);
+            let url = action.sign(ONE_HOUR);
+            let resp = client.post(url).send().await.unwrap().error_for_status().unwrap();
+            let body = resp.text().await.unwrap();
+            let multipart = CreateMultipartUpload::parse_response(&body).unwrap();
+        
+            info!(
+                "multipart upload created - upload id: {}",
+                multipart.upload_id()
+            );
+        
+            let part_upload = UploadPart::new(
+                &bucket,
+                Some(&credentials),
+                &file_name,
+                1,
+                multipart.upload_id(),
+            );
 
-            let signed_url = action.sign(ONE_HOUR);
+            let url = part_upload.sign(ONE_HOUR);
+            // let x = Bytes::from(bytes.as_slice()).clone();
 
-            let client = Client::new();
-            let mime = from_path(filename).first_or_octet_stream();
-            let resp = client.get(signed_url).header(CONTENT_TYPE, mime.essence_str()).send().await.unwrap();
-            let content_length = resp.content_length().unwrap();
-            let mut downloaded_bytes: u64 = 0;
-            // let bytes = resp.await.unwrap();
-            let mut byte_stream = resp.bytes_stream();
+            let resp = client
+                .put(url)
+                .body(bytes)
+                .send()
+                .await.unwrap()
+                .error_for_status().unwrap();
 
-            let file = task.await;
-            while let Some(item) = byte_stream.next().await{
-                let chunk = item.unwrap();
-                tx.try_send((chunk.to_vec(), content_length));
+            let etag = resp
+                .headers()
+                .get(ETAG)
+                .expect("every UploadPart request returns an Etag");
+        
+            info!("etag: {}", etag.to_str().unwrap());
+        
+            let action = CompleteMultipartUpload::new(
+                &bucket,
+                Some(&credentials),
+                &file_name,
+                multipart.upload_id(),
+                iter::once(etag.to_str().unwrap()),
+            );
+            let url = action.sign(ONE_HOUR);
+        
+            let resp = client
+                .post(url)
+                .body(action.body())
+                .send()
+                .await.unwrap()
+                .error_for_status().unwrap();
 
+            let body = resp.text().await.unwrap();
 
-                downloaded_bytes += chunk.len() as u64;
-                if downloaded_bytes == content_length {
-                    if let Some(ref file) = file {
-                        file.write(&chunk.to_vec().as_slice()).await.unwrap();
-                    }
-                }
-            }
+            info!("it worked! {body}");
         });
     }
 
