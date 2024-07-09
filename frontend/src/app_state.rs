@@ -4,7 +4,7 @@ use crossbeam::channel::{self, Receiver, Sender};
 use eframe::egui::{Align2, Context, Ui, WidgetText};
 use egui::FontFamily;
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::ui_tools::toasts::Toasts};
+use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal}, ui_tools::toasts::Toasts}};
 use gloo_worker::Spawnable;
 use log::info;
 use ratatui::Terminal;
@@ -56,6 +56,7 @@ pub enum AppState{
     CreateAccount,
     NoAuth(String),
 }
+
 impl Default for AppState{
     fn default() -> Self {
         Self::NoAuth("Not Authenticated".to_string())
@@ -173,6 +174,7 @@ pub struct MtechServerContext{
     pub current_modal: ModalType,
     pub task_modal_handler: ModalHandler<TaskModal>,
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
+    pub chat_modal_handler: ChatModalHandler,
     #[serde(skip)]
     pub chat_modal: Option<ChatView>,
     /// collection of all open tabs in ui
@@ -276,6 +278,7 @@ impl MtechServer{
             task_modal_handler: ModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
             chat_modal: None,
+            chat_modal_handler: ChatModalHandler::default(),
 
             file_system: FileSystem::new(),
             github_issue: GithubIssue::new(),
@@ -352,15 +355,17 @@ impl MtechServerContext{
                     }
                 }
             },
-            // ModalType::ChatView(task_notes) => {
-            //     let notes = task_notes.clone();
-            //     if let Some(current_user) = self.current_user.as_ref(){
-            //         self.chat_modal_handler.ui(
-            //             ctx, 
-            //             || ChatView::new(notes, current_user),
-            //             move |ui, _stay_open, _page_state| chat_modal.ui(ui));
-            //     }
-            // }
+            ModalType::ChatView(chat_view) => {
+                let notes = chat_view.1.clone();
+                if let Some(current_user) = self.current_user.as_ref(){
+                    // self.chat_modal_handler.ui(ctx, make_modal, content_ui)
+                    let mut chat_modal = ChatView::new(notes.to_owned(), current_user.clone(), chat_view.0.clone());
+                    ChatModalHandler::default().ui(
+                        ctx, 
+                        || Modal::new("Chats"),
+                        move |ui, _stay_open| chat_modal.ui(ui));
+                }
+            }
             _ => {},
         }
     }
