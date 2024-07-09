@@ -7,6 +7,7 @@ use egui::{Layout, RichText, ScrollArea, Ui, popup_below_widget, PopupCloseBehav
 use futures::StreamExt;
 use log::info;
 use reqwest::{header::CONTENT_TYPE, Client, Url};
+use rusty_s3::actions::CreateMultipartUpload;
 use rusty_s3::{actions::GetObject, Bucket, Credentials, S3Action};
 use wasm_bindgen_futures::spawn_local;
 use web_time::Duration;
@@ -23,7 +24,8 @@ pub struct FileSystem {
     bytes_tx: Sender<(Vec<u8>, u64)>,
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
     progress: f64,
-    total_size: f64
+    total_size: f64,
+    paths: Vec<String>
 }
 
 #[derive(Debug)]
@@ -41,11 +43,13 @@ impl FileSystem {
             root: Node::Folder(HashMap::new()),
             selected_items: RefCell::new(HashSet::new()),
             progress: 0.0,
-            total_size: 0.0
+            total_size: 0.0,
+            paths: Vec::new()
         }
     }
 
     pub fn build_file_system(&mut self, paths: Vec<String>) {
+        self.paths = paths.clone();
         for path in paths {
             let parts: Vec<&str> = path.split('/').collect();
             let mut current = &mut self.root;
@@ -104,11 +108,11 @@ impl FileSystem {
                 });
 
                 for (label, node) in entries {
-                    let full_path = if current_path.is_empty() {
-                        label.clone()
-                    } else {
-                        format!("{}/{}", current_path, label)
-                    };
+                    // let full_path = if current_path.is_empty() {
+                    //     label.clone()
+                    // } else {
+                    //     format!("{}/{}", current_path, label)
+                    // };
 
                     let is_selected = self.selected_items.borrow().contains(label);
                     let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
@@ -140,8 +144,11 @@ impl FileSystem {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
                                     if ui.button("Download").clicked(){
-                                        
-                                        self.download_selection(label.to_string());
+                                        let path = self.path_lookup(&label.clone());
+                                        if let Some(path) = path {
+                                            info!("Path: {:?}", path.clone());
+                                            self.download_selection(path, label.clone());
+                                        }
                                     }
                                 }).inner
                             });
@@ -173,8 +180,11 @@ impl FileSystem {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);
                                 if ui.button("Download").clicked(){
-                                    info!("Path: {:?} // full_path: {}", current_path.clone(), full_path.clone());
-                                    self.download_selection(label.to_string());
+                                    let path = self.path_lookup(&label.clone());
+                                    if let Some(path) = path {
+                                        info!("Path: {:?}", path.clone());
+                                        self.download_selection(path, label.clone());
+                                    }
                                 }
                             }).inner
                         });
@@ -184,14 +194,14 @@ impl FileSystem {
         });
     }
 
-    pub fn upload(&self, path: String) {
-
+    fn path_lookup(&self, file_name: &str) -> Option<String> {
+        self.paths.iter()
+            .find(|path| path.ends_with(file_name))
+            .cloned() // returns a clone of the matching path, if found
     }
 
-    fn download_selection(&self, path: String) {
-        let task = rfd::AsyncFileDialog::new().set_file_name(path.clone()).save_file();
-        // let contents = self.sample_text.clone();
-        info!("file name: {}", path.clone());
+    pub fn upload(&self, path: String) {
+        let task = rfd::AsyncFileDialog::new().pick_files();
         let tx = self.bytes_tx.clone();
         spawn_local(async move {
             let name = "logan";
@@ -202,10 +212,14 @@ impl FileSystem {
             )
             .expect("Url has a valid scheme and host");
 
-            //  https://storage.master-tech.app/api/v1/buckets/logan/objects/download?prefix=1-TUNEUP%2F1Webroot.exe&version_id=null
             let credentials = Credentials::new(ACCESS_KEY, SECRET_KEY);
             
-            let mut action = GetObject::new(&bucket, Some(&credentials), "1-TUNEUP/1Webroot.exe");
+            let files = task.await.unwrap();
+            for file_handle in files {
+                let bytes: Vec<u8> = file_handle.read().await;
+            }
+
+            let mut action = CreateMultipartUpload::new(&bucket, Some(&credentials), &path);
             action
                 .query_mut()
                 .insert("response-cache-control", "no-cache, no-store");
@@ -213,7 +227,7 @@ impl FileSystem {
             let signed_url = action.sign(ONE_HOUR);
 
             let client = Client::new();
-            let mime = from_path(path).first_or_octet_stream();
+            let mime = from_path(filename).first_or_octet_stream();
             let resp = client.get(signed_url).header(CONTENT_TYPE, mime.essence_str()).send().await.unwrap();
             let content_length = resp.content_length().unwrap();
             let mut downloaded_bytes: u64 = 0;
@@ -233,9 +247,51 @@ impl FileSystem {
                     }
                 }
             }
+        });
+    }
+
+    fn download_selection(&self, path: String, filename: String) {
+        let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
+        let tx = self.bytes_tx.clone();
+        spawn_local(async move {
+            let name = "logan";
+            let region = "us-west";
+            let bucket = Bucket::new(
+                "https://storage-api.master-tech.app".to_string().parse::<Url>().unwrap(), 
+                rusty_s3::UrlStyle::Path, name, region
+            )
+            .expect("Url has a valid scheme and host");
+
+            let credentials = Credentials::new(ACCESS_KEY, SECRET_KEY);
+            
+            let mut action = GetObject::new(&bucket, Some(&credentials), &path);
+            action
+                .query_mut()
+                .insert("response-cache-control", "no-cache, no-store");
+
+            let signed_url = action.sign(ONE_HOUR);
+
+            let client = Client::new();
+            let mime = from_path(filename).first_or_octet_stream();
+            let resp = client.get(signed_url).header(CONTENT_TYPE, mime.essence_str()).send().await.unwrap();
+            let content_length = resp.content_length().unwrap();
+            let mut downloaded_bytes: u64 = 0;
+            // let bytes = resp.await.unwrap();
+            let mut byte_stream = resp.bytes_stream();
+
+            let file = task.await;
+            while let Some(item) = byte_stream.next().await{
+                let chunk = item.unwrap();
+                tx.try_send((chunk.to_vec(), content_length));
 
 
-
+                downloaded_bytes += chunk.len() as u64;
+                if downloaded_bytes == content_length {
+                    if let Some(ref file) = file {
+                        file.write(&chunk.to_vec().as_slice()).await.unwrap();
+                    }
+                }
+            }
         });
     }
 }
