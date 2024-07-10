@@ -1,11 +1,9 @@
-use std::{collections::HashMap, env, process::Stdio, time::Duration};
-use anyhow::Context;
+use std::{process::Stdio, time::Duration};
 use crossbeam::channel::{Receiver, Sender};
 use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use log::debug;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use surrealdb::sql::Thing;
 use sysinfo::{Components, CpuRefreshKind, Disks, Networks, RefreshKind, System};
 use tokio::{io::AsyncReadExt, process::Command, spawn, time::sleep};
@@ -62,26 +60,29 @@ impl MastertechContext{
                         ..Default::default()
                     };
 
-
                     info!("Client: {:?}", connected_client);
 
                     let tx = self.connected_clients_tx.clone();
                     spawn(async move {
+
                         let res: Result<Vec<ConnectedClient>, surrealdb::Error> = db.database
                             .query("CREATE connected_client CONTENT $content")
                             .bind(("content", connected_client.clone()))
                             .await
                             .unwrap().take(0);
+
                         match res{
                             Ok(data) => tx.try_send(data.clone()).unwrap(),
-                            Err(e) => debug!("db error: {e:?}"),
+                            Err(e) => info!("Error Creating Client: {e:?}"),
                         }
                     });
 
                     if let Some(url) = &self.url{
+
                         info!("self.url: {}", url.clone());
                         let ctx = ui.ctx().clone();
                         let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
+
                         match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
                             Ok((mut ws_sender, ws_receiver)) => {
                                 ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
@@ -106,13 +107,7 @@ impl MastertechContext{
             }
             if let Some(frontend) = &mut self.frontend {
                 let connected = frontend.initialize_websocket(ui);
-                if !connected{
-                    // if let Some(db) = self.database {
-                    //     spawn(async move {
-                            
-                    //     });
-                    // }
-                } 
+                if !connected{ } // if let Some(db) = self.database { spawn(async move { }); }
             }
         });
     }
@@ -204,7 +199,7 @@ impl WebConsoleFrontend {
                                     spawn(async move { 
                                         match live_computer_stats(tx.clone(), connected).await{
                                             Ok(_) => drop(tx),
-                                            Err(e) => debug!("Error with live data {e:?}"),
+                                            Err(e) => info!("Error with live data {e:?}"),
                                         }
                                     });
                                 },

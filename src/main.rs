@@ -38,12 +38,18 @@ impl eframe::App for MasterTechApp {
                     self.state = AppState::Authenticated(app_state::MainPages::Tasks);
                     let tx = self.context.db_tx.clone();
                     let sysinfo_tx = self.context.computer_specs_tx.clone();
-                    let _x = spawn(async move {
-                        match tx.try_send(Database::new(login.username, login.password, None).await){
+                    let db = Database::new(login.username, login.password, None);
+
+                    spawn(async move {
+                        match ComputerData::default().get_computer_data(sysinfo_tx).await{
+                            Ok(x) => info!("Computer Data: {x:?}"),
+                            Err(e) => info!("Error getting specs: {e:?}"),
+                        }
+
+                        match tx.try_send(db.await){
                             Ok(_) => drop(tx),
                             Err(e) => info!("Error sending specs: {e:?}"),
                         }
-                        ComputerData::default().get_computer_data(sysinfo_tx).await
                     });
 
                     // match x.poll_unpin(cx)
@@ -84,7 +90,6 @@ impl eframe::App for MasterTechApp {
                 },
             }
         }
-        
 
         if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
             self.context.computer_data = computer_data;
