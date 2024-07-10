@@ -50,19 +50,19 @@ pub fn handle_live_notes(
 }
 
 
-pub fn handle_live_create<T: Serialize + for<'a> Deserialize<'a> + Debug>(existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+pub fn handle_live_create<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     info!("Data was Created: {:?}", new_data);
 
     Ok(())
 }
 
-pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug>(existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     info!("Data was Updated: {:?}", new_data);
 
     Ok(())
 }
 
-pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug>(existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     info!("Data was Deleted: {:?}", new_data);
 
     Ok(())
@@ -93,7 +93,7 @@ impl LiveUpdate for LiveTaskPayload {
         Ok(())
     }
     
-    fn handle_live_update(self, _existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_update(self, _existing_tasks: &mut Vec<TaskPayload>, _new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
         info!("Data was Updated: {:?}", self);
         Ok(())
     }

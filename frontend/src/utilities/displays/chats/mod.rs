@@ -1,12 +1,11 @@
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local};
 use database::schema::{TaskId, TaskNotePayload, User};
 use eframe::emath::Vec2;
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontSelection, Frame, Label, Layout, Margin, Pos2, Rangef, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
 use log::{debug, info};
-use markdown_editor::{shortcuts, EasyMarkEditor, SHORTCUT_ENTER};
-use wasm_bindgen_futures::spawn_local;
+use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
 use super::modals::ModalState;
 
 pub mod markdown_editor;

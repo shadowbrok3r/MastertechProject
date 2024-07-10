@@ -1,6 +1,7 @@
 use std::borrow::BorrowMut;
 use eframe::egui::{epaint::Shadow, Ui, Align, Button, CentralPanel, Color32, Frame, Layout, Margin, RichText, Rounding, ScrollArea,  Stroke, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
+use log::info;
 use crate::utilities::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use crate::app_state::MtechServerContext;
 
@@ -169,7 +170,7 @@ impl MtechServerContext{
                                     }
                                     Err(error) => {
                                         client.connected = false;
-                                        log::error!("Failed to connect to {:?}: {}", &url, error);
+                                        info!("Failed to connect to {:?}: {}", &url, error);
                                         let toast = &mut self.toasts;
                 
                                         let error_toast = Toast{

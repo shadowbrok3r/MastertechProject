@@ -1,6 +1,6 @@
 
 
-use database::{schema::{Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User}, Database};
+use database::{schema::{Priority, Record, Status, Store, TaskNotePayload, TaskPayload}, Database};
 use log::info;
 use surrealdb::opt::RecordId;
 use wasm_bindgen_futures::spawn_local;

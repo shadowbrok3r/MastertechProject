@@ -9,7 +9,7 @@ use wasm_bindgen_futures::spawn_local;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
-use eframe::egui::{popup_below_widget, Align, Button, Color32, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
 
@@ -227,7 +227,7 @@ impl ColumnLayout for TaskLayout {
                                         let db = self.database.clone();
                                         info!("ids: {:?}", id);
                                         spawn_local(async move {
-                                            let x: Vec<Record> = db.database.query("fn::mark_all_completion($ids, $completion)")
+                                            let _x: Vec<Record> = db.database.query("fn::mark_all_completion($ids, $completion)")
                                                 .bind(("ids", id))
                                                 .bind(("completion", true))
                                                 .await.unwrap().take(0).unwrap();
@@ -237,7 +237,7 @@ impl ColumnLayout for TaskLayout {
                                         let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
                                         let db = self.database.clone();
                                         spawn_local(async move {
-                                            let x: Vec<Record> = db.database.query("fn::mark_all_completion($ids, $completion)")
+                                            let _x: Vec<Record> = db.database.query("fn::mark_all_completion($ids, $completion)")
                                                 .bind(("ids", id))
                                                 .bind(("completion", false))
                                                 .await.unwrap().take(0).unwrap();
@@ -251,7 +251,7 @@ impl ColumnLayout for TaskLayout {
                                             let _ = db.database.set("ids", id);
                                             let _ = db.database.set("completion", true);
 
-                                            let x: Vec<Record> = db.sql(query).await.unwrap();
+                                            let _x: Vec<Record> = db.sql(query).await.unwrap();
                                         });
                                     }, _ => {}
                                 }

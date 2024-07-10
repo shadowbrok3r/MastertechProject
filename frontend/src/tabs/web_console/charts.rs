@@ -1,8 +1,6 @@
-use std::ops::RangeInclusive;
-
 use eframe::egui::{Color32, NumExt, Response, TextStyle, Ui, Vec2b};
 use egui_plot::{
-    AxisHints, CoordinatesFormatter, Corner, GridMark, 
+    CoordinatesFormatter, Corner, 
     Legend, Line, LineStyle, Plot, PlotPoint,
     PlotPoints, VPlacement
 };

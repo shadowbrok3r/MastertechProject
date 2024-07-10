@@ -4,12 +4,12 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use database::{schema::{CustomerData, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, User, TASK_TABLE}, Database};
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use eframe::egui::{vec2, Grid, ScrollArea};
-use egui_extras::{DatePickerButton, Size, StripBuilder};
-use log::{debug, info};
+use egui_extras::DatePickerButton;
+use log::info;
 use serde::Serialize;
 use wasm_bindgen_futures::spawn_local;
 
-use crate::utilities::{ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}}, DisplayModal, ModalTypes};
+use crate::utilities::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, ModalTypes};
 
 use super::{task_modal::ModalAction, ModalState};
 
@@ -341,16 +341,16 @@ impl CreateTaskModal {
 
         ScrollArea::new([false, true])
         .id_source("checkin_notes_scroll")
-        .show(ui, |ui|{
-            TextEdit::multiline(&mut self.ticket_data.checkin_notes)
+        .show(ui, |_ui|{
+            let _ = TextEdit::multiline(&mut self.ticket_data.checkin_notes)
             .hint_text(RichText::new("Checkin Notes").weak())
             .font(FontId::proportional(15.0))
             .desired_rows(4);
         });
         ScrollArea::new([false, true])
         .id_source("recomendations_scroll")
-        .show(ui, |ui|{
-            TextEdit::multiline(&mut self.task_data.task_description)
+        .show(ui, |_ui|{
+            let _ = TextEdit::multiline(&mut self.task_data.task_description)
             .hint_text(RichText::new("Recommendations").weak())
             .font(FontId::proportional(15.0))
             .desired_rows(4);

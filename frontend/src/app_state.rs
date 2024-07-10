@@ -313,7 +313,7 @@ impl MtechServer{
         }
     }
 
-    fn canvas_id() -> String { "mtech_canvas".into() }
+    // fn _canvas_id() -> String { "mtech_canvas".into() }
 }
 
 impl MtechServerContext{
@@ -521,26 +521,6 @@ fn setup_custom_fonts(ctx: &Context) {
         FontFamily::Name("Bold".into()),
         vec!["Bold".to_owned()],
     );
-
-    // fonts.font_data.insert(
-    //     "Oblique".to_owned(),
-    //     FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Oblique.ttf")),
-    // );
-    // fonts.families.insert(
-    //     FontFamily::Name("Oblique".into()),
-    //     vec!["Oblique".to_owned()],
-    // );
-
-    // fonts.font_data.insert(
-    //     "BoldOblique".to_owned(),
-    //     FontData::from_static(include_bytes!(
-    //         "../assets/fonts/Iosevka-BoldOblique.ttf"
-    //     )),
-    // );
-    // fonts.families.insert(
-    //     FontFamily::Name("BoldOblique".into()),
-    //     vec!["BoldOblique".to_owned()],
-    // );
 
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);

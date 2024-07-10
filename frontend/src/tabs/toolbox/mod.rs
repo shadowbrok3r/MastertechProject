@@ -1,6 +1,6 @@
 use eframe::egui::Ui;
-use eframe::egui::{CentralPanel, Color32, Frame, Margin, RichText, Rounding, Stroke, TopBottomPanel, Vec2};
-use crate::app_state::{MtechServerContext, ACCESS_KEY, SECRET_KEY};
+use eframe::egui::{CentralPanel, Color32, Frame, Margin, Rounding, Stroke, TopBottomPanel, Vec2};
+use crate::app_state::MtechServerContext;
 
 pub mod storage_api;
 
@@ -33,18 +33,6 @@ impl MtechServerContext {
         
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
 
-        // TopBottomPanel::top("FileBrowserTop").frame(top_panel_frame)
-        //     .show_separator_line(false)
-        //     .show_inside(ui, |ui| 
-        // {
-        //     ui.vertical_centered(|ui |
-        //     {
-        //         if ui.button(RichText::new("Upload").size(9.0)).clicked() {
-
-        //         }
-        //     })
-        // });
-
         TopBottomPanel::bottom("FileBrowserBottom").frame(top_panel_frame)
             .show_separator_line(false)
             .show_inside(ui, |ui| {
@@ -58,11 +46,6 @@ impl MtechServerContext {
         CentralPanel::default().frame(panel_frame)
             .show_inside(ui, |ui| 
         {
-            // let data_update = self.data_update.as_mut().unwrap();
-            // if let Some(items) = data_update.take() { 
-            //     self.file_system.build_file_system(items);
-            // }
-
             self.file_system.display(ui);
         });
     }
