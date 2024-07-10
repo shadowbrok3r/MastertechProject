@@ -1,8 +1,7 @@
 use std::{cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
 use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
-use eframe::egui::{Align2, Context, Ui, WidgetText};
-use egui::FontFamily;
+use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal}, ui_tools::toasts::Toasts}};
 use gloo_worker::Spawnable;
@@ -174,6 +173,7 @@ pub struct MtechServerContext{
     pub current_modal: ModalType,
     pub task_modal_handler: ModalHandler<TaskModal>,
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
+    #[serde(skip)]
     pub chat_modal_handler: ChatModalHandler,
     #[serde(skip)]
     pub chat_modal: Option<ChatView>,
@@ -189,7 +189,7 @@ pub struct MtechServerContext{
 }
 
 impl MtechServer{
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &CreationContext<'_>) -> Self {
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         setup_custom_fonts(&cc.egui_ctx);
 
@@ -437,7 +437,7 @@ impl TabViewer for MtechServerContext {
             "My Tools" => self.toolbox(ui),
             "Store Tasks" => self.store_tasks(ui),
             "My Tasks" => self.my_tasks(ui),
-            "Ai Playground" => self.ai_playground(ui),
+            // "Ai Playground" => self.ai_playground(ui),
             "Web Console" => self.web_console(ui),
             "Completed Tasks" => self.completed_tasks(ui),
             "Bug Report" => self.github(ui),
@@ -494,12 +494,12 @@ impl TabViewer for MtechServerContext {
 
 }
 
-fn setup_custom_fonts(ctx: &egui::Context) {
+fn setup_custom_fonts(ctx: &Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
-    let mut fonts = egui::FontDefinitions::default();
+    let mut fonts = FontDefinitions::default();
 
     fonts.font_data.insert("Monaspace".to_owned(),
-   egui::FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Light.otf"))); // .ttf and .otf supported
+   FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Light.otf"))); // .ttf and .otf supported
 
     // Put my font first (highest priority):
     fonts.families.get_mut(&FontFamily::Proportional).unwrap()
@@ -507,38 +507,38 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 
     fonts.font_data.insert(
         "Regular".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf")),
+        FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf")),
     );
     fonts.families.insert(
-        egui::FontFamily::Name("Regular".into()),
+        FontFamily::Name("Regular".into()),
         vec!["Regular".to_owned()],
     );
     fonts.font_data.insert(
         "Bold".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Bold.otf")),
+        FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Bold.otf")),
     );
     fonts.families.insert(
-        egui::FontFamily::Name("Bold".into()),
+        FontFamily::Name("Bold".into()),
         vec!["Bold".to_owned()],
     );
 
     // fonts.font_data.insert(
     //     "Oblique".to_owned(),
-    //     egui::FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Oblique.ttf")),
+    //     FontData::from_static(include_bytes!("../assets/fonts/Iosevka-Oblique.ttf")),
     // );
     // fonts.families.insert(
-    //     egui::FontFamily::Name("Oblique".into()),
+    //     FontFamily::Name("Oblique".into()),
     //     vec!["Oblique".to_owned()],
     // );
 
     // fonts.font_data.insert(
     //     "BoldOblique".to_owned(),
-    //     egui::FontData::from_static(include_bytes!(
+    //     FontData::from_static(include_bytes!(
     //         "../assets/fonts/Iosevka-BoldOblique.ttf"
     //     )),
     // );
     // fonts.families.insert(
-    //     egui::FontFamily::Name("BoldOblique".into()),
+    //     FontFamily::Name("BoldOblique".into()),
     //     vec!["BoldOblique".to_owned()],
     // );
 

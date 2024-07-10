@@ -1,32 +1,27 @@
-# cargo-features = ["per-package-target"]
-
 [package]
 name = "mtechserver"
 version = "2.0.1"
 edition = "2021"
-# forced-target = "wasm32-unknown-unknown"
 
 [dependencies]
 database = { workspace=true }
-anyhow = "1"
-# anyhow = { workspace=true }
 log  = { workspace=true }
 serde = { workspace=true }
-surrealdb = { workspace=true }
-# surrealdb-alpha = { workspace=true }
 chrono = { workspace=true }
 dotenv = { workspace=true }
 serde_json = { workspace=true }
+surrealdb = { workspace=true }
+# surrealdb-alpha = { workspace=true }
 
-egui ={ version="0.28", features = ["persistence"]} # "callstack", "log"
-eframe = { version="0.28", default-features = false, features=["wgpu"] } # wgpu
-wgpu = { version = "*", features = ["webgpu", "webgl", "fragile-send-sync-non-atomic-wasm"] }
+
+anyhow = "1"
+eframe = { version="0.28", default-features = false, features=["glow", "default_fonts"] } # wgpu
+# wgpu = { version = "0.20", features = ["webgpu", "webgl", "fragile-send-sync-non-atomic-wasm"] }
 wasm-bindgen = "0.2"
 egui_extras = { version = "0.28", features = ["datepicker"]}
-egui-aesthetix = { version = "0.2", features = ["carl"] }
-egui_dock = "0.13.0"
+egui_dock = "0.13"
 ratframe = "1"
-ratatui = { version = "0.27.0", default-features = false }
+ratatui = { version = "0.27", default-features = false }
 web-time = "1.1"
 wasm-bindgen-futures = "0.4"
 crossbeam = "0.8"
@@ -36,22 +31,23 @@ gloo-net = {version = "0.5", features = ["http"]}
 futures = "0.3"
 wasm-cookies = { version= "0.2" }
 
-egui_form = {version="0.2.0", features = ["validator_validator"]}
+egui_form = {version="0.2", features = ["validator_validator"]}
 egui_ratatui = "0.0.10"
-fuzzy-matcher = "0.3.7"
+fuzzy-matcher = "0.3"
 ewebsock = "0.6"
-uuid = { version = "1.8.0", features = ["v4"] }
-bincode = "1.3.3"
+uuid = { version = "1.10", features = ["v4"] }
+bincode = "1.3"
 egui_plot = "0.28"
-rusty-s3 = { version = "0.5.0", features = ["wasm_bindgen"] }
-rfd = "0.14.1"
+rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] } # default-features = false
+# rust-s3 = {version = "0.23.0-beta2", features = ["wasm"], default-features = false}
+rfd = "0.14"
 async-openai-wasm = { version = "0.23" }
-derive_more = {version = "1.0.0-beta", features = ["from"]}
+derive_more = {version = "0.99", features = ["from"]}
 rpc-router = "0.1"
 schemars = "0.8"
-mime_guess = "2.0.5"
-reqwest = { version = "0.12.5", features = ["stream", "json"] }
-bytes = "1.6.0"
+mime_guess = "2"
+reqwest = { version = "0.12", features = ["stream", "json"] }
+bytes = "1.6"
 # crossterm = { version= "0.27", default-features = false }
 
 # web:

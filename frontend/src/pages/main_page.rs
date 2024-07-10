@@ -1,9 +1,9 @@
-use eframe::egui::{CentralPanel, Color32, Frame};
+use eframe::egui::{CentralPanel, Color32, Frame, Context};
 use egui_dock::{DockArea, Style as DockStyle};
 use crate::MtechServer;
 
 impl MtechServer{
-    pub fn main_page(&mut self, ctx: &egui::Context){
+    pub fn main_page(&mut self, ctx: &Context){
         
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))

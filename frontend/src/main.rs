@@ -1,10 +1,10 @@
 use app_state::{check_authentication, AppState, MainPages, MtechServer, NewTicketChannel};
-use database::schema::{TaskNotePayload, TaskPayload, TicketPayload, TICKET_TABLE};
-use egui::FontFamily;
+use database::schema::{TaskPayload, TicketPayload};
+use eframe::egui::FontFamily;
 use log::{debug, info};
-use ratframe::NewCC;
+// use ratframe::NewCC;
 use surrealdb::{Action, Response};
-use tabs::web_console::websockets::WebSocketClient;
+// use tabs::web_console::websockets::WebSocketClient;
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ pub mod webworker;
 pub mod pages;
 
 impl eframe::App for MtechServer {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
 
         // most important part of the whole app.. setting up our styling
         let arc_style = set_style();
@@ -276,7 +276,7 @@ impl eframe::App for MtechServer {
         }
 
         self.menu_bar(ctx);
-        
+
         // Always checking authentication.
         match &self.state{
             //if auth'd, user shall be allowed
@@ -307,7 +307,7 @@ impl eframe::App for MtechServer {
 
     // Called by the frame work to save state before shutdown.
     // fn save(&mut self, storage: &mut dyn eframe::Storage) { 
-    //     eframe::set_value(storage, eframe::APP_KEY, self); 
+        // eframe::set_value(storage, eframe::APP_KEY, self); 
     // }
 }
 
@@ -318,7 +318,7 @@ fn main() {
     // use eframe::wgpu::{Backends, PowerPreference};
     use log::LevelFilter;
     eframe::WebLogger::init(LevelFilter::Info).ok();
-    let mut web_options = eframe::WebOptions::default();
+    let web_options = eframe::WebOptions::default();
     // web_options.wgpu_options.power_preference = PowerPreference::HighPerformance;
     // web_options.wgpu_options.supported_backends = Backends::METAL;
     // web_options.wgpu_options.supported_backends = eframe::wgpu::Instance::

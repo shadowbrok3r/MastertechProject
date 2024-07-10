@@ -1,6 +1,6 @@
 use std::ops::RangeInclusive;
 
-use eframe::egui::{Color32, NumExt, Response, Ui, Vec2b};
+use eframe::egui::{Color32, NumExt, Response, TextStyle, Ui, Vec2b};
 use egui_plot::{
     AxisHints, CoordinatesFormatter, Corner, GridMark, 
     Legend, Line, LineStyle, Plot, PlotPoint,
@@ -67,7 +67,7 @@ impl<'a> LinePlot<'a> {
 
 
         let mut plot = Plot::new(plot_name)
-            .legend(Legend::default().position(Corner::RightBottom).text_style(egui::TextStyle::Small))
+            .legend(Legend::default().position(Corner::RightBottom).text_style(TextStyle::Small))
             // .custom_x_axes(x_axes)
             .label_formatter(label_fmt)
             .show_axes(true)

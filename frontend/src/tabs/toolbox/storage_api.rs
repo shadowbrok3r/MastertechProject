@@ -1,6 +1,6 @@
 use std::{iter, cell::RefCell, collections::{HashMap, HashSet}};
 use crossbeam::channel::{Receiver, Sender};
-use egui::{Layout, RichText, ScrollArea, Ui, popup_below_widget, PopupCloseBehavior::CloseOnClickOutside, Color32, ProgressBar, Widget, collapsing_header::CollapsingState};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
 use futures::StreamExt;
 use log::info;
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
@@ -84,7 +84,7 @@ impl FileSystem {
             .auto_shrink(false)
             .show(ui, |ui| 
         {
-            ui.with_layout(Layout::from_main_dir_and_cross_align(egui::Direction::TopDown, egui::Align::Center), |ui| {
+            ui.with_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), |ui| {
                 self.display_path(ui, &self.root, "".to_string());
             });
         });
@@ -327,18 +327,19 @@ impl FileSystem {
             let mut downloaded_bytes: u64 = 0;
             // let bytes = resp.await.unwrap();
             let mut byte_stream = resp.bytes_stream();
-
+            info!("Content length: {content_length}");
             let file = task.await;
+            let mut bytes = Bytes::new();
             while let Some(item) = byte_stream.next().await{
-                let chunk = item.unwrap();
-                tx.try_send((chunk.to_vec(), content_length));
-
-
+                let chunk = item.unwrap().clone();
+                bytes = chunk.clone();
+                let _ = tx.try_send((chunk.to_vec(), content_length));
                 downloaded_bytes += chunk.len() as u64;
-                if downloaded_bytes == content_length {
-                    if let Some(ref file) = file {
-                        file.write(&chunk.to_vec().as_slice()).await.unwrap();
-                    }
+            }
+            if downloaded_bytes == content_length {
+                info!("Downloaded: {downloaded_bytes}");
+                if let Some(ref file) = file {
+                    file.write(&bytes.to_vec().as_slice()).await.unwrap();
                 }
             }
         });

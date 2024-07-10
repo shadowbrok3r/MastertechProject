@@ -1,16 +1,17 @@
+use eframe::egui::{text, Style, Align, Color32, Stroke, TextStyle};
 use super::parser;
 
 /// Highlight easymark, memoizing previous output to save CPU.
 /// In practice, the highlighter is fast enough not to need any caching.
 #[derive(Default, Debug, Clone)]
 pub struct MemoizedEasymarkHighlighter {
-    style: egui::Style,
+    style: Style,
     code: String,
-    output: egui::text::LayoutJob,
+    output: text::LayoutJob,
 }
 
 impl MemoizedEasymarkHighlighter {
-    pub fn highlight(&mut self, egui_style: &egui::Style, code: &str) -> egui::text::LayoutJob {
+    pub fn highlight(&mut self, egui_style: &Style, code: &str) -> text::LayoutJob {
         if (&self.style, self.code.as_str()) != (egui_style, code) {
             self.style = egui_style.clone();
             code.clone_into(&mut self.code);
@@ -20,8 +21,8 @@ impl MemoizedEasymarkHighlighter {
     }
 }
 
-pub fn highlight_easymark(egui_style: &egui::Style, mut text: &str) -> egui::text::LayoutJob {
-    let mut job = egui::text::LayoutJob::default();
+pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob {
+    let mut job = text::LayoutJob::default();
     let mut style = parser::Style::default();
     let mut start_of_line = true;
 
@@ -132,10 +133,10 @@ pub fn highlight_easymark(egui_style: &egui::Style, mut text: &str) -> egui::tex
 }
 
 fn format_from_style(
-    egui_style: &egui::Style,
+    egui_style: &Style,
     emark_style: &parser::Style,
-) -> egui::text::TextFormat {
-    use eframe::egui::{Align, Color32, Stroke, TextStyle};
+) -> text::TextFormat {
+    
 
     let color = if emark_style.strong || emark_style.heading {
         egui_style.visuals.strong_text_color()
@@ -179,7 +180,7 @@ fn format_from_style(
         Align::BOTTOM
     };
 
-    egui::text::TextFormat {
+    text::TextFormat {
         font_id: text_style.resolve(egui_style),
         color,
         background,

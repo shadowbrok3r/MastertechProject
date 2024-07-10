@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use database::Database;
-use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Spinner, Stroke, TextEdit, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Spinner, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
@@ -81,7 +81,7 @@ impl Login{
 }
 
 impl MtechServer{
-    pub fn login_page(&mut self, ctx: &egui::Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
+    pub fn login_page(&mut self, ctx: &Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
             .show(ctx, |ui| 
