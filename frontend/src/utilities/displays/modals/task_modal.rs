@@ -1,11 +1,9 @@
 use chrono::{DateTime, Utc};
 use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, Database};
-use eframe::egui::{Align, Button, Color32, ComboBox, Direction, Grid, Layout, Margin, RichText, ScrollArea, Style, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, Grid, Layout, Margin, RichText, ScrollArea, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
-use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use serde::Serialize;
-use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes, Updatable};
@@ -150,8 +148,8 @@ impl DisplayModal for TaskModal {
                                 let db = self.database.clone();
                                 let mut ids = Vec::new();
                                 let task = self.task.as_ref().unwrap();
-                                let task_id = task.id.as_ref().unwrap().0.clone();
-                                let ticket_id = if let Some(ticket) = &task.service_ticket{
+                                let _task_id = task.id.as_ref().unwrap().0.clone();
+                                let _ticket_id = if let Some(ticket) = &task.service_ticket{
                                     Some(ticket.id.clone().unwrap())
                                 } else{ None };
 
@@ -180,14 +178,14 @@ impl DisplayModal for TaskModal {
                                     let db = db.unwrap();
 
                                     if ids.len() > 0 {
-                                        let query = "DELETE ";
+                                        let _query = "DELETE ";
                                     } 
                                     if let Some(id) = ticket_id {
                                         info!("deleting task_id: {:?}", id.0.clone());
-                                        let x: Option<TicketPayload> = db.database.delete((TICKET_TABLE, id.0.id)).await.unwrap();
+                                        let _x: Option<TicketPayload> = db.database.delete((TICKET_TABLE, id.0.id)).await.unwrap();
                                     }
                                     info!("deleting task_id: {task_id:?}");
-                                    let y: Option<TaskPayload> = db.database.delete((TASK_TABLE, task_id.id)).await.unwrap();
+                                    let _y: Option<TaskPayload> = db.database.delete((TASK_TABLE, task_id.id)).await.unwrap();
 
                                 });
                             }
@@ -270,7 +268,7 @@ impl DisplayModal for TaskModal {
 }
 
 
-fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, avail_size: Vec2){
+fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: Vec2){
     fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
         let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
@@ -559,7 +557,7 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                                 ScrollArea::vertical()
                                     .max_height(avail_size.y)
                                     .max_width(f32::INFINITY)
-                                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                                    .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
                                     .show(ui, |ui| 
                                 {
                                     ui.group(|ui| {

@@ -1,4 +1,4 @@
-use eframe::egui::menu;
+use eframe::egui::{menu, Align, Context, TextEdit};
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use crate::utilities::ui_tools::autocomplete::AutoCompleteTextEdit;
 use std::collections::BTreeSet;
@@ -6,12 +6,12 @@ use log::info;
 use crate::{app_state::{AppState, MainPages, MtechServer}, utilities::TaskUiActions};
 
 impl MtechServer{
-    pub fn menu_bar(&mut self, ctx: &egui::Context) {
+    pub fn menu_bar(&mut self, ctx: &Context) {
         TopBottomPanel::top("egui_dock::MenuBar")
         .show(ctx, |ui| 
     {
         menu::bar(ui, |ui| {
-            ui.with_layout(Layout::left_to_right(egui::Align::Min), |ui|{
+            ui.with_layout(Layout::left_to_right(Align::Min), |ui|{
                 ui.add_space(10.0);
                 ui.menu_button("View", |ui| {
                     // allow certain tabs to be toggled
@@ -52,7 +52,7 @@ impl MtechServer{
                     let result = AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
                         .highlight_matches(true)
                         .max_suggestions(10)
-                        .set_text_edit_properties(|text_edit: egui::TextEdit<'_>| 
+                        .set_text_edit_properties(|text_edit: TextEdit<'_>| 
                     {
                         
                         text_edit
@@ -91,7 +91,7 @@ impl MtechServer{
                     }
                 });
 
-                ui.with_layout(Layout::right_to_left(egui::Align::Max), |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                     ui.add_space(10.0);
                     let txt = RichText::new(format!("Welcome, {}", usr.name)).color(Color32::from_rgb(100,50,100));
                     ui.menu_button(txt, |ui| {

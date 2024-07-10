@@ -1,14 +1,13 @@
 use std::borrow::BorrowMut;
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Frame, Layout, Margin, RichText, Rounding, ScrollArea,  Stroke, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Ui, Align, Button, CentralPanel, Color32, Frame, Layout, Margin, RichText, Rounding, ScrollArea,  Stroke, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
-use log::info;
 use crate::utilities::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use crate::app_state::MtechServerContext;
 
 use super::websockets::{ClientHandler, WebSocketClient};
 
 impl MtechServerContext{
-    pub fn client_display(&mut self, ui: &mut egui::Ui){
+    pub fn client_display(&mut self, ui: &mut Ui){
         let mut shadow = Shadow::default();
         shadow.blur = 10.0;
         shadow.spread = 2.0;
@@ -41,7 +40,7 @@ impl MtechServerContext{
             {
                 let x: f32 = ui.available_height() - 40.0;
                 StripBuilder::new(ui)
-                    .cell_layout(Layout::top_down_justified(egui::Align::Center))
+                    .cell_layout(Layout::top_down_justified(Align::Center))
                     .size(Size::exact(30.0))
                     .size(Size::exact(5.0))
                     .size(Size::exact(x))

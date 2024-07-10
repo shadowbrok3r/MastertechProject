@@ -2,7 +2,7 @@ use serde::Serialize;
 use crate::app_state::{AppState, MtechServer};
 use crossbeam::channel::Sender;
 use database::{schema::Store, Database};
-use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
@@ -74,7 +74,7 @@ impl Signup{
 }
 
 impl MtechServer{
-    pub fn signup_page(&mut self, ctx: &egui::Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
+    pub fn signup_page(&mut self, ctx: &Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
         // wasm_cookies::delete("user");
         // wasm_cookies::delete("jwt");
         CentralPanel::default()

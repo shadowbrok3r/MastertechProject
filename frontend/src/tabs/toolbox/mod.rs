@@ -1,5 +1,5 @@
 use eframe::egui::Ui;
-use egui::{CentralPanel, Color32, Frame, Margin, RichText, Rounding, Stroke, TopBottomPanel, Vec2};
+use eframe::egui::{CentralPanel, Color32, Frame, Margin, RichText, Rounding, Stroke, TopBottomPanel, Vec2};
 use crate::app_state::{MtechServerContext, ACCESS_KEY, SECRET_KEY};
 
 pub mod storage_api;

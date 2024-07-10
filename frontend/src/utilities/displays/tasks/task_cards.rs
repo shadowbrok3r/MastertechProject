@@ -3,7 +3,7 @@ use database::Database;
 use eframe::egui::Ui;
 use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
 use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
-use egui::Vec2;
+use eframe::egui::Vec2;
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
 
@@ -67,8 +67,8 @@ impl Displayable for TaskPayload{
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
                                 if Button::new("⮫").small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
-                                    // res = Some(TaskUiActions::OpenTaskModal(self.to_owned()))
-                                    res = Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
+                                    res = Some(TaskUiActions::OpenTaskModal(self.to_owned()))
+                                    // res = Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
                                 }
                             });
                         });

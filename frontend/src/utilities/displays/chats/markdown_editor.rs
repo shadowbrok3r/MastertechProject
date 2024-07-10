@@ -46,7 +46,7 @@ impl EasyMarkEditor {
         }
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<Response> {
+    pub fn ui(&mut self, ui: &mut Ui) -> Option<Response> {
         let mut response: Option<Response> = None;
         let mut font = FontId::default();
         font.size = 12.0;
@@ -73,7 +73,7 @@ impl EasyMarkEditor {
         }
         ui.separator();
 
-        egui::Grid::new("controls").show(ui, |ui| {
+        Grid::new("controls").show(ui, |ui| {
             let _response = ui.button("Hotkeys").on_hover_ui(nested_hotkeys_ui);
             ui.add_space(width);
             ui.checkbox(&mut self.show_rendered, "Show rendered");
@@ -88,13 +88,13 @@ impl EasyMarkEditor {
         response
     }
 
-    fn editor_ui(&mut self, ui: &mut egui::Ui) {
+    fn editor_ui(&mut self, ui: &mut Ui) {
         let Self {
             message, highlighter, ..
         } = self;
 
         let response = if self.highlight_editor {
-            let mut layouter = |ui: &egui::Ui, easymark: &str, wrap_width: f32| {
+            let mut layouter = |ui: &Ui, easymark: &str, wrap_width: f32| {
                 let mut layout_job = highlighter.highlight(ui.style(), easymark);
                 layout_job.wrap.max_width = wrap_width;
                 ui.fonts(|f| f.layout_job(layout_job))
@@ -102,23 +102,23 @@ impl EasyMarkEditor {
 
             // if self.show_example{
             //     ui.add(
-            //         egui::TextEdit::multiline(&mut self.default_msg)
+            //         TextEdit::multiline(&mut self.default_msg)
             //             .desired_width(f32::INFINITY)
             //             .return_key(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter))
-            //             .font(egui::TextStyle::Monospace) // for cursor height
+            //             .font(TextStyle::Monospace) // for cursor height
             //             .layouter(&mut layouter),
             //     )
             // } else{
                 ui.add(
-                    egui::TextEdit::multiline(message)
-                        .desired_width(f32::INFINITY).font(egui::TextStyle::Monospace) 
+                    TextEdit::multiline(message)
+                        .desired_width(f32::INFINITY).font(TextStyle::Monospace) 
                         .layouter(&mut layouter),
                 )
             // }
 
         } else {
             ui.add(
-                egui::TextEdit::multiline(message).desired_width(f32::INFINITY)
+                TextEdit::multiline(message).desired_width(f32::INFINITY)
             )
         };
 
@@ -141,8 +141,8 @@ impl EasyMarkEditor {
         self.message.clear();
     }
 
-    pub fn panels(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    pub fn panels(&mut self, ctx: &Context) {
+        CentralPanel::default().show(ctx, |ui| {
             self.ui(ui);
         });
     }
@@ -163,8 +163,8 @@ pub const SHORTCUT_INDENT: KeyboardShortcut =
 pub const SHORTCUT_ENTER: KeyboardShortcut = 
     KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter);
 
-fn nested_hotkeys_ui(ui: &mut egui::Ui) {
-    egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
+fn nested_hotkeys_ui(ui: &mut Ui) {
+    Grid::new("shortcuts").striped(true).show(ui, |ui| {
         let mut label = |shortcut, what| {
             ui.label(what);
             ui.weak(ui.ctx().format_shortcut(&shortcut));

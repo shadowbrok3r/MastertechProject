@@ -74,10 +74,10 @@ impl MtechServerContext {
         });
 
         if !self.error.is_empty() {
-            egui::TopBottomPanel::bottom("error").show_inside(ui, |ui| {
+            TopBottomPanel::bottom("error").show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Error:");
-                    ui.colored_label(egui::Color32::RED, &self.error);
+                    ui.colored_label(Color32::RED, &self.error);
                 });
             });
         }

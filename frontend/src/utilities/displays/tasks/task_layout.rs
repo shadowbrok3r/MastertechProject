@@ -1,17 +1,15 @@
 use std::collections::HashMap;
 use crossbeam::channel::Sender;
 use database::Database;
-use database::schema::{Priority, Record, TaskId, TaskPayload, User};
+use database::schema::{Priority, Record, TaskPayload, User};
 use log::info;
 use serde::Serialize;
-use surrealdb::opt::RecordId;
-use surrealdb::sql::{Id, Thing};
+use surrealdb::sql::Id;
 use wasm_bindgen_futures::spawn_local;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
-use eframe::egui::{popup_below_widget, Align, Button, FontId, RichText, ScrollArea, Sense, TextEdit, Vec2, Widget};
-use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
 
@@ -59,7 +57,7 @@ impl TaskLayout {
 impl ColumnLayout for TaskLayout {
     fn layout_cols(
         &mut self,
-        ui: &mut egui::Ui
+        ui: &mut Ui
     ){
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
@@ -69,7 +67,7 @@ impl ColumnLayout for TaskLayout {
         {
             let x: f32 = ui.available_height() - 40.0;
             StripBuilder::new(ui)
-                .cell_layout(Layout::top_down_justified(egui::Align::Center))
+                .cell_layout(Layout::top_down_justified(Align::Center))
                 .size(Size::exact(30.0))
                 .size(Size::exact(5.0))
                 .size(Size::exact(x))
@@ -190,7 +188,7 @@ impl ColumnLayout for TaskLayout {
                                 .hint_text("Search for task")
                                 .desired_width(100.0)
                                 .margin(margin)
-                                .font(FontId::new(11.0, egui::FontFamily::Name("Regular".into())))
+                                // .font(FontId::new(11.0, FontFamily::Name("Regular".into())))
                                 .ui(ui);
 
                             ui.add_space(ui.available_width() / 3.4);
@@ -204,7 +202,7 @@ impl ColumnLayout for TaskLayout {
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
                             }
                             
-                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, PopupCloseBehavior::CloseOnClickOutside, |ui| {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
                                     if ui.button("Mark all Complete").clicked(){

@@ -1,8 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
-use eframe::egui::{Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
-
+use eframe::egui::{Vec2, Align, Button, Color32, ComboBox, Id, Response, RichText, Stroke, TextEdit, Ui, Widget};
 use database::{schema::{Priority, User, Status, TaskPayload}, Database};
-use egui::Vec2;
 use egui_extras::DatePickerButton;
 use log::info;
 
@@ -30,7 +28,7 @@ impl Interaction for TaskPayload {
             let text_edit = TextEdit::multiline(&mut service_ticket.checkin_notes)
                 .desired_rows(5)
                 .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
+                .horizontal_align(Align::Center)
                 .ui(ui);
             if text_edit.changed() {
                 let notes = service_ticket.checkin_notes.clone();
@@ -41,7 +39,7 @@ impl Interaction for TaskPayload {
             TextEdit::multiline(&mut "No checkin notes")
                 .desired_rows(5)
                 .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
+                .horizontal_align(Align::Center)
                 .ui(ui);
         }
 
@@ -56,7 +54,7 @@ impl Interaction for TaskPayload {
         let text_edit = TextEdit::multiline(&mut self.task_description)
             .desired_rows(6)
             .desired_width(ui.available_width())
-            .horizontal_align(egui::Align::Center)
+            .horizontal_align(Align::Center)
             .ui(ui);
 
         if text_edit.changed() {

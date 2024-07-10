@@ -1,6 +1,6 @@
 use crossbeam::channel::Sender;
 use displays::{modals::create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, modals::task_modal::{ModalAction, TaskModal}};
-use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
+use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
 use database::{schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
@@ -160,7 +160,7 @@ pub trait ModalTypes: Default{
         // Implementation for showing the modal
         Self::dim_background(ctx);
 
-        let mut open = ctx.input(|i| !i.key_pressed(egui::Key::Escape));
+        let mut open = ctx.input(|i| !i.key_pressed(Key::Escape));
         // let mut page_state = &;
 
         let screen_height = ctx.screen_rect().height();
@@ -169,7 +169,7 @@ pub trait ModalTypes: Default{
 
         let mut window = Window::new(&*self.modal_state().title.as_ref().unwrap())
             .frame(
-                egui::Frame::default()
+                Frame::default()
                 .inner_margin(Margin::symmetric(15.0, 0.0))
                 .outer_margin(Margin::same(20.0))
                 .stroke(Stroke::new(2.0, Color32::from_additive_luminance(150)))
@@ -202,7 +202,7 @@ pub trait ModalTypes: Default{
             let item_spacing_y = ui.spacing().item_spacing.y;
             ui.spacing_mut().item_spacing.y = 0.0;
 
-            egui::Frame {
+            Frame {
                 inner_margin: Margin::same(0.0),
                 ..Default::default()
             }
@@ -210,7 +210,7 @@ pub trait ModalTypes: Default{
                 Self::title_bar(ui, &self.modal_state().title.as_ref().unwrap_or(&"Modal".to_string()), &mut open);
                 ui.add_space(item_spacing_y);
 
-                egui::Frame {
+                Frame {
                     inner_margin: Margin::same(0.0),
                     ..Default::default()
                 }
@@ -261,7 +261,7 @@ pub trait ModalTypes: Default{
 
     fn title_bar(ui: &mut Ui, title: &str, open: &mut bool) {
         let t: RichText = RichText::new(title).heading().strong();
-        egui::Frame::default()
+        Frame::default()
             .fill(Color32::from_rgb(20, 20, 25))
             .rounding(Rounding{nw: 15.0,ne: 15.0,sw: 0.0,se: 0.0})
             .inner_margin(Margin::same(0.0))

@@ -2,12 +2,11 @@ pub mod create_task_modal;
 pub mod task_modal;
 pub mod ai_chat; 
 
-use egui::{vec2, Align, Align2, Button, Color32, Context, Id, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
+use eframe::egui::{Context, Frame, Key, NumExt, Ui, vec2, Align, Align2, Button, Color32, Id, LayerId, Layout, Margin, Order, Painter, Pos2, Rect, RichText, Rounding, Shape, Stroke, Widget, Window};
 use serde::Serialize;
 use task_modal::ModalAction;
 use crate::utilities::ModalTypes;
 
-use super::chats::ChatView;
 
 #[derive(Default, Serialize)]
 pub struct ModalHandler<M: ModalTypes>{
@@ -51,9 +50,9 @@ impl <M: ModalTypes>ModalHandler<M> {
     /// Draw the modal window, creating/destroying it as required.
     pub fn ui<R>(
         &mut self,
-        ctx: &egui::Context,
+        ctx: &Context,
         make_modal: impl FnOnce() -> M,
-        content_ui: impl FnMut(&mut egui::Ui, &mut bool, &mut ModalAction) -> R,
+        content_ui: impl FnMut(&mut Ui, &mut bool, &mut ModalAction) -> R,
     ) -> Option<R> {
         if self.modal.is_none() && self.should_open {
             self.modal = Some(make_modal());
@@ -104,9 +103,9 @@ impl ChatModalHandler {
     /// Draw the modal window, creating/destroying it as required.
     pub fn ui<R>(
         &mut self,
-        ctx: &egui::Context,
+        ctx: &Context,
         make_modal: impl FnOnce() -> Modal,
-        content_ui: impl FnMut(&mut egui::Ui, &mut bool) -> R,
+        content_ui: impl FnMut(&mut Ui, &mut bool) -> R,
     ) -> Option<R> {
         if self.modal.is_none() && self.should_open {
             self.modal = Some(make_modal());
@@ -176,7 +175,7 @@ impl Modal {
         // Implementation for showing the modal
         Self::dim_background(ctx);
 
-        let mut open = ctx.input(|i| !i.key_pressed(egui::Key::Escape));
+        let mut open = ctx.input(|i| !i.key_pressed(Key::Escape));
         // let mut page_state = &;
 
         let screen_height = ctx.screen_rect().height();
@@ -185,7 +184,7 @@ impl Modal {
 
         let mut window = Window::new(self.title.clone())
             .frame(
-                egui::Frame::default()
+                Frame::default()
                 .inner_margin(Margin::symmetric(15.0, 0.0))
                 .outer_margin(Margin::same(20.0))
                 .stroke(Stroke::new(2.0, Color32::from_additive_luminance(150)))
@@ -218,7 +217,7 @@ impl Modal {
             let item_spacing_y = ui.spacing().item_spacing.y;
             ui.spacing_mut().item_spacing.y = 0.0;
 
-            egui::Frame {
+            Frame {
                 inner_margin: Margin::same(0.0),
                 ..Default::default()
             }
@@ -226,7 +225,7 @@ impl Modal {
                 Self::title_bar(ui, &self.title, &mut open);
                 ui.add_space(item_spacing_y);
 
-                egui::Frame {
+                Frame {
                     inner_margin: Margin::same(0.0),
                     ..Default::default()
                 }
@@ -276,7 +275,7 @@ impl Modal {
 
     fn title_bar(ui: &mut Ui, title: &str, open: &mut bool) {
         let t: RichText = RichText::new(title).heading().strong();
-        egui::Frame::default()
+        Frame::default()
             .fill(Color32::from_rgb(20, 20, 25))
             .rounding(Rounding{nw: 15.0,ne: 15.0,sw: 0.0,se: 0.0})
             .inner_margin(Margin::same(0.0))
