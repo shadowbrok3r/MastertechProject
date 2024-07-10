@@ -62,9 +62,7 @@ impl MtechServerContext{
                             .sizes(column_width, self.clients.len())
                             .horizontal( |mut strip| 
                         {
-                            self.columns(
-                                strip.borrow_mut(),
-                            );
+                            self.columns(strip.borrow_mut());
                         });
                     });
                 });

@@ -132,7 +132,11 @@ impl ColumnLayout for TaskLayout {
                                                 TaskUiActions::OpenTaskModal(task) => {
                                                     let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
                                                 },
-                                                _ => ()
+                                                TaskUiActions::OpenChatModal(chat_details) => {
+                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(chat_details));
+                                                    info!("Opening chat");
+                                                },
+                                                _ => {}
                                             }
                                         }
                                     }
@@ -146,9 +150,10 @@ impl ColumnLayout for TaskLayout {
                                                 TaskUiActions::OpenTaskModal(task) => {
                                                     let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
                                                 },
-                                                TaskUiActions::OpenChatModal(pld) => {
-                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(pld));
-                                                }
+                                                TaskUiActions::OpenChatModal(chat_details) => {
+                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(chat_details));
+                                                    info!("Opening chat");
+                                                },
                                                 _ => ()
                                             }
                                         }

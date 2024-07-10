@@ -437,7 +437,7 @@ impl TabViewer for MtechServerContext {
             "My Tools" => self.toolbox(ui),
             "Store Tasks" => self.store_tasks(ui),
             "My Tasks" => self.my_tasks(ui),
-            // "Ai Playground" => self.ai_playground(ui),
+            "Ai Playground" => self.ai_playground(ui),
             "Web Console" => self.web_console(ui),
             "Completed Tasks" => self.completed_tasks(ui),
             "Bug Report" => self.github(ui),

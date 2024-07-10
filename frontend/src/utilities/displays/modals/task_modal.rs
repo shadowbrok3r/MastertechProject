@@ -1,9 +1,14 @@
+use std::default;
+
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, Database};
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, Grid, Layout, Margin, RichText, ScrollArea, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
+use rfd::AsyncFileDialog;
 use serde::Serialize;
+use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
 
 use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes, Updatable};
@@ -87,7 +92,7 @@ impl ModalTypes for TaskModal{
     }
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SpecialPartOrder {
     customer_name: String,          //  "kathleen Hoffmon",
     customer_phone_number: String,          //  "801-888-8888",
@@ -96,13 +101,14 @@ pub struct SpecialPartOrder {
     id_location: String,            //  "Riverdale",
     request_type: String,           //  "Any",
     shipping_method: String,            //  "2 - 2-3 Day Express",
-    part_manufacturer: String,          //  "PC Laptops",
+    part_manufacturer: Manufacturer,          //  "PC Laptops",
     manufacturer_model_number: String,          //  "12345Test",
     manufacturer_serial_number: String,             //  "123456789",
     manufacturer_part_number: String,           //  "324657687",
     part_color: String,             //  "N/A",
     part_description: String,           //  "Test",
-    part_lcd_toggle: String,            //  "0"
+    part_lcd_toggle: bool,            //  "0"
+    spo_status: SpoStatus,
 }
 
 impl DisplayModal for TaskModal {
@@ -239,7 +245,7 @@ impl DisplayModal for TaskModal {
                                     match current_page_state{
                                         ModalAction::TicketInfoPage => display_task_page(ui, self.task.as_mut(), avail_size),
                                         ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref(), avail_size),
-                                        ModalAction::PartOrderPage => display_part_order_page(self.spo.clone(), ui, avail_size),
+                                        ModalAction::PartOrderPage => self.spo.display_part_order_page(ui, avail_size),
                                         ModalAction::TaskNotePage => {
                                             ui.set_width(avail_size.x);
                                             // ui.add_space(15.0);
@@ -471,7 +477,7 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
         }else{_col = Color32::from_rgb(30, 30, 38);}
         Some(_col)
     }
-    ui.set_width(avail_size.x - 50.0);
+    // ui.set_width(avail_size.x - 50.0);
     if let Some(task) = task.as_ref(){
         let ticket = task.service_ticket.as_ref().unwrap();
         let computer = ticket.computer.as_ref();
@@ -672,116 +678,215 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
     
 }
 
-fn display_part_order_page(mut spo: SpecialPartOrder, ui: &mut Ui, avail_size: Vec2){
-    StripBuilder::new(ui)
-        .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
-        .size(Size::exact(50.0))
-        .size(Size::remainder())
-        .size(Size::remainder())
-        .vertical(|mut s| 
-    {
-        s.empty();
-        s.strip(|s| 
+impl Default for SpecialPartOrder {
+    fn default() -> Self {
+        Self {
+            customer_name: String::new(),
+            customer_phone_number: String::new(),
+            notes: String::new(),
+            system_order_number: String::new(),
+            id_location: "0".to_string(),
+            request_type: String::new(),
+            shipping_method: "2 - 2-3 Day Express".to_string(),
+            part_manufacturer: Manufacturer::Pclaptops,
+            manufacturer_model_number: String::new(),
+            manufacturer_serial_number: String::new(),
+            manufacturer_part_number: String::new(),
+            part_color: "N/A".to_string(),
+            part_description: String::new(),
+            part_lcd_toggle: false,
+            spo_status: SpoStatus::AwaitingQuote,
+        }
+    }
+}
+#[derive(PartialEq, Default, Debug, Serialize, Clone)]
+pub enum SpoStatus {
+    #[default]
+    AwaitingQuote,
+    QuoteFullfilled,
+    OrderPendingDM,
+}
+
+#[derive(PartialEq, Default, Debug, Serialize, Clone)]
+pub enum Manufacturer {
+    #[default]
+    Pclaptops,
+    Other,
+}
+
+impl Manufacturer{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            Manufacturer::Pclaptops => "PC Laptops",
+            Manufacturer::Other => "Other",
+        }
+    }
+}
+
+impl SpoStatus{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            SpoStatus::AwaitingQuote => "Awaiting Quote",
+            SpoStatus::OrderPendingDM => "Pending DM",
+            SpoStatus::QuoteFullfilled => "Quote Fullfilled"
+        }
+    }
+}
+
+impl SpecialPartOrder {
+    fn display_part_order_page(&mut self, ui: &mut Ui, avail_size: Vec2){
+        StripBuilder::new(ui)
+            .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
+            .size(Size::exact(50.0))
+            .size(Size::remainder())
+            .size(Size::remainder())
+            .vertical(|mut s| 
         {
-            s
-                .cell_layout(Layout::centered_and_justified(Direction::TopDown))
-                .size(Size::exact(avail_size.x / 3.2))
-                .size(Size::exact(200.0))
-                .horizontal(|mut s| 
+            s.empty();
+            s.strip(|s| 
             {
-                s.empty();
-                s.cell(|ui| 
+                s
+                    .cell_layout(Layout::centered_and_justified(Direction::TopDown))
+                    .size(Size::exact(avail_size.x / 3.2))
+                    .size(Size::exact(200.0))
+                    .horizontal(|mut s| 
                 {
-                    ui.vertical_centered(|ui| {
-                        ui.horizontal(|ui| {
-                            ComboBox::new("AwaitingQuoteCombo", "")
-                                .selected_text("Awaiting Quote")
-                                .show_ui(ui, |ui| 
-                            {
-                                ui.selectable_value(&mut "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval".to_string(), "Order - Pending DM Approval");
-                                ui.selectable_value(&mut "Quote Fullfilled".to_string(), "Quote Fullfilled".to_string(), "Quote Fullfilled");
-                                ui.selectable_value(&mut "Awaiting Quote".to_string(), "Awaiting Quote".to_string(), "Awaiting Quote");
-                            });
-                            ComboBox::new("ManufacturerCombo", "")
-                                .selected_text("PC Laptops")
-                                .show_ui(ui, |ui| 
-                            {
-                                ui.selectable_value(&mut "PC Laptops".to_string(), "PCL".to_string(), "PCL");
-                                ui.selectable_value(&mut "Other".to_string(), "Other".to_string(), "Other");
-                                
-                            });
-                        });
-
-                        ui.add_space(15.0);
-
-                        TextEdit::singleline(&mut spo.manufacturer_model_number)
-                            .hint_text("MFG Model #".to_string())
-                            .margin(Margin::same(5.0))
-                            .ui(ui);
-
-                        ui.add_space(15.0);
-
-                        TextEdit::singleline(&mut spo.manufacturer_part_number)
-                            .hint_text("MFG P/N".to_string())
-                            .margin(Margin::same(5.0))
-                            .frame(true)
-                            .ui(ui);
-                    
-                        ui.add_space(15.0);
-
-                        TextEdit::singleline(&mut spo.part_description)
-                            .hint_text("Part Description".to_string())
-                            .margin(Margin::same(5.0))
-                            .ui(ui);
-                        
-                        ui.add_space(15.0);
-
-                        TextEdit::multiline(&mut spo.notes)
-                            .hint_text("Notes".to_string())
-                            .margin(Margin::same(5.0))
-                            .desired_rows(3)
-                            .ui(ui);
-
-                        ui.add_space(15.0);
-
-                        ui.horizontal(|ui| { 
-                            let _ = ui.radio(false, "LCD?");
-                            ui.add_space(ui.available_width() / 2.0);
-                            ui.label("Upload Picture");
-                        });
-
-                        ui.add_space(15.0);
-
-                        ui.horizontal(|ui| { 
-                            if ui.button("Submit").clicked() {
-                                spawn_local(async move {
-                                    // let params: Value = serde_json::json!({
-                                    //     "user_email": "logan.lees@pclaptops.com", 
-                                    //     "user_password": "Poolparty1",
-                                    //     "format_data": "text",
-                                    //     "action": "create",
-                                    //     "application": "customer_request_order", 
-                                    //     "payload": spo,
-                                    // });
-
-                                    // let client = Client::new();
-                                    // client.post("https://scaffold.pclaptops.com/api/index")
-                                    //     .header(CONTENT_TYPE, "application/json")
-                                    //     .header(ACCEPT, "application/json")
-                                    //     .json(&params)
-                                    //     .send()
-                                    //     .await
-                                    //     .unwrap();
-
+                    s.empty();
+                    s.cell(|ui| 
+                    {
+                        ui.vertical_centered(|ui| {
+                            ui.horizontal(|ui| {
+                                ComboBox::new("AwaitingQuoteCombo", "")
+                                    .selected_text(self.spo_status.as_str())
+                                    .width(50.0)
+                                    .show_ui(ui, |ui| 
+                                {
+                                    ui.selectable_value(&mut self.spo_status, SpoStatus::OrderPendingDM, "Pending DM");
+                                    ui.selectable_value(&mut self.spo_status, SpoStatus::QuoteFullfilled, "Quote Fullfilled");
+                                    ui.selectable_value(&mut self.spo_status, SpoStatus::AwaitingQuote, "Awaiting Quote");
                                 });
-                            }
+                                ComboBox::new("ManufacturerCombo", "")
+                                    .selected_text(self.part_manufacturer.as_str())
+                                    .width(50.0)
+                                    .show_ui(ui, |ui| 
+                                {
+                                    ui.selectable_value(&mut self.part_manufacturer, Manufacturer::Pclaptops, "PC Laptops");
+                                    ui.selectable_value(&mut self.part_manufacturer, Manufacturer::Other, "Other");
+                                    
+                                });
+                            });
+
+                            ui.add_space(15.0);
+
+                            TextEdit::singleline(&mut self.manufacturer_model_number)
+                                .hint_text("MFG Model #".to_string())
+                                .margin(Margin::same(5.0))
+                                .ui(ui);
+
+                            ui.add_space(15.0);
+
+                            TextEdit::singleline(&mut self.manufacturer_part_number)
+                                .hint_text("MFG P/N".to_string())
+                                .margin(Margin::same(5.0))
+                                .frame(true)
+                                .ui(ui);
+                        
+                            ui.add_space(15.0);
+
+                            TextEdit::singleline(&mut self.part_description)
+                                .hint_text("Part Description".to_string())
+                                .margin(Margin::same(5.0))
+                                .ui(ui);
+                            
+                            ui.add_space(15.0);
+
+                            TextEdit::multiline(&mut self.notes)
+                                .hint_text("Notes".to_string())
+                                .margin(Margin::same(5.0))
+                                .desired_rows(3)
+                                .ui(ui);
+
+                            ui.add_space(15.0);
+
+                            // let mut task: Option<AsyncFileDialog> = None;
+
+                            ui.horizontal(|ui| { 
+                                let toggle = ui.checkbox(&mut self.part_lcd_toggle, "LCD?");
+                                ui.add_space(ui.available_width() / 2.0);
+                                let file_upload = ui.selectable_label(false, "Upload Picture");
+
+                                
+                                if file_upload.clicked() {
+                                    // task = Some(AsyncFileDialog::new().pick_files());
+                                }
+                                if toggle.clicked() {
+                                    info!("self.part_lcd_toggle: {}", self.part_lcd_toggle);
+                                }
+                            });
+
+                            ui.add_space(15.0);
+
+                            ui.horizontal_top(|ui| { 
+                                if Button::new("Submit").min_size(Vec2::new(50.0, 20.0)).ui(ui).clicked() {
+
+                                    let spo = SpecialPartOrder {
+                                        customer_name: self.customer_name.clone(),
+                                        customer_phone_number: self.customer_phone_number.clone(),
+                                        notes: self.notes.clone(),
+                                        system_order_number: self.system_order_number.clone(),
+                                        id_location: self.id_location.clone(),
+                                        request_type: self.request_type.clone(),
+                                        shipping_method: self.shipping_method.clone(),
+                                        part_manufacturer: self.part_manufacturer.clone(),
+                                        manufacturer_model_number: self.manufacturer_model_number.clone(),
+                                        manufacturer_serial_number: self.manufacturer_serial_number.clone(),
+                                        manufacturer_part_number: self.manufacturer_part_number.clone(),
+                                        part_color: self.part_color.clone(),
+                                        part_description: self.part_description.clone(),
+                                        part_lcd_toggle: self.part_lcd_toggle.clone(),
+                                        spo_status: self.spo_status.clone(),
+                                    };
+
+                                    spawn_local(async move {
+                                        // let mut bytes: Bytes = Bytes::new();
+                                        // let mut file_name = String::new();
+
+                                        // if let Some(task) = task{
+                                        //     let files = task.await.unwrap();
+                                        //     for file_handle in files {
+                                        //         file_name = file_handle.file_name();
+                                        //         bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
+                                        //     }
+                                        // }
+
+                                        let params: Value = serde_json::json!({
+                                            "user_email": "logan.lees@pclaptops.com", 
+                                            "user_password": "Poolparty1",
+                                            "format_data": "text",
+                                            "action": "create",
+                                            "application": "customer_request_order", 
+                                            "payload": spo,
+                                        });
+
+                                        // let client = Client::new();
+                                        // client.post("https://scaffold.pclaptops.com/api/index")
+                                        //     .header(CONTENT_TYPE, "application/json")
+                                        //     .header(ACCEPT, "application/json")
+                                        //     .json(&params)
+                                        //     .send()
+                                        //     .await
+                                        //     .unwrap();
+
+                                    });
+                                }
+                            });
                         });
                     });
                 });
             });
+            s.empty();
         });
-        s.empty();
-    });
-    
-    
+        
+        
+    }
 }
