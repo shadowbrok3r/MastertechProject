@@ -1,4 +1,4 @@
-use anyhow::{Result, Error};
+use anyhow::Result;
 use super::tools;
 use async_openai_wasm::types::{
 	ChatChoice, ChatCompletionMessageToolCall,

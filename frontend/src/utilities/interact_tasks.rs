@@ -173,7 +173,7 @@ impl Interaction for TaskPayload {
     fn interact_dep(&mut self, ui: &mut Ui, _database: Database) -> Option<Response> {
 
         ui.label("Store:");
-        let dep = ui.text_edit_singleline(&mut self.dep);
+        let _dep = ui.text_edit_singleline(&mut self.dep);
         None
     }
 }

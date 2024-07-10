@@ -244,7 +244,7 @@ fn toggle_surrounding(
 
 // ----------------------------------------------------------------------------
 
-const DEFAULT_CODE: &str = r#"
+const _DEFAULT_CODE: &str = r#"
 # EasyMark
 EasyMark is a markup language, designed for extreme simplicity.
 

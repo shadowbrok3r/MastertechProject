@@ -134,7 +134,7 @@ impl FileSystem {
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",label).into()));
                             }
                             
-                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",label).into(), &selectable_label, CloseOnClickOutside, |ui| {
+                            let _res = popup_below_widget(ui, format!("sub_menu-{:?}",label).into(), &selectable_label, CloseOnClickOutside, |ui| {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
                                     if ui.button("Download").clicked(){
@@ -176,7 +176,7 @@ impl FileSystem {
                             ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",label).into()));
                         }
                         
-                        let res = popup_below_widget(ui, format!("sub_menu-{:?}",label).into(), &selectable_label, CloseOnClickOutside, |ui| {
+                        let _res = popup_below_widget(ui, format!("sub_menu-{:?}",label).into(), &selectable_label, CloseOnClickOutside, |ui| {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);
                                 if ui.button("Download").clicked(){
@@ -217,7 +217,7 @@ impl FileSystem {
     pub fn upload(&self, path: String) {
 
         let task = rfd::AsyncFileDialog::new().pick_files();
-        let tx = self.bytes_tx.clone();
+        let _tx = self.bytes_tx.clone();
         // self.total_size = bytes.len() as f64;
         spawn_local(async move {
             let name = "logan";

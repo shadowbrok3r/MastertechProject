@@ -1,16 +1,13 @@
 
-use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, fmt::Display, str::from_utf8};
-use crossbeam::channel::Sender;
-use database::{schema::{ConnectedClient, Record}, Database};
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
-use egui_extras::{Size, Strip, StripBuilder};
+use std::{collections::{HashMap, VecDeque}, fmt::Display};
+use database::{schema::ConnectedClient, Database};
+use eframe::egui::{epaint::Shadow, Align, Button, CollapsingHeader, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Vec2, Widget};
+use egui_extras::{Size, Strip};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
 use log::info;
 use surrealdb::Response;
 use wasm_bindgen_futures::spawn_local;
-
-use crate::utilities::ColumnLayout;
 
 use super::charts::LinePlot;
 
@@ -104,7 +101,7 @@ impl WebSocketClient{
                             if let Some(sysinfo) = &self.sysinfo{
                                 let normalized_cpu_percentage = normalize(sysinfo.cpu_percentage, 0.0, 100.0);
                                 let normalized_cpu_clock = normalize(sysinfo.cpu_clock, 0.0, 5000.0); // Example range for CPU clock
-                                let normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
+                                let _normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
                                 let normalized_ram_usage = normalize(sysinfo.used_memory, 0.0, 16000.0); // Example range for RAM usage
         
                                 if self.cpu_percentage.len() < 30
@@ -237,7 +234,7 @@ impl WebSocketClient{
             {
                 ui.add_space(10.0);
                 ui.vertical_centered(|ui| {
-                    if let Some(sysinfo) = &self.sysinfo {
+                    if let Some(_sysinfo) = &self.sysinfo {
                         let percentages = self.cpu_percentage.make_contiguous().to_owned();
                         let clocks = self.cpu_clock.make_contiguous().to_owned();
                         // let temps = self.component_temps.make_contiguous().to_owned();
