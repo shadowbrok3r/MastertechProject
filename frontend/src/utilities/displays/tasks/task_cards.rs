@@ -6,6 +6,7 @@ use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use eframe::egui::Vec2;
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
+use log::info;
 
 use crate::utilities::{Displayable, Interaction, TaskUiActions};
 
@@ -90,6 +91,7 @@ impl Displayable for TaskPayload{
                         .size(Size::remainder())
                         .size(Size::remainder())
                         .size(Size::remainder())
+                        .size(Size::exact(30.0))
                         .horizontal( |mut s| 
                     {
                         s.cell(|ui|{
@@ -103,6 +105,15 @@ impl Displayable for TaskPayload{
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft),
                                 |ui| self.interact_status(ui, database.clone()));
+                        });
+                        s.cell(|ui|{
+                            ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft), |ui|{
+                                if Button::new("💬").small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
+                                    info!("Chat Clicked");
+                                    res = Some(TaskUiActions::OpenChatModal((self.id.as_ref().unwrap().clone(), self.task_note.clone().unwrap_or(Vec::new()))))
+                                    // res = Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
+                                }
+                            });
                         });
                     });
                 });

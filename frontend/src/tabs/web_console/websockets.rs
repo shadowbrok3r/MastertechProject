@@ -138,8 +138,10 @@ impl WebSocketClient{
                 },
                 WsEvent::Opened => {
                     // self.connected = true;
+                    self.history.push("Connection Opened".to_string());
                 },
                 WsEvent::Closed => {
+                    self.history.push("Connection Closed".to_string());
                     // self.connected = false;
                 },
                 WsEvent::Error(e) => {

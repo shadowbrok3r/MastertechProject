@@ -170,6 +170,7 @@ impl eframe::App for MtechServer {
                 },
                 TaskUiActions::Response(_res) => { }
                 TaskUiActions::OpenChatModal(pld) => {
+                    info!("Got Chat action");
                     self.context.current_modal = ModalType::ChatView(pld);
                     self.context.chat_modal_handler.open();
                     // self.context.chat = ModalType::ChatView(pld);
@@ -271,7 +272,9 @@ impl eframe::App for MtechServer {
 
         if let Ok(connected_clients) = self.context.connected_clients_rx.try_recv(){
             for client in connected_clients.iter(){
-                self.context.clients.insert(client.connection_string.clone(), client.clone());
+                if self.context.clients.get(&client.connection_string).is_none() {
+                    self.context.clients.insert(client.connection_string.clone(), client.clone());
+                }
             }
         }
 
@@ -380,13 +383,14 @@ fn set_style() -> Arc<Style>{
     custom_style.visuals.window_shadow.blur = 10.0;
     custom_style.visuals.selection.stroke.color =  Color32::from_rgb_additive(200, 100, 200);
     custom_style.visuals.selection.bg_fill = Color32::from_rgba_premultiplied(40,40,40,20);
-    custom_style.visuals.widgets.inactive.bg_fill =  Color32::from_rgb(15,14,18);
+    custom_style.visuals.widgets.inactive.bg_fill =  Color32::DARK_GRAY;
     custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
     custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
     custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-    custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
-    custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+    custom_style.visuals.widgets.open.bg_fill =  Color32::LIGHT_BLUE;
+    custom_style.visuals.widgets.open.weak_bg_fill =  Color32::LIGHT_BLUE;
     custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(28,28,28);
+    custom_style.visuals.widgets.active.bg_fill =  Color32::LIGHT_GREEN;
     custom_style.visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(15,15,19);
     // custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
     custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);

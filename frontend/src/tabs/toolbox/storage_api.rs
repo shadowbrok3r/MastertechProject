@@ -335,13 +335,14 @@ impl FileSystem {
                 bytes = chunk.clone();
                 let _ = tx.try_send((chunk.to_vec(), content_length));
                 downloaded_bytes += chunk.len() as u64;
-            }
-            if downloaded_bytes == content_length {
-                info!("Downloaded: {downloaded_bytes}");
-                if let Some(ref file) = file {
-                    file.write(&bytes.to_vec().as_slice()).await.unwrap();
+                if downloaded_bytes == content_length {
+                    info!("Downloaded: {downloaded_bytes}");
+                    if let Some(ref file) = file {
+                        file.write(&bytes.to_vec().as_slice()).await.unwrap();
+                    }
                 }
             }
+
         });
     }
 }
