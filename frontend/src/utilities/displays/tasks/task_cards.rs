@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use database::Database;
-use eframe::egui::Ui;
+use eframe::egui::{RichText, Ui};
 use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
 use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use eframe::egui::Vec2;
@@ -18,14 +18,14 @@ impl Displayable for TaskPayload{
         store_users: &Vec<User>
     )  -> Option<TaskUiActions>{
         let mut res: Option<TaskUiActions> = None;
-        let frame_color = date_colors(self.due_date.clone(), self.completed);
+        // let frame_color = date_colors(self.due_date.clone(), self.completed);
 
         Frame::default()
             .fill(Color32::from_rgb(14,14,18))
             .inner_margin(Margin::same(8.0))
             .outer_margin(Margin::same(5.0))
             .rounding(Rounding::same(15.0))
-            .stroke(Stroke::new(0.5, frame_color))
+            .stroke(Stroke::new(0.2, Color32::from_additive_luminance(100)))
             .show(ui, |ui| 
         {
             ui.set_max_height(300.0);
@@ -108,7 +108,13 @@ impl Displayable for TaskPayload{
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft), |ui|{
-                                if Button::new("💬").small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
+                                let mut count = 0;
+                                if let Some(task_notes) = &self.task_note{
+                                    count = task_notes.len();
+                                }
+                                let txt = if count > 0 { RichText::new(format!("{} 💬", count)).color(Color32::LIGHT_RED) } else { RichText::new("💬").color(Color32::WHITE) };
+
+                                if Button::new(txt).small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
                                     info!("Chat Clicked");
                                     res = Some(TaskUiActions::OpenChatModal((self.id.as_ref().unwrap().clone(), self.task_note.clone().unwrap_or(Vec::new()))))
                                     // res = Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
@@ -159,7 +165,7 @@ pub fn date_colors(date: String, _complete: bool) -> Color32{
     } 
 
     if let Some(_) = overdue{
-        Color32::from_rgb(199, 48, 103) // Pink
+        Color32::from_rgb(199, 30, 60) // Pink
     }else if let Some(_) = due_today{
         Color32::from_rgb(240, 200, 108) // Orange
     }else if let Some(_) = due_tomorrow{

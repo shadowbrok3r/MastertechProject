@@ -105,7 +105,7 @@ impl ColumnLayout for TaskLayout {
             .fill(Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(8.0))
             .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
+            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(70)));
 
         let mut inputs = BTreeSet::new();
 
@@ -174,7 +174,7 @@ impl ColumnLayout for TaskLayout {
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(4.0, 1.0))
             .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
+            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(70)));
 
         for (name, tasks) in self.task_map.iter(){
             s.cell(|ui|{
@@ -190,7 +190,7 @@ impl ColumnLayout for TaskLayout {
                             margin.left = 4.0;
                             
                             TextEdit::singleline(search_input)
-                                .hint_text("Search for task")
+                                .hint_text("Search")
                                 .desired_width(100.0)
                                 .margin(margin)
                                 // .font(FontId::new(11.0, FontFamily::Name("Regular".into())))
@@ -199,9 +199,9 @@ impl ColumnLayout for TaskLayout {
                             ui.add_space(ui.available_width() / 3.4);
                             
                             let response = Button::new(RichText::new(name.to_owned())
-                                    .color(Color32::LIGHT_BLUE)
-                                    .size(10.5).monospace()
-                                ).fill(Color32::TRANSPARENT).min_size(Vec2::new(50.0, 15.0)).ui(ui);
+                                    .color(Color32::LIGHT_RED)
+                                    .size(13.0).monospace()
+                                ).fill(Color32::TRANSPARENT).min_size(Vec2::new(60.0, 15.0)).ui(ui);
 
                             if response.clicked(){
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
@@ -296,7 +296,7 @@ impl ColumnLayout for TaskLayout {
                             if count > 0{
                                 ui.label("Overdue");
                                 ui.add_space(5.0);
-                                ui.colored_label(Color32::LIGHT_RED, format!("{count}"));
+                                ui.colored_label(Color32::DARK_RED, format!("{count}"));
                             }
                         });
                     });

@@ -3,7 +3,7 @@ use std::default;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, Database};
-use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, Grid, Layout, Margin, RichText, ScrollArea, Style, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use rfd::AsyncFileDialog;
@@ -242,6 +242,7 @@ impl DisplayModal for TaskModal {
                             s.empty();
                             s.cell(|ui| {
                                 ui.horizontal_centered(|ui|{
+                                    ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
                                     match current_page_state{
                                         ModalAction::TicketInfoPage => display_task_page(ui, self.task.as_mut(), avail_size),
                                         ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref(), avail_size),
@@ -305,22 +306,22 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: V
                     {
                         s.cell(|ui|{
                             ui.group(|ui| {
-                                // ui.label("Personnel Information");
+                                // ui.colored_label(Color32::LIGHT_RED, "Personnel Information");
                                 Grid::new("group2").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
                                 .show(ui, |ui| {
-                                    ui.label("Technician:");
+                                    ui.colored_label(Color32::LIGHT_RED, "Technician:");
                                     ui.label(&ticket.tech);
                                     ui.end_row();
 
-                                    ui.label("Salesman:");
+                                    ui.colored_label(Color32::LIGHT_RED, "Salesman:");
                                     ui.label(&ticket.salesman);
                                     ui.end_row();
 
-                                    ui.label("Split Rep:");
+                                    ui.colored_label(Color32::LIGHT_RED, "Split Rep:");
                                     ui.label(&ticket.sales_rep);
                                     ui.end_row();
 
-                                    ui.label("Checkin Rep:");
+                                    ui.colored_label(Color32::LIGHT_RED, "Checkin Rep:");
                                     ui.label(&ticket.checkin_rep);
                                 });
                             });
@@ -329,26 +330,26 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: V
                         s.empty();
                         s.cell(|ui| {
                             ui.group(|ui| {
-                                // ui.label("Ticket Information");
+                                // ui.colored_label(Color32::LIGHT_RED, "Ticket Information");
                                 Grid::new("group1").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
                                 .show(ui, |ui| {
-                                    ui.label("SO#:");
+                                    ui.colored_label(Color32::LIGHT_RED, "SO#:");
                                     ui.label(format!("{}", ticket.service_number));
                                     ui.end_row();
                                     let x = ticket.created_at.as_ref();
                                     if let Some(x) = x{
                                         let date = x.parse::<DateTime<Utc>>();
                                         if let Ok(date) = date{
-                                            ui.label("Tur Sent:");
+                                            ui.colored_label(Color32::LIGHT_RED, "Tur Sent:");
                                             ui.label(date.date_naive().to_string());
                                             ui.end_row();
                                         }
                                     }
 
-                                    ui.label("Store:");
+                                    ui.colored_label(Color32::LIGHT_RED, "Store:");
                                     ui.label(&ticket.dep);
                                     ui.end_row();
-                                    ui.label("");
+                                    ui.colored_label(Color32::LIGHT_RED, "");
                                 });
                             });
                         });
@@ -363,23 +364,23 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: V
                     {
                         s.cell(|ui|{
                             ui.group(|ui| {
-                                // ui.label("Order Details");
+                                // ui.colored_label(Color32::LIGHT_RED, "Order Details");
                                 Grid::new("group3").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
                                 .show(ui, |ui| {
-                                    ui.label("Terms:");
+                                    ui.colored_label(Color32::LIGHT_RED, "Terms:");
                                     ui.label(&ticket.terms);
                                     ui.end_row();
 
-                                    ui.label("Total on Order:");
+                                    ui.colored_label(Color32::LIGHT_RED, "Total on Order:");
                                     ui.label(&ticket.ticket_total);
                                     ui.end_row();
 
-                                    ui.label("Order Type:");
+                                    ui.colored_label(Color32::LIGHT_RED, "Order Type:");
                                     ui.label(&ticket.doc_alias);
                                     ui.end_row();
-                                    ui.label("");
+                                    ui.colored_label(Color32::LIGHT_RED, "");
                                     ui.end_row();
-                                    ui.label("");
+                                    ui.colored_label(Color32::LIGHT_RED, "");
                                 });
                             });
                         });
@@ -387,34 +388,34 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: V
                         s.cell(|ui|{
                             if let Some(customer) = &customer {
                                 ui.group(|ui| {
-                                    // ui.label("Customer Information");
-                                    Grid::new("customer_data").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                                    // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
+                                    Grid::new("customer_data").spacing(Vec2::new(0.0, 6.0)).max_col_width(150.0).min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
-                                        // ui.label("Other Services:");
+                                        // ui.colored_label(Color32::LIGHT_RED, "Other Services:");
                                         // ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), |ui| {
                                         //     ui.label(&customer.services.as_ref().unwrap());
                                         // });
                                         // ui.end_row();
 
-                                        ui.label("Customer ID:");
+                                        ui.colored_label(Color32::LIGHT_RED, "ID:");
                                         ui.label(format!("{}", customer.id.as_ref().unwrap().0.id));
                                         ui.end_row();
 
-                                        ui.label("Customer Name:");
+                                        ui.colored_label(Color32::LIGHT_RED, "Name:");
                                         ui.label(&customer.name);
                                         ui.end_row();
 
-                                        ui.label("Phone #:");
+                                        ui.colored_label(Color32::LIGHT_RED, "Phone#:");
                                         ui.label(&customer.phone_number);
                                         ui.end_row();
 
-                                        ui.label("2nd Phone #:");
+                                        ui.colored_label(Color32::LIGHT_RED, "Phone2:");
                                         ui.label(&customer.phone_number_2);
                                         ui.end_row();
 
-                                        ui.label("Customer Email:");
+                                        ui.colored_label(Color32::LIGHT_RED, "Email:");
                                         ui.label(&customer.email);
-                                        // ui.label("SPO Links:");
+                                        // ui.colored_label(Color32::LIGHT_RED, "SPO Links:");
                                         // ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), |ui| {
                                         //     ui.label(&customer.part_order_links);
                                         // });
@@ -440,7 +441,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: V
                             {
                                 s.cell(|ui|{
                                     ui.vertical_centered_justified(|ui| {
-                                        ui.label("Checkin Notes:");
+                                        ui.label(RichText::new("Checkin Notes:").font(FontId::proportional(15.0)));
                                         TextEdit::multiline(&mut ticket.checkin_notes.to_string())
                                             .margin(Margin::same(5.0))
                                             .desired_rows(8)
@@ -451,7 +452,7 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: V
                                 s.empty();
                                 s.cell(|ui|{
                                     ui.vertical_centered_justified(|ui| {
-                                        ui.label("Recommendations:");
+                                        ui.label(RichText::new("Recommendations:").font(FontId::proportional(15.0)));
                                         TextEdit::multiline(&mut task.task_description.to_string())
                                             .margin(Margin::same(5.0))
                                             .desired_rows(8)
@@ -483,16 +484,13 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
         let computer = ticket.computer.as_ref();
         if let Some(computer) = computer{
             let seb_info = computer.seb_info.as_ref();
-            ui.horizontal(|ui| ui.add_space(50.0));
+            ui.horizontal(|ui: &mut Ui| ui.add_space(5.0));
 
             StripBuilder::new(ui)
                 .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
-                .size(Size::exact(20.0))
                 .size(Size::exact(avail_size.y))
-                .size(Size::exact(20.0))
                 .vertical(|mut s| 
             {
-                s.empty();
                 s.strip(|s| 
                 {
                     s
@@ -502,43 +500,42 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                     {
                         s.cell(|ui| 
                         {
-                            // ui.vertical(|ui| ui.add_space(50.0));
                             ui.vertical_centered(|ui|{
                                 ui.group(|ui| {
-                                    Grid::new("group2").min_col_width(avail_size.x / 2.5).with_row_color(|num, style| return_colors(num, style))
+                                    Grid::new("group2").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
-                                        ui.label("hostname:");
+                                        ui.colored_label(Color32::LIGHT_RED, "hostname:");
                                         ui.label(&computer.hostname);
                                         ui.end_row();
-                                        ui.label("operating_system:");
+                                        ui.colored_label(Color32::LIGHT_RED, "operating_system:");
                                         ui.label(&computer.operating_system);
                                         ui.end_row();
-                                        ui.label("cpu:");
+                                        ui.colored_label(Color32::LIGHT_RED, "cpu:");
                                         ui.label(&computer.cpu);
                                         ui.end_row();
-                                        ui.label("gpu:");
+                                        ui.colored_label(Color32::LIGHT_RED, "gpu:");
                                         ui.label(&computer.gpu);
                                         ui.end_row();
-                                        ui.label("ram:");
+                                        ui.colored_label(Color32::LIGHT_RED, "ram:");
                                         ui.label(&computer.ram);
                                         ui.end_row();
                                         
-                                        // ui.label("current_antivirus:");
+                                        // ui.colored_label(Color32::LIGHT_RED, "current_antivirus:");
                                         // ui.label(&ticket.current_antivirus);
                                         // ui.end_row();
-                                        // ui.label("hardware_test_results:");
+                                        // ui.colored_label(Color32::LIGHT_RED, "hardware_test_results:");
                                         // ui.label(&ticket.hardware_test_results);
                                         // ui.end_row();
                                     });
                                 });
                                 
                                 ui.group(|ui| {
-                                    // ui.label("Ticket Information");
-                                    Grid::new("group1").min_col_width(avail_size.x / 3.8).with_row_color(|num, style| return_colors(num, style))
+                                    // ui.colored_label(Color32::LIGHT_RED, "Ticket Information");
+                                    Grid::new("group1").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 3.15).min_col_width(avail_size.x / 3.15).with_row_color(|num, style| return_colors(num, style))
                                     .show(ui, |ui| {
-                                        ui.label("Letter");
-                                        ui.label("Space Left / Total Size");
-                                        ui.label("Type");
+                                        ui.colored_label(Color32::LIGHT_RED, "Letter");
+                                        ui.colored_label(Color32::LIGHT_RED, "Space Left / Total Size");
+                                        ui.colored_label(Color32::LIGHT_RED, "Type");
                                         ui.end_row();
                                         
                                         for drive_data in &computer.drives{
@@ -550,118 +547,119 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                                     });
                                 });
                             });
-                            ui.vertical_centered_justified(|ui|{
-
-                                ui.add_space(8.0);
-                                ui.separator();
-                                ui.add_space(8.0);
-                                ui.heading("SEB Information");
-                                ui.add_space(8.0);
-                                ui.separator();
-                                ui.add_space(8.0);
-
+                            ui.vertical_centered(|ui|{
+                                ui.scope(|ui| {
+                                    ui.add_space(8.0);
+                                    Separator::default().shrink(150.0).ui(ui);
+                                    ui.add_space(8.0);
+                                    ui.heading("SEB Information");
+                                    ui.add_space(8.0);
+                                    Separator::default().shrink(150.0).ui(ui);
+                                    ui.add_space(8.0);
+                                });
                                 ScrollArea::vertical()
                                     .max_height(avail_size.y)
                                     .max_width(f32::INFINITY)
+                                    .auto_shrink(Vec2b::new(false, false))
                                     .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
                                     .show(ui, |ui| 
                                 {
                                     ui.group(|ui| {
                                         if let Some(seb_info) = seb_info{
                                             
-                                            // ui.label("Order Details");
-                                            Grid::new("group3").min_col_width(avail_size.x / 2.5).with_row_color(|num, style| return_colors(num, style))
+                                            // ui.colored_label(Color32::LIGHT_RED, "Order Details");
+                                            Grid::new("group3").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
                                             .show(ui, |ui| {
-                                                ui.label("InstalledDeviceId:");
+                                                ui.colored_label(Color32::LIGHT_RED, "InstalledDeviceId:");
                                                 ui.label(&seb_info.InstalledDeviceId);
                                                 ui.end_row();
-                                                ui.label("InstallInstanceId:");
+                                                ui.colored_label(Color32::LIGHT_RED, "InstallInstanceId:");
                                                 ui.label(&seb_info.InstallInstanceId);
                                                 ui.end_row();
-                                                ui.label("HasIssues:");
+                                                ui.colored_label(Color32::LIGHT_RED, "HasIssues:");
                                                 ui.label(&seb_info.HasIssues);
                                                 ui.end_row();
-                                                ui.label("InstallationStage:");
+                                                ui.colored_label(Color32::LIGHT_RED, "InstallationStage:");
                                                 ui.label(&seb_info.InstallationStage);
                                                 ui.end_row();
-                                                ui.label("ReasonCode:");
+                                                ui.colored_label(Color32::LIGHT_RED, "ReasonCode:");
                                                 ui.label(&seb_info.ReasonCode);
                                                 ui.end_row();
-                                                ui.label("ActivationCode:");
+                                                ui.colored_label(Color32::LIGHT_RED, "ActivationCode:");
                                                 ui.label(&seb_info.ActivationCode);
                                                 ui.end_row();
-                                                ui.label("InstallVersion:");
+                                                ui.colored_label(Color32::LIGHT_RED, "InstallVersion:");
                                                 ui.label(&seb_info.InstallVersion);
                                                 ui.end_row();
-                                                ui.label("MachineName:");
+                                                ui.colored_label(Color32::LIGHT_RED, "MachineName:");
                                                 ui.label(&seb_info.MachineName);
                                                 ui.end_row();
                                             });
                                         }else{
-                                            ui.horizontal(|ui|{
-                                                ui.label("No SEB information was sent with ticket.");
+                                            ui.vertical_centered(|ui|{
+                                                ui.colored_label(Color32::LIGHT_RED, "No SEB information was sent with ticket.");
                                             });
                                         }
                                     });
                                     if let Some(seb_info) = seb_info{
                                         if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
                                             ui.group(|ui| {
-                                                // ui.label("Customer Information");
-                                                Grid::new("customer_data").min_col_width(avail_size.x / 2.5).with_row_color(|num, style| return_colors(num, style))
+                                                // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
+                                                Grid::new("customer_data").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
                                                 .show(ui, |ui| {
-                                                    ui.label("email:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "email:");
                                                     ui.label(&extended_seb.email);
                                                     ui.end_row();
-                                                    ui.label("phone:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "phone:");
                                                     ui.label(&extended_seb.phone);
                                                     ui.end_row();
-                                                    ui.label("device_name:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "device_name:");
                                                     ui.label(&extended_seb.device_name);
                                                     ui.end_row();
-                                                    ui.label("device_id:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "device_id:");
                                                     ui.label(&extended_seb.device_id);
                                                     ui.end_row();
-                                                    ui.label("state:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "state:");
                                                     ui.label(&extended_seb.state);
                                                     ui.end_row();
-                                                    ui.label("usage_gb:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "usage_gb:");
                                                     ui.label(&extended_seb.usage_gb);
                                                     ui.end_row();
-                                                    ui.label("date_device_created:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "date_device_created:");
                                                     ui.label(&extended_seb.date_device_created);
                                                     ui.end_row();
-                                                    ui.label("activated:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "activated:");
                                                     ui.label(&extended_seb.activated);
                                                     ui.end_row();
-                                                    ui.label("activation_code:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "activation_code:");
                                                     ui.label(&extended_seb.activation_code);
                                                     ui.end_row();
-                                                    ui.label("last_complete_backup:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "last_complete_backup:");
                                                     ui.label(&extended_seb.last_complete_backup);
                                                     ui.end_row();
-                                                    ui.label("last_client_status_update:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "last_client_status_update:");
                                                     ui.label(&extended_seb.last_client_status_update);
                                                     ui.end_row();
-                                                    ui.label("id_recurly_account:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "id_recurly_account:");
                                                     ui.label(&extended_seb.id_recurly_account);
                                                     ui.end_row();
-                                                    ui.label("date_last_scan:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "date_last_scan:");
                                                     ui.end_row();
-                                                    ui.label("current_period_ends_at:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "current_period_ends_at:");
                                                     ui.label(&extended_seb.current_period_ends_at);
                                                     ui.end_row();
-                                                    ui.label("date_modified:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "date_modified:");
                                                     ui.label(&extended_seb.date_modified);
                                                     ui.end_row();
-                                                    ui.label("date_created:");
+                                                    ui.colored_label(Color32::LIGHT_RED, "date_created:");
                                                     ui.label(&extended_seb.date_created);
                                                     ui.end_row();
                                                 });
                                             });
                                         }else{
-                                            ui.add_space(15.0);
-                                            ui.horizontal(|ui|{
-                                                ui.label("SEB information was sent with ticket, but we didnt get the extended SEB info");
+                                            ui.add_space(ui.available_width() / 2.1);
+                                            ui.vertical_centered(|ui|{
+                                                ui.colored_label(Color32::LIGHT_RED, "SEB information was sent with ticket, but we didnt get the extended SEB info");
                                             });
                                         }
                                     }
@@ -670,9 +668,8 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
                         });
                     });
                 });
-                s.empty();
             });
-        } else { ui.label("Computer information was not sent with ticket"); }
+        } else { ui.colored_label(Color32::LIGHT_RED, "Computer information was not sent with ticket"); }
     }
     
     

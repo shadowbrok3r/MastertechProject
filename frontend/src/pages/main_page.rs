@@ -1,4 +1,4 @@
-use eframe::egui::{CentralPanel, Color32, Frame, Context};
+use eframe::egui::{CentralPanel, Color32, Context, Frame, Stroke};
 use egui_dock::{DockArea, Style as DockStyle};
 use crate::MtechServer;
 
@@ -13,13 +13,16 @@ impl MtechServer{
                 let mut style = self.context.style.get_or_insert(dock_style).clone();
                 style.overlay.selection_color = Color32::from_rgb(92,0,87);
                 style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
-                style.separator.color_idle = Color32::from_rgba_premultiplied(17,17,33,5);
                 style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
                 style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
                 style.main_surface_border_rounding.nw = 15.0;
                 style.main_surface_border_rounding.ne = 15.0;
                 style.buttons.close_tab_color = Color32::from_rgba_premultiplied(118, 0, 129, 58);
-                
+                style.tab_bar.bg_fill = Color32::from_rgb(15,15,15);
+                style.tab_bar.hline_color = Color32::TRANSPARENT;
+                style.separator.color_idle = Color32::TRANSPARENT;
+                style.main_surface_border_stroke = Stroke::new(0.25, Color32::TRANSPARENT);
+                style.tab_bar.height = 20.0;
                 // egui_dock
                 DockArea::new(&mut self.tree)
                     .style(style)
