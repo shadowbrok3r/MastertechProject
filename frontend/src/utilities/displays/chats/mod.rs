@@ -6,6 +6,7 @@ use eframe::egui::{
 };
 use log::{debug, info};
 use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
+use serde::Serialize;
 use super::modals::ModalState;
 
 pub mod markdown_editor;
@@ -13,14 +14,15 @@ pub mod highlighter;
 pub mod parser;
 pub mod viewer;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ChatView{
     pub state: ModalState,
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
     pub current_user: Option<User>,
+    pub task_id: Option<TaskId>,
+    #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
-    pub task_id: Option<TaskId>
 }
 
 impl Default for ChatView{
@@ -64,6 +66,7 @@ impl ChatView {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Option<String>{
+        
         let mut new_msg: Option<String> = None;
 
         let mut shadow = Shadow::default();
@@ -185,29 +188,12 @@ impl ChatView {
 
                                     let color = Color32::from_rgb(10,10,12);
 
-                                    // let from_frame_color = Color32::from_white_alpha(2);
-                                    // let from_frame = Frame::none()
-                                    //     .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(Margin::same(0.0))
-                                    //     .inner_margin(Margin::same(6.0)).rounding(rnding);
-
                                     let note_frame = Frame::none().fill(color)
                                         .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
                                         .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
-                            
 
-
-                                    // let txt = RichText::new(&item.note).monospace();
-                                    // let txt = RichText::new(&item.note).monospace()
-                                    //     .append_to(
-                                    //         &mut layout_job, ui.style(), 
-                                    // FontSelection::Default,
-                                    // Align::Center
-                                    // );
                                     let from = RichText::new(&item.everest_initials).strong().monospace().color(Color32::LIGHT_BLUE);
 
-
-                                    
-                                    // from_frame.show(ui, |ui| {
                                     if is_message_from_myself {
                                         ui.with_layout(Layout::from_main_dir_and_cross_align(
                                             Direction::RightToLeft,
@@ -253,40 +239,8 @@ impl ChatView {
                                             Direction::TopDown,
                                             Align::Center,
                                         ), |ui| {
-                                            // ui.label(txt);
-                                            // let mut layout_job = markdown_editor.highlighter.highlight(ui.style(), &item.note.as_str());
-                                            // layout_job.wrap.max_width = wrap_width;
-                                            // let x = ui.fonts(|f| f.layout_job(layout_job.clone()));
-                                            // ui.painter().galley(Pos2::default(), x, Color32::default());
-                                            // RichText::new(&item.note).monospace()
-                                            //     .append_to(
-                                            //         &mut layout_job, ui.style(), 
-                                            // FontSelection::Default,
-                                            // Align::Center
-                                            // );
                                             ui.set_width(ui.available_width());
-                                            viewer::easy_mark(ui, &item.note);
-
-                                            // let mut layouter = |ui: &egui::Ui, easymark: &str, wrap_width: f32| {
-                                            //     let mut layout_job = markdown_editor.highlighter.highlight(ui.style(), easymark);
-                                            //     layout_job.wrap.max_width = wrap_width;
-                                            //     ui.fonts(|f| f.layout_job(layout_job))
-                                            // };
-                                            // let response = ui.add(
-                                            //     egui::TextEdit::multiline(&mut item.note)
-                                            //         .desired_width(f32::INFINITY).font(egui::TextStyle::Monospace) 
-                                            //         .layouter(&mut layouter),
-                                            // );
-                                            // if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {
-                                            //     if let Some(mut ccursor_range) = state.cursor.char_range() {
-                                            //         let any_change = shortcuts(ui, &mut item.note, &mut ccursor_range);
-                                            //         if any_change {
-                                            //             state.cursor.set_char_range(Some(ccursor_range));
-                                            //             state.store(ui.ctx(), response.id);
-                                            //         }
-                                            //     }
-                                            // }
-                                            
+                                            // viewer::easy_mark(ui, &item.note);
                                         });
                                     });
                                 });

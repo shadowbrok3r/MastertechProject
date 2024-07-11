@@ -3,7 +3,7 @@ use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal}, ui_tools::toasts::Toasts}};
+use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::{chats::markdown_editor::EasyMarkEditor, modals::{ChatModalHandler, Modal}}, ui_tools::toasts::Toasts}};
 use gloo_worker::Spawnable;
 use log::info;
 use ratatui::Terminal;
@@ -355,16 +355,15 @@ impl MtechServerContext{
                     }
                 }
             },
-            ModalType::ChatView(chat_view) => {
-                let notes = chat_view.1.clone();
-                if let Some(current_user) = self.current_user.as_ref(){
-                    // self.chat_modal_handler.ui(ctx, make_modal, content_ui)
-                    let mut chat_modal = ChatView::new(notes.to_owned(), current_user.clone(), chat_view.0.clone());
-                    ChatModalHandler::default().ui(
-                        ctx, 
-                        || Modal::new("Chats"),
-                        move |ui, _stay_open| chat_modal.ui(ui));
-                }
+            ModalType::ChatView(chat_modal) => {
+                info!("opening chat");
+                self.chat_modal_handler.ui(
+                    ctx, 
+                    || Modal::new("Chats").default_height(600.0),
+                    move |ui, _stay_open| {
+                        // EasyMarkEditor::default().ui(ui);
+                        chat_modal.ui(ui);
+                    });
             }
             _ => {},
         }

@@ -2,7 +2,7 @@ pub mod create_task_modal;
 pub mod task_modal;
 pub mod ai_chat; 
 
-use eframe::egui::{Context, Frame, Key, NumExt, Ui, vec2, Align, Align2, Button, Color32, Id, LayerId, Layout, Margin, Order, Painter, Pos2, Rect, RichText, Rounding, Shape, Stroke, Widget, Window};
+use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, RichText, Rounding, Shape, Stroke, Ui, Vec2, Widget, Window};
 use serde::Serialize;
 use task_modal::ModalAction;
 use crate::utilities::ModalTypes;
@@ -136,25 +136,25 @@ impl Modal {
         }
     }
 
-    fn title(mut self, title: String) -> Self {
+    pub fn title(mut self, title: String) -> Self {
         self.title = title;
         self
     }
 
     /// Set the minimum width of the modal window.
-    fn min_width(mut self, min_width: f32) -> Self {
+    pub fn min_width(mut self, min_width: f32) -> Self {
         self.min_width = Some(min_width);
         self
     }
 
     /// Set the minimum height of the modal window.
-    fn min_height(mut self, min_height: f32) -> Self {
+    pub fn min_height(mut self, min_height: f32) -> Self {
         self.min_height = Some(min_height);
         self
     }
 
     /// Set the default height of the modal window.
-    fn default_height(mut self, default_height: f32) -> Self {
+    pub fn default_height(mut self, default_height: f32) -> Self {
         self.default_height = Some(default_height);
         self
     }
@@ -164,7 +164,7 @@ impl Modal {
     /// - setting the vertical spacing to 0.0
     /// - removing any padding at the bottom of the area
     /// In this mode, the user code is responsible for adding spacing between items.
-    fn full_span_content(mut self, full_span_content: bool) -> Self {
+    pub fn full_span_content(mut self, full_span_content: bool) -> Self {
         self.full_span_content = full_span_content;
         self
     }
@@ -185,8 +185,8 @@ impl Modal {
         let mut window = Window::new(self.title.clone())
             .frame(
                 Frame::default()
-                .inner_margin(Margin::symmetric(15.0, 0.0))
-                .outer_margin(Margin::same(20.0))
+                .inner_margin(Margin::symmetric(0.0, 0.0))
+                .outer_margin(Margin::same(30.0))
                 .stroke(Stroke::new(2.0, Color32::from_additive_luminance(150)))
                 .rounding(Rounding::same(15.0))
             )
@@ -197,7 +197,7 @@ impl Modal {
             .max_width(680.0)
             .default_width(680.0)
             .collapsible(false)
-            .resizable(false)
+            .resizable(true)
             .title_bar(false);
 
         if let Some(min_width) = self.min_width {
@@ -286,7 +286,7 @@ impl Modal {
             .with_layout(
                 Layout::top_down(Align::Max), 
             |ui|{
-                if Button::new(" X ").rounding(Rounding::same(10.0))
+                if Button::new(" X ").min_size(Vec2::new(15.0, 15.0)).rounding(Rounding::same(f32::INFINITY))
                 .fill(Color32::BLACK)
                     .ui(ui)
                     .clicked(){

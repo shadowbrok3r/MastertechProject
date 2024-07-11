@@ -1,4 +1,5 @@
 use eframe::egui::{text::CCursorRange, *};
+use log::info;
 use super::highlighter;
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
@@ -73,14 +74,14 @@ impl EasyMarkEditor {
         }
         ui.separator();
 
-        Grid::new("controls").show(ui, |ui| {
+        Grid::new("controls").spacing(Vec2::new(width, 10.0)).show(ui, |ui| {
             let _response = ui.button("Hotkeys").on_hover_ui(nested_hotkeys_ui);
-            ui.add_space(width);
+
             ui.checkbox(&mut self.show_rendered, "Show rendered");
-            ui.add_space(width);
+
             ui.checkbox(&mut self.highlight_editor, "Highlight editor");
-            ui.add_space(width);
-            let res = ui.button("Submit");
+
+            let res = Button::new("Submit").min_size(Vec2::new(60.0, 10.0)).ui(ui);
             response = Some(res);
             ui.end_row();
         });
@@ -122,10 +123,14 @@ impl EasyMarkEditor {
             )
         };
 
+        
         if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {
+            // info!("Text edit load state");
             if let Some(mut ccursor_range) = state.cursor.char_range() {
+                // info!("if let state.cursor.char_range()");
                 let any_change = shortcuts(ui, message, &mut ccursor_range);
                 if any_change {
+                    // info!(" if any_change ");
                     state.cursor.set_char_range(Some(ccursor_range));
                     state.store(ui.ctx(), response.id);
                 }
@@ -184,10 +189,11 @@ fn nested_hotkeys_ui(ui: &mut Ui) {
 
 pub fn shortcuts(ui: &Ui, message: &mut dyn TextBuffer, ccursor_range: &mut CCursorRange) -> bool {
     let mut any_change = false;
-
+    // info!("In shortcuts fn");
     if ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_INDENT)) {
         // This is a placeholder till we can indent the active line
         any_change = true;
+        // info!("In input mut");
         let [primary, _secondary] = ccursor_range.sorted();
 
         let advance = message.insert_text("  ", primary.index);
@@ -219,6 +225,7 @@ fn toggle_surrounding(
     ccursor_range: &mut CCursorRange,
     surrounding: &str,
 ) {
+    // info!("In toggle_surrounding");
     let [primary, secondary] = ccursor_range.sorted();
 
     let surrounding_ccount = surrounding.chars().count();
@@ -229,11 +236,13 @@ fn toggle_surrounding(
         && message.char_range(suffix_crange.clone()) == surrounding;
 
     if already_surrounded {
+        // info!("already_surrounded");
         message.delete_char_range(suffix_crange);
         message.delete_char_range(prefix_crange);
         ccursor_range.primary.index -= surrounding_ccount;
         ccursor_range.secondary.index -= surrounding_ccount;
     } else {
+        // info!("else");
         message.insert_text(surrounding, secondary.index);
         let advance = message.insert_text(surrounding, primary.index);
 

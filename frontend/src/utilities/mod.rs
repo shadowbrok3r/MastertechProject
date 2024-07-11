@@ -1,5 +1,5 @@
 use crossbeam::channel::Sender;
-use displays::{modals::create_task_modal::CreateTaskModal, modals::{ModalResponse, ModalState}, modals::task_modal::{ModalAction, TaskModal}};
+use displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::{ModalAction, TaskModal}, ModalResponse, ModalState}};
 use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
 use database::{schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use egui_extras::Strip;
@@ -30,7 +30,7 @@ pub enum TaskUiActions{
 pub enum ModalType{
     CreateTaskModal(CreateTaskModal),
     TaskModal(TaskModal),
-    ChatView((TaskId, Vec<TaskNotePayload>)),
+    ChatView(ChatView),
     #[default]
     Null,
 }
@@ -170,9 +170,10 @@ pub trait ModalTypes: Default{
         let mut window = Window::new(&*self.modal_state().title.as_ref().unwrap())
             .frame(
                 Frame::default()
-                .inner_margin(Margin::symmetric(15.0, 0.0))
-                .outer_margin(Margin::same(20.0))
+                .inner_margin(Margin::symmetric(0.0, 0.0))
+                .outer_margin(Margin::same(30.0))
                 .stroke(Stroke::new(2.0, Color32::from_additive_luminance(150)))
+                .fill(Color32::BLACK)
                 .rounding(Rounding::same(15.0))
             )
             .pivot(Align2::CENTER_TOP)
