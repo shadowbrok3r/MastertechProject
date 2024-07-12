@@ -112,6 +112,7 @@ pub struct MastertechContext {
     pub github_issue_title: String,
     pub github_issue_descript: String,
 
+    pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
     
     // pub presta_data: PrestaDataChannel<T>,
     pub db_data_receiver: Receiver<Vec<TaskPayload>>,
@@ -262,6 +263,7 @@ impl MasterTechApp {
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
 
+            added_nodes: Vec::new(),
 
             db_data_receiver,  db_data_sender,
             prestashop_api_tx, prestashop_api_rx,
@@ -341,16 +343,8 @@ impl TabViewer for MastertechContext {
         true
     }
     
-    fn on_add(&mut self, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        
-        // for node in tree[SurfaceIndex::main()].iter() {
-        //     if let Node::Leaf { tabs, .. } = node {
-        //         for tab in tabs {
-        //             open_tabs.insert(tab.clone());
-        //         }
-        //     }
-        // }
-        // self.open_tabs.insert(surface_index.);
+    fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
+        self.added_nodes.push((surface_index, node_index));
     }
 
 }
