@@ -1,15 +1,14 @@
-use std::default;
-
-use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, Database};
+use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, DATABASE};
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
-use rfd::AsyncFileDialog;
 use serde::Serialize;
 use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
+// use rfd::AsyncFileDialog;
+// use std::default;
+// use bytes::Bytes;
 
 use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes, Updatable};
 
@@ -19,10 +18,7 @@ use super::ModalState;
 #[derive(Serialize, Clone, Debug)]
 pub struct TaskModal{
     pub title: String,
-    #[serde(skip)]
-    pub database: Option<Database>, 
-    #[serde(skip)]
-    pub task: Option<TaskPayload>,
+    pub task: TaskPayload,
     #[serde(skip)]
     pub chat_view: ChatView,
     pub min_width: Option<f32>,
@@ -48,8 +44,7 @@ impl Default for TaskModal{
     fn default() -> Self {
         Self {
             title: "Task Details".to_string(),
-            database: None,
-            task: None,
+            task: TaskPayload::default(),
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
@@ -62,23 +57,18 @@ impl Default for TaskModal{
 }
 
 impl TaskModal{
-    pub fn new(chats: ChatView) -> Self {
+    pub fn new(chat_view: ChatView, task: TaskPayload) -> Self {
         Self {
             title: "Task Details".to_string(),
-            database: None,
-            task: None,
+            task,
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
             full_span_content: false,
             state: ModalState::default(),
-            chat_view: chats,
+            chat_view,
             spo: SpecialPartOrder::default()
         }
-    }
-
-    pub fn update_task(&mut self, task: TaskPayload) {
-        self.task = Some(task);
     }
 }
 
@@ -150,12 +140,9 @@ impl DisplayModal for TaskModal {
                             // if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
                                 
                             if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
-                                
-                                let db = self.database.clone();
                                 let mut ids = Vec::new();
-                                let task = self.task.as_ref().unwrap();
-                                let _task_id = task.id.as_ref().unwrap().0.clone();
-                                let _ticket_id = if let Some(ticket) = &task.service_ticket{
+                                let _task_id = self.task.id.as_ref().unwrap().0.clone();
+                                let _ticket_id = if let Some(ticket) = &self.task.service_ticket{
                                     Some(ticket.id.clone().unwrap())
                                 } else{ None };
 
@@ -166,9 +153,8 @@ impl DisplayModal for TaskModal {
                                 };
 
                                 let mut ids = Vec::new();
-                                let task = self.task.as_ref().unwrap();
-                                let task_id = task.id.as_ref().unwrap().0.clone();
-                                let ticket_id = if let Some(ticket) = &task.service_ticket{
+                                let task_id = self.task.id.as_ref().unwrap().0.clone();
+                                let ticket_id = if let Some(ticket) = &self.task.service_ticket{
                                     Some(ticket.id.clone().unwrap())
                                 } else{ None };
 
@@ -181,17 +167,15 @@ impl DisplayModal for TaskModal {
                                 spawn_local(async move {
                                     let task_id = task_id.clone();
                                     let ticket_id = ticket_id.clone();
-                                    let db = db.unwrap();
-
                                     if ids.len() > 0 {
                                         let _query = "DELETE ";
                                     } 
                                     if let Some(id) = ticket_id {
                                         info!("deleting task_id: {:?}", id.0.clone());
-                                        let _x: Option<TicketPayload> = db.database.delete((TICKET_TABLE, id.0.id)).await.unwrap();
+                                        let _x: Option<TicketPayload> = DATABASE.delete((TICKET_TABLE, id.0.id)).await.unwrap();
                                     }
                                     info!("deleting task_id: {task_id:?}");
-                                    let _y: Option<TaskPayload> = db.database.delete((TASK_TABLE, task_id.id)).await.unwrap();
+                                    let _y: Option<TaskPayload> = DATABASE.delete((TASK_TABLE, task_id.id)).await.unwrap();
 
                                 });
                             }
@@ -201,15 +185,13 @@ impl DisplayModal for TaskModal {
                             if ui.selectable_label(ticket_page, RichText::new("🖹").heading()).clicked(){
                                 response = Some(ModalAction::TicketInfoPage);
                             };
-                            if let Some(task) = &self.task{
-                                if let Some(_) = task.service_ticket{
-                                    if ui.selectable_label(computer_info_page, RichText::new("🖥").heading()).clicked(){
-                                        response = Some(ModalAction::ComputerInfoPage);
-                                    };
-                                    if ui.selectable_label(part_order_page, RichText::new("🔫").heading()).clicked(){
-                                        response = Some(ModalAction::PartOrderPage);
-                                    };
-                                }
+                            if let Some(_) = self.task.service_ticket{
+                                if ui.selectable_label(computer_info_page, RichText::new("🖥").heading()).clicked(){
+                                    response = Some(ModalAction::ComputerInfoPage);
+                                };
+                                if ui.selectable_label(part_order_page, RichText::new("🔫").heading()).clicked(){
+                                    response = Some(ModalAction::PartOrderPage);
+                                };
                             }
                             if ui.selectable_label(task_note_page, RichText::new("💬").heading()).clicked(){
                                 response = Some(ModalAction::TaskNotePage);
@@ -244,21 +226,18 @@ impl DisplayModal for TaskModal {
                                 ui.horizontal_centered(|ui|{
                                     ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
                                     match current_page_state{
-                                        ModalAction::TicketInfoPage => display_task_page(ui, self.task.as_mut(), avail_size),
-                                        ModalAction::ComputerInfoPage => display_computer_page(ui, self.task.as_ref(), avail_size),
+                                        ModalAction::TicketInfoPage => display_task_page(ui, &mut self.task, avail_size),
+                                        ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
                                         ModalAction::PartOrderPage => self.spo.display_part_order_page(ui, avail_size),
                                         ModalAction::TaskNotePage => {
                                             ui.set_width(avail_size.x);
                                             // ui.add_space(15.0);
                                             // eframe::egui
                                             if let Some(new_message) = self.chat_view.ui(ui){
-                                                if let (Some(db), Some(task)) = (self.database.clone(), self.task.clone()){
-                                                    
-                                                    task.update_task_notes(new_message, db);
-                                                }
+                                                    self.task.update_task_notes(new_message);
                                             }
                                         },
-                                        _ => display_task_page(ui, self.task.as_mut(), avail_size)
+                                        _ => display_task_page(ui, &mut self.task, avail_size)
                                     };
                                 });
                             });
@@ -275,7 +254,7 @@ impl DisplayModal for TaskModal {
 }
 
 
-fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: Vec2){
+fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
     fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
         let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
@@ -286,9 +265,8 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: V
 
     ui.add_space(15.0);
 
-    if let Some(task) = task{
-        let ticket = task.service_ticket.as_ref();
-        if let Some(ticket) = ticket{
+    let ticket = task.service_ticket.as_ref();
+    if let Some(ticket) = ticket{
             let customer = ticket.customer.as_ref();
             StripBuilder::new(ui)
                 .size(Size::exact(100.0))
@@ -467,10 +445,10 @@ fn display_task_page(ui: &mut Ui, task: Option<&mut TaskPayload>, _avail_size: V
 
             });
         }
-    }
+    
 }
 
-fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Vec2){
+fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2){
     fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
         let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
@@ -479,198 +457,197 @@ fn display_computer_page(ui: &mut Ui, task: Option<&TaskPayload>, avail_size: Ve
         Some(_col)
     }
     // ui.set_width(avail_size.x - 50.0);
-    if let Some(task) = task.as_ref(){
-        let ticket = task.service_ticket.as_ref().unwrap();
-        let computer = ticket.computer.as_ref();
-        if let Some(computer) = computer{
-            let seb_info = computer.seb_info.as_ref();
-            ui.horizontal(|ui: &mut Ui| ui.add_space(5.0));
+    let ticket = task.service_ticket.as_ref().unwrap();
+    let computer = ticket.computer.as_ref();
+    if let Some(computer) = computer{
+        let seb_info = computer.seb_info.as_ref();
+        ui.horizontal(|ui: &mut Ui| ui.add_space(5.0));
 
-            StripBuilder::new(ui)
-                .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
-                .size(Size::exact(avail_size.y))
-                .vertical(|mut s| 
+        StripBuilder::new(ui)
+            .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
+            .size(Size::exact(avail_size.y))
+            .vertical(|mut s| 
+        {
+            s.strip(|s| 
             {
-                s.strip(|s| 
+                s
+                    .cell_layout(Layout::centered_and_justified(Direction::TopDown))
+                    .size(Size::exact(avail_size.x))
+                    .horizontal(|mut s| 
                 {
-                    s
-                        .cell_layout(Layout::centered_and_justified(Direction::TopDown))
-                        .size(Size::exact(avail_size.x))
-                        .horizontal(|mut s| 
+                    s.cell(|ui| 
                     {
-                        s.cell(|ui| 
-                        {
-                            ui.vertical_centered(|ui|{
-                                ui.group(|ui| {
-                                    Grid::new("group2").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
-                                    .show(ui, |ui| {
-                                        ui.colored_label(Color32::LIGHT_RED, "hostname:");
-                                        ui.label(&computer.hostname);
-                                        ui.end_row();
-                                        ui.colored_label(Color32::LIGHT_RED, "operating_system:");
-                                        ui.label(&computer.operating_system);
-                                        ui.end_row();
-                                        ui.colored_label(Color32::LIGHT_RED, "cpu:");
-                                        ui.label(&computer.cpu);
-                                        ui.end_row();
-                                        ui.colored_label(Color32::LIGHT_RED, "gpu:");
-                                        ui.label(&computer.gpu);
-                                        ui.end_row();
-                                        ui.colored_label(Color32::LIGHT_RED, "ram:");
-                                        ui.label(&computer.ram);
-                                        ui.end_row();
-                                        
-                                        // ui.colored_label(Color32::LIGHT_RED, "current_antivirus:");
-                                        // ui.label(&ticket.current_antivirus);
-                                        // ui.end_row();
-                                        // ui.colored_label(Color32::LIGHT_RED, "hardware_test_results:");
-                                        // ui.label(&ticket.hardware_test_results);
-                                        // ui.end_row();
-                                    });
-                                });
-                                
-                                ui.group(|ui| {
-                                    // ui.colored_label(Color32::LIGHT_RED, "Ticket Information");
-                                    Grid::new("group1").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 3.15).min_col_width(avail_size.x / 3.15).with_row_color(|num, style| return_colors(num, style))
-                                    .show(ui, |ui| {
-                                        ui.colored_label(Color32::LIGHT_RED, "Letter");
-                                        ui.colored_label(Color32::LIGHT_RED, "Space Left / Total Size");
-                                        ui.colored_label(Color32::LIGHT_RED, "Type");
-                                        ui.end_row();
-                                        
-                                        for drive_data in &computer.drives{
-                                            ui.label(&drive_data.drive_letter);
-                                            ui.label(format!("{}Gb / {}Gb", &drive_data.space_left, &drive_data.total_size));
-                                            ui.label(&drive_data.drive_type);
-                                            ui.end_row();
-                                        }
-                                    });
+                        ui.vertical_centered(|ui|{
+                            ui.group(|ui| {
+                                Grid::new("group2").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
+                                .show(ui, |ui| {
+                                    ui.colored_label(Color32::LIGHT_RED, "hostname:");
+                                    ui.label(&computer.hostname);
+                                    ui.end_row();
+                                    ui.colored_label(Color32::LIGHT_RED, "operating_system:");
+                                    ui.label(&computer.operating_system);
+                                    ui.end_row();
+                                    ui.colored_label(Color32::LIGHT_RED, "cpu:");
+                                    ui.label(&computer.cpu);
+                                    ui.end_row();
+                                    ui.colored_label(Color32::LIGHT_RED, "gpu:");
+                                    ui.label(&computer.gpu);
+                                    ui.end_row();
+                                    ui.colored_label(Color32::LIGHT_RED, "ram:");
+                                    ui.label(&computer.ram);
+                                    ui.end_row();
+                                    
+                                    // ui.colored_label(Color32::LIGHT_RED, "current_antivirus:");
+                                    // ui.label(&ticket.current_antivirus);
+                                    // ui.end_row();
+                                    // ui.colored_label(Color32::LIGHT_RED, "hardware_test_results:");
+                                    // ui.label(&ticket.hardware_test_results);
+                                    // ui.end_row();
                                 });
                             });
-                            ui.vertical_centered(|ui|{
-                                ui.scope(|ui| {
-                                    ui.add_space(8.0);
-                                    Separator::default().shrink(150.0).ui(ui);
-                                    ui.add_space(8.0);
-                                    ui.heading("SEB Information");
-                                    ui.add_space(8.0);
-                                    Separator::default().shrink(150.0).ui(ui);
-                                    ui.add_space(8.0);
-                                });
-                                ScrollArea::vertical()
-                                    .max_height(avail_size.y)
-                                    .max_width(f32::INFINITY)
-                                    .auto_shrink(Vec2b::new(false, false))
-                                    .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
-                                    .show(ui, |ui| 
-                                {
-                                    ui.group(|ui| {
-                                        if let Some(seb_info) = seb_info{
-                                            
-                                            // ui.colored_label(Color32::LIGHT_RED, "Order Details");
-                                            Grid::new("group3").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
-                                            .show(ui, |ui| {
-                                                ui.colored_label(Color32::LIGHT_RED, "InstalledDeviceId:");
-                                                ui.label(&seb_info.InstalledDeviceId);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "InstallInstanceId:");
-                                                ui.label(&seb_info.InstallInstanceId);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "HasIssues:");
-                                                ui.label(&seb_info.HasIssues);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "InstallationStage:");
-                                                ui.label(&seb_info.InstallationStage);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "ReasonCode:");
-                                                ui.label(&seb_info.ReasonCode);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "ActivationCode:");
-                                                ui.label(&seb_info.ActivationCode);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "InstallVersion:");
-                                                ui.label(&seb_info.InstallVersion);
-                                                ui.end_row();
-                                                ui.colored_label(Color32::LIGHT_RED, "MachineName:");
-                                                ui.label(&seb_info.MachineName);
-                                                ui.end_row();
-                                            });
-                                        }else{
-                                            ui.vertical_centered(|ui|{
-                                                ui.colored_label(Color32::LIGHT_RED, "No SEB information was sent with ticket.");
-                                            });
-                                        }
-                                    });
-                                    if let Some(seb_info) = seb_info{
-                                        if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
-                                            ui.group(|ui| {
-                                                // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
-                                                Grid::new("customer_data").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
-                                                .show(ui, |ui| {
-                                                    ui.colored_label(Color32::LIGHT_RED, "email:");
-                                                    ui.label(&extended_seb.email);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "phone:");
-                                                    ui.label(&extended_seb.phone);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "device_name:");
-                                                    ui.label(&extended_seb.device_name);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "device_id:");
-                                                    ui.label(&extended_seb.device_id);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "state:");
-                                                    ui.label(&extended_seb.state);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "usage_gb:");
-                                                    ui.label(&extended_seb.usage_gb);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "date_device_created:");
-                                                    ui.label(&extended_seb.date_device_created);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "activated:");
-                                                    ui.label(&extended_seb.activated);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "activation_code:");
-                                                    ui.label(&extended_seb.activation_code);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "last_complete_backup:");
-                                                    ui.label(&extended_seb.last_complete_backup);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "last_client_status_update:");
-                                                    ui.label(&extended_seb.last_client_status_update);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "id_recurly_account:");
-                                                    ui.label(&extended_seb.id_recurly_account);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "date_last_scan:");
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "current_period_ends_at:");
-                                                    ui.label(&extended_seb.current_period_ends_at);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "date_modified:");
-                                                    ui.label(&extended_seb.date_modified);
-                                                    ui.end_row();
-                                                    ui.colored_label(Color32::LIGHT_RED, "date_created:");
-                                                    ui.label(&extended_seb.date_created);
-                                                    ui.end_row();
-                                                });
-                                            });
-                                        }else{
-                                            ui.add_space(ui.available_width() / 2.1);
-                                            ui.vertical_centered(|ui|{
-                                                ui.colored_label(Color32::LIGHT_RED, "SEB information was sent with ticket, but we didnt get the extended SEB info");
-                                            });
-                                        }
+                            
+                            ui.group(|ui| {
+                                // ui.colored_label(Color32::LIGHT_RED, "Ticket Information");
+                                Grid::new("group1").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 3.15).min_col_width(avail_size.x / 3.15).with_row_color(|num, style| return_colors(num, style))
+                                .show(ui, |ui| {
+                                    ui.colored_label(Color32::LIGHT_RED, "Letter");
+                                    ui.colored_label(Color32::LIGHT_RED, "Space Left / Total Size");
+                                    ui.colored_label(Color32::LIGHT_RED, "Type");
+                                    ui.end_row();
+                                    
+                                    for drive_data in &computer.drives{
+                                        ui.label(&drive_data.drive_letter);
+                                        ui.label(format!("{}Gb / {}Gb", &drive_data.space_left, &drive_data.total_size));
+                                        ui.label(&drive_data.drive_type);
+                                        ui.end_row();
                                     }
                                 });
+                            });
+                        });
+                        ui.vertical_centered(|ui|{
+                            ui.scope(|ui| {
+                                ui.add_space(8.0);
+                                Separator::default().shrink(150.0).ui(ui);
+                                ui.add_space(8.0);
+                                ui.heading("SEB Information");
+                                ui.add_space(8.0);
+                                Separator::default().shrink(150.0).ui(ui);
+                                ui.add_space(8.0);
+                            });
+                            ScrollArea::vertical()
+                                .max_height(avail_size.y)
+                                .max_width(f32::INFINITY)
+                                .auto_shrink(Vec2b::new(false, false))
+                                .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
+                                .show(ui, |ui| 
+                            {
+                                ui.group(|ui| {
+                                    if let Some(seb_info) = seb_info{
+                                        
+                                        // ui.colored_label(Color32::LIGHT_RED, "Order Details");
+                                        Grid::new("group3").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
+                                        .show(ui, |ui| {
+                                            ui.colored_label(Color32::LIGHT_RED, "InstalledDeviceId:");
+                                            ui.label(&seb_info.InstalledDeviceId);
+                                            ui.end_row();
+                                            ui.colored_label(Color32::LIGHT_RED, "InstallInstanceId:");
+                                            ui.label(&seb_info.InstallInstanceId);
+                                            ui.end_row();
+                                            ui.colored_label(Color32::LIGHT_RED, "HasIssues:");
+                                            ui.label(&seb_info.HasIssues);
+                                            ui.end_row();
+                                            ui.colored_label(Color32::LIGHT_RED, "InstallationStage:");
+                                            ui.label(&seb_info.InstallationStage);
+                                            ui.end_row();
+                                            ui.colored_label(Color32::LIGHT_RED, "ReasonCode:");
+                                            ui.label(&seb_info.ReasonCode);
+                                            ui.end_row();
+                                            ui.colored_label(Color32::LIGHT_RED, "ActivationCode:");
+                                            ui.label(&seb_info.ActivationCode);
+                                            ui.end_row();
+                                            ui.colored_label(Color32::LIGHT_RED, "InstallVersion:");
+                                            ui.label(&seb_info.InstallVersion);
+                                            ui.end_row();
+                                            ui.colored_label(Color32::LIGHT_RED, "MachineName:");
+                                            ui.label(&seb_info.MachineName);
+                                            ui.end_row();
+                                        });
+                                    }else{
+                                        ui.vertical_centered(|ui|{
+                                            ui.colored_label(Color32::LIGHT_RED, "No SEB information was sent with ticket.");
+                                        });
+                                    }
+                                });
+                                if let Some(seb_info) = seb_info{
+                                    if let Some(extended_seb) = seb_info.ExtendedSeb.as_ref(){
+                                        ui.group(|ui| {
+                                            // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
+                                            Grid::new("customer_data").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.1).min_col_width(avail_size.x / 2.1).with_row_color(|num, style| return_colors(num, style))
+                                            .show(ui, |ui| {
+                                                ui.colored_label(Color32::LIGHT_RED, "email:");
+                                                ui.label(&extended_seb.email);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "phone:");
+                                                ui.label(&extended_seb.phone);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "device_name:");
+                                                ui.label(&extended_seb.device_name);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "device_id:");
+                                                ui.label(&extended_seb.device_id);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "state:");
+                                                ui.label(&extended_seb.state);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "usage_gb:");
+                                                ui.label(&extended_seb.usage_gb);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "date_device_created:");
+                                                ui.label(&extended_seb.date_device_created);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "activated:");
+                                                ui.label(&extended_seb.activated);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "activation_code:");
+                                                ui.label(&extended_seb.activation_code);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "last_complete_backup:");
+                                                ui.label(&extended_seb.last_complete_backup);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "last_client_status_update:");
+                                                ui.label(&extended_seb.last_client_status_update);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "id_recurly_account:");
+                                                ui.label(&extended_seb.id_recurly_account);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "date_last_scan:");
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "current_period_ends_at:");
+                                                ui.label(&extended_seb.current_period_ends_at);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "date_modified:");
+                                                ui.label(&extended_seb.date_modified);
+                                                ui.end_row();
+                                                ui.colored_label(Color32::LIGHT_RED, "date_created:");
+                                                ui.label(&extended_seb.date_created);
+                                                ui.end_row();
+                                            });
+                                        });
+                                    }else{
+                                        ui.add_space(ui.available_width() / 2.1);
+                                        ui.vertical_centered(|ui|{
+                                            ui.colored_label(Color32::LIGHT_RED, "SEB information was sent with ticket, but we didnt get the extended SEB info");
+                                        });
+                                    }
+                                }
                             });
                         });
                     });
                 });
             });
-        } else { ui.colored_label(Color32::LIGHT_RED, "Computer information was not sent with ticket"); }
-    }
+        });
+    } else { ui.colored_label(Color32::LIGHT_RED, "Computer information was not sent with ticket"); }
+    
     
     
 }
@@ -856,7 +833,7 @@ impl SpecialPartOrder {
                                         //     }
                                         // }
 
-                                        let params: Value = serde_json::json!({
+                                        let _params: Value = serde_json::json!({
                                             "user_email": "logan.lees@pclaptops.com", 
                                             "user_password": "Poolparty1",
                                             "format_data": "text",

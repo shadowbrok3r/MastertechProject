@@ -1,7 +1,6 @@
 use eframe::egui::{Align, CentralPanel, Context, Direction, Frame, Layout};
 use gloo_net::http::Request;
 use log::info;
-use reqwest::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
 use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
 use crate::app_state::MtechServer;
@@ -21,10 +20,10 @@ impl MtechServer{
             {
                 
 
-                let (tx, rx) = crossbeam::channel::unbounded();
+                let (tx, _rx) = crossbeam::channel::unbounded();
                 if ui.button("Get Releases").clicked(){
                     spawn_local(async move {
-                        let x = run(tx).await;
+                        let _x = run(tx).await;
                     });
                 }
                 
@@ -36,7 +35,7 @@ impl MtechServer{
 }
 
 
-pub async fn run(tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
+pub async fn run(_tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
     // let mut downloaded_bytes: u64 = 0;
     
     let response: Value = Request::get("https://api.github.com/repos/shadowbrok3r/Mastertech4.0/releases/latest") 

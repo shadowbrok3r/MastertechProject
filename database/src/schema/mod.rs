@@ -1,6 +1,5 @@
 use serde::{Serialize, Deserialize};
 use surrealdb::{opt::RecordId, sql::{Id, Thing}};
-use uuid::Uuid;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";

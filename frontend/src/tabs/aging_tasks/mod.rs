@@ -1,9 +1,8 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, ColumnLayout, FilterTasks}};
-use database::schema::TaskPayload;
+use crate::app_state::MtechServerContext;
 use eframe::egui::Ui;
 
 impl MtechServerContext{
-    pub fn aging_tasks(&mut self, ui: &mut Ui) {
+    pub fn aging_tasks(&mut self, _ui: &mut Ui) {
         // if let Some(tasks) = self.tasks.clone(){
         //     if let Some(users) = self.store_users.as_ref(){
         //         self.my_tasks_opened = true;

@@ -1,11 +1,11 @@
 use app_state::{check_authentication, AppState, MainPages, MtechServer, NewTicketChannel};
-use database::schema::{TaskPayload, TicketPayload};
+use database::{schema::{TaskPayload, TicketPayload}, DATABASE};
 use eframe::egui::FontFamily;
 use log::{debug, info};
 // use ratframe::NewCC;
 use surrealdb::{Action, Response};
 // use tabs::web_console::websockets::WebSocketClient;
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert}, ModalType, TaskUiActions};
 use wasm_bindgen_futures::spawn_local;
 use std::sync::Arc;
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
@@ -59,8 +59,7 @@ impl eframe::App for MtechServer {
         if let Ok(db) = self.context.db_rx.try_recv(){
             info!("Got db");
             match db{
-                Ok(db) => {
-                    self.context.database = Some(db.clone());
+                Ok(_db) => {
                     // get all of our channel Senders from crossbeam to get user/store/completed tasks, 
                     // as well as store users and live task notifications
                     let live_tasks_tx = self.context.live_tasks_tx.clone();
@@ -71,15 +70,18 @@ impl eframe::App for MtechServer {
                     let notes_tx = self.context.notes_tx.clone();
                     if let Some(usr) = self.context.current_user.as_ref(){
                         info!("Getting Initial data");
-                        get_tasks(db.clone(), initial_tasks_tx);
-                        get_store_users(db.clone(), store_users_tx, usr.store);
-                        listen_tasks(db.clone(), live_tasks_tx);
-                        listen_data(db.clone(), live_clients_tx);
-                        listen_task_notes(db.clone(), notes_tx);
+                        get_tasks(initial_tasks_tx);
+                        get_store_users(store_users_tx, usr.store);
+                        listen_tasks(live_tasks_tx);
+                        listen_data(live_clients_tx);
+                        listen_task_notes(notes_tx);
 
                         let user = usr.clone();
                         spawn_local(async move {
-                            get_connected_clients(db, tx, user).await.unwrap();
+                            match get_connected_clients(tx, user).await{
+                                Ok(_) => info!("Got clients"),
+                                Err(e) => info!("Error getting clients: {e:?}"),
+                            }
                         });
                         let toast = &mut self.context.toasts;
     
@@ -97,10 +99,10 @@ impl eframe::App for MtechServer {
                                 self.state = d.0;
                                 if let Some(ref usr) = d.1{
                                     self.context.current_user = Some(usr.clone());
-                                    get_tasks(db.clone(), initial_tasks_tx);
-                                    get_store_users(db.clone(), store_users_tx, usr.store);
-                                    // listen_tasks(db.clone(), live_tasks_tx);
-                                    // listen_task_notes(db.clone(), notes_tx);
+                                    get_tasks(initial_tasks_tx);
+                                    get_store_users(store_users_tx, usr.store);
+                                    // listen_tasks(live_tasks_tx);
+                                    // listen_task_notes(notes_tx);
 
                                     let toast = &mut self.context.toasts;
                 
@@ -141,7 +143,8 @@ impl eframe::App for MtechServer {
         
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv(){
             // info!("Got tasks? {tasks:?}");
-            self.context.tasks = Some(tasks);
+            self.context.tasks = tasks;
+
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
@@ -152,19 +155,17 @@ impl eframe::App for MtechServer {
         if let Ok(action) = self.context.ui_actions_rx.try_recv(){
             match action{
                 TaskUiActions::OpenTaskModal(task) => {
-                    let mut task_modal = if let Some(notes) = &task.task_note{
+                    let task_modal = if let Some(notes) = &task.task_note{
                         let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
-                        TaskModal::new(chat_modal)
+                        TaskModal::new(chat_modal, task.clone())
                     }else{
-                        TaskModal::default()
+                        TaskModal::new(ChatView::default(), task.clone())
                     };
-                    task_modal.database = Some(self.context.database.as_ref().unwrap().to_owned());
-                    task_modal.task = Some(task);
                     self.context.current_modal = ModalType::TaskModal(task_modal);
                     self.context.task_modal_handler.open();
                 },
                 TaskUiActions::CreateTaskModal => {
-                    let create_modal = CreateTaskModal::new("Create Task", self.context.database.clone(), self.context.store_users.clone());
+                    let create_modal = CreateTaskModal::new("Create Task", self.context.store_users.clone());
                     self.context.current_modal = ModalType::CreateTaskModal(create_modal);
                     self.context.create_task_modal_handler.open();
                 },
@@ -182,54 +183,50 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(ref new_task) = self.context.live_tasks_rx.try_recv(){
-            let database = &self.context.database.clone();
             let tx = self.context.new_ticket_tx.clone();
-            if let Some(existing_tasks) = &mut self.context.tasks{
+            // if let Some(existing_tasks) = &mut self.context.tasks{
                 if let Some(service_num) = new_task.1.clone().service_number{
                     if !service_num.is_empty() {
-                        let db = database.clone();
-                        if let Some(db) = db{
-                            let n_task = new_task.clone();
-                            spawn_local(async move {
-                                let x: Result<Response, surrealdb::Error> = db.database
-                                    .query(
-                                        format!("SELECT * FROM service_order WHERE service_number == {}", service_num.clone())
-                                    )
-                                    .await;
-                                
-                                match x{
-                                    Ok(mut data) => {
-                                        info!("data: {:?}", data);
-                                        let ticket: Option<TicketPayload> = data.take(0).unwrap();
+                        let n_task = new_task.clone();
+                        spawn_local(async move {
+                            let x: Result<Response, surrealdb::Error> = DATABASE
+                                .query(
+                                    format!("SELECT * FROM service_order WHERE service_number == {}", service_num.clone())
+                                )
+                                .await;
+                            
+                            match x{
+                                Ok(mut data) => {
+                                    info!("data: {:?}", data);
+                                    let ticket: Option<TicketPayload> = data.take(0).unwrap();
 
 
-                                        let chnnl = NewTicketChannel {
-                                            new_ticket: ticket.unwrap_or_default(),
-                                            new_task: n_task,
-                                        };
-                                        match tx.try_send(chnnl){
-                                            Ok(_) => info!("Sent ticket"),
-                                            Err(e) => info!("Error sending ticket: {e:?}")
-                                        }
-                                    },
-                                    Err(e) => info!("ERROR: {e:?}"),
-                                }
-                            });
-                        }
+                                    let chnnl = NewTicketChannel {
+                                        new_ticket: ticket.unwrap_or_default(),
+                                        new_task: n_task,
+                                    };
+                                    match tx.try_send(chnnl){
+                                        Ok(_) => info!("Sent ticket"),
+                                        Err(e) => info!("Error sending ticket: {e:?}")
+                                    }
+                                },
+                                Err(e) => info!("ERROR: {e:?}"),
+                            }
+                        });
                     }
                 }else {
-                    handle_live_data(new_task.to_owned(), existing_tasks, None).unwrap();
+                    handle_live_data(new_task.to_owned(), &mut self.context.tasks, None).unwrap();
                 }
-            }
+            // }
         }
 
         if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
-            if let Some(existing_tasks) = &mut self.context.tasks{
+            // if let Some(existing_tasks) = &mut self.context.tasks{
                 let live_task = channel.new_task.1;
-                let check = existing_tasks.iter().any(|x| x.id == live_task.id);
+                let check = self.context.tasks.iter().any(|x| x.id == live_task.id);
                 info!("existing_tasks.service_num matches new task.service_num: {check}");
                 if !check{
-                    existing_tasks.push(TaskPayload {
+                    self.context.tasks.push(TaskPayload {
                         id: live_task.id,
                         task_name: live_task.task_name,
                         service_ticket: Some(channel.new_ticket),
@@ -244,8 +241,13 @@ impl eframe::App for MtechServer {
                         status: live_task.status,
                         dep: live_task.dep,
                     });
+                } else {
+                    match update_or_insert(&mut self.context.tasks, live_task, None){
+                        Ok(_) => info!("Updated existing task"),
+                        Err(e) => info!("Error updating existing task: {e:?}"),
+                    }
                 }
-            }
+            // }
         }
 
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
@@ -260,11 +262,8 @@ impl eframe::App for MtechServer {
         if let Ok(payload) = self.context.notes_rx.try_recv(){
             self.context.new_note = true;
             if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal{
-                if let Some(task) = task_modal.task.as_mut(){
-                    handle_live_notes(payload.clone(), task).unwrap_or(());
-                    // info!("Got the new note {:?}");
+                    handle_live_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
                     task_modal.chat_view.insert_note(payload.1);
-                }
             }
         }
 
@@ -371,7 +370,7 @@ fn set_style() -> Arc<Style>{
     
     custom_style.override_font_id = Some(font);
     custom_style.spacing.button_padding.x = 3.0;
-    custom_style.spacing.button_padding.y = 2.0;
+    custom_style.spacing.button_padding.y = 3.0;
     custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
     custom_style.spacing.combo_height = 55.0; 
     custom_style.spacing.combo_width = 100.0;
@@ -384,9 +383,11 @@ fn set_style() -> Arc<Style>{
     custom_style.interaction.resize_grab_radius_corner = 10.0;
     custom_style.visuals.window_shadow.spread = 8.0;
     custom_style.visuals.window_shadow.blur = 10.0;
+    // custom_style.visuals.panel_fill = Color32::from_rgb(16,16,17);
+    // custom_style.visuals.window_fill = Color32::from_rgb(16,16,17);
     custom_style.visuals.selection.stroke.color =  Color32::from_rgba_premultiplied(199, 20, 150, 100);
     custom_style.visuals.selection.bg_fill = Color32::from_rgba_premultiplied(40,40,40,20);
-    custom_style.visuals.widgets.inactive.bg_fill =  Color32::DARK_GRAY;
+    custom_style.visuals.widgets.inactive.bg_fill =  Color32::from_rgb(17,17,19);
     custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
     custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
     custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));

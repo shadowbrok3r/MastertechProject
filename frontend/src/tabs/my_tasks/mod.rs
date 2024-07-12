@@ -1,38 +1,40 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, ColumnLayout, FilterTasks}};
+use crate::{app_state::MtechServerContext, utilities::{ColumnLayout, FilterTasks}};
 use database::schema::{Status, TaskPayload};
 use eframe::egui::Ui;
 
 impl MtechServerContext{
     pub fn my_tasks(&mut self, ui: &mut Ui){ 
-        if let Some(tasks) = self.tasks.clone(){
-            if let Some(users) = self.store_users.as_ref(){
-                let page = "my_tasks";
-                let col_names = vec!["Todo".to_string(), "In Repair".to_string(), "Complete".to_string()];
-                let database = self.database.as_ref().unwrap().clone();   
-                let current_user = self.current_user.as_ref().unwrap();
-                self.task_map.clear();
-                let tasks_by_column = &mut self.task_map;
+        if let Some(users) = self.store_users.as_ref(){
+            // let temp_map: BTreeMap<String, Vec<TaskPayload>> = std::mem::replace(&mut self.task_map, BTreeMap::new());
+            self.task_map.clear();
+            let mut col_names = Vec::new();
+            col_names.push("Complete".to_string());
+            col_names.push("In Repair".to_string());
+            col_names.push("Todo".to_string());
+            let current_user = self.current_user.as_ref().unwrap();
+            let mut vals = Status::VALUES;
+                // Define the custom sort order
+            let order = |mut name: Status| match name.as_str() {
+                "Todo" => 1,
+                "In Repair" => 2,
+                "Complete" => 3,
+                _ => 4, // Default case if there are other unexpected items
+            };
+            
+            vals.sort_unstable_by_key(|x| order(x.clone()));
 
-                if !self.task_layouts.contains_key(page) {
-                    let task_layout_opts = TaskLayout::new(
-                        tasks_by_column.clone(),
-                        col_names,
-                        database,
-                        self.ui_actions_tx.clone(),
-                        Some(users.clone()),
-                    );
-                    self.task_layouts.insert(page.to_string(), task_layout_opts);
-                } else if let Some(task_layout) = self.task_layouts.get_mut(page) {
-                    for mut status in Status::VALUES{
-                        let filtered: Vec<TaskPayload> = tasks
-                            .filter_by_status(&status)
-                            .filter_by_assignee(current_user);
-                        tasks_by_column.insert(status.as_str().to_string(), filtered);
-                    }
-                    task_layout.update_tasks(tasks_by_column.clone(), col_names.clone());
-                    task_layout.layout_cols(ui);
-                }
+            for mut status in vals{
+                let filtered: Vec<TaskPayload> = self.tasks
+                    .filter_by_status(&status)
+                    .filter_by_assignee(current_user);
+                
+                self.task_map.entry(status.as_str().to_string()).or_insert(filtered);
             }
+        
+            self.task_layout.update_assignees(Some(users.clone()))
+                .update_col_names(col_names)
+                .update_tasks(self.task_map.clone())
+                .layout_cols(ui);
         }
     }
 }

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
-use database::Database;
+use database::DATABASE;
 use database::schema::{Priority, Record, TaskPayload, User};
 use log::info;
 use serde::Serialize;
@@ -26,11 +26,11 @@ pub struct SortTasks{
 #[derive(Serialize)]
 pub struct TaskLayout{
     pub search_inputs: HashMap<String, String>,
-    pub task_map: HashMap<String, Vec<TaskPayload>>,
+    pub task_map: BTreeMap<String, Vec<TaskPayload>>,
     pub column_names: Vec<String>,
     #[serde(skip)]
-    pub database: Database,
-    #[serde(skip)]
+    // pub database: Database,
+    // #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
     pub assignees: Option<Vec<User>>,
 
@@ -39,18 +39,26 @@ pub struct TaskLayout{
 
 impl TaskLayout { 
     pub fn new(
-        task_map: HashMap<String, Vec<TaskPayload>>,
+        task_map: BTreeMap<String, Vec<TaskPayload>>,
         column_names: Vec<String>,
-        database: Database,
         ui_actions_tx: Sender<TaskUiActions>,
         assignees: Option<Vec<User>>,
     ) -> Self {
-        Self {  task_map, column_names, database, ui_actions_tx, search_inputs: HashMap::new(), assignees, open_menu: false }
+        Self {  task_map, column_names, ui_actions_tx, search_inputs: HashMap::new(), assignees, open_menu: false }
     }
 
-    pub fn update_tasks(&mut self,task_map: HashMap<String, Vec<TaskPayload>>, column_names: Vec<String>) {
+    pub fn update_tasks(&mut self,task_map: BTreeMap<String, Vec<TaskPayload>>) -> &mut Self {
         self.task_map = task_map;
+        self
+    }
+
+    pub fn update_assignees(&mut self, assignees: Option<Vec<User>>) -> &mut Self {
+        self.assignees = assignees;
+        self
+    }
+    pub fn update_col_names(&mut self, column_names: Vec<String>) -> &mut Self {
         self.column_names = column_names;
+        self
     }
 }
 
@@ -126,7 +134,7 @@ impl ColumnLayout for TaskLayout {
                             if !search_input.is_empty(){
                                 for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
                                     if let Some(store_users) = &self.assignees {
-                                        let action = task.display_cards(ui, self.database.to_owned(), &store_users.as_ref());
+                                        let action = task.display_cards(ui, &store_users.as_ref());
                                         if let Some(action) = action{
                                             match action{
                                                 TaskUiActions::OpenTaskModal(task) => {
@@ -144,7 +152,7 @@ impl ColumnLayout for TaskLayout {
                             }else{
                                 for task in tasks {
                                     if let Some(store_users) = &self.assignees {
-                                        let action = task.display_cards(ui, self.database.to_owned(), &store_users.as_ref());
+                                        let action = task.display_cards(ui, &store_users.as_ref());
                                         if let Some(action) = action{
                                             match action{
                                                 TaskUiActions::OpenTaskModal(task) => {
@@ -170,12 +178,12 @@ impl ColumnLayout for TaskLayout {
 
     fn headers(&mut self, mut s: Strip){
         let header_frame = Frame::default()
-            .fill(Color32::from_rgb(20, 20, 25))
+            .fill(Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(4.0, 1.0))
             .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(70)));
-
+            .stroke(Stroke::new(0.4, Color32::WHITE));
+        // ui.style_mut().spacing.button_padding.y = 4.0;
         for (name, tasks) in self.task_map.iter(){
             s.cell(|ui|{
                 header_frame.show(ui, |ui|
@@ -192,16 +200,14 @@ impl ColumnLayout for TaskLayout {
                             TextEdit::singleline(search_input)
                                 .hint_text("Search")
                                 .desired_width(100.0)
-                                .margin(margin)
-                                // .font(FontId::new(11.0, FontFamily::Name("Regular".into())))
-                                .ui(ui);
+                                .margin(margin).ui(ui);
 
                             ui.add_space(ui.available_width() / 3.4);
                             
                             let response = Button::new(RichText::new(name.to_owned())
-                                    .color(Color32::LIGHT_RED)
+                                    .color(Color32::from_rgb(191, 33, 101))
                                     .size(13.0).monospace()
-                                ).fill(Color32::TRANSPARENT).min_size(Vec2::new(60.0, 15.0)).ui(ui);
+                                ).fill(Color32::from_rgb(22,22,22)).rounding(Rounding::same(2.)).min_size(Vec2::new(60.0, 15.0)).ui(ui);
 
                             if response.clicked(){
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
@@ -229,10 +235,10 @@ impl ColumnLayout for TaskLayout {
                                 match action{
                                     TaskActions::MarkComplete => {
                                         let id: Vec<String> = tasks.iter().map(|t| t.id.clone().unwrap().0.id.to_string()).collect::<Vec<String>>();
-                                        let db = self.database.clone();
+                                        
                                         info!("ids: {:?}", id);
                                         spawn_local(async move {
-                                            let _x: Vec<Record> = db.database.query("fn::mark_all_completion($ids, $completion)")
+                                            let _x: Vec<Record> = DATABASE.query("fn::mark_all_completion($ids, $completion)")
                                                 .bind(("ids", id))
                                                 .bind(("completion", true))
                                                 .await.unwrap().take(0).unwrap();
@@ -240,9 +246,9 @@ impl ColumnLayout for TaskLayout {
                                     },
                                     TaskActions::MarkIncomplete => {
                                         let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
-                                        let db = self.database.clone();
+                                        
                                         spawn_local(async move {
-                                            let _x: Vec<Record> = db.database.query("fn::mark_all_completion($ids, $completion)")
+                                            let _x: Vec<Record> = DATABASE.query("fn::mark_all_completion($ids, $completion)")
                                                 .bind(("ids", id))
                                                 .bind(("completion", false))
                                                 .await.unwrap().take(0).unwrap();
@@ -250,13 +256,13 @@ impl ColumnLayout for TaskLayout {
                                     },
                                     TaskActions::MarkDueToday => {
                                         let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
-                                        let db = self.database.clone();
+                                        
                                         spawn_local(async move {
                                             let query = "fn::mark_all_completion($ids, $completion)";
-                                            let _ = db.database.set("ids", id);
-                                            let _ = db.database.set("completion", true);
+                                            let _ = DATABASE.set("ids", id);
+                                            let _ = DATABASE.set("completion", true);
 
-                                            let _x: Vec<Record> = db.sql(query).await.unwrap();
+                                            let _x: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
                                         });
                                     }, _ => {}
                                 }
@@ -269,9 +275,11 @@ impl ColumnLayout for TaskLayout {
                         {
                             let button = Button::new(
                                 RichText::new("✚")
-                                    .color(Color32::LIGHT_RED)
+                                    .color(Color32::from_rgb(191, 33, 101))
                                 )
-                                .fill(Color32::TRANSPARENT)
+                                // .fill(Color32::TRANSPARENT)
+                                .rounding(Rounding::same(2.))
+                                .fill(Color32::from_rgb(22,22,22))
                                 .min_size(Vec2::new(30.0, 15.0))
                                 .ui(ui);
 

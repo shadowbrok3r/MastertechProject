@@ -201,7 +201,7 @@ impl FileSystem {
                 self.progress += y as f64;
             }
         }
-        ProgressBar::new(self.progress as f32/ self.total_size as f32).show_percentage().fill(Color32::from_rgb(200, 50, 200)).ui(ui);
+        ProgressBar::new(self.progress as f32/ self.total_size as f32).show_percentage().fill(Color32::from_rgba_premultiplied(50, 10, 50, 65)).ui(ui);
     }
 
     fn path_lookup(&self, file_name: &str) -> Option<String> {
@@ -329,16 +329,16 @@ impl FileSystem {
             let mut byte_stream = resp.bytes_stream();
             info!("Content length: {content_length}");
             let file = task.await;
-            let mut bytes = Bytes::new();
+            let mut _bytes = Bytes::new();
             while let Some(item) = byte_stream.next().await{
                 let chunk = item.unwrap().clone();
-                bytes = chunk.clone();
+                _bytes = chunk.clone();
                 let _ = tx.try_send((chunk.to_vec(), content_length));
                 downloaded_bytes += chunk.len() as u64;
                 if downloaded_bytes == content_length {
                     info!("Downloaded: {downloaded_bytes}");
                     if let Some(ref file) = file {
-                        file.write(&bytes.to_vec().as_slice()).await.unwrap();
+                        file.write(&_bytes.to_vec().as_slice()).await.unwrap();
                     }
                 }
             }

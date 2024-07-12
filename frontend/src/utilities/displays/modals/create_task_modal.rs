@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use database::{schema::{CustomerData, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, User, TASK_TABLE}, Database};
+use database::{schema::{CustomerData, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, User, TASK_TABLE}, DATABASE};
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use eframe::egui::{vec2, Grid, ScrollArea};
 use egui_extras::DatePickerButton;
@@ -21,8 +21,6 @@ pub struct CreateTaskModal{
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
     pub full_span_content: bool,  
-    #[serde(skip)]
-    pub database: Option<Database>,
     pub store_users: Option<Vec<User>>,
 
     pub ticket_data: TicketData,
@@ -41,7 +39,7 @@ pub struct CreateTaskModal{
 
 impl CreateTaskModal{
     /// Create a new modal with the given title.
-    pub fn new(title: &str, database: Option<Database>, store_users: Option<Vec<User>>) -> Self {
+    pub fn new(title: &str, store_users: Option<Vec<User>>) -> Self {
         Self {
             title: title.to_owned(),
             min_width: Some(600.0),
@@ -50,7 +48,6 @@ impl CreateTaskModal{
             full_span_content: false,
             state: ModalState::default(),
             due_date: Utc::now().date_naive(),
-            database,
             store_users,
             ..Default::default()
         }
@@ -139,7 +136,6 @@ impl DisplayModal for CreateTaskModal {
                 .ui(ui)
                 .clicked()
             {
-                let db = self.database.clone();
                 let time = NaiveTime::from_hms_milli_opt(0,0,0,0).unwrap();
                 let date = NaiveDateTime::new(self.due_date, time);
                 let y = date.and_utc().to_rfc3339();
@@ -168,18 +164,14 @@ impl DisplayModal for CreateTaskModal {
                 };
 
                 spawn_local(async move{
-                    if let Some(db) = db{
-                        let _: Vec<Record> = db
-                        .database
+                        let _: Vec<Record> = DATABASE
                         .create(TASK_TABLE)
                         .content(task_payload)
                         .await
                         .unwrap();
-                    }
-            
                 });
             }
-            // ui.add_space(ui.available_width() / 3.0);
+            ui.add_space(ui.available_width() / 3.0);
         });
         None
     }

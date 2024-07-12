@@ -1,6 +1,6 @@
-use database::schema::TaskPayload;
+use database::{schema::TaskPayload, DATABASE};
 use futures::StreamExt;
-use database::{schema::*, Database};
+use database::schema::*;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
 use wasm_bindgen_futures::spawn_local;
@@ -201,29 +201,29 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload,existing_task: &TaskPaylo
     }
 }
 
-pub fn listen_data<T>(db: Database, tx: Sender<(Action, T)>) 
+pub fn listen_data<T>(tx: Sender<(Action, T)>) 
     where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin
 {
     spawn_local(async move {
-        let client_stream: Stream<Client, Vec<T>> = db.database.select(CONNECTED_CLIENT_TABLE).live().await.unwrap();
+        let client_stream: Stream<Client, Vec<T>> = DATABASE.select(CONNECTED_CLIENT_TABLE).live().await.unwrap();
         handle_streams(client_stream, tx).await;
     });
 }
 
-pub fn listen_task_notes(db: Database, tx: Sender<(Action, TaskNotePayload)>) 
+pub fn listen_task_notes(tx: Sender<(Action, TaskNotePayload)>) 
     // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
 {
     spawn_local(async move {
-        let task_stream: Stream<Client, Vec<TaskNotePayload>> = db.database.select(TASK_NOTE_TABLE).live().await.unwrap();
+        let task_stream: Stream<Client, Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await.unwrap();
         handle_streams(task_stream, tx).await;
     });
 }
 
-pub fn listen_tasks(db: Database, tx: Sender<(Action, LiveTaskPayload)>) 
+pub fn listen_tasks(tx: Sender<(Action, LiveTaskPayload)>) 
     // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
 {
     spawn_local(async move {
-        let task_stream: Stream<Client, Vec<LiveTaskPayload>> = db.database.select(TASK_TABLE).live().await.unwrap();
+        let task_stream: Stream<Client, Vec<LiveTaskPayload>> = DATABASE.select(TASK_TABLE).live().await.unwrap();
         handle_streams(task_stream, tx).await;
     });
 }
