@@ -1,5 +1,5 @@
 use crossbeam::channel::Sender;
-use database::Database;
+use database::{Database, DATABASE};
 use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Spinner, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
@@ -41,7 +41,7 @@ impl Login{
                             info!("set cookies");
                         }else{ 
                             info!("no usr"); 
-                            let _ = db.database.invalidate().await;
+                            let _ = DATABASE.invalidate().await;
                             match appstate_tx.try_send(AppState::NoAuth("No user was found".to_string())){
                                 Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                 Err(e) => info!("Error {e:?}"),
@@ -49,7 +49,7 @@ impl Login{
                         }
                     }else{ 
                         info!("no cookie"); 
-                        let _ = db.database.invalidate().await;
+                        let _ = DATABASE.invalidate().await;
                         match appstate_tx.try_send(AppState::NoAuth("No cookie was found".to_string())){
                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                             Err(e) => info!("Error {e:?}"),

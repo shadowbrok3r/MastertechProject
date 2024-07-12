@@ -21,7 +21,9 @@ impl MtechServer{
                         &"Terminal".to_string(),
                         &"Web Console".to_string(),
                         &"Completed Tasks".to_string(),
-                        &"Bug Report".to_string()
+                        &"Bug Report".to_string(),
+                        &"Ai Playground".to_string(),
+                        // &"Bug Report".to_string()
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)
@@ -41,8 +43,8 @@ impl MtechServer{
                 ui.add_space(30.0);
                 let mut inputs = BTreeSet::new();
                 
-                if let Some(tasks) = &self.context.tasks{
-                    for task in tasks.iter(){
+
+                    for task in self.context.tasks.iter(){
                         inputs.insert(task.task_name.clone());
                         inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
                     }
@@ -54,21 +56,17 @@ impl MtechServer{
                         .max_suggestions(10)
                         .set_text_edit_properties(|text_edit: TextEdit<'_>| 
                     {
-                        
                         text_edit
                             .hint_text("Search for task")
                             .desired_width(150.0)
                             .font(FontId::proportional(12.0))
                             .frame(true)
-                            // .horizontal_align(egui::Align::Center)
-                    })
-                    .ui(ui);
-                
-                    // result.
+                    }).ui(ui);
+
                     if result.clicked(){
                         info!("selected? {}", self.context.search_input.clone());
                         if let Some(input) = inputs.get(&self.context.search_input){
-                            let task = tasks.iter().find(|&x| 
+                            let task = self.context.tasks.iter().find(|&x| 
                                 x.task_name == *input || format!("{}",x.service_number.clone().unwrap_or_default()) == format!("{}",*input)
                             );
 
@@ -77,7 +75,7 @@ impl MtechServer{
                             }
                         }
                     }
-                }
+                
             });
 
             if let Some(usr) = &self.context.current_user{
@@ -93,7 +91,7 @@ impl MtechServer{
 
                 ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                     ui.add_space(10.0);
-                    let txt = RichText::new(format!("Welcome, {}", usr.name)).color(Color32::from_rgb(100,50,100));
+                    let txt = RichText::new(usr.name.clone()).color(Color32::from_rgb(100,50,100));
                     ui.menu_button(txt, |ui| {
                         if ui.add(Button::new("Account Settings")).clicked(){
                         
@@ -124,12 +122,8 @@ impl MtechServer{
                             }
                         }
                     });
-                    
-                    // if ui.add(Button::new("Web Console")).clicked(){
-                    //     self.state = AppState::Authenticated(MainPages::WebConsole);
-                    // }
-                    
-
+                    ui.add_space(5.0);
+                    ui.label("Welcome, ");
                 });
             }else{
                 ui.add(Button::new("Login"));

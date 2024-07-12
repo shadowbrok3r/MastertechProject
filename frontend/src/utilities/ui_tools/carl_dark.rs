@@ -76,7 +76,7 @@ impl Aesthetix for CarlDark {
     }
 
     fn scroll_bar_width_style(&self) -> f32 {
-        14.0
+        8.0
     }
 
     fn rounding_visuals(&self) -> f32 {

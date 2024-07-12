@@ -9,27 +9,23 @@ impl MtechServerContext {
         ui.ctx().request_repaint();
 
         let mut inner_margin_top = Margin::default();
-        inner_margin_top.left = 3.0;
-        inner_margin_top.right = 3.0;
         inner_margin_top.top = 5.0;
-        inner_margin_top.bottom = 5.0;
 
-        let top_panel_frame = Frame::default().fill(Color32::from_rgb(20,20,30))
-            .inner_margin(inner_margin_top)
-            .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(20)));
+        let top_panel_frame = Frame::default().inner_margin(inner_margin_top)
+            .rounding(Rounding::same(10.0));
 
 
         let mut inner_margin = Margin::default();
-        inner_margin.top = 5.0;
+        inner_margin.top = 3.0;
         inner_margin.left = 3.0;
         inner_margin.right = 3.0;
+        inner_margin.bottom = 5.0;
 
         let panel_frame = Frame::default()
-            .fill(Color32::from_rgb(15,15,22))
+            .fill(Color32::from_rgb(12, 12, 14))
             .inner_margin(inner_margin)
             .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(20)));
+            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
         
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
 

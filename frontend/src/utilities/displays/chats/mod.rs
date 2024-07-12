@@ -45,7 +45,7 @@ impl ChatView {
             current_user: Some(current_user),
             messages,
             state: ModalState::default(),
-            title: "Chats".to_string(),
+            title: "Chat".to_string(),
             markdown_editor: EasyMarkEditor::default(),
             task_id: Some(task_id)
         }

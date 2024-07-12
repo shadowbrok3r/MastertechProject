@@ -1,9 +1,6 @@
 use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
 use reqwest::{header::{ACCEPT, AUTHORIZATION, USER_AGENT}, Client};
-use serde::{Deserialize, Serialize};
-use serde_json::*;
 use wasm_bindgen_futures::spawn_local;
-use std::error::Error;
 use log::info;
 
 use crate::app_state::MtechServerContext;
@@ -97,7 +94,7 @@ pub async fn create_new_issue(title: String, body: String, client: Client)
         ]
     });
 
-    let res = client
+    let _res = client
         .post("https://api.github.com/repos/shadowbrok3r/Mtechserver2.0/issues")
         .header(AUTHORIZATION, TOKEN)
         .header(ACCEPT, "application/vnd.github+json")

@@ -1,7 +1,7 @@
 use crossbeam::channel::Sender;
 use displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::{ModalAction, TaskModal}, ModalResponse, ModalState}};
 use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
-use database::{schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
+use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -36,7 +36,7 @@ pub enum ModalType{
 }
 
 pub trait Displayable{ 
-    fn display_cards(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<TaskUiActions>;
+    fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Option<TaskUiActions>;
 }
 
 pub trait DisplayCards{ 
@@ -51,28 +51,28 @@ pub trait ColumnLayout{
 }
 
 pub trait Updatable { // This is correctly implemented
-    fn update_completed(&self, completed: bool, db: Database);
-    fn update_due_date(&self, due_date: String, db: Database);
-    fn update_assignee_initials(&self, initials: String, db: Database);
-    fn update_task_name(&self, name: String, db: Database);
-    fn update_status(&self, status: Status, db: Database);
-    fn update_dep(&self, store: Store, db: Database);
-    fn update_priority(&self, priority: Option<Priority>, db: Database);
-    fn update_task_description(&self, description: String, db: Database);
-    fn update_checkin_notes(&self, checkin_notes: Option<String>, db: Database);
-    fn update_task_notes(&self, new_msg: String, db: Database);
+    fn update_completed(&self, completed: bool);
+    fn update_due_date(&self, due_date: String);
+    fn update_assignee_initials(&self, initials: String);
+    fn update_task_name(&self, name: String);
+    fn update_status(&self, status: Status);
+    fn update_dep(&self, store: Store);
+    fn update_priority(&self, priority: Option<Priority>);
+    fn update_task_description(&self, description: String);
+    fn update_checkin_notes(&self, checkin_notes: Option<String>);
+    fn update_task_notes(&self, new_msg: String);
 }
 
 pub trait Interaction{ // This is correctly implemented
-    fn interact_task_name(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_task_description(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_checkin_notes(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_due_date(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_completed(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_status(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_dep(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_priority(&mut self, ui: &mut Ui, database: Database) -> Option<Response>;
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, database: Database, store_users: &Vec<User>) -> Option<Response>;
+    fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_task_description(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_due_date(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_completed(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_status(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response>;
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Option<Response>;
 }
 
 pub trait FilterTasks{ 
@@ -102,15 +102,15 @@ pub trait LiveUpdate{
 }
 
 pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
-    fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
-    fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
-    // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
-    fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
-    fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, db: Database, tx: Sender<Option<T>>);
-    // fn create_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    // fn get_data(&mut self, database: Database, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    // fn modify_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
-    // fn delete_data(&mut self, database: Database, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
+    fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
+    // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
+    fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
+    fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
+    // fn create_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    // fn get_data(&mut self, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    // fn modify_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
+    // fn delete_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
 }
 
 pub trait DisplayModal{

@@ -1,9 +1,9 @@
-use std::{cell::Cell, collections::{HashMap, HashSet}, rc::Rc};
+use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::{chats::markdown_editor::EasyMarkEditor, modals::{ChatModalHandler, Modal}}, ui_tools::toasts::Toasts}};
+use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal}, ui_tools::toasts::Toasts}};
 use gloo_worker::Spawnable;
 use log::info;
 use ratatui::Terminal;
@@ -71,18 +71,19 @@ pub struct NewTicketChannel {
 pub struct MtechServerContext{
     #[serde(skip)]
     pub current_user: Option<User>,
-    pub task_map: HashMap<String, Vec<TaskPayload>>,
+    pub task_map: BTreeMap<String, Vec<TaskPayload>>,
+    // pub task: TaskPayload,
     ///Gets data from the first run of the main loop
     pub first_run: bool,
 
     pub clients: HashMap<String, ConnectedClient>,
     /// Database connection
-    #[serde(skip)]
-    pub database: Option<Database>,
+    // #[serde(skip)]
+    // pub database: Option<Database>,
 
     /// All contained task data from database
     pub live_tasks: Option<LiveTaskPayload>,
-    pub tasks: Option<Vec<TaskPayload>>,
+    pub tasks: Vec<TaskPayload>,
     pub store_users: Option<Vec<User>>,
 
     /// Receives task data over crossbeam channel
@@ -166,6 +167,7 @@ pub struct MtechServerContext{
     /// Widgets / Modals / Ui for portions throughout the app
     pub new_note: bool,
     pub search_input: String,
+    pub task_layout: TaskLayout,
     pub task_layouts: HashMap<String, TaskLayout>,
     #[serde(skip)]
     pub ai_playground: AiPlayground,
@@ -244,16 +246,19 @@ impl MtechServer{
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
+        let mut tasks = Vec::new();
+        tasks.push(TaskPayload::default());
 
+        let ui_actions = ui_actions_tx.clone();
         let context = MtechServerContext{
+            // task: Vec::new(TaskPayload::default()),
             current_user: None,
             first_run: true,
             clients: HashMap::new(),
-            database: None,
 
-            task_map: HashMap::new(),
+            task_map: BTreeMap::new(),
             live_tasks: None,
-            tasks: None,
+            tasks,
             store_users: None,
 
             // CHANNEL SENDERS / RECEIVERS
@@ -272,8 +277,8 @@ impl MtechServer{
 
             // MODALS / LAYOUTS
             ai_playground: AiPlayground::default(),
+            task_layout: TaskLayout::new(BTreeMap::new(), Vec::new(), ui_actions, None),
             task_layouts: HashMap::new(),
-            // clients_layout: HashMap::new(),
             current_modal: ModalType::Null,
             task_modal_handler: ModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
@@ -320,18 +325,17 @@ impl MtechServerContext{
     pub fn handle_modals(&mut self, ctx: &Context){
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
-                let modal = if let Some(task) = &task_modal.task{
-                    if let Some(notes) = &task.task_note{
-                        // info!("Any new notes here? {:?}", notes.clone());
-                        
-                        let chat_modal = ChatView::new(notes.to_owned(), self.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
-                        
-                        TaskModal::new(chat_modal).title(task_modal.task.as_ref().unwrap().task_name.clone())
-                    }else{ TaskModal::new(ChatView::default()).title(task_modal.task.as_ref().unwrap().task_name.clone()) }
-                }else{
-                    info!("No task payload?");
-                    TaskModal::default().title(task_modal.task.as_ref().unwrap().task_name.clone())
-                };
+                let task = &task_modal.task;
+                let task_name = task.task_name.clone();
+                let id = &task.id.clone();
+                let modal = if let Some(notes) = &task.task_note{
+                    let chat_modal = ChatView::new(
+                        notes.to_owned(), 
+                        self.current_user.as_ref().unwrap().clone(), 
+                        id.clone().unwrap()
+                    );
+                    TaskModal::new(chat_modal, task.clone()).title(task_name.clone())
+                }else{ TaskModal::new(ChatView::default(), task.clone()).title(task_name.clone()) };
 
                 self.task_modal_handler.ui(
                     ctx, 
@@ -346,7 +350,7 @@ impl MtechServerContext{
             ModalType::CreateTaskModal(create_task_modal) => {
                 let response = self.create_task_modal_handler.ui(
                     ctx, 
-                    || CreateTaskModal::new("Create Task", self.database.clone(), self.store_users.clone()),
+                    || CreateTaskModal::new("Create Task", self.store_users.clone()),
                     |ui, _stay_open, page_state| create_task_modal.display(ui, page_state.to_owned()));
 
                 if let Some(response) = response{
@@ -361,8 +365,12 @@ impl MtechServerContext{
                     ctx, 
                     || Modal::new("Chats").default_height(600.0),
                     move |ui, _stay_open| {
-                        // EasyMarkEditor::default().ui(ui);
-                        chat_modal.ui(ui);
+                        if let Some(_new_message) = chat_modal.ui(ui){
+                            // if let (Some(db), Some(task)) = (self.database.clone(), self.task.clone()){
+                                
+                            //     task.update_task_notes(new_message, db);
+                            // }
+                        }
                     });
             }
             _ => {},

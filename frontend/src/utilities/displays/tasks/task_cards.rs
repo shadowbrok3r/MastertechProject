@@ -1,20 +1,21 @@
 use chrono::{DateTime, Utc};
-use database::Database;
 use eframe::egui::{RichText, Ui};
 use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
 use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use eframe::egui::Vec2;
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
-use log::info;
 
 use crate::utilities::{Displayable, Interaction, TaskUiActions};
 
+// impl TaskPayload {
+
+// }
 impl Displayable for TaskPayload{
     fn display_cards(
         &mut self, 
         ui: &mut Ui, 
-        database: Database, 
+        // database: Database, 
         store_users: &Vec<User>
     )  -> Option<TaskUiActions>{
         let mut res: Option<TaskUiActions> = None;
@@ -55,14 +56,14 @@ impl Displayable for TaskPayload{
                     {
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                self.interact_assignee_initials(ui, database.clone(), store_users);
+                                self.interact_assignee_initials(ui, store_users);
                             });
                             
                         });
 
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                self.interact_task_name(ui, database.clone());
+                                self.interact_task_name(ui);
                             });
                         });
                         s.cell(|ui|{
@@ -75,7 +76,7 @@ impl Displayable for TaskPayload{
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                self.interact_completed(ui, database.clone());
+                                self.interact_completed(ui);
                             });
                         });
                     });
@@ -96,15 +97,15 @@ impl Displayable for TaskPayload{
                     {
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), 
-                                |ui| self.interact_priority(ui, database.clone()));
+                                |ui| self.interact_priority(ui));
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), 
-                                |ui| self.interact_due_date(ui, database.clone()));
+                                |ui| self.interact_due_date(ui));
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft),
-                                |ui| self.interact_status(ui, database.clone()));
+                                |ui| self.interact_status(ui));
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft), |ui|{
@@ -112,10 +113,10 @@ impl Displayable for TaskPayload{
                                 if let Some(task_notes) = &self.task_note{
                                     count = task_notes.len();
                                 }
+                                ui.style_mut().spacing.button_padding.x = 6.0;
+                                ui.style_mut().spacing.button_padding.y = 6.0;
                                 let txt = if count > 0 { RichText::new(format!("{} 💬", count)).color(Color32::LIGHT_RED) } else { RichText::new("💬").color(Color32::WHITE) };
-
                                 if Button::new(txt).small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
-                                    info!("Chat Clicked");
                                     res = Some(TaskUiActions::OpenChatModal((self.id.as_ref().unwrap().clone(), self.task_note.clone().unwrap_or(Vec::new()))))
                                     // res = Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
                                 }
@@ -135,7 +136,7 @@ impl Displayable for TaskPayload{
                         {
                             let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}", self.id.as_ref().unwrap().0.id));
                             let task_descrip_head = CollapsingHeader::new("Task Description").id_source(task_descrip_header);
-                            task_descrip_head.show_unindented(ui, |ui| self.interact_task_description(ui, database.clone()));
+                            task_descrip_head.show_unindented(ui, |ui| self.interact_task_description(ui));
                         });
                     });
                 });

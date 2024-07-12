@@ -1,6 +1,6 @@
 use async_openai_wasm::types::ChatChoice;
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{epaint::Shadow, Align, Button, CollapsingHeader, Color32, Direction, Frame, Key, Label, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Spinner, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Vec2b, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Ui, Vec2, Widget};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
 

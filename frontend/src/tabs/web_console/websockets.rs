@@ -1,6 +1,6 @@
 
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
-use database::{schema::ConnectedClient, Database};
+use database::{schema::ConnectedClient, DATABASE};
 use eframe::egui::{epaint::Shadow, Align, Button, CollapsingHeader, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, Strip};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
@@ -13,7 +13,7 @@ use super::charts::LinePlot;
 
 pub trait ClientHandler { 
     fn connect(&mut self);
-    fn export_logs(&mut self, db: Database, history: Vec<String>);
+    fn export_logs(&mut self, history: Vec<String>);
 }
 
 pub enum ClientConnection{
@@ -438,13 +438,13 @@ impl WebSocketClient{
 impl ClientHandler for ConnectedClient {
     fn connect(&mut self) { }
 
-    fn export_logs(&mut self, db: Database, history: Vec<String>) {
+    fn export_logs(&mut self, history: Vec<String>) {
         let id = self.id.clone().unwrap().0;
         spawn_local(async move {
             // db.database.set("id", id).await.unwrap();
             // db.database.set("history", history.clone()).await.unwrap();
             let query = format!("UPDATE {id:?} SET command_history = {history:?}");
-            let update_history: Result<Response, surrealdb::Error> = db.database.query(query)
+            let update_history: Result<Response, surrealdb::Error> = DATABASE.query(query)
                 .await;
 
             info!("History: {update_history:#?}");
