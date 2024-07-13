@@ -70,6 +70,12 @@ impl Login{
                 },
                 Err(e) => {
                     info!("Error with db: {e:?}");
+                    if e.to_string().contains("Already connected"){
+                        match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
+                            Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
+                            Err(e) => info!("Error {e:?}"),
+                        }
+                    }
                     match appstate_tx.try_send(AppState::NoAuth(e.to_string())){
                         Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                         Err(e) => info!("Error {e:?}"),

@@ -126,17 +126,21 @@ impl eframe::App for MtechServer {
                 },
                 Err(e) => {
                     info!("{e:?}");
-                    let toast = &mut self.context.toasts;
+                    if e.to_string().contains("Already connected"){
+                        self.state = AppState::Authenticated(MainPages::Tasks); 
+                    } else {
+                        let toast = &mut self.context.toasts;
     
-                    let auth_toast = Toast{
-                        kind: ToastKind::Error,
-                        text: format!("{e:?} \nYou may need to login again").into(),
-                        options: ToastOptions::default()
-                            .show_progress(true)
-                            .duration_in_seconds(6.0)
-                    };
-                    toast.add(auth_toast);
-                    self.state = AppState::NoAuth("Needs login".to_string());
+                        let auth_toast = Toast{
+                            kind: ToastKind::Error,
+                            text: format!("{e:?} \nYou may need to login again").into(),
+                            options: ToastOptions::default()
+                                .show_progress(true)
+                                .duration_in_seconds(6.0)
+                        };
+                        toast.add(auth_toast);
+                        self.state = AppState::NoAuth("Needs login".to_string());
+                    }
                 }
             }
         }

@@ -145,7 +145,6 @@ pub fn update_or_insert(
     new_task: LiveTaskPayload,
     new_ticket: Option<TicketPayload>
 ) -> anyhow::Result<(), anyhow::Error>{
-
     if let Some(ref id) = new_task.id {
         let mut updated = false;
 
