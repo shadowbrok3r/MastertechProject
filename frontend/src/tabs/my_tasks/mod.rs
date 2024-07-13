@@ -27,9 +27,13 @@ impl MtechServerContext{
                 let filtered: Vec<TaskPayload> = self.tasks
                     .filter_by_status(&status)
                     .filter_by_assignee(current_user);
-                
-                self.task_map.entry(status.as_str().to_string()).or_insert(filtered);
-                self.task_layout.update_tasks(self.task_map.to_owned());
+
+                self.task_map.get_mut(status.as_str()).get_or_insert(&mut filtered);
+                // self.task_map.entry(status.as_str().to_string()).or_insert(filtered);
+                if let Some(tasks) = self.task_map.get(&status) {
+                    // tasks.iter().any(|t| t.id == )
+                    self.task_layout.update_tasks(self.task_map.to_owned());
+                }
             }
         
             self.task_layout
