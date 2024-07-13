@@ -28,13 +28,11 @@ pub struct TaskLayout{
     pub search_inputs: HashMap<String, String>,
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
     pub column_names: Vec<String>,
-    #[serde(skip)]
-    // pub database: Database,
-    // #[serde(skip)]
-    pub ui_actions_tx: Sender<TaskUiActions>,
     pub assignees: Option<Vec<User>>,
-
     pub open_menu: bool,
+
+    #[serde(skip)]
+    pub ui_actions_tx: Sender<TaskUiActions>,
 }
 
 impl TaskLayout { 
@@ -47,15 +45,11 @@ impl TaskLayout {
         Self {  task_map, column_names, ui_actions_tx, search_inputs: HashMap::new(), assignees, open_menu: false }
     }
 
-    pub fn update_tasks(&mut self, task_map: BTreeMap<String, Vec<TaskPayload>>) -> &mut Self {
-        self.task_map = task_map;
-        self
-    }
-
     pub fn update_assignees(&mut self, assignees: Option<Vec<User>>) -> &mut Self {
         self.assignees = assignees;
         self
     }
+
     pub fn update_col_names(&mut self, column_names: Vec<String>) -> &mut Self {
         self.column_names = column_names;
         self
@@ -297,11 +291,11 @@ impl ColumnLayout for TaskLayout {
                                     .with_timezone(&Utc)
                                     .date_naive();
 
-                                if due_date < current_date {
+                                if due_date < current_date && !task.completed{
                                     count += 1;
                                 }
                             }
-                            if count > 0{
+                            if count > 0 {
                                 ui.label("Overdue");
                                 ui.add_space(5.0);
                                 ui.colored_label(Color32::DARK_RED, format!("{count}"));

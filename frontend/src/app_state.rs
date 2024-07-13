@@ -3,7 +3,7 @@ use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal}, ui_tools::toasts::Toasts}};
+use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, ui_tools::toasts::Toasts}};
 use gloo_worker::Spawnable;
 use log::info;
 use ratatui::Terminal;
@@ -173,7 +173,8 @@ pub struct MtechServerContext{
     pub ai_playground: AiPlayground,
     #[serde(skip)]
     pub current_modal: ModalType,
-    pub task_modal_handler: ModalHandler<TaskModal>,
+    #[serde(skip)]
+    pub task_modal_handler: TaskModalHandler,
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
     #[serde(skip)]
     pub chat_modal_handler: ChatModalHandler,
@@ -280,7 +281,7 @@ impl MtechServer{
             task_layout: TaskLayout::new(BTreeMap::new(), Vec::new(), ui_actions, None),
             task_layouts: HashMap::new(),
             current_modal: ModalType::Null,
-            task_modal_handler: ModalHandler::default(),
+            task_modal_handler: TaskModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
             chat_modal: None,
             chat_modal_handler: ChatModalHandler::default(),
@@ -325,21 +326,10 @@ impl MtechServerContext{
     pub fn handle_modals(&mut self, ctx: &Context){
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
-                let task = &task_modal.task;
-                let task_name = task.task_name.clone();
-                let id = &task.id.clone();
-                let modal = if let Some(notes) = &task.task_note{
-                    let chat_modal = ChatView::new(
-                        notes.to_owned(), 
-                        self.current_user.as_ref().unwrap().clone(), 
-                        id.clone().unwrap()
-                    );
-                    TaskModal::new(chat_modal, task.clone()).title(task_name.clone())
-                }else{ TaskModal::new(ChatView::default(), task.clone()).title(task_name.clone()) };
-
+                let task_name = task_modal.task.task_name.clone();
                 self.task_modal_handler.ui(
                     ctx, 
-                    || modal,
+                    || Modal::new(&task_name).default_height(600.0),
                     move |ui, _stay_open, page_state| {
                         let action = task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action{
@@ -364,7 +354,7 @@ impl MtechServerContext{
                 self.chat_modal_handler.ui(
                     ctx, 
                     || Modal::new("Chats").default_height(600.0),
-                    move |ui, _stay_open| {
+                    move |ui, _stay_open, _page_state| {
                         if let Some(_new_message) = chat_modal.ui(ui){
                             // if let (Some(db), Some(task)) = (self.database.clone(), self.task.clone()){
                                 

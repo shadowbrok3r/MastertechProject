@@ -14,13 +14,13 @@ impl MtechServerContext{
                 let filtered: Vec<TaskPayload> = self.tasks
                     .filter_by_assignee(user)
                     .filter_by_completion(true);
-                self.task_map.entry(user.everest_initials.to_string()).or_insert(filtered);
+                // self.task_layout.task_map.entry(user.everest_initials.to_string()).or_insert(filtered);
             }
         
-            self.task_layout.update_assignees(Some(users.clone()))
-                .update_col_names(col_names)
-                .update_tasks(self.task_map.clone())
-                .layout_cols(ui);
+            // self.task_layout.update_assignees(Some(users.clone()))
+            //     .update_col_names(col_names)
+            //     // .update_tasks(self.task_map.clone())
+            //     .layout_cols(ui);
         }
     }
 }
