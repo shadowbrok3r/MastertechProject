@@ -70,15 +70,19 @@ impl Login{
                 },
                 Err(e) => {
                     info!("Error with db: {e:?}");
+                    // if let Some(err) = e.source() {
+                        
+                    // }
                     if e.to_string().contains("Already connected"){
                         match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                             Err(e) => info!("Error {e:?}"),
                         }
-                    }
-                    match appstate_tx.try_send(AppState::NoAuth(e.to_string())){
-                        Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                        Err(e) => info!("Error {e:?}"),
+                    } else {
+                        match appstate_tx.try_send(AppState::NoAuth(e.to_string())){
+                            Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
+                            Err(e) => info!("Error {e:?}"),
+                        }
                     }
                 },
             }

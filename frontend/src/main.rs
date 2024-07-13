@@ -128,6 +128,16 @@ impl eframe::App for MtechServer {
                     info!("{e:?}");
                     if e.to_string().contains("Already connected"){
                         self.state = AppState::Authenticated(MainPages::Tasks); 
+                        let toast = &mut self.context.toasts;
+    
+                        let auth_toast = Toast{
+                            kind: ToastKind::Success,
+                            text: format!("Already Connected").into(),
+                            options: ToastOptions::default()
+                                .show_progress(true)
+                                .duration_in_seconds(6.0)
+                        };
+                        toast.add(auth_toast);
                     } else {
                         let toast = &mut self.context.toasts;
     
@@ -146,9 +156,7 @@ impl eframe::App for MtechServer {
         }
         
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv(){
-            // info!("Got tasks? {tasks:?}");
             self.context.tasks = tasks;
-
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
