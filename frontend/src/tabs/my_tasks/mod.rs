@@ -29,11 +29,12 @@ impl MtechServerContext{
                     .filter_by_assignee(current_user);
                 
                 self.task_map.entry(status.as_str().to_string()).or_insert(filtered);
+                self.task_layout.update_tasks(self.task_map.to_owned());
             }
         
-            self.task_layout.update_assignees(Some(users.clone()))
+            self.task_layout
+                .update_assignees(Some(users.clone()))
                 .update_col_names(col_names)
-                .update_tasks(self.task_map.clone())
                 .layout_cols(ui);
         }
     }

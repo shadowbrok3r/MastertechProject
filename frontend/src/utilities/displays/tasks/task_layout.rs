@@ -47,7 +47,7 @@ impl TaskLayout {
         Self {  task_map, column_names, ui_actions_tx, search_inputs: HashMap::new(), assignees, open_menu: false }
     }
 
-    pub fn update_tasks(&mut self,task_map: BTreeMap<String, Vec<TaskPayload>>) -> &mut Self {
+    pub fn update_tasks(&mut self, task_map: BTreeMap<String, Vec<TaskPayload>>) -> &mut Self {
         self.task_map = task_map;
         self
     }
