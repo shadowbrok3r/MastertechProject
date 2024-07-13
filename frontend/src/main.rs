@@ -125,7 +125,7 @@ impl eframe::App for MtechServer {
                     }
                 },
                 Err(e) => {
-                    info!("{e:?}");
+                    
                     if e.to_string().contains("Already connected"){
                         self.state = AppState::Authenticated(MainPages::Tasks); 
                         let toast = &mut self.context.toasts;
@@ -139,6 +139,7 @@ impl eframe::App for MtechServer {
                         };
                         toast.add(auth_toast);
                     } else {
+                        info!("{e:?}");
                         let toast = &mut self.context.toasts;
     
                         let auth_toast = Toast{
@@ -170,9 +171,7 @@ impl eframe::App for MtechServer {
                     let task_modal = if let Some(notes) = &task.task_note{
                         let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
                         TaskModal::new(chat_modal, task.clone())
-                    }else{
-                        TaskModal::new(ChatView::default(), task.clone())
-                    };
+                    }else{ TaskModal::new(ChatView::default(), task.clone()) };
                     self.context.current_modal = ModalType::TaskModal(task_modal);
                     self.context.task_modal_handler.open();
                 },
@@ -188,78 +187,67 @@ impl eframe::App for MtechServer {
                         let chat_modal = ChatView::new(pld.1.to_owned(), current_user.clone(), pld.0.clone());
                         self.context.current_modal = ModalType::ChatView(chat_modal);
                         self.context.chat_modal_handler.open();
-                    }
-                    // self.context.chat = ModalType::ChatView(pld);
+                    }// self.context.chat = ModalType::ChatView(pld);
                 },
             }
         }
 
         if let Ok(ref new_task) = self.context.live_tasks_rx.try_recv(){
             let tx = self.context.new_ticket_tx.clone();
-            // if let Some(existing_tasks) = &mut self.context.tasks{
-                if let Some(service_num) = new_task.1.clone().service_number{
-                    if !service_num.is_empty() {
-                        let n_task = new_task.clone();
-                        spawn_local(async move {
-                            let x: Result<Response, surrealdb::Error> = DATABASE
-                                .query(
-                                    format!("SELECT * FROM service_order WHERE service_number == {}", service_num.clone())
-                                )
-                                .await;
-                            
-                            match x{
-                                Ok(mut data) => {
-                                    info!("data: {:?}", data);
-                                    let ticket: Option<TicketPayload> = data.take(0).unwrap();
+            if let Some(service_num) = new_task.1.clone().service_number{
+                if !service_num.is_empty() {
+                    let new_task = new_task.clone();
+                    spawn_local(async move {
+                        let res: Result<Response, surrealdb::Error> = DATABASE.query(format!(
+                                "SELECT * FROM service_order WHERE service_number == {}", service_num.clone()
+                            )).await;
+                        
+                        match res{
+                            Ok(mut data) => {
+                                info!("data: {:?}", data);
+                                let ticket: Option<TicketPayload> = data.take(0).unwrap();
+                                let new_ticket = ticket.unwrap_or_default();
+                                let chnnl = NewTicketChannel { new_ticket, new_task };
 
-
-                                    let chnnl = NewTicketChannel {
-                                        new_ticket: ticket.unwrap_or_default(),
-                                        new_task: n_task,
-                                    };
-                                    match tx.try_send(chnnl){
-                                        Ok(_) => info!("Sent ticket"),
-                                        Err(e) => info!("Error sending ticket: {e:?}")
-                                    }
-                                },
-                                Err(e) => info!("ERROR: {e:?}"),
-                            }
-                        });
-                    }
-                }else {
-                    handle_live_data(new_task.to_owned(), &mut self.context.tasks, None).unwrap();
+                                match tx.try_send(chnnl){
+                                    Ok(_) => info!("Sent ticket"),
+                                    Err(e) => info!("Error sending ticket: {e:?}")
+                                }
+                            },
+                            Err(e) => info!("ERROR: {e:?}"),
+                        }
+                    });
                 }
-            // }
+            }else {
+                handle_live_data(new_task.to_owned(), &mut self.context.tasks, None).unwrap();
+            }
         }
 
         if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
-            // if let Some(existing_tasks) = &mut self.context.tasks{
-                let live_task = channel.new_task.1;
-                let check = self.context.tasks.iter().any(|x| x.id == live_task.id);
-                info!("existing_tasks.service_num matches new task.service_num: {check}");
-                if !check{
-                    self.context.tasks.push(TaskPayload {
-                        id: live_task.id,
-                        task_name: live_task.task_name,
-                        service_ticket: Some(channel.new_ticket),
-                        everest_initials: live_task.everest_initials,
-                        task_description: live_task.task_description,
-                        assignee: live_task.assignee,
-                        service_number: live_task.service_number,
-                        due_date: live_task.due_date,
-                        priority: live_task.priority,
-                        task_note: None,
-                        completed: live_task.completed,
-                        status: live_task.status,
-                        dep: live_task.dep,
-                    });
-                } else {
-                    match update_or_insert(&mut self.context.tasks, live_task, None){
-                        Ok(_) => info!("Updated existing task"),
-                        Err(e) => info!("Error updating existing task: {e:?}"),
-                    }
+            let live_task = channel.new_task.1;
+            if !self.context.tasks.iter().any(|x| x.id == live_task.id){
+                info!("inserting task in self.context.tasks");
+                self.context.tasks.push(TaskPayload {
+                    id: live_task.id,
+                    task_name: live_task.task_name,
+                    service_ticket: Some(channel.new_ticket),
+                    everest_initials: live_task.everest_initials,
+                    task_description: live_task.task_description,
+                    assignee: live_task.assignee,
+                    service_number: live_task.service_number,
+                    due_date: live_task.due_date,
+                    priority: live_task.priority,
+                    task_note: None,
+                    completed: live_task.completed,
+                    status: live_task.status,
+                    dep: live_task.dep,
+                });
+            } else {
+                match update_or_insert(&mut self.context.tasks, live_task, None){
+                    Ok(_) => info!("Updated existing task"),
+                    Err(e) => info!("Error updating existing task: {e:?}"),
                 }
-            // }
+            }
         }
 
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){

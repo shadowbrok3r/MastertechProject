@@ -6,9 +6,6 @@ use log::info;
 use serde::Serialize;
 use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
-// use rfd::AsyncFileDialog;
-// use std::default;
-// use bytes::Bytes;
 
 use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes, Updatable};
 
@@ -243,7 +240,7 @@ impl DisplayModal for TaskModal {
                             });
                             s.empty();
                         });
-                    });// strip.cell(|ui|{  });
+                    });
                 });
             });
         });

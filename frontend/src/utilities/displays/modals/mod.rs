@@ -77,12 +77,21 @@ pub struct ChatModalResponse<R> {
     /// What the content closure returned, if it was actually run.
     pub inner: Option<R>,
     /// Whether the modal should remain open.
-    pub open: bool
+    pub open: bool,
+    pub page_state: ModalAction
 }
 #[derive(Default)]
 pub struct ChatModalHandler{
     modal: Option<Modal>,
     should_open: bool,
+    page_state: ModalAction
+}
+
+#[derive(Default)]
+pub struct TaskModalHandler{
+    modal: Option<Modal>,
+    should_open: bool,
+    page_state: ModalAction
 }
 
 pub struct Modal {
@@ -91,8 +100,38 @@ pub struct Modal {
     min_height: Option<f32>,
     default_height: Option<f32>,
     full_span_content: bool,
+    page_state: ModalAction
 }
 
+impl TaskModalHandler{
+    /// Open the model next time the [`ModalHandler::ui`] method is called.
+    pub fn open(&mut self) {
+        self.should_open = true;
+    }
+
+    /// Draw the modal window, creating/destroying it as required.
+    pub fn ui<R>(
+        &mut self,
+        ctx: &Context,
+        make_modal: impl FnOnce() -> Modal,
+        content_ui: impl FnMut(&mut Ui, &mut bool, &mut ModalAction) -> R,
+    ) -> Option<R> {
+        if self.modal.is_none() && self.should_open {
+            self.modal = Some(make_modal());
+            self.should_open = false;
+        }
+        if let Some(modal) = &mut self.modal {
+            let ChatModalResponse { inner, open, page_state } = modal.ui_modal(ctx, content_ui);
+            if !open {
+                self.modal = None;
+            }
+
+            inner
+        } else {
+            None
+        }
+    }
+}
 
 impl ChatModalHandler {
     /// Open the model next time the [`ModalHandler::ui`] method is called.
@@ -105,14 +144,14 @@ impl ChatModalHandler {
         &mut self,
         ctx: &Context,
         make_modal: impl FnOnce() -> Modal,
-        content_ui: impl FnMut(&mut Ui, &mut bool) -> R,
+        content_ui: impl FnMut(&mut Ui, &mut bool, &mut ModalAction) -> R,
     ) -> Option<R> {
         if self.modal.is_none() && self.should_open {
             self.modal = Some(make_modal());
             self.should_open = false;
         }
         if let Some(modal) = &mut self.modal {
-            let ChatModalResponse { inner, open } = modal.ui_modal(ctx, content_ui);
+            let ChatModalResponse { inner, open, page_state } = modal.ui_modal(ctx, content_ui);
             if !open {
                 self.modal = None;
             }
@@ -133,6 +172,7 @@ impl Modal {
             min_height: None,
             default_height: None,
             full_span_content: false,
+            page_state: ModalAction::None
         }
     }
 
@@ -171,12 +211,12 @@ impl Modal {
 
     /// Show the modal window.
     /// Typically called by [`ModalHandler::ui`].
-    fn ui_modal<R>(&mut self, ctx: &Context, content_ui: impl FnOnce(&mut Ui, &mut bool) -> R) -> ChatModalResponse<R> {
+    fn ui_modal<R>(&mut self, ctx: &Context, content_ui: impl FnOnce(&mut Ui, &mut bool, &mut ModalAction) -> R) -> ChatModalResponse<R> {
+
         // Implementation for showing the modal
         Self::dim_background(ctx);
 
         let mut open = ctx.input(|i| !i.key_pressed(Key::Escape));
-        // let mut page_state = &;
 
         let screen_height = ctx.screen_rect().height();
         let _screen_width = ctx.screen_rect().width();
@@ -231,7 +271,7 @@ impl Modal {
                 }
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = item_spacing_y;
-                    content_ui(ui, &mut open)
+                    content_ui(ui, &mut open, &mut self.page_state)
                 })
                 .inner
             })
@@ -256,7 +296,8 @@ impl Modal {
 
         ChatModalResponse {
             inner: response.and_then(|response| response.inner),
-            open
+            open,
+            page_state: self.page_state.clone()
         }
     }
 
