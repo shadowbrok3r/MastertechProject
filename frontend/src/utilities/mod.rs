@@ -5,12 +5,11 @@ use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPay
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+
 pub mod displays;
 pub mod update_tasks;
-pub mod get_tasks;
+pub mod get_data;
 pub mod interact_tasks;
-pub mod get_other;
-pub mod task_crud;
 pub mod filter;
 pub mod handle_live_data;
 pub mod sortable;

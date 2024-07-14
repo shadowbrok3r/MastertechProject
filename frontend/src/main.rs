@@ -1,15 +1,12 @@
-use app_state::{check_authentication, AppState, MainPages, MtechServer, NewTicketChannel};
-use database::{schema::{TaskPayload, TicketPayload}, DATABASE};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_connected_clients, get_store_users, get_associated_ticket, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert}, ModalType, TaskUiActions};
+use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
+use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
+use app_state::{check_authentication, AppState, MainPages, MtechServer};
+use wasm_bindgen_futures::spawn_local;
 use eframe::egui::FontFamily;
 use log::{debug, info};
-// use ratframe::NewCC;
-use surrealdb::{Action, Response};
-// use tabs::web_console::websockets::WebSocketClient;
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_other::{get_connected_clients, get_store_users}, get_tasks::get_tasks, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert}, ModalType, TaskUiActions};
-use wasm_bindgen_futures::spawn_local;
+use surrealdb::Action;
 use std::sync::Arc;
-use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
-use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 
 pub mod tabs;
 pub mod app_state;
@@ -19,7 +16,6 @@ pub mod pages;
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-
         // most important part of the whole app.. setting up our styling
         let arc_style = set_style();
         ctx.set_style(arc_style);
@@ -54,8 +50,7 @@ impl eframe::App for MtechServer {
             };
         }
 
-        // Retrieve our database connection, and 
-        // 2. Requesting some task data
+        // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.context.db_rx.try_recv(){
             info!("Got db");
             match db{
@@ -70,24 +65,22 @@ impl eframe::App for MtechServer {
                     let notes_tx = self.context.notes_tx.clone();
                     if let Some(usr) = self.context.current_user.as_ref(){
                         info!("Getting Initial data");
-                        get_tasks(initial_tasks_tx);
-                        get_store_users(store_users_tx, usr.store);
-                        listen_tasks(live_tasks_tx);
-                        listen_data(live_clients_tx);
-                        listen_task_notes(notes_tx);
-
                         let user = usr.clone();
+                        let name = usr.name.clone();
                         spawn_local(async move {
-                            match get_connected_clients(tx, user).await{
-                                Ok(_) => info!("Got clients"),
-                                Err(e) => info!("Error getting clients: {e:?}"),
-                            }
+                            let _ = get_tasks(initial_tasks_tx).await;
+                            let _ = get_store_users(store_users_tx, user.clone().store).await;
+                            let _ = listen_tasks(live_tasks_tx).await;
+                            let _ = listen_data(live_clients_tx).await;
+                            let _ = listen_task_notes(notes_tx).await;
+                            let _ = get_connected_clients(tx, user.clone()).await;
                         });
+
                         let toast = &mut self.context.toasts;
     
                         let auth_toast = Toast{
                             kind: ToastKind::Success,
-                            text: format!("Logged in successfully\nWelcome, {}", usr.name).into(),
+                            text: format!("Logged in successfully\nWelcome, {}", name).into(),
                             options: ToastOptions::default()
                                 .show_progress(true)
                                 .duration_in_seconds(6.0)
@@ -99,10 +92,11 @@ impl eframe::App for MtechServer {
                                 self.state = d.0;
                                 if let Some(ref usr) = d.1{
                                     self.context.current_user = Some(usr.clone());
-                                    get_tasks(initial_tasks_tx);
-                                    get_store_users(store_users_tx, usr.store);
-                                    // listen_tasks(live_tasks_tx);
-                                    // listen_task_notes(notes_tx);
+                                    let user = usr.clone();
+                                    spawn_local(async move {
+                                        let _ = get_tasks(initial_tasks_tx).await;
+                                        let _ = get_store_users(store_users_tx, user.store).await;
+                                    });
 
                                     let toast = &mut self.context.toasts;
                 
@@ -192,62 +186,27 @@ impl eframe::App for MtechServer {
             }
         }
 
-        if let Ok(ref new_task) = self.context.live_tasks_rx.try_recv(){
+        if let Ok(new_task) = self.context.live_tasks_rx.try_recv(){
             let tx = self.context.new_ticket_tx.clone();
-            if let Some(service_num) = new_task.1.clone().service_number{
+            if let Some(service_num) = new_task.clone().1.service_number{
                 if !service_num.is_empty() {
-                    let new_task = new_task.clone();
                     spawn_local(async move {
-                        let res: Result<Response, surrealdb::Error> = DATABASE.query(format!(
-                                "SELECT * FROM service_order WHERE service_number == {}", service_num.clone()
-                            )).await;
-                        
-                        match res{
-                            Ok(mut data) => {
-                                info!("data: {:?}", data);
-                                let ticket: Option<TicketPayload> = data.take(0).unwrap();
-                                let new_ticket = ticket.unwrap_or_default();
-                                let chnnl = NewTicketChannel { new_ticket, new_task };
-
-                                match tx.try_send(chnnl){
-                                    Ok(_) => info!("Sent ticket"),
-                                    Err(e) => info!("Error sending ticket: {e:?}")
-                                }
-                            },
-                            Err(e) => info!("ERROR: {e:?}"),
+                        match get_associated_ticket(tx, new_task.clone()).await{
+                            Ok(_) => info!("Got associated ticket"),
+                            Err(e) => info!("Error getting associated ticket: {e:?}")
                         }
                     });
                 }
-            }else {
-                handle_live_data(new_task.to_owned(), &mut self.context.tasks, None).unwrap();
-            }
+            }else { handle_live_data(new_task.to_owned(), &mut self.context.tasks, None).unwrap(); }
         }
 
         if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
-            let live_task = channel.new_task.1;
-            if !self.context.tasks.iter().any(|x| x.id == live_task.id){
-                info!("inserting task in self.context.tasks");
-                self.context.tasks.push(TaskPayload {
-                    id: live_task.id,
-                    task_name: live_task.task_name,
-                    service_ticket: Some(channel.new_ticket),
-                    everest_initials: live_task.everest_initials,
-                    task_description: live_task.task_description,
-                    assignee: live_task.assignee,
-                    service_number: live_task.service_number,
-                    due_date: live_task.due_date,
-                    priority: live_task.priority,
-                    task_note: None,
-                    completed: live_task.completed,
-                    status: live_task.status,
-                    dep: live_task.dep,
-                });
-            } else {
-                match update_or_insert(&mut self.context.tasks, live_task, None){
-                    Ok(_) => info!("Updated existing task"),
-                    Err(e) => info!("Error updating existing task: {e:?}"),
-                }
+            // If the live task does NOT already exist in our current vec<tasks>, then insert it
+            match update_or_insert(&mut self.context.tasks, channel.new_task.1, Some(channel.new_ticket)){
+                Ok(_) => info!("Updated existing task"),
+                Err(e) => info!("Error updating existing task: {e:?}"),
             }
+
         }
 
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
@@ -262,8 +221,8 @@ impl eframe::App for MtechServer {
         if let Ok(payload) = self.context.notes_rx.try_recv(){
             self.context.new_note = true;
             if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal{
-                    handle_live_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
-                    task_modal.chat_view.insert_note(payload.1);
+                handle_live_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
+                task_modal.chat_view.insert_note(payload.1);
             }
         }
 
@@ -281,39 +240,20 @@ impl eframe::App for MtechServer {
         }
 
         self.menu_bar(ctx);
-
-        // Always checking authentication.
-        match &self.state{
-            //if auth'd, user shall be allowed
-            AppState::Authenticated(MainPages::Tasks) => {
-                // info!("Main page state");
-                self.main_page(ctx);
-            },
-            // if no auth, appstate will be login_page
-            AppState::NoAuth(_reason) => {
-                self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
-                // info!("Login page state");
-            },
-            AppState::Authenticated(MainPages::Downloads) => {
-                self.downloads_page(ctx);
-            },
-            AppState::Authenticated(_) => {
-                self.main_page(ctx);
-            },
-            AppState::CreateAccount => {
-                // info!("Create Account state");
-                self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone());
-            }
-        }
-
         self.context.handle_modals(ctx);
         self.context.toasts.show(ctx);
+        // Always checking authentication.
+        match &self.state{
+            AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
+            AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
+            AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
+            AppState::Authenticated(_) => self.main_page(ctx),
+            AppState::CreateAccount => self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())
+        }
     }
 
     // Called by the frame work to save state before shutdown.
-    // fn save(&mut self, storage: &mut dyn eframe::Storage) { 
-        // eframe::set_value(storage, eframe::APP_KEY, self); 
-    // }
+    // fn save(&mut self, storage: &mut dyn eframe::Storage) {  eframe::set_value(storage, eframe::APP_KEY, self); }
 }
 
 // When compiling to web using trunk:

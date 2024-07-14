@@ -56,7 +56,11 @@ impl Displayable for TaskPayload{
                     {
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                self.interact_assignee_initials(ui, store_users);
+                                if let Some(response) = self.interact_assignee_initials(ui, store_users){
+                                    if response.secondary_clicked(){
+                                        res = Some(TaskUiActions::OpenTaskModal(self.to_owned()));
+                                    }
+                                }
                             });
                             
                         });

@@ -28,7 +28,7 @@ pub struct TaskLayout{
     pub search_inputs: HashMap<String, String>,
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
     pub column_names: Vec<String>,
-    pub assignees: Option<Vec<User>>,
+    pub assignees: Vec<User>,
     pub open_menu: bool,
 
     #[serde(skip)]
@@ -40,27 +40,67 @@ impl TaskLayout {
         task_map: BTreeMap<String, Vec<TaskPayload>>,
         column_names: Vec<String>,
         ui_actions_tx: Sender<TaskUiActions>,
-        assignees: Option<Vec<User>>,
+        assignees: Vec<User>,
     ) -> Self {
         Self {  task_map, column_names, ui_actions_tx, search_inputs: HashMap::new(), assignees, open_menu: false }
     }
 
-    pub fn update_assignees(&mut self, assignees: Option<Vec<User>>) -> &mut Self {
+    pub fn update_assignees(&mut self, assignees: Vec<User>) -> &mut Self {
         self.assignees = assignees;
         self
     }
+
+    pub fn update_tasks(&mut self, new_map: BTreeMap<String, Vec<TaskPayload>>)  -> &mut Self{
+        for (key, new_payloads) in new_map.into_iter() {
+            if let Some(existing_payloads) = self.task_map.get_mut(&key) {
+                for (existing, new) in existing_payloads.iter_mut().zip(new_payloads.iter()) {
+                    // Update only non-UI bound fields or compare changes before updating
+                    if existing.assignee != new.assignee {
+                        existing.assignee = new.assignee.clone();
+                    }
+                    if existing.dep != new.dep {
+                        existing.dep = new.dep.clone();
+                    }
+                    if existing.due_date != new.due_date {
+                        existing.due_date = new.due_date.clone();
+                    }
+                    if existing.everest_initials != new.everest_initials {
+                        existing.everest_initials = new.everest_initials.clone();
+                    }
+                    if existing.priority != new.priority {
+                        existing.priority = new.priority.clone();
+                    }
+                    if existing.status != new.status {
+                        existing.status = new.status.clone();
+                    }
+
+                    // In the update logic, check this flag
+                    // if !existing.is_editing {
+                    //     existing.service_name = new.service_name;
+                    // }
+                }
+            } else {
+                // Insert new key if it does not exist
+                self.task_map.insert(key, new_payloads);
+            }
+        }
+        self
+    }
+
 
     pub fn update_col_names(&mut self, column_names: Vec<String>) -> &mut Self {
         self.column_names = column_names;
         self
     }
+
+    // pub fn set_name_filter(&mut self, tasks: Vec<TaskPayload>, names: Vec<String>) -> &mut Self {
+    //     self.column_names = column_names;
+    //     self
+    // }
 }
 
 impl ColumnLayout for TaskLayout {
-    fn layout_cols(
-        &mut self,
-        ui: &mut Ui
-    ){
+    fn layout_cols(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
         
@@ -99,10 +139,7 @@ impl ColumnLayout for TaskLayout {
         });
     }
 
-    fn columns(
-        &mut self,
-        s: &mut Strip,
-    ) {
+    fn columns(&mut self, s: &mut Strip) {
         let column_frame = Frame::default()
             .fill(Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(8.0))
@@ -127,37 +164,33 @@ impl ColumnLayout for TaskLayout {
                             let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
                             if !search_input.is_empty(){
                                 for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
-                                    if let Some(store_users) = &self.assignees {
-                                        let action = task.display_cards(ui, &store_users.as_ref());
-                                        if let Some(action) = action{
-                                            match action{
-                                                TaskUiActions::OpenTaskModal(task) => {
-                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
-                                                },
-                                                TaskUiActions::OpenChatModal(chat_details) => {
-                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(chat_details));
-                                                    info!("Opening chat");
-                                                },
-                                                _ => {}
-                                            }
+                                    let action = task.display_cards(ui, &self.assignees);
+                                    if let Some(action) = action{
+                                        match action{
+                                            TaskUiActions::OpenTaskModal(task) => {
+                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
+                                            },
+                                            TaskUiActions::OpenChatModal(chat_details) => {
+                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(chat_details));
+                                                info!("Opening chat");
+                                            },
+                                            _ => {}
                                         }
                                     }
                                 }
                             }else{
                                 for task in tasks {
-                                    if let Some(store_users) = &self.assignees {
-                                        let action = task.display_cards(ui, &store_users.as_ref());
-                                        if let Some(action) = action{
-                                            match action{
-                                                TaskUiActions::OpenTaskModal(task) => {
-                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
-                                                },
-                                                TaskUiActions::OpenChatModal(chat_details) => {
-                                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(chat_details));
-                                                    info!("Opening chat");
-                                                },
-                                                _ => ()
-                                            }
+                                    let action = task.display_cards(ui, &self.assignees);
+                                    if let Some(action) = action{
+                                        match action{
+                                            TaskUiActions::OpenTaskModal(task) => {
+                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
+                                            },
+                                            TaskUiActions::OpenChatModal(chat_details) => {
+                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(chat_details));
+                                                info!("Opening chat");
+                                            },
+                                            _ => ()
                                         }
                                     }
                                 }
@@ -169,7 +202,6 @@ impl ColumnLayout for TaskLayout {
         }
     }
     
-
     fn headers(&mut self, mut s: Strip){
         let header_frame = Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
@@ -177,7 +209,7 @@ impl ColumnLayout for TaskLayout {
             .outer_margin(Margin::symmetric(4.0, 1.0))
             .rounding(Rounding::same(5.0))
             .stroke(Stroke::new(0.4, Color32::WHITE));
-        // ui.style_mut().spacing.button_padding.y = 4.0;
+
         for (name, tasks) in self.task_map.iter(){
             s.cell(|ui|{
                 header_frame.show(ui, |ui|
@@ -228,7 +260,7 @@ impl ColumnLayout for TaskLayout {
                             if let Some(action) = res{
                                 match action{
                                     TaskActions::MarkComplete => {
-                                        let id: Vec<String> = tasks.iter().map(|t| t.id.clone().unwrap().0.id.to_string()).collect::<Vec<String>>();
+                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id.to_string()).collect::<Vec<String>>();
                                         
                                         info!("ids: {:?}", id);
                                         spawn_local(async move {

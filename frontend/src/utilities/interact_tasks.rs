@@ -1,6 +1,6 @@
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use database::{schema::{Priority, User, Status, TaskPayload}};
+use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
 use egui_extras::DatePickerButton;
 use log::info;
 
@@ -13,7 +13,7 @@ impl Interaction for TaskPayload {
         ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name).desired_width(ui.available_width() - 10.0).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
-        if text_edit.changed(){
+        if text_edit.lost_focus(){
             self.update_task_name(self.task_name.clone());
         }
         Some(text_edit)
@@ -22,29 +22,18 @@ impl Interaction for TaskPayload {
     fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Option<Response> {
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
-
-        
-        if let Some(service_ticket) = &mut self.service_ticket{ // std::mem::take()
-
-            let text_edit = TextEdit::multiline(&mut service_ticket.checkin_notes)
-                .desired_rows(5)
-                .desired_width(ui.available_width())
-                .horizontal_align(Align::Center)
-                .ui(ui);
-            if text_edit.changed() {
-                let notes = service_ticket.checkin_notes.clone();
-                self.update_checkin_notes(Some(notes));
-                info!("checkin_notes changed: {:?}// {:?}", self.id, self.task_name);
-            }
-        }else{
-            TextEdit::multiline(&mut "No checkin notes")
-                .desired_rows(5)
-                .desired_width(ui.available_width())
-                .horizontal_align(Align::Center)
-                .ui(ui);
+        let default = &mut TicketPayload::default();
+        let ticket = self.service_ticket.as_mut().unwrap_or(default);
+        let text_edit = TextEdit::multiline(&mut ticket.checkin_notes)
+            .desired_rows(5)
+            .desired_width(ui.available_width())
+            .horizontal_align(Align::Center)
+            .ui(ui);
+        if text_edit.lost_focus() {
+            let notes = ticket.clone().checkin_notes;
+            self.update_checkin_notes(Some(notes));
+            info!("checkin_notes changed: {:?}// {:?}", self.id, self.task_name);
         }
-
-
         None
     }
 
@@ -120,7 +109,7 @@ impl Interaction for TaskPayload {
     fn interact_status(&mut self, ui: &mut Ui) -> Option<Response> {
         let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
-            .width(ui.available_width())
+            .width(ui.available_width() - 15.0)
             .height(ui.available_height())
             .show_ui(ui, |ui| 
         {
