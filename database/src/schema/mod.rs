@@ -132,12 +132,11 @@ pub struct TicketPayload{
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct TicketData{
+pub struct TicketData{ // Live Ticket Payload
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
     pub customer: Option<CustomerId>,
     pub computer: Option<ComputerId>,
-    // pub service_task: Option<TaskId>,
     pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
@@ -158,8 +157,8 @@ pub struct TicketData{
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
     pub part_order_links: Option<Vec<String>>,
-    pub computers: Option<Vec<ComputerId>>,
-    pub services: Option<Vec<TicketId>>,
+    // pub computers: Option<Vec<ComputerId>>,
+    // pub services: Option<Vec<TicketId>>,
     pub name: String,
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>

@@ -3,7 +3,6 @@ use futures::StreamExt;
 use database::schema::*;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
-use wasm_bindgen_futures::spawn_local;
 use log::{info, error};
 use crossbeam::channel::Sender;
 use surrealdb::engine::remote::ws::Client;
@@ -152,7 +151,7 @@ pub fn update_or_insert(
             if let Some(existing_id) = &task.id {
                 if existing_id == id{
                     info!("ID's match: {:?} // {:?}", existing_id, id);
-                    let updated_task = convert_live_to_task(new_task.clone(), task);
+                    let updated_task = convert_live_to_task(new_task.clone(), task, new_ticket);
                     *task = updated_task;
                     updated = true;
                     break;
@@ -162,19 +161,18 @@ pub fn update_or_insert(
 
         if !updated {
             info!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
-            // todo!();
-            let mut new_task_converted = convert_live_to_task(new_task, &TaskPayload::default());  
-            if let Some(ticket) = new_ticket{
-                new_task_converted.service_ticket = Some(ticket.clone());
-                new_task_converted.service_number = Some(ticket.service_number);
-            }
+            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);  
+            // if let Some(ticket) = new_ticket{
+            //     new_task_converted.service_ticket = Some(ticket.clone());
+            //     new_task_converted.service_number = Some(ticket.service_number);
+            // }
             info!("new_task_converted: {new_task_converted:?}");
             // Insert the new task if it does not exist
             tasks.push(new_task_converted);
         }
     } else {
         info!("there was NO task id");
-        let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default());
+        let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);
         info!("new_task_converted: {new_task_converted:?}");
         // If the new task does not have an ID, insert it
         tasks.push(new_task_converted);
@@ -182,11 +180,15 @@ pub fn update_or_insert(
     Ok(())
 }
 
-pub fn convert_live_to_task(live_task: LiveTaskPayload,existing_task: &TaskPayload) -> TaskPayload {
+pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayload, ticket: Option<TicketPayload>) -> TaskPayload {
+
+    let service_ticket = if let Some(service) = ticket {
+        Some(service)
+    } else { existing_task.service_ticket.clone() };
     TaskPayload {
         id: live_task.id,
         task_name: live_task.task_name,
-        service_ticket: existing_task.service_ticket.clone(), // Preserve the existing service_ticket
+        service_ticket, // Preserve the existing service_ticket
         everest_initials: live_task.everest_initials,
         task_description: live_task.task_description,
         assignee: live_task.assignee,
@@ -200,31 +202,23 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload,existing_task: &TaskPaylo
     }
 }
 
-pub fn listen_data<T>(tx: Sender<(Action, T)>) 
-    where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin
-{
-    spawn_local(async move {
-        let client_stream: Stream<Client, Vec<T>> = DATABASE.select(CONNECTED_CLIENT_TABLE).live().await.unwrap();
-        handle_streams(client_stream, tx).await;
-    });
+pub async fn listen_data<T>(tx: Sender<(Action, T)>) -> anyhow::Result<(), anyhow::Error> 
+    where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin {
+    let client_stream: Stream<Client, Vec<T>> = DATABASE.select(CONNECTED_CLIENT_TABLE).live().await?;
+    handle_streams(client_stream, tx).await;
+    Ok(())
 }
 
-pub fn listen_task_notes(tx: Sender<(Action, TaskNotePayload)>) 
-    // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
-{
-    spawn_local(async move {
-        let task_stream: Stream<Client, Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await.unwrap();
-        handle_streams(task_stream, tx).await;
-    });
+pub async fn listen_task_notes(tx: Sender<(Action, TaskNotePayload)>) -> anyhow::Result<(), anyhow::Error> {
+    let task_stream: Stream<Client, Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await?;
+    handle_streams(task_stream, tx).await;
+    Ok(())
 }
 
-pub fn listen_tasks(tx: Sender<(Action, LiveTaskPayload)>) 
-    // where T: DeserializeOwned + Serialize + 'static + Debug + marker::Unpin
-{
-    spawn_local(async move {
-        let task_stream: Stream<Client, Vec<LiveTaskPayload>> = DATABASE.select(TASK_TABLE).live().await.unwrap();
-        handle_streams(task_stream, tx).await;
-    });
+pub async fn listen_tasks(tx: Sender<(Action, LiveTaskPayload)>) -> anyhow::Result<(), anyhow::Error> {
+    let task_stream: Stream<Client, Vec<LiveTaskPayload>> = DATABASE.select(TASK_TABLE).live().await?;
+    handle_streams(task_stream, tx).await;
+    Ok(())
 }
 
 async fn handle_streams<T>(

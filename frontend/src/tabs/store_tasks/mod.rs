@@ -1,25 +1,23 @@
-use crate::{app_state::MtechServerContext, utilities::{ColumnLayout, FilterTasks}};
-use database::schema::TaskPayload;
+use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, ColumnLayout, FilterTasks}};
+use std::collections::BTreeMap;
 use eframe::egui::Ui;
 
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {
-        let mut col_names = Vec::new();
         if let Some(users) = self.store_users.as_ref(){
-            self.task_map.clear();
-            for user in users.iter() {
-                col_names.push(user.everest_initials.clone());
-                col_names.sort();
-                let filtered: Vec<TaskPayload> = self.tasks
-                    .filter_by_assignee(user)
-                    .filter_by_completion(false);
-                self.task_layout.task_map.entry(user.everest_initials.to_string()).or_insert(filtered);
+            let page = "StoreTasks";
+            if let Some(layout) = self.task_layouts.get_mut(page){
+                let mut map = BTreeMap::new();
+                users.iter().for_each(|u| {
+                    let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(false);
+                    map.entry(u.everest_initials.to_string()).or_insert(filtered);
+                });
+                layout.update_tasks(map).layout_cols(ui);
+            } else {
+                let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();
+                let layout = TaskLayout::new(BTreeMap::new(), user_names, self.ui_actions_tx.clone(), users.clone());
+                self.task_layouts.insert(page.to_string(), layout);
             }
-        
-            self.task_layout.update_assignees(Some(users.clone()))
-                .update_col_names(col_names)
-                .layout_cols(ui);
         }
     }
 }
-

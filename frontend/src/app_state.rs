@@ -19,9 +19,9 @@ use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, toolbox::storage_api::FileSystem, web_console::websockets::WebSocketClient}, 
     utilities::{
         displays::{
-            chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalHandler}, tasks::task_layout::TaskLayout
+            chats::ChatView, modals::{create_task_modal::CreateTaskModal, ModalHandler}, tasks::task_layout::TaskLayout
         }, 
-        DisplayModal, ModalType, ModalTypes, TaskUiActions
+        DisplayModal, ModalType,TaskUiActions
     }
 };
 
@@ -227,8 +227,7 @@ impl MtechServer{
             .callback(move |response| {
                 sender.set(Some(response.buckets));
                 ctx.request_repaint();
-            })
-            .spawn("./dummy_worker.js");
+            }).spawn("./dummy_worker.js");
 
         bridge.send(Input {
             url: "https://storage-api.master-tech.app".to_string(),
@@ -272,13 +271,12 @@ impl MtechServer{
             store_users_tx, store_users_rx,
             ui_actions_tx, ui_actions_rx,
             connected_clients_tx, connected_clients_rx,
-            // client_connection_tx, client_connection_rx,
             new_ticket_tx, new_ticket_rx,
             notes_tx, notes_rx,
 
             // MODALS / LAYOUTS
             ai_playground: AiPlayground::default(),
-            task_layout: TaskLayout::new(BTreeMap::new(), Vec::new(), ui_actions, None),
+            task_layout: TaskLayout::new(BTreeMap::new(), Vec::new(), ui_actions, Vec::new()),
             task_layouts: HashMap::new(),
             current_modal: ModalType::Null,
             task_modal_handler: TaskModalHandler::default(),
@@ -313,9 +311,9 @@ impl MtechServer{
         Self {
             login: Login::default(),
             signup: Signup::default(),
+            state: AppState::default(),
             context,
             tree,
-            state: AppState::default()
         }
     }
 

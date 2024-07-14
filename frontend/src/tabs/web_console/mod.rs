@@ -1,7 +1,7 @@
 use eframe::egui::{Button, Color32, Frame, Margin, Rangef, Rounding, SidePanel, Stroke, TopBottomPanel, Ui, Vec2, Widget};
 // use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use wasm_bindgen_futures::spawn_local;
-use crate::{app_state::MtechServerContext, utilities::get_other::get_connected_clients};
+use crate::{app_state::MtechServerContext, utilities::get_data::get_connected_clients};
 
 pub mod websockets;
 pub mod charts;
