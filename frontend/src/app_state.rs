@@ -3,7 +3,7 @@ use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, ui_tools::toasts::Toasts}};
+use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, get_data::update_task_notes, ui_tools::toasts::Toasts}};
 use gloo_worker::Spawnable;
 use log::info;
 use ratatui::Terminal;
@@ -170,6 +170,9 @@ pub struct MtechServerContext{
     pub edited_task: TaskPayload,
     #[serde(skip)]
     pub task_layouts: HashMap<String, TaskLayout>,
+    pub rerun_filtering_my_tasks: bool,
+    pub rerun_filtering_store_tasks: bool,
+    pub rerun_filtering_completed: bool,
     #[serde(skip)]
     pub ai_playground: AiPlayground,
     #[serde(skip)]
@@ -247,11 +250,11 @@ impl MtechServer{
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
+        
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
 
         let context = MtechServerContext{
-            // task: Vec::new(TaskPayload::default()),
             current_user: None,
             first_run: true,
             clients: HashMap::new(),
@@ -278,6 +281,9 @@ impl MtechServer{
             ai_playground: AiPlayground::default(),
             edited_task: TaskPayload::default(),
             task_layouts: HashMap::new(),
+            rerun_filtering_my_tasks: false,
+            rerun_filtering_store_tasks: false,
+            rerun_filtering_completed: false,
             current_modal: ModalType::Null,
             task_modal_handler: TaskModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
@@ -308,13 +314,7 @@ impl MtechServer{
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
         };
         
-        Self {
-            login: Login::default(),
-            signup: Signup::default(),
-            state: AppState::default(),
-            context,
-            tree,
-        }
+        Self { login: Login::default(), signup: Signup::default(), state: AppState::default(), context, tree }
     }
 
     // fn _canvas_id() -> String { "mtech_canvas".into() }
@@ -325,11 +325,19 @@ impl MtechServerContext{
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
                 let task_name = task_modal.task.task_name.clone();
+                if let Some(notes) = &task_modal.task.task_note {
+                    info!("Notes: {:?}", notes);
+                }
+                
                 self.task_modal_handler.ui(
                     ctx, 
                     || Modal::new(&task_name).default_height(600.0),
                     move |ui, _stay_open, page_state| {
                         let action = task_modal.display(ui, page_state.to_owned());
+                        // info!("Modal stuff");
+                        // if let Some(notes) = &task_modal.task.task_note{
+                        //     info!("Notes: {:?}", notes);
+                        // }
                         if let Some(action) = action{
                             *page_state = action;
                         }
@@ -354,11 +362,10 @@ impl MtechServerContext{
                     || Modal::new("Chats").default_height(600.0),
                     move |ui, _stay_open, _page_state| {
                         if let Some(_new_message) = chat_modal.ui(ui){
-                            // if let (Some(db), Some(task)) = (self.database.clone(), self.task.clone()){
-                                
-                            //     task.update_task_notes(new_message, db);
-                            // }
-                        }
+                            spawn_local(async move { });
+                            // let _ = update_task_notes(new_message).await;
+                            
+                        } // task_modal.chat_view.insert_note(payload.1);
                     });
             }
             _ => {},
@@ -386,20 +393,13 @@ impl MtechServer{
 pub fn check_authentication(
     db_tx: Sender<anyhow::Result<Database, Error>>
 ) -> Result<(AppState, Option<User>), Error>{
-    // #[cfg(target_arch="wasm32-unknown-unknown")]{
-        let cookie = wasm_cookies::get("jwt");
-        let user_cookie = wasm_cookies::get("user");
-    // }
-    
+    let cookie = wasm_cookies::get("jwt");
+    let user_cookie = wasm_cookies::get("user");
     let mut state = AppState::default();
     let mut current_user = None;
-
-    // #[cfg(target_arch="wasm32-unknown-unknown")]
     if let (Some(cookie), Some(usr)) = (cookie, user_cookie){
         current_user = Some(serde_json::from_str(usr?.as_str())?);
         let db_tx = db_tx.clone();
-                
-
         spawn_local(async move {
             let database = Database::new(
                 "".to_string(), 

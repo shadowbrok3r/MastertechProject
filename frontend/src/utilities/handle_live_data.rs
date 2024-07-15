@@ -229,6 +229,12 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayl
     let service_ticket = if let Some(service) = ticket {
         Some(service)
     } else { existing_task.service_ticket.clone() };
+
+    // let notes = if let Some(existing_notes) = live_task.task_note{
+        info!("live_task.task_note: {:?}", live_task.task_note.clone());
+    // } else { 
+        info!("existing_task.task_note.clone() : {:?}", existing_task.task_note.clone() .clone());
+    // };
     TaskPayload {
         id: live_task.id,
         task_name: live_task.task_name,
@@ -254,6 +260,7 @@ pub async fn listen_data<T>(tx: Sender<(Action, T)>) -> anyhow::Result<(), anyho
 }
 
 pub async fn listen_task_notes(tx: Sender<(Action, TaskNotePayload)>) -> anyhow::Result<(), anyhow::Error> {
+    info!("Listening to task notes");
     let task_stream: Stream<Client, Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await?;
     handle_streams(task_stream, tx).await;
     Ok(())
@@ -275,13 +282,13 @@ async fn handle_streams<T>(
             Ok(notification) => {
                 let data = notification.data;
                 let action = notification.action;
-                debug!("Data: {data:?}");
+                info!("Data: {data:?}");
                 match tx.try_send((action, data)){
                     Ok(_) => debug!("Sent notification"),
-                    Err(e) => error!("Error sending task data: {e:?}")
+                    Err(e) => info!("Error sending task data: {e:?}")
                 }
             },
-            Err(err) => error!("Error: {err:?}")
+            Err(err) => info!("Error: {err:?}")
         };
     }; 
 }

@@ -1,4 +1,4 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, ColumnLayout, FilterTasks}};
+use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks}};
 use std::collections::BTreeMap;
 use eframe::egui::Ui;
 
@@ -7,6 +7,15 @@ impl MtechServerContext{
         if let Some(users) = self.store_users.as_ref(){
             let page = "CompletedTasks";
             if let Some(layout) = self.task_layouts.get_mut(page){
+                if self.rerun_filtering_completed{
+                    self.rerun_filtering_completed = false;
+                    let mut map = BTreeMap::new();
+                    users.iter().for_each(|u| {
+                        let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(true);
+                        map.entry(u.everest_initials.to_string()).or_insert(filtered);
+                    });
+                    layout.task_map = map;
+                }
                 layout.layout_cols(ui);
             } else {
                 let mut map = BTreeMap::new();

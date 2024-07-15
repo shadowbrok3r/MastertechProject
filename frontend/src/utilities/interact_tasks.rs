@@ -102,9 +102,8 @@ impl Interaction for TaskPayload {
         }
     }
 
-    fn interact_status(&mut self, ui: &mut Ui) -> Option<Response> {
-        let mut res: Option<Response> = None;
-        let response = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+    fn interact_status(&mut self, ui: &mut Ui) -> Response {
+        ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
             .width(ui.available_width() - 15.0)
             .height(ui.available_height())
@@ -113,25 +112,16 @@ impl Interaction for TaskPayload {
             for mut status in Status::VALUES{
                 let status_change = ui.selectable_value(&mut self.status, status.to_owned(), status.as_str());
                 if status_change.clicked(){
-                    // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, everest_initials);
                     self.update_status(status.clone());
-                    res = Some(status_change.clone());
-                    info!("status_change {:?}", res);
                 }
-                res = Some(status_change);
             }
-            None
-        }).inner;
-        if let Some(res) = response {
-            res
-        } else { None }
+        }).response
     }
 
-    fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response> {
-        let mut res: Option<Response> = None;
-        let response = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+    fn interact_priority(&mut self, ui: &mut Ui) -> Response {
+        ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
-            .width(ui.available_width() - 2.0)
+            .width(ui.available_width() - 15.0)
             .height(ui.available_height() - 2.0)
             .show_ui(ui, |ui| 
         {
@@ -139,21 +129,13 @@ impl Interaction for TaskPayload {
                 let priority_change = ui.selectable_value(&mut self.priority, priority.to_owned(), priority.as_str());
                 if priority_change.clicked(){
                     self.update_priority(Some(priority.clone()));
-                    res = Some(priority_change.clone());
-                    info!("interact_priority {:?}", res);
                 }
-                res = Some(priority_change);
             }
-            None
-        }).inner;
-        if let Some(res) = response {
-            res
-        } else { None }
+        }).response
     }
 
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Option<Response> {
-        let mut res: Option<Response> = None;
-        let response = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response {
+        ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(RichText::new(&self.everest_initials).small())
             .width(ui.available_width() / 1.3)
             .height(ui.available_height() - 2.0)
@@ -163,16 +145,9 @@ impl Interaction for TaskPayload {
                 let assignee_selection = ui.selectable_value(&mut self.everest_initials, user.everest_initials.to_owned(), &user.everest_initials);
                 if assignee_selection.clicked(){
                     self.update_assignee_initials(user.everest_initials.clone());
-                    res = Some(assignee_selection.clone());
-                    info!("assignee changed {:?}", res);
                 }
-                res = Some(assignee_selection);
             }
-            None
-        }).inner;
-        if let Some(res) = response {
-            res
-        } else { None }
+        }).response
     }
     
     fn interact_dep(&mut self, ui: &mut Ui) -> Response {

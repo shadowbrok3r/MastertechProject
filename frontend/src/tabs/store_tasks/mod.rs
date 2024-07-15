@@ -5,8 +5,19 @@ use eframe::egui::Ui;
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {
         if let Some(users) = self.store_users.as_ref(){
+            
             let page = "StoreTasks";
+
             if let Some(layout) = self.task_layouts.get_mut(page){
+                if self.rerun_filtering_store_tasks{
+                    self.rerun_filtering_store_tasks = false;
+                    let mut map = BTreeMap::new();
+                    users.iter().for_each(|u| {
+                        let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(false);
+                        map.entry(u.everest_initials.to_string()).or_insert(filtered);
+                    });
+                    layout.task_map = map;
+                }
 
                 layout.layout_cols(ui);
             } else {

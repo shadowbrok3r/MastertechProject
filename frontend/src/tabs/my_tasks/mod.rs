@@ -21,6 +21,15 @@ impl MtechServerContext{
             vals.sort_unstable_by_key(|x| order(x.clone()));
             
             if let Some(layout) = self.task_layouts.get_mut(page){
+                if self.rerun_filtering_my_tasks{
+                    self.rerun_filtering_my_tasks = false;
+                    let mut map = BTreeMap::new();
+                    vals.iter_mut().for_each(|status| {
+                        let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user);
+                        map.entry(status.as_str().to_string()).or_insert(filtered);
+                    });
+                    layout.task_map = map;
+                }
                 layout.layout_cols(ui);
             } else {
                 let mut map = BTreeMap::new();

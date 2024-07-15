@@ -33,6 +33,25 @@ impl eframe::App for MtechServer {
                     if let Some(ref _usr) = d.1{
                         self.context.current_user = d.1;
                     }
+                    let live_tasks_tx = self.context.live_tasks_tx.clone();
+                    let live_clients_tx = self.context.live_clients_tx.clone();
+                    let initial_tasks_tx = self.context.initial_tasks_tx.clone();
+                    let store_users_tx = self.context.store_users_tx.clone();
+                    let tx = self.context.connected_clients_tx.clone();
+                    let notes_tx = self.context.notes_tx.clone();
+                    if let Some(usr) = self.context.current_user.as_ref(){
+                        info!("Getting Initial data");
+                        let user = usr.clone();
+                        let name = usr.name.clone();
+                        spawn_local(async move {
+                            let _ = get_tasks(initial_tasks_tx).await;
+                            let _ = get_store_users(store_users_tx, user.clone().store).await;
+                            let _ = listen_tasks(live_tasks_tx).await;
+                            let _ = listen_data(live_clients_tx).await;
+                            let _ = listen_task_notes(notes_tx).await;
+                            let _ = get_connected_clients(tx, user.clone()).await;
+                        });
+                    }
                 },
                 Err(e) => {
                     info!("Error with auth: {e:?}");
@@ -175,30 +194,44 @@ impl eframe::App for MtechServer {
                         self.context.chat_modal_handler.open();
                     }// self.context.chat = ModalType::ChatView(pld);
                 },
-                TaskUiActions::Editing(id) => {
+                TaskUiActions::Editing(_id) => {
                     info!("Editing");
-                    for (_, layout) in self.context.task_layouts.iter_mut() {
-                        if let Some(task_payload) = layout.begin_edit(&id.clone()){
-                            info!("\nReplacing {:?} // {:?}\n", id, task_payload);
-                            self.context.edited_task = task_payload.to_owned();
-                        }
-                    }
+                    // for (_, layout) in self.context.task_layouts.iter_mut() {
+                    //     if let Some(task_payload) = layout.begin_edit(&id.clone()){
+                    //         info!("\nReplacing {:?}\n{:?}\n", id, task_payload.task_name);
+                    //         // self.context.edited_task = task_payload.to_owned();
+                    //     }
+                    // }
                 },
-                TaskUiActions::CommitChanges(id) => {
+                TaskUiActions::CommitChanges(_id) => {
                     info!("CommitChanges");
-                    for (_, layout) in self.context.task_layouts.iter_mut() {
-                        if let Some(task_payload) = layout.begin_edit(&id.clone()){
-                            info!("\nReplacing {:?} // {:?}\n", id, task_payload);
-                            *task_payload = self.context.edited_task.to_owned();
-                        }
-                    }
+                    // for (_, layout) in self.context.task_layouts.iter_mut() {
+                    //     if let Some(task_payload) = layout.begin_edit(&id.clone()){
+                    //         // info!("\nReplacing {:?} // {:?}\n", id, task_payload);
+                    //         // *task_payload = self.context.edited_task.to_owned();
+                    //     }
+                    // }
                 },
                 TaskUiActions::None => (),
             }
         }
 
         if let Ok(new_task) = self.context.live_tasks_rx.try_recv(){
+            info!("New Task Update");
             let tx = self.context.new_ticket_tx.clone();
+            if let Some(notes) = new_task.1.task_note {
+                for (existing_tasks, new_task_note) in self.context.tasks.iter().zip(notes.iter()){    
+                    if let Some(existing_notes) = existing_tasks.task_note{
+                        if !existing_notes.iter().any(|n| {
+                            if let Some(id) = n.id{
+                                id == new_task_note.0.id
+                            }
+                        }){
+                            existing_notes.push(new_task_note.clone());
+                        }
+                    }
+                }
+            }
             if let Some(service_num) = new_task.clone().1.service_number{
                 if !service_num.is_empty() {
                     spawn_local(async move {
@@ -208,27 +241,43 @@ impl eframe::App for MtechServer {
                         }
                     });
                 }
-            }else { handle_live_data(new_task.to_owned(), &mut self.context.tasks, None).unwrap(); }
+            }else { 
+                info!("Inserting Task");
+                self.context.rerun_filtering_completed = true;
+                self.context.rerun_filtering_my_tasks = true;
+                self.context.rerun_filtering_store_tasks = true;
+                handle_live_data(new_task.to_owned(), &mut self.context.tasks, None).unwrap(); 
+            }
         }
 
         if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
-            let id = self.context.edited_task.id.clone();
-            if let Some(id) = id {
-                for (_, layout) in self.context.task_layouts.iter_mut() {
-                    if let Some(task_payload) = layout.begin_edit(&id.0.id.clone()){
-                        info!("\nReplacing {:?} // {:?}\n", id.0.id, task_payload);
-                        // If the live task does NOT already exist in our current vec<tasks>, then insert it
-                        match update_or_insert_layout(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone()), task_payload){
-                            Ok(_) => {},// info!("Updated existing task"),
-                            Err(e) => info!("Error updating existing task: {e:?}"),
+            info!("New Ticket Update ");
+            for (_, layout) in self.context.task_layouts.iter_mut() {
+                for (_, tasks) in layout.task_map.iter_mut(){ // .zip(tasks) 
+                    for task in tasks.iter_mut(){
+                        if task.id.clone().unwrap().0.id == channel.new_task.1.id.clone().unwrap().0.id{
+                            debug!("\nReplacing {:?}\n with \n{:?}\n", task.task_name.clone(), channel.new_task.1.task_name.clone());
+                            match update_or_insert_layout(
+                                &mut self.context.tasks, 
+                                channel.new_task.1.clone(), 
+                            Some(channel.new_ticket.clone()), 
+                            task
+                            ){
+                                Ok(_) => {
+                                    self.context.rerun_filtering_my_tasks = true;
+                                    self.context.rerun_filtering_store_tasks = true;
+                                    self.context.rerun_filtering_completed = true;
+                                    info!("Updated existing task");
+                                },
+                                Err(e) => info!("Error updating existing task: {e:?}"),
+                            }
+                        } else {
+                            match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
+                                Ok(_) => {},// info!("Updated existing task"),
+                                Err(e) => info!("Error updating existing task: {e:?}"),
+                            }
                         }
                     }
-                }
-            } else {
-                // If the live task does NOT already exist in our current vec<tasks>, then insert it
-                match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
-                    Ok(_) => {},// info!("Updated existing task"),
-                    Err(e) => info!("Error updating existing task: {e:?}"),
                 }
             }
         }
@@ -243,9 +292,11 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(payload) = self.context.notes_rx.try_recv(){
+            info!("New note");
             self.context.new_note = true;
             if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal{
                 handle_live_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
+                info!("Inserting note into modal");
                 task_modal.chat_view.insert_note(payload.1);
             }
         }
