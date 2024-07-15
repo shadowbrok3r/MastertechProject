@@ -39,7 +39,7 @@ pub enum ModalType{
 }
 
 pub trait Displayable{ 
-    fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Option<TaskUiActions>;
+    fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>);
 }
 
 pub trait DisplayCards{ 
@@ -67,15 +67,15 @@ pub trait Updatable { // This is correctly implemented
 }
 
 pub trait Interaction{ // This is correctly implemented
-    fn interact_task_name(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_task_description(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_due_date(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_completed(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_status(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_dep(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_priority(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_task_name(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_task_description(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_due_date(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_completed(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_status(&mut self, ui: &mut Ui) -> Option<Response>; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_dep(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response>; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Option<Response>; // , task: Rc<RefCell<TaskPayload>>
 }
 
 pub trait FilterTasks{ 

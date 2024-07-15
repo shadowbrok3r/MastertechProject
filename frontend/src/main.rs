@@ -1,4 +1,4 @@
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_connected_clients, get_store_users, get_associated_ticket, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
 use app_state::{check_authentication, AppState, MainPages, MtechServer};
@@ -212,12 +212,25 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
-            // If the live task does NOT already exist in our current vec<tasks>, then insert it
-            match update_or_insert(&mut self.context.tasks, channel.new_task.1, Some(channel.new_ticket)){
-                Ok(_) => {},// info!("Updated existing task"),
-                Err(e) => info!("Error updating existing task: {e:?}"),
+            let id = self.context.edited_task.id.clone();
+            if let Some(id) = id {
+                for (_, layout) in self.context.task_layouts.iter_mut() {
+                    if let Some(task_payload) = layout.begin_edit(&id.0.id.clone()){
+                        info!("\nReplacing {:?} // {:?}\n", id.0.id, task_payload);
+                        // If the live task does NOT already exist in our current vec<tasks>, then insert it
+                        match update_or_insert_layout(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone()), task_payload){
+                            Ok(_) => {},// info!("Updated existing task"),
+                            Err(e) => info!("Error updating existing task: {e:?}"),
+                        }
+                    }
+                }
+            } else {
+                // If the live task does NOT already exist in our current vec<tasks>, then insert it
+                match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
+                    Ok(_) => {},// info!("Updated existing task"),
+                    Err(e) => info!("Error updating existing task: {e:?}"),
+                }
             }
-
         }
 
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
