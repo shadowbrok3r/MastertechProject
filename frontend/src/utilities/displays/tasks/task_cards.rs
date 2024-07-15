@@ -49,18 +49,16 @@ impl Displayable for TaskPayload{
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
                                 let response = self.interact_assignee_initials(ui, store_users);
-                                if let Some(response) = response {
                                     if response.secondary_clicked(){ 
                                         let _ = tx.try_send(TaskUiActions::OpenTaskModal(self.to_owned()));
                                     }
-                                    if response.has_focus() && response.changed() {
+                                    if response.has_focus() || response.changed() || response.clicked() {
                                         info!("assignee initials changed");
                                         let _ = tx.try_send(TaskUiActions::Editing(self.id.clone().unwrap().0.id));
                                     } else if response.lost_focus() {
                                         info!("assignee initials lost_focus");
                                         let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id));
                                     }
-                                }
                             });
                         });
 
@@ -80,14 +78,13 @@ impl Displayable for TaskPayload{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
                                 if Button::new("⮫").small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
                                     let _ = tx.try_send(TaskUiActions::OpenTaskModal(self.to_owned()));
-                                    // let _ = tx.try_send(Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
                                 }
                             });
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
                                 let response = self.interact_completed(ui);
-                                if response.clicked() || response.changed() || response.is_pointer_button_down_on(){
+                                if response.has_focus() || response.changed() || response.clicked() {
                                     info!("Marked Task Complete / Incomplete ");
                                     if self.completed { self.update_completed(false); } 
                                     else { self.update_completed(true); }
@@ -116,8 +113,7 @@ impl Displayable for TaskPayload{
                             ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), 
                                 |ui| {
                                     let response = self.interact_priority(ui);
-                                    if let Some(response) = response{
-                                        if response.changed() {
+                                        if response.has_focus() || response.changed() || response.clicked() {
                                             info!("interact_priority changed");
                                             let _ = tx.try_send(TaskUiActions::Editing(self.id.as_ref().unwrap().0.id.clone()));
                                         } else if response.lost_focus() {
@@ -125,7 +121,6 @@ impl Displayable for TaskPayload{
                                             let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.as_ref().unwrap().0.id.clone()));
                                             // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id))
                                         }
-                                    }
                                 });
                         });
                         s.cell(|ui|{
@@ -144,10 +139,10 @@ impl Displayable for TaskPayload{
                                 });
                         });
                         s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft),
+                            ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight),
                                 |ui| {
+                                    ui.add_space(8.0);
                                     let response = self.interact_status(ui);
-                                    if let Some(response) = response{
 
                                         if response.changed() {
                                             info!("interact_status changed");
@@ -157,7 +152,6 @@ impl Displayable for TaskPayload{
                                             let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.as_ref().unwrap().0.id.clone()));
                                             // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id))
                                         }
-                                    }
                                 });
                         });
                         s.cell(|ui|{

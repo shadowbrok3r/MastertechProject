@@ -1,12 +1,15 @@
-use chrono::{DateTime, Local};
-use database::schema::{TaskId, TaskNotePayload, User};
-use eframe::emath::Vec2;
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
-use log::{debug, info};
+use database::schema::{TaskId, TaskNotePayload, User};
 use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
+use crate::utilities::get_data::TaskNoteMod;
+use wasm_bindgen_futures::spawn_local;
+use chrono::{DateTime, Local};
+use eframe::emath::Vec2;
+use log::{debug, info};
 use serde::Serialize;
+
 use super::modals::ModalState;
 
 pub mod markdown_editor;
@@ -110,7 +113,15 @@ impl ChatView {
                     let txt = markdown_editor.submit();
                     info!("Txt: {txt}");
                     markdown_editor.clear();
-                    new_msg = Some(txt);
+                    new_msg = Some(txt.clone());
+
+                    if let Some(usr) = self.current_user.clone(){
+                        self.messages.push(TaskNotePayload {
+                            everest_initials: usr.everest_initials,
+                            note: txt,
+                            ..Default::default()
+                        });
+                    }
                 }
             }
         });
@@ -213,10 +224,18 @@ impl ChatView {
                                             ui.add_space(other);
                                             let btn = Button::new(RichText::new("X").small().weak().color(Color32::LIGHT_RED))
                                                 .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
                                             if btn.clicked(){
-                                                
+                                                let mut item = item.clone();
+                                                spawn_local(async move {
+                                                    match item.delete_note().await{
+                                                        Ok(_) => info!("Deleted Note"),
+                                                        Err(e) => info!("Error deleting note: {e:?}"),
+                                                    }
+                                                })
                                             }
                                         });
+                                        
                                     } else{
                                         ui.with_layout(Layout::from_main_dir_and_cross_align(
                                             Direction::LeftToRight,
@@ -240,7 +259,7 @@ impl ChatView {
                                             Align::Center,
                                         ), |ui| {
                                             ui.set_width(ui.available_width());
-                                            // viewer::easy_mark(ui, &item.note);
+                                            viewer::easy_mark(ui, &item.note);
                                         });
                                     });
                                 });
@@ -280,3 +299,6 @@ impl ChatView {
         new_msg
     }
 }
+
+
+

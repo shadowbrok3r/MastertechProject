@@ -1,13 +1,13 @@
-use chrono::{DateTime, Utc};
-use database::{schema::{TaskPayload, TicketPayload, TASK_TABLE, TICKET_TABLE}, DATABASE};
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, StripBuilder};
-use log::info;
-use serde::Serialize;
-use serde_json::Value;
 use wasm_bindgen_futures::spawn_local;
+use database::schema::TaskPayload;
+use chrono::{DateTime, Utc};
+use serde_json::Value;
+use serde::Serialize;
+use log::info;
 
-use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes, Updatable};
+use crate::utilities::{displays::chats::ChatView, get_data::delete_task, DisplayModal, ModalTypes, Updatable};
 
 use super::ModalState;
 
@@ -24,7 +24,7 @@ pub struct TaskModal{
     pub full_span_content: bool,
 
     pub state: ModalState,
-    pub spo: SpecialPartOrder
+    pub spo: SpecialPartOrder,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -134,8 +134,6 @@ impl DisplayModal for TaskModal {
 
                             
 
-                            // if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
-                                
                             if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
                                 let mut ids = Vec::new();
                                 let _task_id = self.task.id.as_ref().unwrap().0.clone();
@@ -148,32 +146,14 @@ impl DisplayModal for TaskModal {
                                         ids.push(id.0.clone());
                                     }
                                 };
-
-                                let mut ids = Vec::new();
                                 let task_id = self.task.id.as_ref().unwrap().0.clone();
-                                let ticket_id = if let Some(ticket) = &self.task.service_ticket{
-                                    Some(ticket.id.clone().unwrap())
-                                } else{ None };
 
-                                for message in self.chat_view.messages.iter(){
-                                    if let Some(id) = &message.id.clone(){
-                                        ids.push(id.0.clone());
-                                    }
-                                };
-
+                                let id = task_id.clone();
                                 spawn_local(async move {
-                                    let task_id = task_id.clone();
-                                    let ticket_id = ticket_id.clone();
-                                    if ids.len() > 0 {
-                                        let _query = "DELETE ";
-                                    } 
-                                    if let Some(id) = ticket_id {
-                                        info!("deleting task_id: {:?}", id.0.clone());
-                                        let _x: Option<TicketPayload> = DATABASE.delete((TICKET_TABLE, id.0.id)).await.unwrap();
+                                    match delete_task(id).await {
+                                        Ok(_) => info!("Deleted task"),
+                                        Err(e) => info!("Error: {e:?}"),
                                     }
-                                    info!("deleting task_id: {task_id:?}");
-                                    let _y: Option<TaskPayload> = DATABASE.delete((TASK_TABLE, task_id.id)).await.unwrap();
-
                                 });
                             }
 
@@ -228,8 +208,6 @@ impl DisplayModal for TaskModal {
                                         ModalAction::PartOrderPage => self.spo.display_part_order_page(ui, avail_size),
                                         ModalAction::TaskNotePage => {
                                             ui.set_width(avail_size.x);
-                                            // ui.add_space(15.0);
-                                            // eframe::egui
                                             if let Some(new_message) = self.chat_view.ui(ui){
                                                     self.task.update_task_notes(new_message);
                                             }

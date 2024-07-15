@@ -37,11 +37,8 @@ pub struct TaskLayout{
 }
 
 impl TaskLayout { 
-    pub fn new(mut task_map: BTreeMap<String, Vec<TaskPayload>>, column_names: Vec<String>, ui_actions_tx: Sender<TaskUiActions>, assignees: Vec<User>) -> Self 
+    pub fn new(task_map: BTreeMap<String, Vec<TaskPayload>>, column_names: Vec<String>, ui_actions_tx: Sender<TaskUiActions>, assignees: Vec<User>) -> Self 
     {
-        for (_, tasks) in task_map.iter_mut() {
-            tasks.sort_task_payloads();
-        }
         Self {  
             task_map, 
             column_names, 
@@ -294,6 +291,7 @@ impl TaskLayout {
         let mut inputs = BTreeSet::new();
 
         for (name, tasks) in self.task_map.iter_mut(){
+            tasks.sort_task_payloads();
             for task in tasks.iter(){
                 inputs.insert(task.task_name.clone());
                 inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
