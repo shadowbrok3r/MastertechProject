@@ -136,8 +136,6 @@ impl TaskLayout {
         });
     }
 
-
-    /// Starts editing a task by loading its data into the `task` (Rc<RefCell<TaskPayload>>).
     pub fn begin_edit(&mut self, task_id: &Id) -> Option<&mut TaskPayload>{
         info!("Finding ID: {task_id:?}");
         // Search for the task by ID
@@ -151,17 +149,6 @@ impl TaskLayout {
         }
         None
     }
-
-    /// Commits the changes from the editable task back to the task map.
-    // pub fn commit_changes(&mut self, task_id: &Id) {
-    //     let edited_task = self.task.borrow().clone();
-    //     if let Some((_, tasks)) = self.task_map.iter_mut().find(|(_, tasks)| tasks.iter().any(|t|  t.id.clone().unwrap().0.id == *task_id)) {
-    //         if let Some(task) = tasks.iter_mut().find(|t|  t.id.clone().unwrap().0.id == *task_id) {
-    //             *task = edited_task;
-    //         }
-    //     }
-    // }
-
 
     fn headers(&mut self, mut s: Strip){
         let header_frame = Frame::default()
@@ -279,19 +266,17 @@ impl TaskLayout {
                             let mut count = 0;
                             let current_date = Utc::now().date_naive();
                             for task in tasks{
-                                let due_date = DateTime::parse_from_rfc3339(&task.due_date)
-                                    .expect("Invalid date format")
-                                    .with_timezone(&Utc)
-                                    .date_naive();
-
-                                if due_date < current_date && !task.completed{
-                                    count += 1;
+                                let due_date = DateTime::parse_from_rfc3339(&task.due_date);
+                                if let Ok(date) = due_date {
+                                    let date = date.with_timezone(&Utc).date_naive();
+                                    if date < current_date && !task.completed{ count += 1; }
+                                    
+                                    if count > 0 {
+                                        ui.label("Overdue");
+                                        ui.add_space(5.0);
+                                        ui.colored_label(Color32::DARK_RED, format!("{count}"));
+                                    }
                                 }
-                            }
-                            if count > 0 {
-                                ui.label("Overdue");
-                                ui.add_space(5.0);
-                                ui.colored_label(Color32::DARK_RED, format!("{count}"));
                             }
                         });
                     });
@@ -325,22 +310,22 @@ impl TaskLayout {
                             let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
                             if !search_input.is_empty(){
                                 for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
-                                    let action: Option<TaskUiActions> = task.display_cards(ui, &self.assignees);
-                                    if let Some(action) = action{
-                                        self.action = action.clone();
-                                        self.ui_actions_tx.try_send(action).unwrap();
-                                    }
+                                    task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
+                                    // if let Some(action) = action{
+                                    //     self.action = action.clone();
+                                    //     self.ui_actions_tx.try_send(action).unwrap();
+                                    // }
                                 }
                             }else{
                                 for task in tasks {
-                                    let action = task.display_cards(ui, &self.assignees);
-                                    if let Some(action) = action{
-                                        // if !TaskUiActions::None = action{
-                                            self.action = action.clone();
-                                            info!("self.action {:?}", self.action.clone());
-                                            self.ui_actions_tx.try_send(action).unwrap();
-                                        // }
-                                    }
+                                    task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
+                                    // if let Some(action) = action{
+                                    //     // if !TaskUiActions::None = action{
+                                    //         self.action = action.clone();
+                                    //         info!("self.action {:?}", self.action.clone());
+                                    //         self.ui_actions_tx.try_send(action).unwrap();
+                                    //     // }
+                                    // }
                                 }
                             }
                         });
@@ -350,9 +335,6 @@ impl TaskLayout {
         }
     }
 }
-
-
-
 pub enum TaskActions{
     MarkComplete,
     MarkIncomplete,

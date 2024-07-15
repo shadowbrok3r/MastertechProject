@@ -1,16 +1,17 @@
 use chrono::{DateTime, Utc};
+use crossbeam::channel::Sender;
 use eframe::egui::{RichText, Ui};
 use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
 use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use eframe::egui::Vec2;
 use egui_extras::{Size, StripBuilder};
 use database::schema::{TaskPayload, User};
+use log::info;
 
-use crate::utilities::{Displayable, Interaction, TaskUiActions};
+use crate::utilities::{Displayable, Interaction, TaskUiActions, Updatable};
 
 impl Displayable for TaskPayload{
-    fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>)  -> Option<TaskUiActions>{
-        let mut res: Option<TaskUiActions> = None;
+    fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>){
         
         Frame::default()
             .fill(Color32::from_rgb(14,14,18))
@@ -47,26 +48,51 @@ impl Displayable for TaskPayload{
                     {
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                res = Some(self.interact_assignee_initials(ui, store_users));
+                                let response = self.interact_assignee_initials(ui, store_users);
+                                if let Some(response) = response {
+                                    if response.secondary_clicked(){ 
+                                        let _ = tx.try_send(TaskUiActions::OpenTaskModal(self.to_owned()));
+                                    }
+                                    if response.has_focus() && response.changed() {
+                                        info!("assignee initials changed");
+                                        let _ = tx.try_send(TaskUiActions::Editing(self.id.clone().unwrap().0.id));
+                                    } else if response.lost_focus() {
+                                        info!("assignee initials lost_focus");
+                                        let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id));
+                                    }
+                                }
                             });
                         });
 
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                res = Some(self.interact_task_name(ui));
-                            });
-                        });
-                        s.cell(|ui|{
-                            ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                if Button::new("⮫").small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
-                                    res = Some(TaskUiActions::OpenTaskModal(self.to_owned()))
-                                    // res = Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
+                                let response = self.interact_task_name(ui);
+                                if response.has_focus() && response.changed() {
+                                    info!("task_name changed");
+                                    let _ = tx.try_send(TaskUiActions::Editing(self.id.clone().unwrap().0.id));
+                                }  else if response.lost_focus() {
+                                    info!("task_name lost_focus");
+                                    let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id));
                                 }
                             });
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                res = Some(self.interact_completed(ui));
+                                if Button::new("⮫").small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
+                                    let _ = tx.try_send(TaskUiActions::OpenTaskModal(self.to_owned()));
+                                    // let _ = tx.try_send(Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
+                                }
+                            });
+                        });
+                        s.cell(|ui|{
+                            ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
+                                let response = self.interact_completed(ui);
+                                if response.clicked() || response.changed() || response.is_pointer_button_down_on(){
+                                    info!("Marked Task Complete / Incomplete ");
+                                    if self.completed { self.update_completed(false); } 
+                                    else { self.update_completed(true); }
+                                    let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id));
+                                }
                             });
                         });
                     });
@@ -89,19 +115,49 @@ impl Displayable for TaskPayload{
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), 
                                 |ui| {
-                                    res = Some(self.interact_priority(ui));
+                                    let response = self.interact_priority(ui);
+                                    if let Some(response) = response{
+                                        if response.changed() {
+                                            info!("interact_priority changed");
+                                            let _ = tx.try_send(TaskUiActions::Editing(self.id.as_ref().unwrap().0.id.clone()));
+                                        } else if response.lost_focus() {
+                                            info!("interact_priority lost focus");
+                                            let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.as_ref().unwrap().0.id.clone()));
+                                            // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id))
+                                        }
+                                    }
                                 });
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), 
                                 |ui| {
-                                    res = Some(self.interact_due_date(ui));
+                                    let response = self.interact_due_date(ui);
+                                    if response.changed() {
+                                        info!("interact_due_date changed");
+                                        let _ = tx.try_send(TaskUiActions::Editing(self.id.as_ref().unwrap().0.id.clone()));
+                                    } 
+                                    if response.lost_focus() {
+                                        info!("interact_due_date lost focus");
+                                        let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.as_ref().unwrap().0.id.clone()));
+                                        // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id))
+                                    }
                                 });
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft),
                                 |ui| {
-                                    res = Some(self.interact_status(ui));
+                                    let response = self.interact_status(ui);
+                                    if let Some(response) = response{
+
+                                        if response.changed() {
+                                            info!("interact_status changed");
+                                            let _ = tx.try_send(TaskUiActions::Editing(self.id.as_ref().unwrap().0.id.clone()));
+                                        } else if response.lost_focus() {
+                                            info!("interact_status lost focus");
+                                            let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.as_ref().unwrap().0.id.clone()));
+                                            // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id))
+                                        }
+                                    }
                                 });
                         });
                         s.cell(|ui|{
@@ -116,9 +172,9 @@ impl Displayable for TaskPayload{
                                     RichText::new(format!("{} 💬", count)).color(Color32::LIGHT_RED) 
                                 } else { RichText::new("💬").color(Color32::WHITE) };
                                 if Button::new(txt).small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
-                                    res = Some(TaskUiActions::OpenChatModal(
+                                    let _ = tx.try_send(TaskUiActions::OpenChatModal(
                                         (self.id.as_ref().unwrap().clone(), self.task_note.clone().unwrap_or(Vec::new()))
-                                    ))
+                                    ));
                                 }
                             });
                         });
@@ -137,71 +193,34 @@ impl Displayable for TaskPayload{
                             let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}", self.id.as_ref().unwrap().0.id));
                             let task_descrip_head = CollapsingHeader::new("Task Description").id_source(task_descrip_header);
                             task_descrip_head.show_unindented(ui, |ui| {
-                                res = Some(self.interact_task_description(ui));
+                                let response = self.interact_task_description(ui);
+                                if response.changed() {
+                                    let _ = tx.try_send(TaskUiActions::Editing(self.id.as_ref().unwrap().0.id.clone()));
+                                } 
+                                if response.lost_focus() {
+                                    let _ = tx.try_send(TaskUiActions::CommitChanges(self.id.as_ref().unwrap().0.id.clone()));
+                                }
                             });
                         });
                     });
                 });
             });
         });
-        res
     }
 }
 
 pub fn date_colors(date: String, _complete: bool) -> Color32{
-    let due_date = DateTime::parse_from_rfc3339(&date)
-        .expect("Invalid date format")
-        .with_timezone(&Utc);
+    let due_date = DateTime::parse_from_rfc3339(&date).expect("Invalid date format").with_timezone(&Utc);
 
     let current_date = Utc::now().date_naive();
-
     let mut overdue: Option<String> = None;
     let mut due_today: Option<String> = None;
     let mut due_tomorrow: Option<String> = None;
-
-    if due_date.date_naive() == current_date.pred_opt().unwrap() {
-        overdue = Some(date.clone());
-    } else if due_date.date_naive() == current_date {
-        due_today = Some(date.clone());
-    } else if due_date.date_naive() == current_date.succ_opt().unwrap() {
-        due_tomorrow = Some(date.clone());
-    } 
-
-    if let Some(_) = overdue{
-        Color32::from_rgb(199, 30, 60) // Pink
-    }else if let Some(_) = due_today{
-        Color32::from_rgb(240, 200, 108) // Orange
-    }else if let Some(_) = due_tomorrow{
-        Color32::from_rgb(79, 232, 125) // Green
-    }else{
-        Color32::from_rgb(199, 48, 103) // Pink
-        // Color32::from_rgb(31, 204, 178) 
-    }
-
-    // if overdue && complete == false{
-    //     Color32::from_rgb(199, 48, 103) // Pink
-    // }else if due_today && !complete{
-    //     info!("due today - and not complete");
-    //     Color32::from_rgb(240, 200, 108) // Orange
-    // }else if due_tomorrow {
-    //     Color32::from_rgb(79, 232, 125) // Green
-    // }else{
-    //     // Color32::from_rgb(31, 204, 178)
-    //     Color32::from_rgb(199, 48, 103) // Pink
-
-    // let overdue: bool = due_date < current_date ;
-    // let due_today: bool = due_date > current_date ;
-    // let due_tomorrow: bool = due_date == current_date.succ_opt().unwrap() ;
-
-    // if overdue && complete == false{
-    //     Color32::from_rgb(199, 48, 103) // Pink
-    // }else if due_today && !complete{
-    //     info!("due today - and not complete");
-    //     Color32::from_rgb(240, 200, 108) // Orange
-    // }else if due_tomorrow {
-    //     Color32::from_rgb(79, 232, 125) // Green
-    // }else{
-    //     // Color32::from_rgb(31, 204, 178)
-    //     Color32::from_rgb(199, 48, 103) // Pink
-    // }
+    if due_date.date_naive() == current_date.pred_opt().unwrap() { overdue = Some(date.clone()); } 
+    else if due_date.date_naive() == current_date { due_today = Some(date.clone()); } 
+    else if due_date.date_naive() == current_date.succ_opt().unwrap() { due_tomorrow = Some(date.clone()); } 
+    if let Some(_) = overdue{ Color32::from_rgb(199, 30, 60) } // Pink
+    else if let Some(_) = due_today{ Color32::from_rgb(240, 200, 108) } // Orange
+    else if let Some(_) = due_tomorrow{ Color32::from_rgb(79, 232, 125) } // Green
+    else{ Color32::from_rgb(199, 48, 103) } // Pink
 }

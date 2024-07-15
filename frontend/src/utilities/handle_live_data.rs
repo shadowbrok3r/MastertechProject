@@ -180,6 +180,50 @@ pub fn update_or_insert(
     Ok(())
 }
 
+pub fn update_or_insert_layout(
+    tasks: &mut Vec<TaskPayload>, 
+    new_task: LiveTaskPayload,
+    new_ticket: Option<TicketPayload>,
+    task_to_replace: &mut TaskPayload
+) -> anyhow::Result<(), anyhow::Error>{
+    if let Some(ref id) = new_task.id {
+        let mut updated = false;
+
+        for task in tasks.iter_mut() {
+            if let Some(existing_id) = &task.id {
+                if existing_id == id{
+                    debug!("ID's match: {:?} // {:?}", existing_id, id);
+                    let updated_task = convert_live_to_task(new_task.clone(), task, new_ticket);
+                    *task = updated_task.clone();
+                    *task_to_replace = updated_task;
+                    updated = true;
+                    break;
+                }
+            }
+        }
+
+        if !updated {
+            debug!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
+            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);  
+            // if let Some(ticket) = new_ticket{
+            //     new_task_converted.service_ticket = Some(ticket.clone());
+            //     new_task_converted.service_number = Some(ticket.service_number);
+            // }
+            debug!("new_task_converted: {new_task_converted:?}");
+            // Insert the new task if it does not exist
+            tasks.push(new_task_converted);
+        }
+    } else {
+        debug!("there was NO task id");
+        let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);
+        debug!("new_task_converted: {new_task_converted:?}");
+        // If the new task does not have an ID, insert it
+        tasks.push(new_task_converted);
+    }
+    Ok(())
+}
+
+
 pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayload, ticket: Option<TicketPayload>) -> TaskPayload {
 
     let service_ticket = if let Some(service) = ticket {
