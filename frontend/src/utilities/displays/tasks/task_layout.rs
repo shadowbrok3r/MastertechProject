@@ -270,13 +270,12 @@ impl TaskLayout {
                                 if let Ok(date) = due_date {
                                     let date = date.with_timezone(&Utc).date_naive();
                                     if date < current_date && !task.completed{ count += 1; }
-                                    
-                                    if count > 0 {
-                                        ui.label("Overdue");
-                                        ui.add_space(5.0);
-                                        ui.colored_label(Color32::DARK_RED, format!("{count}"));
-                                    }
                                 }
+                            }
+                            if count > 0 {
+                                ui.label("Overdue");
+                                ui.add_space(5.0);
+                                ui.colored_label(Color32::DARK_RED, format!("{count}"));
                             }
                         });
                     });
