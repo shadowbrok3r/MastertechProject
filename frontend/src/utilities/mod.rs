@@ -4,7 +4,8 @@ use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key
 use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User};
 use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use surrealdb::sql::Id as SurrealId;
+use std::{cell::RefCell, fmt::Debug, rc::Rc};
 
 pub mod displays;
 pub mod update_tasks;
@@ -16,12 +17,15 @@ pub mod sortable;
 pub mod ui_tools;
 pub mod ai;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TaskUiActions{
     OpenTaskModal(TaskPayload),
     CreateTaskModal,
     OpenChatModal((TaskId, Vec<TaskNotePayload>)),
-    Response(Response)
+    Response(Response),
+    Editing(SurrealId),
+    CommitChanges(SurrealId),
+    None
 }
 
 // pub type Xy = 
@@ -63,15 +67,15 @@ pub trait Updatable { // This is correctly implemented
 }
 
 pub trait Interaction{ // This is correctly implemented
-    fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_task_description(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_due_date(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_completed(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_status(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response>;
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Option<Response>;
+    fn interact_task_name(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_task_description(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_due_date(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_completed(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_status(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_dep(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_priority(&mut self, ui: &mut Ui) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> TaskUiActions; // , task: Rc<RefCell<TaskPayload>>
 }
 
 pub trait FilterTasks{ 

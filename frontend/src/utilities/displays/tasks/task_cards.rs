@@ -8,19 +8,10 @@ use database::schema::{TaskPayload, User};
 
 use crate::utilities::{Displayable, Interaction, TaskUiActions};
 
-// impl TaskPayload {
-
-// }
 impl Displayable for TaskPayload{
-    fn display_cards(
-        &mut self, 
-        ui: &mut Ui, 
-        // database: Database, 
-        store_users: &Vec<User>
-    )  -> Option<TaskUiActions>{
+    fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>)  -> Option<TaskUiActions>{
         let mut res: Option<TaskUiActions> = None;
-        // let frame_color = date_colors(self.due_date.clone(), self.completed);
-
+        
         Frame::default()
             .fill(Color32::from_rgb(14,14,18))
             .inner_margin(Margin::same(8.0))
@@ -56,18 +47,13 @@ impl Displayable for TaskPayload{
                     {
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                if let Some(response) = self.interact_assignee_initials(ui, store_users){
-                                    if response.secondary_clicked(){
-                                        res = Some(TaskUiActions::OpenTaskModal(self.to_owned()));
-                                    }
-                                }
+                                res = Some(self.interact_assignee_initials(ui, store_users));
                             });
-                            
                         });
 
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                self.interact_task_name(ui);
+                                res = Some(self.interact_task_name(ui));
                             });
                         });
                         s.cell(|ui|{
@@ -80,11 +66,12 @@ impl Displayable for TaskPayload{
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), |ui|{
-                                self.interact_completed(ui);
+                                res = Some(self.interact_completed(ui));
                             });
                         });
                     });
                 });
+
                 strip.empty();
                 
                 strip.strip(|strip| 
@@ -101,15 +88,21 @@ impl Displayable for TaskPayload{
                     {
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), 
-                                |ui| self.interact_priority(ui));
+                                |ui| {
+                                    res = Some(self.interact_priority(ui));
+                                });
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::TopDown), 
-                                |ui| self.interact_due_date(ui));
+                                |ui| {
+                                    res = Some(self.interact_due_date(ui));
+                                });
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft),
-                                |ui| self.interact_status(ui));
+                                |ui| {
+                                    res = Some(self.interact_status(ui));
+                                });
                         });
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft), |ui|{
@@ -119,10 +112,13 @@ impl Displayable for TaskPayload{
                                 }
                                 ui.style_mut().spacing.button_padding.x = 6.0;
                                 ui.style_mut().spacing.button_padding.y = 6.0;
-                                let txt = if count > 0 { RichText::new(format!("{} 💬", count)).color(Color32::LIGHT_RED) } else { RichText::new("💬").color(Color32::WHITE) };
+                                let txt = if count > 0 { 
+                                    RichText::new(format!("{} 💬", count)).color(Color32::LIGHT_RED) 
+                                } else { RichText::new("💬").color(Color32::WHITE) };
                                 if Button::new(txt).small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
-                                    res = Some(TaskUiActions::OpenChatModal((self.id.as_ref().unwrap().clone(), self.task_note.clone().unwrap_or(Vec::new()))))
-                                    // res = Some(TaskUiActions::OpenChatModal((self.id.clone().unwrap(), self.task_note.clone().unwrap_or(Vec::new()))))
+                                    res = Some(TaskUiActions::OpenChatModal(
+                                        (self.id.as_ref().unwrap().clone(), self.task_note.clone().unwrap_or(Vec::new()))
+                                    ))
                                 }
                             });
                         });
@@ -140,7 +136,9 @@ impl Displayable for TaskPayload{
                         {
                             let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}", self.id.as_ref().unwrap().0.id));
                             let task_descrip_head = CollapsingHeader::new("Task Description").id_source(task_descrip_header);
-                            task_descrip_head.show_unindented(ui, |ui| self.interact_task_description(ui));
+                            task_descrip_head.show_unindented(ui, |ui| {
+                                res = Some(self.interact_task_description(ui));
+                            });
                         });
                     });
                 });
