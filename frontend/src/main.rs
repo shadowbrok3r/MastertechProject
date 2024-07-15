@@ -21,15 +21,7 @@ impl eframe::App for MtechServer {
         ctx.set_style(arc_style);
 
         let data_update = self.context.data_update.as_mut().unwrap();
-        if let Some(items) = data_update.take() { 
-            self.context.file_system.build_file_system(items);
-        }
-
-        // For updating our Ratatui chart in the RataGuiBackend terminal
-        // if self.context.last_tick.elapsed() >= self.context.tick_rate {
-        //     self.context.chart_app.on_tick();
-        //     self.context.last_tick = Instant::now();
-        // }
+        if let Some(items) = data_update.take() { self.context.file_system.build_file_system(items); }
 
         // do some setting up in the initial frame of our update loop for 
         // 1. Getting database connection
@@ -183,6 +175,25 @@ impl eframe::App for MtechServer {
                         self.context.chat_modal_handler.open();
                     }// self.context.chat = ModalType::ChatView(pld);
                 },
+                TaskUiActions::Editing(id) => {
+                    info!("Editing");
+                    for (_, layout) in self.context.task_layouts.iter_mut() {
+                        if let Some(task_payload) = layout.begin_edit(&id.clone()){
+                            info!("\nReplacing {:?} // {:?}\n", id, task_payload);
+                            self.context.edited_task = task_payload.to_owned();
+                        }
+                    }
+                },
+                TaskUiActions::CommitChanges(id) => {
+                    info!("CommitChanges");
+                    for (_, layout) in self.context.task_layouts.iter_mut() {
+                        if let Some(task_payload) = layout.begin_edit(&id.clone()){
+                            info!("\nReplacing {:?} // {:?}\n", id, task_payload);
+                            *task_payload = self.context.edited_task.to_owned();
+                        }
+                    }
+                },
+                TaskUiActions::None => (),
             }
         }
 
@@ -192,7 +203,7 @@ impl eframe::App for MtechServer {
                 if !service_num.is_empty() {
                     spawn_local(async move {
                         match get_associated_ticket(tx, new_task.clone()).await{
-                            Ok(_) => info!("Got associated ticket"),
+                            Ok(_) => {},// info!("Got associated ticket"),
                             Err(e) => info!("Error getting associated ticket: {e:?}")
                         }
                     });
@@ -203,7 +214,7 @@ impl eframe::App for MtechServer {
         if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
             // If the live task does NOT already exist in our current vec<tasks>, then insert it
             match update_or_insert(&mut self.context.tasks, channel.new_task.1, Some(channel.new_ticket)){
-                Ok(_) => info!("Updated existing task"),
+                Ok(_) => {},// info!("Updated existing task"),
                 Err(e) => info!("Error updating existing task: {e:?}"),
             }
 

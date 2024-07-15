@@ -1,25 +1,33 @@
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
-use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
 use egui_extras::DatePickerButton;
 use log::info;
 
 use crate::utilities::Updatable;
-use super::{displays::tasks::task_cards::date_colors, Interaction};
+use super::{displays::tasks::task_cards::date_colors, Interaction, TaskUiActions};
 
 impl Interaction for TaskPayload {
-    fn interact_task_name(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_task_name(&mut self, ui: &mut Ui) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
-        let text_edit = TextEdit::singleline(&mut self.task_name).desired_width(ui.available_width() - 10.0).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
-        if text_edit.lost_focus(){
+        let response = TextEdit::singleline(&mut self.task_name).desired_width(ui.available_width() - 10.0).horizontal_align(Align::Center).vertical_align(Align::Center).ui(ui);
+        if response.changed() {
+            info!("assignee initials changed");
+            ui_action = TaskUiActions::Editing(self.id.clone().unwrap().0.id);
+        } 
+        if response.lost_focus() {
+            info!("assignee initials lost_focus");
             self.update_task_name(self.task_name.clone());
+            ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
         }
-        Some(text_edit)
+        ui_action
     }
 
-    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_checkin_notes(&mut self, ui: &mut Ui) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         let default = &mut TicketPayload::default();
@@ -29,15 +37,21 @@ impl Interaction for TaskPayload {
             .desired_width(ui.available_width())
             .horizontal_align(Align::Center)
             .ui(ui);
+
+        if text_edit.changed() {
+            ui_action = TaskUiActions::Editing(self.id.clone().unwrap().0.id);
+        }
         if text_edit.lost_focus() {
             let notes = ticket.clone().checkin_notes;
             self.update_checkin_notes(Some(notes));
             info!("checkin_notes changed: {:?}// {:?}", self.id, self.task_name);
+            ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
         }
-        None
+        ui_action
     }
 
-    fn interact_task_description(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_task_description(&mut self, ui: &mut Ui) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
         ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_additive_luminance(80));
 
@@ -47,13 +61,18 @@ impl Interaction for TaskPayload {
             .horizontal_align(Align::Center)
             .ui(ui);
 
+        if text_edit.changed() {
+            ui_action = TaskUiActions::Editing(self.id.clone().unwrap().0.id);
+        }
         if text_edit.lost_focus() {
             self.update_task_description(self.task_description.clone());
+            ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
         }
-        None
+        ui_action
     }
 
-    fn interact_due_date(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_due_date(&mut self, ui: &mut Ui) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
         let frame_color = date_colors(self.due_date.clone(), self.completed);
         ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(0.5, frame_color);
         ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(0.5, frame_color);
@@ -80,10 +99,15 @@ impl Interaction for TaskPayload {
             self.update_due_date(rfc3339_date.clone());
             info!("date_widget changed: {:?}// {:?} ", self.task_name,  date);
         }
-        None
+        if date_picker.lost_focus(){
+            ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
+        }
+
+        ui_action
     }
 
-    fn interact_completed(&mut self, ui: &mut Ui) -> Option<Response> {
+    fn interact_completed(&mut self, ui: &mut Ui) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
         if self.completed{
             let hover_txt = "✔";
             let color_complete = Color32::LIGHT_GREEN;
@@ -91,8 +115,9 @@ impl Interaction for TaskPayload {
             let button = Button::new(hover_txt).stroke(stroke).small().min_size(Vec2::new(25.0, 20.0)).ui(ui);
             if button.clicked(){
                 self.update_completed(false);
+                ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
             }
-            Some(button)
+            return ui_action;
         }else{
             let hover_txt = "✖";
             let color_incomplete = Color32::LIGHT_RED;
@@ -101,13 +126,15 @@ impl Interaction for TaskPayload {
             
             if button.clicked(){
                 self.update_completed(true);
+                ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
             }
-            Some(button)
+            return ui_action;
         }
     }
 
-    fn interact_status(&mut self, ui: &mut Ui) -> Option<Response> {
-        let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+    fn interact_status(&mut self, ui: &mut Ui) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
+        ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
             .width(ui.available_width() - 15.0)
             .height(ui.available_height())
@@ -118,14 +145,17 @@ impl Interaction for TaskPayload {
                 if status_change.clicked(){
                     // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, everest_initials);
                     self.update_status(status.clone());
+                    ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
                 }
             }
-        });
-        Some(combo_box.response)
+        }).inner;
+
+        ui_action
     }
 
-    fn interact_priority(&mut self, ui: &mut Ui) -> Option<Response> {
-        let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+    fn interact_priority(&mut self, ui: &mut Ui) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
+        ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
             .width(ui.available_width() - 2.0)
             .height(ui.available_height() - 2.0)
@@ -134,16 +164,18 @@ impl Interaction for TaskPayload {
             for mut priority in Priority::VALUES{
                 let priority_change = ui.selectable_value(&mut self.priority, priority.to_owned(), priority.as_str());
                 if priority_change.clicked(){
-                    // info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, everest_initials);
                     self.update_priority(Some(priority.clone()));
+                    ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
                 }
             }
-        });
-        Some(combo_box.response)
+        }).inner;
+
+        ui_action
     }
 
-    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Option<Response> {
-        let combo_box = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+    fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
+        let x = ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
             .selected_text(RichText::new(&self.everest_initials).small())
             .width(ui.available_width() / 1.3)
             .height(ui.available_height() - 2.0)
@@ -154,16 +186,22 @@ impl Interaction for TaskPayload {
                 if assignee_selection.clicked(){
                     info!("assignee changed?: {:?}// {:?} // {:?}", self.id, self.task_name, user.everest_initials.clone());
                     self.update_assignee_initials(user.everest_initials.clone());
+                    ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
                 }
             }
-        });
-        Some(combo_box.response)
+            ui_action.clone()
+        }).inner;
+        if let Some(action) = x{
+            return action;
+        }
+        ui_action
     }
     
-    fn interact_dep(&mut self, ui: &mut Ui) -> Option<Response> {
-
+    fn interact_dep(&mut self, ui: &mut Ui) -> TaskUiActions {
+        let mut ui_action = TaskUiActions::None;
         ui.label("Store:");
-        let _dep = ui.text_edit_singleline(&mut self.dep);
-        None
+        let dep = ui.text_edit_singleline(&mut self.dep);
+        ui_action = TaskUiActions::CommitChanges(self.id.clone().unwrap().0.id);
+        ui_action
     }
 }

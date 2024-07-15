@@ -167,7 +167,8 @@ pub struct MtechServerContext{
     /// Widgets / Modals / Ui for portions throughout the app
     pub new_note: bool,
     pub search_input: String,
-    pub task_layout: TaskLayout,
+    pub edited_task: TaskPayload,
+    #[serde(skip)]
     pub task_layouts: HashMap<String, TaskLayout>,
     #[serde(skip)]
     pub ai_playground: AiPlayground,
@@ -249,7 +250,6 @@ impl MtechServer{
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
 
-        let ui_actions = ui_actions_tx.clone();
         let context = MtechServerContext{
             // task: Vec::new(TaskPayload::default()),
             current_user: None,
@@ -276,7 +276,7 @@ impl MtechServer{
 
             // MODALS / LAYOUTS
             ai_playground: AiPlayground::default(),
-            task_layout: TaskLayout::new(BTreeMap::new(), Vec::new(), ui_actions, Vec::new()),
+            edited_task: TaskPayload::default(),
             task_layouts: HashMap::new(),
             current_modal: ModalType::Null,
             task_modal_handler: TaskModalHandler::default(),

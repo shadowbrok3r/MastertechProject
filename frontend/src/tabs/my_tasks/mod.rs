@@ -1,4 +1,4 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, ColumnLayout, FilterTasks}};
+use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks}};
 use std::collections::BTreeMap;
 use database::schema::Status;
 use eframe::egui::Ui;

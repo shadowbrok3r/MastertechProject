@@ -3,7 +3,6 @@ use crossbeam::channel::Sender;
 use database::DATABASE;
 use database::schema::{Priority, Record, TaskPayload, User};
 use log::info;
-use serde::Serialize;
 use surrealdb::sql::Id;
 use wasm_bindgen_futures::spawn_local;
 use std::borrow::BorrowMut;
@@ -11,7 +10,7 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
 use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
-use crate::utilities::{ColumnLayout, Displayable, FilterTasks, Sortable, TaskUiActions};
+use crate::utilities::{FilterTasks, Sortable, TaskUiActions, Displayable};
 
 // use super::sub_menu::sub_menu;
 
@@ -23,7 +22,7 @@ pub struct SortTasks{
 }
 
 
-#[derive(Serialize)]
+// #[derive(Serialize)]
 pub struct TaskLayout{
     pub search_inputs: HashMap<String, String>,
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
@@ -31,18 +30,28 @@ pub struct TaskLayout{
     pub assignees: Vec<User>,
     pub open_menu: bool,
 
-    #[serde(skip)]
+    pub action: TaskUiActions,
+    pub task: Option<Id>,
+    // #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
 }
 
 impl TaskLayout { 
-    pub fn new(
-        task_map: BTreeMap<String, Vec<TaskPayload>>,
-        column_names: Vec<String>,
-        ui_actions_tx: Sender<TaskUiActions>,
-        assignees: Vec<User>,
-    ) -> Self {
-        Self {  task_map, column_names, ui_actions_tx, search_inputs: HashMap::new(), assignees, open_menu: false }
+    pub fn new(mut task_map: BTreeMap<String, Vec<TaskPayload>>, column_names: Vec<String>, ui_actions_tx: Sender<TaskUiActions>, assignees: Vec<User>) -> Self 
+    {
+        for (_, tasks) in task_map.iter_mut() {
+            tasks.sort_task_payloads();
+        }
+        Self {  
+            task_map, 
+            column_names, 
+            ui_actions_tx, 
+            assignees, 
+            search_inputs: HashMap::new(), 
+            open_menu: false, 
+            action: TaskUiActions::None,
+            task: None
+        }
     }
 
     pub fn update_assignees(&mut self, assignees: Vec<User>) -> &mut Self {
@@ -87,20 +96,12 @@ impl TaskLayout {
         self
     }
 
-
     pub fn update_col_names(&mut self, column_names: Vec<String>) -> &mut Self {
         self.column_names = column_names;
         self
     }
 
-    // pub fn set_name_filter(&mut self, tasks: Vec<TaskPayload>, names: Vec<String>) -> &mut Self {
-    //     self.column_names = column_names;
-    //     self
-    // }
-}
-
-impl ColumnLayout for TaskLayout {
-    fn layout_cols(&mut self, ui: &mut Ui) {
+    pub fn layout_cols(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
         
@@ -115,93 +116,53 @@ impl ColumnLayout for TaskLayout {
                 .size(Size::exact(x))
                 .vertical(|mut strip| 
             {
-                strip
-                    .strip(|strip| 
+                strip.strip(|strip| 
                 {
-                    strip
-                        .sizes(column_width, self.column_names.len())
-                        .horizontal( |strip| self.headers(strip));
+                    strip.sizes(column_width, self.column_names.len()).horizontal( |strip| self.headers(strip));
                 });
+                
                 strip.empty();
-                strip
-                    .strip(|strip| 
+                
+                strip.strip(|strip| 
                 {
-                    strip
-                        .sizes(column_width, self.column_names.len())
-                        .horizontal( |mut strip| 
+                    strip.sizes(column_width, self.column_names.len()).horizontal( |mut strip| 
                     {
-                        self.columns(
-                            strip.borrow_mut(),
-                        );
+                        // for (name, tasks) in self.task_map.iter_mut() {
+                            self.columns(strip.borrow_mut());
+                        // }
                     });
                 });
             });
         });
     }
 
-    fn columns(&mut self, s: &mut Strip) {
-        let column_frame = Frame::default()
-            .fill(Color32::from_rgb(12, 12, 14))
-            .inner_margin(Margin::same(8.0))
-            .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(70)));
 
-        let mut inputs = BTreeSet::new();
-
-        for (name, tasks) in self.task_map.iter_mut() {
-            tasks.sort_task_payloads();
-            for task in tasks.iter(){
-                inputs.insert(task.task_name.clone());
-                inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
+    /// Starts editing a task by loading its data into the `task` (Rc<RefCell<TaskPayload>>).
+    pub fn begin_edit(&mut self, task_id: &Id) -> Option<&mut TaskPayload>{
+        info!("Finding ID: {task_id:?}");
+        // Search for the task by ID
+        for (_, tasks) in self.task_map.iter_mut(){
+            for task in tasks.iter_mut(){
+                if task.id.as_ref().unwrap().0.id == *task_id{
+                    info!("Got a match");
+                    return Some(task);
+                }
             }
-            s.cell(|ui| {
-                column_frame.show(ui, |ui| {
-                    ui.vertical_centered_justified(|ui| {
-                        ScrollArea::vertical()
-                            .auto_shrink(false)
-                            .show_viewport(ui, |ui, _| 
-                        {
-                            let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
-                            if !search_input.is_empty(){
-                                for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
-                                    let action = task.display_cards(ui, &self.assignees);
-                                    if let Some(action) = action{
-                                        match action{
-                                            TaskUiActions::OpenTaskModal(task) => {
-                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
-                                            },
-                                            TaskUiActions::OpenChatModal(chat_details) => {
-                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(chat_details));
-                                                info!("Opening chat");
-                                            },
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                            }else{
-                                for task in tasks {
-                                    let action = task.display_cards(ui, &self.assignees);
-                                    if let Some(action) = action{
-                                        match action{
-                                            TaskUiActions::OpenTaskModal(task) => {
-                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task));
-                                            },
-                                            TaskUiActions::OpenChatModal(chat_details) => {
-                                                let _ = self.ui_actions_tx.try_send(TaskUiActions::OpenChatModal(chat_details));
-                                                info!("Opening chat");
-                                            },
-                                            _ => ()
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    });
-                });
-            });
         }
+        None
     }
-    
+
+    /// Commits the changes from the editable task back to the task map.
+    // pub fn commit_changes(&mut self, task_id: &Id) {
+    //     let edited_task = self.task.borrow().clone();
+    //     if let Some((_, tasks)) = self.task_map.iter_mut().find(|(_, tasks)| tasks.iter().any(|t|  t.id.clone().unwrap().0.id == *task_id)) {
+    //         if let Some(task) = tasks.iter_mut().find(|t|  t.id.clone().unwrap().0.id == *task_id) {
+    //             *task = edited_task;
+    //         }
+    //     }
+    // }
+
+
     fn headers(&mut self, mut s: Strip){
         let header_frame = Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
@@ -223,10 +184,7 @@ impl ColumnLayout for TaskLayout {
                             margin.top = 6.0;
                             margin.left = 4.0;
                             
-                            TextEdit::singleline(search_input)
-                                .hint_text("Search")
-                                .desired_width(100.0)
-                                .margin(margin).ui(ui);
+                            TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
 
                             ui.add_space(ui.available_width() / 3.4);
                             
@@ -239,7 +197,13 @@ impl ColumnLayout for TaskLayout {
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
                             }
                             
-                            let res = popup_below_widget(ui, format!("sub_menu-{:?}",name).into(), &response, PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                            let res = popup_below_widget(
+                                ui, 
+                                format!("sub_menu-{:?}",name).into(), 
+                                &response, 
+                                PopupCloseBehavior::CloseOnClickOutside, 
+                                |ui| 
+                            {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
                                     if ui.button("Mark all Complete").clicked(){
@@ -293,8 +257,6 @@ impl ColumnLayout for TaskLayout {
                                     }, _ => {}
                                 }
                             }
-                            
-                            // ui.colored_label(Color32::WHITE, RichText::new(name.to_owned()).heading());
                         });
                         
                         ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
@@ -303,7 +265,6 @@ impl ColumnLayout for TaskLayout {
                                 RichText::new("✚")
                                     .color(Color32::from_rgb(191, 33, 101))
                                 )
-                                // .fill(Color32::TRANSPARENT)
                                 .rounding(Rounding::same(2.))
                                 .fill(Color32::from_rgb(22,22,22))
                                 .min_size(Vec2::new(30.0, 15.0))
@@ -339,7 +300,58 @@ impl ColumnLayout for TaskLayout {
         }
     }
 
+    fn columns(&mut self, s: &mut Strip) {
+        let column_frame = Frame::default()
+            .fill(Color32::from_rgb(12, 12, 14))
+            .inner_margin(Margin::same(8.0))
+            .rounding(Rounding::same(10.0))
+            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(70)));
+
+        let mut inputs = BTreeSet::new();
+
+        for (name, tasks) in self.task_map.iter_mut(){
+            for task in tasks.iter(){
+                inputs.insert(task.task_name.clone());
+                inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
+            }
+
+            s.cell(|ui| {
+                column_frame.show(ui, |ui| {
+                    ui.vertical_centered_justified(|ui| {
+                        ScrollArea::vertical()
+                            .auto_shrink(false)
+                            .show_viewport(ui, |ui, _| 
+                        {
+                            let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
+                            if !search_input.is_empty(){
+                                for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
+                                    let action: Option<TaskUiActions> = task.display_cards(ui, &self.assignees);
+                                    if let Some(action) = action{
+                                        self.action = action.clone();
+                                        self.ui_actions_tx.try_send(action).unwrap();
+                                    }
+                                }
+                            }else{
+                                for task in tasks {
+                                    let action = task.display_cards(ui, &self.assignees);
+                                    if let Some(action) = action{
+                                        // if !TaskUiActions::None = action{
+                                            self.action = action.clone();
+                                            info!("self.action {:?}", self.action.clone());
+                                            self.ui_actions_tx.try_send(action).unwrap();
+                                        // }
+                                    }
+                                }
+                            }
+                        });
+                    });
+                });
+            });
+        }
+    }
 }
+
+
 
 pub enum TaskActions{
     MarkComplete,
