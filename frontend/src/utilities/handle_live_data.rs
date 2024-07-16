@@ -1,3 +1,4 @@
+use anyhow::Error;
 use database::{schema::TaskPayload, DATABASE};
 use futures::StreamExt;
 use database::schema::*;
@@ -253,83 +254,41 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayl
 }
 
 pub async fn listen_data<T>(tx: Sender<(Action, T)>) -> anyhow::Result<(), anyhow::Error> 
-    where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin {
+    where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin 
+{
     let client_stream: Stream<Client, Vec<T>> = DATABASE.select(CONNECTED_CLIENT_TABLE).live().await?;
-    handle_streams(client_stream, tx).await;
+    handle_streams(client_stream, tx).await?;
     Ok(())
 }
 
 pub async fn listen_task_notes(tx: Sender<(Action, TaskNotePayload)>) -> anyhow::Result<(), anyhow::Error> {
     info!("Listening to task notes");
-    let task_stream: Stream<Client, Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await?;
-    handle_streams(task_stream, tx).await;
+    let note_stream: Stream<Client, Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await?;
+    handle_streams(note_stream, tx).await?;
     Ok(())
 }
 
 pub async fn listen_tasks(tx: Sender<(Action, LiveTaskPayload)>) -> anyhow::Result<(), anyhow::Error> {
     let task_stream: Stream<Client, Vec<LiveTaskPayload>> = DATABASE.select(TASK_TABLE).live().await?;
-    handle_streams(task_stream, tx).await;
+    handle_streams(task_stream, tx).await?;
     Ok(())
 }
 
 async fn handle_streams<T>(
     mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,
     tx: Sender<(Action, T)>
-) where T: Serialize + Deserialize<'static> + Debug
+) -> anyhow::Result<(), Error> 
+    where T: Serialize + Deserialize<'static> + Debug 
 {
     while let Some(notification) = notification_stream.next().await {
-        match notification{
-            Ok(notification) => {
-                let data = notification.data;
-                let action = notification.action;
-                info!("Data: {data:?}");
-                match tx.try_send((action, data)){
-                    Ok(_) => debug!("Sent notification"),
-                    Err(e) => info!("Error sending task data: {e:?}")
-                }
-            },
-            Err(err) => info!("Error: {err:?}")
-        };
+        let notif: Notification<T> = notification?;
+        let data = notif.data;
+        let action = notif.action;
+        info!("Data: {:?}", action);
+        match tx.try_send((action, data)){
+            Ok(_) => info!("Sent notification"),
+            Err(e) => info!("Error Sending notification {e:?}"),
+        }
     }; 
+    Ok(())
 }
-
-
-// pub trait IntoTaskPayload {
-//     fn into_task_payload(self) -> TaskPayload;
-// }
-
-// impl IntoTaskPayload for LiveTaskPayload {
-//     fn into_task_payload(self) -> TaskPayload {
-//         // Parse the service_ticket field
-//         let service_ticket = self.service_ticket.map(|ticket_str| {
-//             // Implement parsing logic for TicketPayload from ticket_str
-//             // For example:
-//             serde_json::from_str::<TicketPayload>(&ticket_str.0.to_string()).unwrap()
-//         });
-
-//         // Parse the task_note field
-//         let task_note = self.task_note.map(|notes| {
-//             notes.into_iter().map(|note_str| {
-//                 // Implement parsing logic for TaskNotePayload from note_str
-//                 // For example:
-//                 serde_json::from_str::<TaskNotePayload>(&note_str.0.to_string()).unwrap()
-//             }).collect()
-//         });
-
-//         TaskPayload {
-//             id: self.id,
-//             task_name: self.task_name,
-//             service_ticket,
-//             everest_initials: self.everest_initials,
-//             task_description: self.task_description,
-//             assignee: self.assignee,
-//             service_number: self.service_number,
-//             due_date: self.due_date,
-//             priority: self.priority,
-//             task_note,
-//             completed: self.completed,
-//             status: self.status,
-//             dep: self.dep,
-//         }
-//     }
-// }

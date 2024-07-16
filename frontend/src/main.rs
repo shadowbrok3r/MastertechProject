@@ -1,4 +1,4 @@
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_task_notes, get_associated_ticket, get_connected_clients, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
 use app_state::{check_authentication, AppState, MainPages, MtechServer};
@@ -29,31 +29,14 @@ impl eframe::App for MtechServer {
             self.context.first_run = false;
             match check_authentication(self.context.db_tx.clone()){
                 Ok(d) => {
+                    info!("1");
                     self.state = d.0;
-                    if let Some(ref _usr) = d.1{
-                        self.context.current_user = d.1;
-                    }
-                    let live_tasks_tx = self.context.live_tasks_tx.clone();
-                    let live_clients_tx = self.context.live_clients_tx.clone();
-                    let initial_tasks_tx = self.context.initial_tasks_tx.clone();
-                    let store_users_tx = self.context.store_users_tx.clone();
-                    let tx = self.context.connected_clients_tx.clone();
-                    let notes_tx = self.context.notes_tx.clone();
-                    if let Some(usr) = self.context.current_user.as_ref(){
-                        info!("Getting Initial data");
-                        let user = usr.clone();
-                        let _name = usr.name.clone();
-                        spawn_local(async move {
-                            let _ = get_tasks(initial_tasks_tx).await;
-                            let _ = get_store_users(store_users_tx, user.clone().store).await;
-                            let _ = listen_tasks(live_tasks_tx).await;
-                            let _ = listen_data(live_clients_tx).await;
-                            let _ = listen_task_notes(notes_tx).await;
-                            let _ = get_connected_clients(tx, user.clone()).await;
-                        });
+                    if let Some(ref usr) = d.1{
+                        self.context.current_user = Some(usr.clone());
                     }
                 },
                 Err(e) => {
+                    info!("2");
                     info!("Error with auth: {e:?}");
                     self.state = AppState::NoAuth(e.to_string());
                     self.context.current_user = None;
@@ -63,9 +46,9 @@ impl eframe::App for MtechServer {
 
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.context.db_rx.try_recv(){
-            info!("Got db");
             match db{
                 Ok(_db) => {
+                    info!("3");
                     // get all of our channel Senders from crossbeam to get user/store/completed tasks, 
                     // as well as store users and live task notifications
                     let live_tasks_tx = self.context.live_tasks_tx.clone();
@@ -74,49 +57,63 @@ impl eframe::App for MtechServer {
                     let store_users_tx = self.context.store_users_tx.clone();
                     let tx = self.context.connected_clients_tx.clone();
                     let notes_tx = self.context.notes_tx.clone();
+
                     if let Some(usr) = self.context.current_user.as_ref(){
                         info!("Getting Initial data");
                         let user = usr.clone();
                         let name = usr.name.clone();
+
                         spawn_local(async move {
-                            let _ = get_tasks(initial_tasks_tx).await;
-                            let _ = get_store_users(store_users_tx, user.clone().store).await;
-                            let _ = listen_tasks(live_tasks_tx).await;
-                            let _ = listen_data(live_clients_tx).await;
-                            let _ = listen_task_notes(notes_tx).await;
-                            let _ = get_connected_clients(tx, user.clone()).await;
+                            let listen_task_notes = listen_task_notes(notes_tx).await;
+                            info!("listen_task_notes: {listen_task_notes:?}");
+                        });
+
+                        spawn_local(async move {
+                            let listen_tasks = listen_tasks(live_tasks_tx).await;
+                            info!("listen_tasks: {listen_tasks:?}");
+                        });
+
+                        spawn_local(async move {
+                            let listen_data = listen_data(live_clients_tx).await;
+                            info!("listen_data: {listen_data:?}");
+                        });
+
+                        spawn_local(async move {
+                            let get_tasks = get_tasks(initial_tasks_tx).await;
+                            let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
+                            let get_connected_clients = get_connected_clients(tx, user.clone()).await;
+                            info!("get_connected_clients: {get_connected_clients:?}");
+                            info!("get_tasks: {get_tasks:?}");
+                            info!("get_store_users: {get_store_users:?}");
                         });
 
                         let toast = &mut self.context.toasts;
-    
                         let auth_toast = Toast{
                             kind: ToastKind::Success,
                             text: format!("Logged in successfully\nWelcome, {}", name).into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(6.0)
+                            options: ToastOptions::default().show_progress(true).duration_in_seconds(6.0)
                         };
                         toast.add(auth_toast);
                     }else{
+                        info!("4");
                         match check_authentication(self.context.db_tx.clone()){
+
                             Ok(d) => {
                                 self.state = d.0;
                                 if let Some(ref usr) = d.1{
                                     self.context.current_user = Some(usr.clone());
                                     let user = usr.clone();
                                     spawn_local(async move {
+                                        info!("5");
                                         let _ = get_tasks(initial_tasks_tx).await;
                                         let _ = get_store_users(store_users_tx, user.store).await;
+                                        let _ = listen_task_notes(notes_tx).await.unwrap();
                                     });
-
                                     let toast = &mut self.context.toasts;
-                
                                     let auth_toast = Toast{
                                         kind: ToastKind::Success,
                                         text: format!("Welcome, {}", usr.name).into(),
-                                        options: ToastOptions::default()
-                                            .show_progress(true)
-                                            .duration_in_seconds(6.0)
+                                        options: ToastOptions::default().show_progress(true).duration_in_seconds(6.0)
                                     };
                                     toast.add(auth_toast);
                                 }
@@ -130,29 +127,25 @@ impl eframe::App for MtechServer {
                     }
                 },
                 Err(e) => {
-                    
+                    info!("6");
                     if e.to_string().contains("Already connected"){
+                        info!("7");
                         self.state = AppState::Authenticated(MainPages::Tasks); 
                         let toast = &mut self.context.toasts;
-    
                         let auth_toast = Toast{
                             kind: ToastKind::Success,
                             text: format!("Already Connected").into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(6.0)
+                            options: ToastOptions::default().show_progress(true).duration_in_seconds(6.0)
                         };
                         toast.add(auth_toast);
                     } else {
+                        info!("8");
                         info!("{e:?}");
                         let toast = &mut self.context.toasts;
-    
                         let auth_toast = Toast{
                             kind: ToastKind::Error,
                             text: format!("{e:?} \nYou may need to login again").into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(6.0)
+                            options: ToastOptions::default().show_progress(true).duration_in_seconds(6.0)
                         };
                         toast.add(auth_toast);
                         self.state = AppState::NoAuth("Needs login".to_string());
@@ -166,7 +159,6 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
-            info!("Got users");
             self.context.store_users = Some(users);
         }
 
@@ -193,51 +185,13 @@ impl eframe::App for MtechServer {
                         self.context.current_modal = ModalType::ChatView(chat_modal);
                         self.context.chat_modal_handler.open();
                     }// self.context.chat = ModalType::ChatView(pld);
-                },
-                TaskUiActions::Editing(_id) => {
-                    info!("Editing");
-                    // for (_, layout) in self.context.task_layouts.iter_mut() {
-                    //     if let Some(task_payload) = layout.begin_edit(&id.clone()){
-                    //         info!("\nReplacing {:?}\n{:?}\n", id, task_payload.task_name);
-                    //         // self.context.edited_task = task_payload.to_owned();
-                    //     }
-                    // }
-                },
-                TaskUiActions::CommitChanges(_id) => {
-                    info!("CommitChanges");
-                    // for (_, layout) in self.context.task_layouts.iter_mut() {
-                    //     if let Some(task_payload) = layout.begin_edit(&id.clone()){
-                    //         // info!("\nReplacing {:?} // {:?}\n", id, task_payload);
-                    //         // *task_payload = self.context.edited_task.to_owned();
-                    //     }
-                    // }
-                },
-                TaskUiActions::None => (),
+                }, _ => (),
             }
         }
 
         if let Ok(new_task) = self.context.live_tasks_rx.try_recv(){
             info!("New Task Update");
             let tx = self.context.new_ticket_tx.clone();
-            
-            if let Some(notes) = new_task.clone().1.task_note {
-                for new_task_note in notes{
-                    for existing_tasks in self.context.tasks.iter(){    
-                        if let Some(existing_notes) = &existing_tasks.task_note{
-                            if !existing_notes.iter().any(|n| n.id.as_ref().unwrap().0.id == new_task_note.clone().0.id){
-                                let notes_tx = self.context.new_note_tx.clone();
-                                let note_id = new_task_note.clone().0.id;
-                                spawn_local(async move {
-                                    match get_associated_task_notes(notes_tx, note_id).await{
-                                        Ok(_) => info!("Got associated notes"),
-                                        Err(e) => info!("Error getting associated ticket: {e:?}")
-                                    }
-                                });
-                            }
-                        }
-                    }
-                }
-            }
             if let Some(service_num) = new_task.clone().1.service_number{
                 if !service_num.is_empty() {
                     let new_task = new_task.clone();
@@ -308,18 +262,7 @@ impl eframe::App for MtechServer {
             }
         }
 
-        if let Ok(payload) = self.context.new_note_rx.try_recv(){
-            info!("New note");
-            self.context.new_note = true;
-            if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal{
-                update_or_insert_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
-                info!("Inserting note into modal");
-                task_modal.chat_view.insert_note(payload);
-            }
-        }
-
         
-
         if let Ok(state) = self.context.app_state_rx.try_recv(){
             debug!("Got a new state: {state:?}");
             self.state = state

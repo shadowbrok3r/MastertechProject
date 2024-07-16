@@ -55,16 +55,16 @@ impl ChatView {
     }
 
     pub fn insert_note(&mut self, new_note: TaskNotePayload){
-        let x = new_note.note.is_empty() ;
+        let x = new_note.note.is_empty();
         let y = new_note.created_at.is_empty();
         let z = new_note.everest_initials.is_empty();
         info!("X {x} // Y {y} // Z {z}");
         if self.messages.iter().any(|note| {
             if let (Some(new_id), Some(existing_id)) = (new_note.id.as_ref(), note.id.as_ref()) {
                 new_id.0.id != existing_id.0.id && !x && !y && !z
-            } else { true }
+            } else { false }
         }) {
-            debug!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
+            info!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
             self.messages.push(new_note);
         }
     }
@@ -104,13 +104,10 @@ impl ChatView {
             ui.visuals_mut().code_bg_color = Color32::BLACK;
             ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             let enter_pressed = ui.input_mut(|i| i.consume_shortcut(&SHORTCUT_ENTER));
-            if enter_pressed{
-                info!("Enter shortcut pressed");
-            }
             
             if let Some(response) = markdown_editor.ui(ui)
             {
-                if response.clicked(){
+                if response.clicked() || enter_pressed {
                     let txt = markdown_editor.submit();
                     info!("Txt: {txt}");
                     markdown_editor.clear();
@@ -119,7 +116,6 @@ impl ChatView {
                     if let Some(usr) = self.current_user.clone(){
                         
                         let new_note = TaskNotePayload { everest_initials: usr.everest_initials, note: txt, task_id: self.task_id.clone(), ..Default::default() };
-                        self.messages.push(new_note.clone());
 
                         spawn_local(async move {
                             let query = format!("CREATE task_note CONTENT $note");
