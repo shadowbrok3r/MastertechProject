@@ -3,7 +3,7 @@ use futures::StreamExt;
 use database::schema::*;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
-use log::{debug, error, info};
+use log::{debug, info};
 use crossbeam::channel::Sender;
 use surrealdb::engine::remote::ws::Client;
 use std::{collections::HashMap, fmt::Debug};
@@ -231,9 +231,9 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayl
     } else { existing_task.service_ticket.clone() };
 
     // let notes = if let Some(existing_notes) = live_task.task_note{
-        info!("live_task.task_note: {:?}", live_task.task_note.clone());
-    // } else { 
-        info!("existing_task.task_note.clone() : {:?}", existing_task.task_note.clone() .clone());
+    //     info!("live_task.task_note: {:?}", live_task.task_note.clone());
+    // // } else { 
+    //     info!("existing_task.task_note.clone() : {:?}", existing_task.task_note.clone());
     // };
     TaskPayload {
         id: live_task.id,

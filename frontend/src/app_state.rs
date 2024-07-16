@@ -1,20 +1,19 @@
-use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
-use anyhow::Error;
-use crossbeam::channel::{self, Receiver, Sender};
+use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, ui_tools::toasts::Toasts}};
+use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
+use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, get_data::update_task_notes, ui_tools::toasts::Toasts}};
-use gloo_worker::Spawnable;
-use log::info;
-use ratatui::Terminal;
-// use ratframe::NewCC;
-use egui_ratatui::RataguiBackend;
-use serde::Serialize;
-use surrealdb::Action;
+use crossbeam::channel::{self, Receiver, Sender};
+use mtechserver::webworker::{Input, WebWorker};
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
-use mtechserver::webworker::{Input, WebWorker};
+use egui_ratatui::RataguiBackend;
+use gloo_worker::Spawnable;
+use surrealdb::Action;
+use ratatui::Terminal;
+use serde::Serialize;
+use anyhow::Error;
+use log::info;
 use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, toolbox::storage_api::FileSystem, web_console::websockets::WebSocketClient}, 
     utilities::{
@@ -24,6 +23,7 @@ use crate::{
         DisplayModal, ModalType,TaskUiActions
     }
 };
+
 
 pub const SECRET_KEY: &str = "lUVgT6KPAR7uPZriAC1QPqSTB9aW12oAmgegk6gO";
 pub const ACCESS_KEY: &str = "DMAZwz4511ezKqEiF2vy";
@@ -113,6 +113,10 @@ pub struct MtechServerContext{
     pub notes_tx: Sender<(Action, TaskNotePayload)>,
     #[serde(skip)]
     pub notes_rx: Receiver<(Action, TaskNotePayload)>,
+    #[serde(skip)]
+    pub new_note_tx: Sender<TaskNotePayload>,
+    #[serde(skip)]
+    pub new_note_rx: Receiver<TaskNotePayload>,
 
     #[serde(skip)]
     pub store_users_tx: Sender<Vec<User>>,
@@ -250,7 +254,8 @@ impl MtechServer{
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
-        
+        let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
+
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
 
@@ -276,6 +281,7 @@ impl MtechServer{
             connected_clients_tx, connected_clients_rx,
             new_ticket_tx, new_ticket_rx,
             notes_tx, notes_rx,
+            new_note_tx, new_note_rx,
 
             // MODALS / LAYOUTS
             ai_playground: AiPlayground::default(),
@@ -325,8 +331,8 @@ impl MtechServerContext{
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
                 let task_name = task_modal.task.task_name.clone();
-                if let Some(notes) = &task_modal.task.task_note {
-                    info!("Notes: {:?}", notes);
+                if let Some(_notes) = &task_modal.task.task_note {
+                    // info!("Notes: {:?}", notes);
                 }
                 
                 self.task_modal_handler.ui(
