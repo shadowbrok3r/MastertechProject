@@ -1,3 +1,4 @@
+use database::schema::TaskNotePayload;
 use database::DATABASE;
 use gloo_worker::{HandlerId, WorkerScope};
 use log::info;
@@ -68,20 +69,20 @@ pub struct LiveInput {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LiveOutput<T>{
-    pub data: T,
+pub struct LiveOutput{
+    pub data: TaskNotePayload,
 }
 
 pub struct LiveWorker;
 
-impl <T> gloo_worker::Worker for LiveWorker<T> {
+impl gloo_worker::Worker for LiveWorker {
     type Message = Message;
     type Input = LiveInput;
-    type Output = LiveOutput<T>;
+    type Output = LiveOutput;
 
     fn create(_scope: &WorkerScope<Self>) -> Self {
         info!("create");
-        LiveWorker::<T>
+        LiveWorker
     }
 
     fn update(&mut self, _scope: &WorkerScope<Self>, msg: Self::Message) {
@@ -95,9 +96,9 @@ impl <T> gloo_worker::Worker for LiveWorker<T> {
         id: HandlerId,
     ) {
         info!("received {msg:?}");
-        let scope: WorkerScope<LiveWorker<T>> = scope.clone();
+        let scope: WorkerScope<LiveWorker> = scope.clone();
         spawn_local(async move {
-            let result = listen_data("task_note", scope, id).await;
+            let result = listen_data::<TaskNotePayload>("task_note", scope, id).await;
             match result {
                 Ok(_) => info!("Got data from worker"),
                 Err(e) => info!("Error: {e:?}"),
@@ -106,8 +107,8 @@ impl <T> gloo_worker::Worker for LiveWorker<T> {
     }
 }
 
-pub async fn listen_data<T>(resource: &str, scope: WorkerScope<LiveWorker<T>>, id: HandlerId) -> anyhow::Result<(), anyhow::Error> 
-    where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin 
+pub async fn listen_data<T>(resource: &str, scope: WorkerScope<LiveWorker>, id: HandlerId) -> anyhow::Result<(), anyhow::Error> 
+    where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin, TaskNotePayload: From<T>
 {
     let client_stream: Stream<SurrealClient, Vec<T>> = DATABASE.select(resource).live().await?;
     handle_streams(client_stream, scope, id).await?;
@@ -117,17 +118,17 @@ pub async fn listen_data<T>(resource: &str, scope: WorkerScope<LiveWorker<T>>, i
 
 async fn handle_streams<T>(
     mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,
-    scope: WorkerScope<LiveWorker<T>>, 
+    scope: WorkerScope<LiveWorker>, 
     id: HandlerId
 ) -> anyhow::Result<(), anyhow::Error> 
-    where T: Serialize + Deserialize<'static> + Debug + 'static
+    where T: Serialize + Deserialize<'static> + Debug + 'static, TaskNotePayload: From<T>
 {
     while let Some(notification) = notification_stream.next().await {
         let notif: Notification<T> = notification?;
         let data = notif.data;
         let action = notif.action;
         info!("Data: {:?}", action);
-        scope.respond(id, LiveOutput { data })
+        scope.respond(id, LiveOutput { data: data.into() })
     }; 
     Ok(())
 }
