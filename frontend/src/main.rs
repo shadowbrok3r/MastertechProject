@@ -1,4 +1,4 @@
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_task_notes, get_associated_ticket, get_connected_clients, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
 use app_state::{check_authentication, AppState, MainPages, MtechServer};
@@ -42,7 +42,7 @@ impl eframe::App for MtechServer {
                     if let Some(usr) = self.context.current_user.as_ref(){
                         info!("Getting Initial data");
                         let user = usr.clone();
-                        let name = usr.name.clone();
+                        let _name = usr.name.clone();
                         spawn_local(async move {
                             let _ = get_tasks(initial_tasks_tx).await;
                             let _ = get_store_users(store_users_tx, user.clone().store).await;
@@ -219,21 +219,28 @@ impl eframe::App for MtechServer {
         if let Ok(new_task) = self.context.live_tasks_rx.try_recv(){
             info!("New Task Update");
             let tx = self.context.new_ticket_tx.clone();
-            if let Some(notes) = new_task.1.task_note {
-                for (existing_tasks, new_task_note) in self.context.tasks.iter().zip(notes.iter()){    
-                    if let Some(existing_notes) = existing_tasks.task_note{
-                        if !existing_notes.iter().any(|n| {
-                            if let Some(id) = n.id{
-                                id == new_task_note.0.id
+            
+            if let Some(notes) = new_task.clone().1.task_note {
+                for new_task_note in notes{
+                    for existing_tasks in self.context.tasks.iter(){    
+                        if let Some(existing_notes) = &existing_tasks.task_note{
+                            if !existing_notes.iter().any(|n| n.id.as_ref().unwrap().0.id == new_task_note.clone().0.id){
+                                let notes_tx = self.context.new_note_tx.clone();
+                                let note_id = new_task_note.clone().0.id;
+                                spawn_local(async move {
+                                    match get_associated_task_notes(notes_tx, note_id).await{
+                                        Ok(_) => info!("Got associated notes"),
+                                        Err(e) => info!("Error getting associated ticket: {e:?}")
+                                    }
+                                });
                             }
-                        }){
-                            existing_notes.push(new_task_note.clone());
                         }
                     }
                 }
             }
             if let Some(service_num) = new_task.clone().1.service_number{
                 if !service_num.is_empty() {
+                    let new_task = new_task.clone();
                     spawn_local(async move {
                         match get_associated_ticket(tx, new_task.clone()).await{
                             Ok(_) => {},// info!("Got associated ticket"),
@@ -300,6 +307,18 @@ impl eframe::App for MtechServer {
                 task_modal.chat_view.insert_note(payload.1);
             }
         }
+
+        if let Ok(payload) = self.context.new_note_rx.try_recv(){
+            info!("New note");
+            self.context.new_note = true;
+            if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal{
+                update_or_insert_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
+                info!("Inserting note into modal");
+                task_modal.chat_view.insert_note(payload);
+            }
+        }
+
+        
 
         if let Ok(state) = self.context.app_state_rx.try_recv(){
             debug!("Got a new state: {state:?}");

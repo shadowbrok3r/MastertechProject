@@ -1,11 +1,11 @@
-use crossbeam::channel::Sender;
-use displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::{ModalAction, TaskModal}, ModalResponse, ModalState}};
 use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
+use displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::{ModalAction, TaskModal}, ModalResponse, ModalState}};
 use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User};
-use egui_extras::Strip;
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Id as SurrealId;
-use std::{cell::RefCell, fmt::Debug, rc::Rc};
+use crossbeam::channel::Sender;
+use egui_extras::Strip;
+use std::fmt::Debug;
 
 pub mod displays;
 pub mod update_tasks;
@@ -53,6 +53,7 @@ pub trait ColumnLayout{
     // fn card_layout(&mut self, ui: &mut Ui) -> Option<TaskUiActions>;
 }
 
+// #[async_trait]
 pub trait Updatable { // This is correctly implemented
     fn update_completed(&self, completed: bool);
     fn update_due_date(&self, due_date: String);

@@ -208,8 +208,8 @@ impl DisplayModal for TaskModal {
                                         ModalAction::PartOrderPage => self.spo.display_part_order_page(ui, avail_size),
                                         ModalAction::TaskNotePage => {
                                             ui.set_width(avail_size.x);
-                                            if let Some(new_message) = self.chat_view.ui(ui){
-                                                    self.task.update_task_notes(new_message);
+                                            if let Some(_new_message) = self.chat_view.ui(ui){
+                                                // self.task.update_task_notes(new_message);
                                             }
                                         },
                                         _ => display_task_page(ui, &mut self.task, avail_size)

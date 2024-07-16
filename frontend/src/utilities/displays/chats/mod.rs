@@ -1,7 +1,7 @@
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
-use database::schema::{TaskId, TaskNotePayload, User};
+use database::{schema::{Record, TaskId, TaskNotePayload, User}, DATABASE};
 use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
 use crate::utilities::get_data::TaskNoteMod;
 use wasm_bindgen_futures::spawn_local;
@@ -59,13 +59,14 @@ impl ChatView {
         let y = new_note.created_at.is_empty();
         let z = new_note.everest_initials.is_empty();
         info!("X {x} // Y {y} // Z {z}");
-        if self.messages.iter().any(|note| 
-            note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
-        ) {
+        if self.messages.iter().any(|note| {
+            if let (Some(new_id), Some(existing_id)) = (new_note.id.as_ref(), note.id.as_ref()) {
+                new_id.0.id != existing_id.0.id && !x && !y && !z
+            } else { true }
+        }) {
             debug!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
             self.messages.push(new_note);
         }
-
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Option<String>{
@@ -116,10 +117,15 @@ impl ChatView {
                     new_msg = Some(txt.clone());
 
                     if let Some(usr) = self.current_user.clone(){
-                        self.messages.push(TaskNotePayload {
-                            everest_initials: usr.everest_initials,
-                            note: txt,
-                            ..Default::default()
+                        
+                        let new_note = TaskNotePayload { everest_initials: usr.everest_initials, note: txt, task_id: self.task_id.clone(), ..Default::default() };
+                        self.messages.push(new_note.clone());
+
+                        spawn_local(async move {
+                            let query = format!("CREATE task_note CONTENT $note");
+                            DATABASE.set("note", new_note).await.unwrap();
+                            let update_task_note: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+                            info!("Update_note: {:?}", update_task_note);
                         });
                     }
                 }

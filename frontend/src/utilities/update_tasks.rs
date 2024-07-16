@@ -196,11 +196,11 @@ impl Updatable for TaskPayload {
     }
 
     fn update_task_notes(&self, new_msg: String) {
-        let id = self.id.clone().unwrap();
         
         let task_note = TaskNotePayload {
-            task_id: Some(id.clone()),
+            task_id: self.id.clone(),
             note: new_msg,
+            
             ..Default::default()
         };
         

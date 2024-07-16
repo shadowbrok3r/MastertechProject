@@ -31,6 +31,16 @@ pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Acti
     Ok(())
 }
 
+pub async fn get_associated_task_notes(tx: Sender<TaskNotePayload>, note_id: Id) -> anyhow::Result<(), anyhow::Error> {
+    debug!("get_associated_task_notes");
+    DATABASE.set("id", note_id).await?;
+    let note: Option<TaskNotePayload> = DATABASE.query(format!("SELECT * FROM task_note WHERE id == $id")).await?.take(0)?;
+    debug!("note: {:?}", note);
+    let new_note = note.unwrap_or_default();
+    tx.try_send(new_note)?;
+    Ok(())
+}
+
 pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_store_users");
     DATABASE.set("store", store).await?;
