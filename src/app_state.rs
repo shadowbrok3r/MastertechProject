@@ -1,17 +1,15 @@
-use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
-use anyhow::Error;
-use chrono::{DateTime, Utc};
-use crossbeam::channel::{Receiver, Sender};
+use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, LocalSebData, PrestashopPayload, TaskNotePayload, TaskPayload, TicketData, User}, GetKeysResponse}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
 use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
-use crate::utilities::toasts::Toasts;
-use serde_json::Value;
+use log::info;
+use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
-use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, LocalSebData, PrestashopPayload, TaskNotePayload, TaskPayload, TicketData, User}, GetKeysResponse}, pages::login_page::Login, tabs::{file_browser::FileBrowser, mastertech_website::task_layout::TaskLayout, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::TaskUiActions};
-use egui_file::FileDialog;
-// use ratframe::NewCC;
+use crossbeam::channel::{Receiver, Sender};
+use crate::utilities::toasts::Toasts;
 use egui_ratatui::RataguiBackend;
-// use uuid::Uuid;
-// use ratatui::Terminal;
+use chrono::{DateTime, Utc};
+use egui_file::FileDialog;
+use serde_json::Value;
+use anyhow::Error;
 
 pub struct MasterTechApp {
     pub context: MastertechContext,
@@ -97,13 +95,21 @@ pub struct MastertechContext {
 
     pub task_map: HashMap<String, Vec<TaskPayload>>,
     pub task_layouts: HashMap<String, TaskLayout>,
-
+    pub current_modal: ModalType,
+    pub task_modal_handler: TaskModalHandler,
+    pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
+    pub chat_modal_handler: ChatModalHandler,
+    pub chat_modal: Option<ChatView>,
     pub task_payload: Option<Vec<TaskPayload>>,
     pub task_data: LiveTaskPayload,
     pub ticket_data: TicketData,
     pub customer_data: CustomerData,
     pub computer_data: ComputerData,
     pub task_notes: Vec<TaskNotePayload>,
+
+    pub rerun_filtering_my_tasks: bool,
+    pub rerun_filtering_store_tasks: bool,
+    pub rerun_filtering_completed: bool,
 
     pub client_uuid: Option<ClientId>,
     pub disks: Value,
@@ -189,7 +195,7 @@ impl MasterTechApp {
         let (initial_tasks_tx, initial_tasks_rx) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
 
-        let context = MastertechContext {
+        let mastertech_context = MastertechContext {
             current_user: None,
             // terminal: Terminal::new(backend).unwrap(),
             terminal_frontend: None,
@@ -209,6 +215,10 @@ impl MasterTechApp {
             ticket_data: TicketData::default(),
             customer_data: CustomerData::default(),
             task_notes: Vec::new(),
+
+            rerun_filtering_my_tasks: false,
+            rerun_filtering_store_tasks: false,
+            rerun_filtering_completed: false,
 
             seb_info: None,
 
@@ -264,6 +274,12 @@ impl MasterTechApp {
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
 
             added_nodes: Vec::new(),
+            
+            current_modal: ModalType::Null,
+            task_modal_handler: TaskModalHandler::default(),
+            create_task_modal_handler: ModalHandler::default(),
+            chat_modal: None,
+            chat_modal_handler: ChatModalHandler::default(),
 
             db_data_receiver,  db_data_sender,
             prestashop_api_tx, prestashop_api_rx,
@@ -278,11 +294,64 @@ impl MasterTechApp {
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
         };
+        let context = mastertech_context;
 
         Self { context, tree, login: Login::default(), state: AppState::default() }
     }
 }
 
+impl MastertechContext {
+    pub fn handle_modals(&mut self, ctx: &Context){
+        match &mut self.current_modal {
+            ModalType::TaskModal(task_modal) => {
+                let task_name = task_modal.task.task_name.clone();
+                if let Some(_notes) = &task_modal.task.task_note {
+                    // info!("Notes: {:?}", notes);
+                }
+                
+                self.task_modal_handler.ui(
+                    ctx, 
+                    || Modal::new(&task_name).default_height(600.0),
+                    move |ui, _stay_open, page_state| {
+                        let action = task_modal.display(ui, page_state.to_owned());
+                        // info!("Modal stuff");
+                        // if let Some(notes) = &task_modal.task.task_note{
+                        //     info!("Notes: {:?}", notes);
+                        // }
+                        if let Some(action) = action{
+                            *page_state = action;
+                        }
+                    });
+            },
+            ModalType::CreateTaskModal(create_task_modal) => {
+                let response = self.create_task_modal_handler.ui(
+                    ctx, 
+                    || CreateTaskModal::new("Create Task", self.store_users.clone()),
+                    |ui, _stay_open, page_state| create_task_modal.display(ui, page_state.to_owned()));
+
+                if let Some(response) = response{
+                    if let Some(_action) = response{
+                        // create_task_modal.set_state(action);
+                    }
+                }
+            },
+            ModalType::ChatView(chat_modal) => {
+                info!("opening chat");
+                self.chat_modal_handler.ui(
+                    ctx, 
+                    || Modal::new("Chats").default_height(600.0),
+                    move |ui, _stay_open, _page_state| {
+                        if let Some(_new_message) = chat_modal.ui(ui){
+                            // spawn(async move { });
+                            // let _ = update_task_notes(new_message).await;
+                            
+                        } // task_modal.chat_view.insert_note(payload.1);
+                    });
+            }
+            _ => {},
+        }
+    }
+}
 /// Private method to access login state only within NoAuth context
 impl MasterTechApp{
     pub fn login_mut(&mut self) -> Option<&mut Login> {

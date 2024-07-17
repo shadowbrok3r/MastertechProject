@@ -1,11 +1,11 @@
-use log::info;
+use crate::{app_state::MastertechContext, database::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order}, schema::{CustomerData, CustomerId, PrestashopPayload, CUSTOMER_TABLE}}};
 use reqwest::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE}, Client};
-use serde::Deserialize;
-use serde_json::{from_value, Value};
-use surrealdb::sql::Thing;
-use std::collections::HashMap;
-use crate::{app_state::MastertechContext, database::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, ServiceOrder}, schema::{CustomerData, CustomerId, PrestashopPayload, CUSTOMER_TABLE}}};
 use crate::database::prestashop_schema::SubResource;
+use serde_json::{from_value, Value};
+use std::collections::HashMap;
+use surrealdb::sql::Thing;
+use serde::Deserialize;
+use log::info;
 
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 

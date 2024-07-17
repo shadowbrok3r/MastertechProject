@@ -70,7 +70,7 @@ impl FilterTasks for Vec<TaskPayload>{
         // Sort the match results by score in descending order (higher scores first).
         match_results.sort_by_key(|k| Reverse(k.1));
 
-        for (i, (output, _, _match_indices)) in
+        for (_i, (output, _, _match_indices)) in
             match_results.iter().take(6).enumerate()
         {
             return self.into_iter()

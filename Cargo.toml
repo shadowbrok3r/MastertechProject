@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.1.7"
+version = "4.1.9"
 edition = "2021"
 description = "Mastertech"
 build = "build.rs"
@@ -29,7 +29,7 @@ fs_extra = "1.3"
 simplelog = "0.12"
 log = "0.4"
 rayon = "1.10"
-quick-xml = { version="0.35.0", features = ["serialize"]}
+quick-xml = { version="0.36", features = ["serialize"]}
 serde-xml-rs = "0.6"
 num-traits = "0.2"
 rfd = "0.14"
@@ -73,6 +73,7 @@ hex = "0.4.3"
 bincode = "1.3.3"
 fuzzy-matcher = "0.3.7"
 ring = "0.17.8"
+once_cell = "1.19.0"
 # tui-term = "0.1.11"
 
 [dev-dependencies]

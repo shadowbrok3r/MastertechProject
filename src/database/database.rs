@@ -1,21 +1,22 @@
-use log::{debug, info};
+use log::info;
+use once_cell::sync::Lazy;
+use std::fmt::Debug;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use serde_json::Value;
+
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws, Wss}, opt::auth::{Jwt, Scope}, sql::Thing, Error, Surreal
-    
+    engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Scope}, Error, Surreal // http::{Client as HttpClient, Https},
 };
+        
 
-use super::schema::User;
+use super::schema::{Record, User};
 
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Database{
-    pub database: Surreal<WsClient>,
+    // pub database: Surreal<WsClient>,
     pub jwt: Option<Jwt>,
     pub user: Option<User>
 }
-
 #[derive(Serialize, Deserialize)]
 pub struct DataSuccess{
     success: bool
@@ -32,46 +33,44 @@ pub struct DataResult{
     pub result: Result<DataSuccess, Error>
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Record {
-    #[allow(dead_code)]
-    pub id: Thing,
-}
-
 #[derive(Serialize)]
 struct Auth {
     email: String,
     password: String,
 }
 
-
-const DB_URL: &str = "surrealdb.master-tech.app/rpc"; // surreal.master-tech.app/rpc
 const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
 
+pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
+        let db_url = dotenv::var("DB_URL").unwrap_or("surrealdb.master-tech.app".to_string());
+
+        DATABASE.connect::<Wss>(&db_url).await?;
+        DATABASE.use_ns(NS).use_db(DB).await?;
+
         match jwt{
             Some(jwt) => {
                 info!("We already have a jwt, attempting token auth");
-                let database: Surreal<WsClient> = Surreal::new::<Wss>(DB_URL).await?;
-                let auth = database.authenticate(jwt.clone()).await;
-
+                info!("We already have a jwt, attempting token auth");
+                let auth = DATABASE.authenticate(jwt.clone()).await;
+                // Self::handle_auth(auth, jwt, username, password).await
                 match auth{
                     Ok(_) => {
                         info!("Auth ok");
                         if !username.is_empty() || !password.is_empty(){
-                            let query = format!("SELECT id, name, everest_initials, email, store, connected_clients FROM user WHERE email = $email");
-                            database.set("email", username).await?;
-                            let user: Vec<Value> = database.query(query).await?.take(0)?;
+                            let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE email = $email");
+                            DATABASE.set("email", username).await?;
+                            let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
                             info!("user: {user:#?}");
                             let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
-                            Ok(Self { database, jwt: Some(jwt.into()), user: Some(usr) })
+                            Ok(Self { jwt: Some(jwt.into()), user: Some(usr) })
                         }else{
                             info!("Auth not ok");
-                            Ok(Self { database, jwt: Some(jwt.into()), user: None })
+                            Ok(Self { jwt: Some(jwt.into()), user: None })
                         }
                     },
                     Err(e) => Err(e.into()),
@@ -79,13 +78,12 @@ impl Database{
             },
             None => {
                 info!("connecting");
-                let database: Surreal<WsClient> = Surreal::new::<Wss>(DB_URL).await?;
+                // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
                 info!("signing in");
-                
-                database.use_ns(NS).use_db(DB).await?;
+                // database.use_ns(NS).use_db(DB).await?;
 
                 // Select a specific namespace / database
-                let jwt = database.signin(
+                let jwt = DATABASE.signin(
                     Scope { 
                         namespace: NS, 
                         database: DB, 
@@ -98,21 +96,44 @@ impl Database{
                     }
                 ).await?;
                 
-                let query = format!("SELECT  id, name, everest_initials, email, store, connected_clients FROM user WHERE email = $email");
-                database.set("email", username.clone().to_lowercase()).await?;
+                let query = format!("SELECT  id, name, everest_initials, email, store FROM user WHERE email = $email");
+                DATABASE.set("email", username.clone().to_lowercase()).await?;
                 info!("querying ");
-                let user: Vec<Value> = database.query(query).await?.take(0)?;
+                let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
                     
                 let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
 
-                Ok(Self { database, jwt: Some(jwt), user: Some(usr) })
+                Ok(Self {jwt: Some(jwt), user: Some(usr) })
             },
         }
     }
 
+    
+    pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
+        let _db_url = dotenv::var("DB_URL").unwrap_or("surrealdb.master-tech.app".to_string());
+        // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
+        // Select a specific namespace / database
+        let jwt = DATABASE.signup(
+            Scope { 
+                namespace: NS, database: DB, scope: USER_SCOPE,
+                params: signup.clone()
+            }
+        ).await?;
+
+        info!("signup: {:?}", signup);
+        let query = format!("SELECT  id, name, everest_initials, email, store FROM user WHERE email == $email");
+
+        DATABASE.set("email", email).await?;
+
+        let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
+            
+        let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
+
+        Ok(Self { jwt: Some(jwt), user: Some(usr) })
+    }
+
     pub async fn insert<T: Serialize>(&self, table: &str, record: T) -> Result<Vec<Record>, Error> {
-        let created: Vec<Record> = self
-            .database
+        let created: Vec<Record> = DATABASE
             .create(table)
             .content(record)
             .await?;
@@ -120,11 +141,12 @@ impl Database{
     }
 
     pub async fn select<T: DeserializeOwned>(&self, table: &str) -> Result<Vec<T>, Error> {
-        let result: Vec<T> = self.database.select(table).await?;
+        let result: Vec<T> = DATABASE.select(table).await?;
         Ok(result)
     }
-    pub async fn query<T: DeserializeOwned>(&self, sql_query: &str) -> Result<Vec<T>, Error> {
-        let query: Vec<T> = self.database
+    
+    pub async fn sql<T: DeserializeOwned>(&self, sql_query: &str) -> Result<Vec<T>, Error> {
+        let query: Vec<T> = DATABASE
             .query(sql_query)
             .await?
             .take(0)?;
@@ -133,26 +155,9 @@ impl Database{
     }
 
     pub async fn delete(&self, table: &str, id: &str) -> Result<Option<Record>, Error> {
-        let result: Option<Record> = self.database
+        let result: Option<Record> = DATABASE
             .delete((table, id))
             .await.unwrap();
         Ok(result)
     }
 }
-
-
-pub async fn _handle_db_data<T: Serialize + DeserializeOwned + Clone>(database: Database, tx: crossbeam::channel::Sender<T>) 
-    -> anyhow::Result<(), anyhow::Error>
-{
-    let task_data: Vec<T> = database.select("task").await?;
-    for task_data in task_data.iter(){
-        
-        match tx.try_send(task_data.clone()){
-            Ok(_) => info!("Sent db connection across thread"),
-            Err(err) => debug!("Error sending db connection: {err:?}"),
-        }
-    }
-
-    Ok(())
-}
-

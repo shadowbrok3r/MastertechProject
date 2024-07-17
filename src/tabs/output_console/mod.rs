@@ -1,4 +1,4 @@
-use eframe::egui::{Color32, FontFamily, FontId, Stroke, TextEdit, Ui};
+use eframe::egui::{Color32, FontId, Stroke, TextEdit, Ui};
 
 use crate::app_state::MastertechContext;
 
