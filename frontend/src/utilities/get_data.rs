@@ -2,6 +2,7 @@
 use database::{schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, Record, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE}, DATABASE};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
+use mtechserver::webworker::LiveOutput;
 use surrealdb::{sql::{Id, Thing}, Action};
 use serde::{Deserialize, Serialize};
 use surrealdb::opt::RecordId;
@@ -31,19 +32,16 @@ pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Acti
     Ok(())
 }
 
-pub async fn get_customers(tx: Sender<CustomerData>) -> anyhow::Result<(), anyhow::Error> {
+pub async fn get_customer_data() -> anyhow::Result<LiveOutput, anyhow::Error> { // tx: Sender<CustomerData>
     debug!("get_customers");
-    let customers: Vec<CustomerData> = DATABASE.query(format!("SELECT * FROM customer")).await?.take(0)?;
+    let customers: Vec<CustomerData> = DATABASE.query("SELECT * FROM customer").await?.take(0)?;
     DATABASE.set("id", "value");
-    let computers: Vec<ComputerData> = DATABASE.query(format!("SELECT * FROM computer where cust_id == $id")).await?.take(0)?;
-    let computers: Vec<TaskPayload> = DATABASE.query(format!("SELECT * FROM task where cust_id == $id")).await?.take(0)?;
-    let computers: Vec<TicketPayload> = DATABASE.query(format!("SELECT * FROM service_order where cust_id == $id")).await?.take(0)?;
+    let computers: Vec<ComputerData> = DATABASE.query("SELECT * FROM computer where customer == $id").await?.take(0)?;
+    let tickets: Vec<TicketPayload> = DATABASE.query("SELECT * FROM service_order where customer == $id").await?.take(0)?;
+    let tasks: Vec<TaskPayload> = DATABASE.query("SELECT * FROM task where service_order == $id").await?.take(0)?;
 
-    debug!("ticket: {:?}", ticket);
-    let new_ticket = ticket.unwrap_or_default();
-    let chnnl = NewTicketChannel { new_ticket, new_task };
-    tx.try_send(chnnl)?;
-    Ok(())
+    let output = LiveOutput{ customers, computers, tickets, tasks };
+    Ok(output)
 }
 
 

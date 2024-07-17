@@ -4,7 +4,7 @@ use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, 
 use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use crossbeam::channel::{self, Receiver, Sender};
-use mtechserver::webworker::{Input, WebWorker};
+use mtechserver::webworker::{Input, LiveInput, LiveOutput, LiveWorker, WebWorker};
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use egui_ratatui::RataguiBackend;
@@ -145,7 +145,11 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
     #[serde(skip)]
+    pub live_bridge: Option<gloo_worker::WorkerBridge<LiveWorker>>,
+    #[serde(skip)]
     pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
+    #[serde(skip)]
+    pub live_data_update: Option<Rc<Cell<Option<LiveOutput>>>>,
     #[serde(skip)]
     pub file_system: FileSystem,
     #[serde(skip)]
@@ -231,11 +235,22 @@ impl MtechServer{
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
+        let live_data_update = Rc::new(std::cell::Cell::new(None));
+        let live_sender = live_data_update.clone();
+        // let context = ctx.clone();
         let bridge = <WebWorker as Spawnable>::spawner()
             .callback(move |response| {
                 sender.set(Some(response.buckets));
                 ctx.request_repaint();
             }).spawn("./dummy_worker.js");
+
+        // let live_bridge = <LiveWorker as Spawnable>::spawner()
+        //     .callback(move |response| {
+        //         live_sender.set(Some(response));
+        //         ctx.request_repaint();
+        //     }).spawn("./dummy_worker.js");
+
+        // live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
 
         bridge.send(Input {
             url: "https://storage-api.master-tech.app".to_string(),
@@ -311,6 +326,8 @@ impl MtechServer{
             text_to_send: Default::default(),
             // MISC / EVERYTHING ELSE
             bridge: Some(bridge),
+            live_bridge: Some(live_bridge),
+            live_data_update: Some(live_data_update),
             data_update: Some(data_update),
             search_input: String::new(),
             open_tabs,

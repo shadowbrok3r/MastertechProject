@@ -1,14 +1,14 @@
-use std::{iter, cell::RefCell, collections::{HashMap, HashSet}};
-use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
-use futures::StreamExt;
-use log::info;
-use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
+use std::{iter, cell::RefCell, collections::{HashMap, HashSet}};
+use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
+use crossbeam::channel::{Receiver, Sender};
 use wasm_bindgen_futures::spawn_local;
-use web_time::Duration;
 use mime_guess::from_path;
+use web_time::Duration;
+use futures::StreamExt;
 use bytes::Bytes;
+use log::info;
 
 use crate::app_state::{ACCESS_KEY, SECRET_KEY};
 

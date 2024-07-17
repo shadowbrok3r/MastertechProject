@@ -19,14 +19,18 @@ impl eframe::App for MtechServer {
         // most important part of the whole app.. setting up our styling
         let arc_style = set_style();
         ctx.set_style(arc_style);
+        // let alt_style = set_alternative_style();
+        // ctx.set_style(alt_style);
 
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(items) = data_update.take() { self.context.file_system.build_file_system(items); }
-
+        let live_data_update = self.context.live_data_update.as_mut().unwrap();
+        if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
         // do some setting up in the initial frame of our update loop for 
         // 1. Getting database connection
         if self.context.first_run{ // || or if refresh button is hit
             self.context.first_run = false;
+
             match check_authentication(self.context.db_tx.clone()){
                 Ok(d) => {
                     info!("1");
@@ -380,3 +384,43 @@ fn set_style() -> Arc<Style>{
     arc_style
 }
 
+fn _set_alternative_style() -> Arc<Style> {
+    let theme = CarlDark;
+    let mut custom_style: Style = theme.custom_style();
+    let mut font = FontId::default();
+    font.size = 10.5;
+    font.family = FontFamily::Proportional;
+    
+    custom_style.override_font_id = Some(font);
+    custom_style.spacing.button_padding.x = 3.0;
+    custom_style.spacing.button_padding.y = 3.0;
+    custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+    custom_style.spacing.combo_height = 55.0; 
+    custom_style.spacing.combo_width = 100.0;
+    custom_style.interaction.multi_widget_text_select = false;
+    custom_style.interaction.selectable_labels = false;
+    custom_style.explanation_tooltips = false;
+    custom_style.url_in_tooltip = true;
+    custom_style.interaction.interact_radius = 10.0;
+    custom_style.interaction.resize_grab_radius_side = 10.0;
+    custom_style.interaction.resize_grab_radius_corner = 10.0;
+    custom_style.visuals.window_shadow.spread = 8.0;
+    custom_style.visuals.window_shadow.blur = 10.0;
+    
+    // Update color scheme based on the extracted colors
+    custom_style.visuals.selection.stroke.color =  Color32::from_rgb(199, 20, 150); // Kept the same for contrast
+    custom_style.visuals.selection.bg_fill = Color32::from_rgb(40, 40, 40); // Kept the same for contrast
+    custom_style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(13, 16, 23);
+    custom_style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+    custom_style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(12, 15, 22);
+    custom_style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(21, 24, 31));
+    custom_style.visuals.widgets.open.bg_fill = Color32::from_rgb(18, 21, 28);
+    custom_style.visuals.widgets.open.weak_bg_fill = Color32::from_rgb(18, 21, 28);
+    custom_style.visuals.widgets.active.weak_bg_fill = Color32::from_rgb(18, 21, 28);
+    custom_style.visuals.widgets.active.bg_fill = Color32::from_rgb(20, 23, 29);
+    custom_style.visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(12, 15, 22);
+    custom_style.visuals.widgets.hovered.bg_stroke = Stroke::new(0.5, Color32::from_rgb(199, 20, 150)); // Kept the same for contrast
+    
+    let arc_style = Arc::new(custom_style);
+    arc_style
+}
