@@ -144,12 +144,12 @@ pub struct MtechServerContext{
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
-    #[serde(skip)]
-    pub live_bridge: Option<gloo_worker::WorkerBridge<LiveWorker>>,
+    // #[serde(skip)]
+    // pub live_bridge: Option<gloo_worker::WorkerBridge<LiveWorker>>,
     #[serde(skip)]
     pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
-    #[serde(skip)]
-    pub live_data_update: Option<Rc<Cell<Option<LiveOutput>>>>,
+    // #[serde(skip)]
+    // pub live_data_update: Option<Rc<Cell<Option<LiveOutput>>>>,
     #[serde(skip)]
     pub file_system: FileSystem,
     #[serde(skip)]
@@ -235,8 +235,8 @@ impl MtechServer{
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
-        let live_data_update = Rc::new(std::cell::Cell::new(None));
-        let live_sender = live_data_update.clone();
+        // let live_data_update = Rc::new(std::cell::Cell::new(None));
+        // let live_sender = live_data_update.clone();
         // let context = ctx.clone();
         let bridge = <WebWorker as Spawnable>::spawner()
             .callback(move |response| {
@@ -326,8 +326,8 @@ impl MtechServer{
             text_to_send: Default::default(),
             // MISC / EVERYTHING ELSE
             bridge: Some(bridge),
-            live_bridge: Some(live_bridge),
-            live_data_update: Some(live_data_update),
+            // live_bridge: Some(live_bridge),
+            // live_data_update: Some(live_data_update),
             data_update: Some(data_update),
             search_input: String::new(),
             open_tabs,

@@ -24,8 +24,8 @@ impl eframe::App for MtechServer {
 
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(items) = data_update.take() { self.context.file_system.build_file_system(items); }
-        let live_data_update = self.context.live_data_update.as_mut().unwrap();
-        if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
+        // let live_data_update = self.context.live_data_update.as_mut().unwrap();
+        // if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
         // do some setting up in the initial frame of our update loop for 
         // 1. Getting database connection
         if self.context.first_run{ // || or if refresh button is hit
