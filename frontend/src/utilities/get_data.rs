@@ -1,5 +1,5 @@
 
-use database::{schema::{ClientId, ConnectedClient, LiveTaskPayload, Record, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE}, DATABASE};
+use database::{schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, Record, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE}, DATABASE};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
 use surrealdb::{sql::{Id, Thing}, Action};
@@ -30,6 +30,23 @@ pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Acti
     tx.try_send(chnnl)?;
     Ok(())
 }
+
+pub async fn get_customers(tx: Sender<CustomerData>) -> anyhow::Result<(), anyhow::Error> {
+    debug!("get_customers");
+    let customers: Vec<CustomerData> = DATABASE.query(format!("SELECT * FROM customer")).await?.take(0)?;
+    DATABASE.set("id", "value");
+    let computers: Vec<ComputerData> = DATABASE.query(format!("SELECT * FROM computer where cust_id == $id")).await?.take(0)?;
+    let computers: Vec<TaskPayload> = DATABASE.query(format!("SELECT * FROM task where cust_id == $id")).await?.take(0)?;
+    let computers: Vec<TicketPayload> = DATABASE.query(format!("SELECT * FROM service_order where cust_id == $id")).await?.take(0)?;
+
+    debug!("ticket: {:?}", ticket);
+    let new_ticket = ticket.unwrap_or_default();
+    let chnnl = NewTicketChannel { new_ticket, new_task };
+    tx.try_send(chnnl)?;
+    Ok(())
+}
+
+
 
 pub async fn get_associated_task_notes(tx: Sender<TaskNotePayload>, note_id: Id) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_associated_task_notes");

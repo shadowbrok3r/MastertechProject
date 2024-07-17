@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use log::info;
 use surrealdb::Response;
 use wasm_bindgen_futures::spawn_local;
+use web_time::Instant;
 
 use super::charts::LinePlot;
 
@@ -51,6 +52,7 @@ pub struct WebSocketClient {
     pub sysinfo: Option<SystemInformation>,
     pub history: Vec<String>,
     pub loading: bool,
+    pub timeout_counter: Instant
 }
 
 impl WebSocketClient{
@@ -70,6 +72,7 @@ impl WebSocketClient{
             history: Vec::new(),
             temps: VecDeque::new(),
             loading: false, 
+            timeout_counter: Instant::now()
         }
     }
     
@@ -77,6 +80,12 @@ impl WebSocketClient{
         while let Some(event) = self.ws_receiver.try_recv() {
             self.events.push(event);
         }
+
+        if self.timeout_counter.elapsed().as_secs() > 10 {
+            info!("Its been over 10 seconds since last ping");
+        }
+
+        info!("Timer: {:?}", self.timeout_counter.elapsed().as_secs());
 
         for event in &self.events {
             match event{
@@ -129,9 +138,13 @@ impl WebSocketClient{
                             info!("Text data: {txt:#?}");
                             self.history.push(txt.clone());
                         },
-                        WsMessage::Unknown(unknown) => {
+                        WsMessage::Ping(_bytes) => {
                             self.loading = false;
-                            info!("unknown data: {unknown:#?}");
+                            self.timeout_counter = Instant::now();
+                            
+                        },
+                        WsMessage::Pong(_bytes) => {
+                            self.timeout_counter = Instant::now();
                         },
                         _ => {}
                     }
@@ -163,27 +176,27 @@ impl WebSocketClient{
             {
                 s.cell(|ui|{
                     if Button::new("Tuneup").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
-                        self.history.push(format!("You\nCommand::Tuneup"));
+                        // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
+                        // self.history.push(format!("You\nCommand::Tuneup"));
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("CPS").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
-                        self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
+                        // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
+                        // self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
                         self.input = "SELECT * FROM Win32_OperatingSystem".to_string();
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("QC").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Qc)));
-                        self.history.push(format!("You\nCommand::Qc"));
+                        // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Qc)));
+                        // self.history.push(format!("You\nCommand::Qc"));
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("Live Data").ui(ui).clicked(){
                         self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::LiveData)));
-                        self.history.push(format!("You\nCommand::LiveData"));
+                        // self.history.push(format!("You\nCommand::LiveData"));
                     }
                 });
             });
@@ -196,32 +209,30 @@ impl WebSocketClient{
             {
                 s.cell(|ui|{
                     if Button::new("SFC Scan").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
-                        self.history.push(format!("You\nCommand::SfcScan"));
+                        // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
+                        // self.history.push(format!("You\nCommand::SfcScan"));
                         self.input = "sfc /scannow".to_string();
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("Dism Scan").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
-                        self.history.push(format!("You\nCommand::DismScan"));
-                        self.input = "dism /online /cleanup-image /scanhealth
-                        dism /online /cleanup-image /checkhealth
-                        dism /online /cleanup-image /restorehealth".to_string();
+                        // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
+                        // self.history.push(format!("You\nCommand::DismScan"));
+                        self.input = "dism /online /cleanup-image /scanhealth\ndism /online /cleanup-image /checkhealth\ndism /online /cleanup-image /restorehealth".to_string();
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("ChkDsk").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
-                        self.history.push(format!("You\nCommand::ChkDsk"));
+                        // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
+                        // self.history.push(format!("You\nCommand::ChkDsk"));
                         self.input = "chkdsk /f /x /r".to_string();
                         
                     }
                 });
                 s.cell(|ui|{
                     if Button::new("Mbr2Gpt").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
-                        self.history.push(format!("You\nCommand::Mbr2Gpt"));
+                        // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
+                        // self.history.push(format!("You\nCommand::Mbr2Gpt"));
                         self.input = "mbr2gpt /Convert /AllowFullOS /disk:0".to_string();
                     }
                 });
@@ -242,6 +253,7 @@ impl WebSocketClient{
                         // let temps = self.component_temps.make_contiguous().to_owned();
                         let ram = self.ram_usage.make_contiguous().to_owned();
                 
+                        info!("sysinfo: {percentages:?}, {clocks:?}, {ram:?}");
                         let mut cpu_usage_plot = LinePlot::new(&[0.0], &percentages.as_slice());
                         let mut cpu_clock_plot = LinePlot::new(&[0.0], &clocks.as_slice());
                         // let temps_plot = LinePlot::new(&[0.0], &temps.as_slice());
@@ -278,16 +290,12 @@ impl WebSocketClient{
                         let min_width = 200.0;
             
                         for item in self.history.iter(){
-                            let is_message_from_myself = if item.contains("You"){
-                                true
-                            } else { false };
+                            let is_message_from_myself = if item.contains("You"){ true } else { false };
             
                             // Messages from the user are right-aligned.
-                            let layout = if is_message_from_myself {
-                                Layout::top_down(Align::Max)
-                            } else {
-                                Layout::top_down(Align::Min)
-                            };
+                            let layout = 
+                                if is_message_from_myself { Layout::top_down(Align::Max)} 
+                                else { Layout::top_down(Align::Min)};
             
                             let msg_color = if is_message_from_myself {
                                 ui.style().visuals.widgets.inactive.bg_fill
@@ -417,7 +425,7 @@ impl WebSocketClient{
                     });
                 });
 
-                ui.vertical_centered_justified(|ui| {
+                ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
                     let text_edit = TextEdit::singleline(&mut self.input).hint_text("Raw Command Prompt > USE WISELY").ui(ui);
                     let key_press = ui.input(|i| i.key_pressed(Key::Enter));
                     if text_edit.lost_focus() && key_press {

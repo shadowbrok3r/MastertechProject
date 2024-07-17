@@ -262,7 +262,6 @@ impl eframe::App for MtechServer {
             }
         }
 
-        
         if let Ok(state) = self.context.app_state_rx.try_recv(){
             debug!("Got a new state: {state:?}");
             self.state = state

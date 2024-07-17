@@ -205,7 +205,7 @@ impl MtechServer{
         setup_custom_fonts(&cc.egui_ctx);
 
         let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), "Quote Fullfilled".to_owned(), 
-            "Aging Tasks".to_owned(), "Web Console".to_owned()]);
+            "Aging Tasks".to_owned(), "Web Console".to_owned(), "Customers".to_owned()]);
         let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["My Tools".to_owned(), "Bug Report".to_owned()]);
         //"Terminal".to_owned(), 
         let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned(), "Ai Playground".to_owned()]);
