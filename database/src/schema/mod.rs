@@ -77,7 +77,6 @@ pub struct TaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
     pub service_ticket: Option<TicketPayload>,
-    // #[serde(skip)]
     pub everest_initials: String,
     pub task_description: String, 
     pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
@@ -157,8 +156,6 @@ pub struct TicketData{ // Live Ticket Payload
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
     pub part_order_links: Option<Vec<String>>,
-    // pub computers: Option<Vec<ComputerId>>,
-    // pub services: Option<Vec<TicketId>>,
     pub name: String,
     pub phone_number: String,
     pub phone_number_2: String, // Option<String>
@@ -368,8 +365,8 @@ impl Store{
             Store::RIV => "RIV",
             Store::LTN => "LTN",
             Store::MUR => "MUR",
-            Store::AF => "AF",
-            Store::WJ => "WJ",
+            Store::AF =>  "AF",
+            Store::WJ =>  "WJ",
             Store::ORE => "ORE",
             Store::SAN => "SAN",
         }
@@ -382,11 +379,12 @@ pub struct User {
     pub id: UserId,
     pub name: String,
     pub everest_initials: String,
-    // #[serde(skip)]
     pub email: String,
     pub store: Store,
     pub notifications: Option<Vec<NotificationId>>,
-    pub connected_clients: Option<Vec<ClientId>>
+    pub connected_clients: Option<Vec<ClientId>>,
+    pub minio_access_key: Option<String>,
+    pub minio_secret_key: Option<String>
 }
 
 impl Priority{
