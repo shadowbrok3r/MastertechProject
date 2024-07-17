@@ -6,13 +6,13 @@ use log::{debug, error, info};
 use app_state::{AppState, MasterTechApp};
 use pages::login_page::HASH;
 use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{style::Style, Color32, Context, FontId, Stroke, Vec2, ViewportBuilder};
-use database::{database::Database, schema::{ComputerData, ComputerId, HardwareTests, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
+use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, Stroke, Vec2, ViewportBuilder};
+use database::{database::{Database, DATABASE}, schema::{ComputerData, ComputerId, HardwareTests, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
 use crate::utilities::themes::carl_dark::{Aesthetix, CarlDark};
 use surrealdb::sql::Thing;
 use tabs::tur_sheet::scaffold::AsanaResponse;
 use tokio::spawn;
-use utilities::crypto::pass_hash::load_encrypted_user_data;
+use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
 
 pub mod app_state;
 pub mod tabs;
@@ -21,6 +21,7 @@ mod database;
 pub mod pages;
 pub mod viewports;
 pub mod utilities;
+pub mod requests;
 
 // #[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
@@ -36,18 +37,25 @@ impl eframe::App for MasterTechApp {
             match loaded_data{
                 Some(login) => {
                     self.state = AppState::Authenticated(app_state::MainPages::Tasks);
+                    
                     let tx = self.context.db_tx.clone();
                     let sysinfo_tx = self.context.computer_specs_tx.clone();
-                    let db = Database::new(login.username, login.password, None);
-
+                    
                     spawn(async move {
                         match ComputerData::default().get_computer_data(sysinfo_tx).await{
                             Ok(x) => info!("Computer Data: {x:?}"),
                             Err(e) => info!("Error getting specs: {e:?}"),
                         }
+                    });
 
-                        match tx.try_send(db.await){
-                            Ok(_) => drop(tx),
+                    spawn(async move {
+                        let db = Database::new(login.username, login.password, None).await;
+                        info!("DB: {db:?}");
+                        match tx.try_send(db){
+                            Ok(_) => {
+                                info!("Sent DB connection");
+                                drop(tx)
+                            },
                             Err(e) => info!("Error sending specs: {e:?}"),
                         }
                     });
@@ -108,12 +116,11 @@ impl eframe::App for MasterTechApp {
             self.context.specs_first_run = true;
             match db{
                 Ok(db) => {
-                    self.context.current_user = db.clone().user;
-                    self.context.database = Some(db.clone());
+                    self.context.current_user = db.user.clone();
                     let initial_tasks_tx = self.context.initial_tasks_tx.clone();
-                    if let Some(usr) = db.clone().user{
-                        get_store_users(db.clone(), self.context.store_users_tx.clone(), usr.store);
-                        get_tasks(db.clone(), initial_tasks_tx);
+                    if let Some(usr) = db.user{
+                        get_store_users(self.context.store_users_tx.clone(), usr.store);
+                        get_tasks(initial_tasks_tx);
                     }
                 },
                 Err(e) => {
@@ -127,18 +134,6 @@ impl eframe::App for MasterTechApp {
         if let Ok(state) = self.context.app_state_rx.try_recv(){
             info!("Got a new state: {state:?}");
             self.state = state
-        }
-
-        match &self.state{
-            app_state::AppState::Authenticated(page) => {
-                match page{
-                    app_state::MainPages::Tasks => self.main_page(ctx),
-                    app_state::MainPages::Downloads => self.main_page(ctx),
-                    app_state::MainPages::WebConsole => self.main_page(ctx),
-                }
-            },
-            app_state::AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
-            _ => {}
         }
 
         while let Ok(message) = self.context.rx.try_recv() {       
@@ -264,6 +259,62 @@ impl eframe::App for MasterTechApp {
             self.context.task_payload = Some(tasks);
         }
         
+        if let Ok(action) = self.context.ui_actions_rx.try_recv(){
+            match action{
+                TaskUiActions::OpenTaskModal(task) => {
+                    let task_modal = if let Some(notes) = &task.task_note{
+                        let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
+                        TaskModal::new(chat_modal, task.clone())
+                    }else{ TaskModal::new(ChatView::default(), task.clone()) };
+                    self.context.current_modal = ModalType::TaskModal(task_modal);
+                    self.context.task_modal_handler.open();
+                },
+                TaskUiActions::CreateTaskModal => {
+                    let create_modal = CreateTaskModal::new("Create Task", self.context.store_users.clone());
+                    self.context.current_modal = ModalType::CreateTaskModal(create_modal);
+                    self.context.create_task_modal_handler.open();
+                },
+                TaskUiActions::Response(_res) => { }
+                TaskUiActions::OpenChatModal(pld) => {
+                    info!("Got Chat action");
+                    if let Some(current_user) = self.context.current_user.as_ref() {
+                        let chat_modal = ChatView::new(pld.1.to_owned(), current_user.clone(), pld.0.clone());
+                        self.context.current_modal = ModalType::ChatView(chat_modal);
+                        self.context.chat_modal_handler.open();
+                    }// self.context.chat = ModalType::ChatView(pld);
+                }, _ => (),
+            }
+        }
+
+        if let Ok(keys) = self.context.cps_keys_rx.try_recv(){
+            if keys.webroot_key.contains("Error"){
+                let toast = &mut self.context.toasts;
+                self.context.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
+                let error_toast = Toast{
+                    kind: ToastKind::Error,
+                    text: "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".into(),
+                    options: ToastOptions::default()
+                        .show_progress(true)
+                        .duration_in_seconds(6.0)
+                };
+                toast.add(error_toast);
+            }
+            self.context.keys = keys;
+        }
+
+        match &self.state{
+            app_state::AppState::Authenticated(page) => {
+                match page{
+                    app_state::MainPages::Tasks => self.main_page(ctx),
+                    app_state::MainPages::Downloads => self.main_page(ctx),
+                    app_state::MainPages::WebConsole => self.main_page(ctx),
+                }
+            },
+            app_state::AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
+            _ => {}
+        }
+
+        self.context.handle_modals(ctx);
         self.context.toasts.show(ctx);
         self.viewport_loader(ctx);
     }
@@ -303,15 +354,14 @@ fn set_style() -> Arc<Style>{
     let theme = CarlDark;
     let mut custom_style: Style = theme.custom_style();
     let mut font = FontId::default();
-    custom_style.spacing.button_padding.x = 2.0;
-    custom_style.spacing.button_padding.y = 2.0;
-    custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
-    font.size = 12.0;
+    font.size = 10.5;
+    font.family = FontFamily::Proportional;
+    
     custom_style.override_font_id = Some(font);
-    custom_style.spacing.button_padding.x = 2.0;
-    custom_style.spacing.button_padding.y = 2.0;
-    custom_style.spacing.item_spacing = Vec2::new(5.0, 2.0);
-    custom_style.spacing.combo_height = 60.0; 
+    custom_style.spacing.button_padding.x = 3.0;
+    custom_style.spacing.button_padding.y = 3.0;
+    custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+    custom_style.spacing.combo_height = 55.0; 
     custom_style.spacing.combo_width = 100.0;
     custom_style.interaction.multi_widget_text_select = false;
     custom_style.interaction.selectable_labels = false;
@@ -322,28 +372,31 @@ fn set_style() -> Arc<Style>{
     custom_style.interaction.resize_grab_radius_corner = 10.0;
     custom_style.visuals.window_shadow.spread = 8.0;
     custom_style.visuals.window_shadow.blur = 10.0;
-    custom_style.visuals.selection.stroke.color =  Color32::from_rgb(29, 209, 161);
-    custom_style.visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-    // custom_style.visuals.widgets.inactive.
-    custom_style.visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(15,15,19);
-    custom_style.visuals.widgets.inactive.bg_fill =  Color32::from_rgb(15,14,18); // Color32::from_rgb(10,10,10);
+    // custom_style.visuals.panel_fill = Color32::from_rgb(16,16,17);
+    // custom_style.visuals.window_fill = Color32::from_rgb(16,16,17);
+    custom_style.visuals.selection.stroke.color =  Color32::from_rgba_premultiplied(199, 20, 150, 100);
+    custom_style.visuals.selection.bg_fill = Color32::from_rgba_premultiplied(40,40,40,20);
+    custom_style.visuals.widgets.inactive.bg_fill =  Color32::from_rgb(17,17,19);
     custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
     custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
-    custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(60,35,65));
-    custom_style.visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
-    custom_style.visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
+    custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+    custom_style.visuals.widgets.open.bg_fill =  Color32::LIGHT_BLUE;
+    custom_style.visuals.widgets.open.weak_bg_fill =  Color32::LIGHT_BLUE;
     custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(28,28,28);
-    custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
-    custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+    custom_style.visuals.widgets.active.bg_fill =  Color32::LIGHT_GREEN;
+    custom_style.visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(15,15,19);
+    // custom_style.visuals.
+    // custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+    // custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+    custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(0.5, Color32::from_rgba_premultiplied(120, 20, 120, 100));
     let arc_style = Arc::new(custom_style);
     arc_style
 }
 
-pub fn get_store_users(db: Database, tx: Sender<Vec<User>>, store: Store) {
+pub fn get_store_users(tx: Sender<Vec<User>>, store: Store) {
     spawn(async move {
-        db.database.set("store", store).await.unwrap();
-        let data: Vec<User> = db.database
-            .query("SELECT name, store, everest_initials, id, email FROM user WHERE store == $store")
+        DATABASE.set("store", store).await.unwrap();
+        let data: Vec<User> = DATABASE.query("SELECT name, store, everest_initials, id, email FROM user WHERE store == $store")
             .await
             .unwrap()
             .take(0)
@@ -356,13 +409,12 @@ pub fn get_store_users(db: Database, tx: Sender<Vec<User>>, store: Store) {
     });
 }
 
-pub fn get_tasks(db: Database, tx: Sender<Vec<TaskPayload>>){
+pub fn get_tasks(tx: Sender<Vec<TaskPayload>>){
     spawn(async move {
 
         let query = format!("SELECT * FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note");
 
-        let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = db
-            .database
+        let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = DATABASE
             .query(query)
             .await
             .unwrap()

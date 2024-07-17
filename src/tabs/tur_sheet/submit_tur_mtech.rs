@@ -1,10 +1,7 @@
-use chrono::{DateTime, SecondsFormat};
-use log::{debug, info};
-use tokio::spawn;
-
 use crate::{app_state::MastertechContext, database::send_payload};
-
-
+use chrono::{DateTime, SecondsFormat};
+use log::info;
+use tokio::spawn;
 
 impl MastertechContext{
     pub fn submit_tur_mastertech(&mut self) {
@@ -21,22 +18,16 @@ impl MastertechContext{
         
         task_data.due_date = due_date.unwrap_or_default();
 
-        match self.database{
-            Some(ref database) => {
-                let database = database.clone();
-                spawn(async move {
-                    let x = send_payload(
-                        ticket_data,
-                        customer_data,
-                        computer_data,
-                        task_data,
-                        task_notes,
-                        database
-                    ).await;
-                    info!("output: {x:?}");
-                });
-            }, None => debug!("No database connection"),
-        };
+        spawn(async move {
+            let x = send_payload(
+                ticket_data,
+                customer_data,
+                computer_data,
+                task_data,
+                task_notes
+            ).await;
+            info!("output: {x:?}");
+        });
     }
 
 }

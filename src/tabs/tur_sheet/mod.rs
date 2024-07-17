@@ -1,16 +1,15 @@
+use crate::tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamPass, RamNotTested, SsdFail, SsdNotTested, SsdPass};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
-use crate::utilities::toasts::{Toast, ToastKind, ToastOptions};
-use get_ticket::SendRequest;
+use crate::database::schema::{CustomerData, LiveTaskPayload, LocalSebData, TicketData};
+use crate::{database::GetKeysResponse, app_state::MastertechContext};
+use crate::utilities::autocomplete::AutoCompleteTextEdit;
+use get_ticket::{request_seb_info, SendRequest};
+use egui_extras::{*, DatePickerButton};
 use std::collections::BTreeSet;
+use egui_file::FileDialog;
 use std::path::PathBuf; 
 use log::{debug, info};
 use tokio::spawn;
-use egui_extras::{*, DatePickerButton};
-use egui_file::FileDialog;
-use crate::database::schema::{CustomerData, LiveTaskPayload, TicketData};
-use crate::tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamPass, RamNotTested, SsdFail, SsdNotTested, SsdPass};
-use crate::{database::GetKeysResponse, app_state::MastertechContext};
-use crate::utilities::autocomplete::AutoCompleteTextEdit;
 
 pub mod get_ticket;
 pub mod submit_tur;
@@ -218,39 +217,22 @@ impl MastertechContext {
                                                             }
                                                         });
 
-                                                        if let Ok(keys) = self.cps_keys_rx.try_recv(){
-                                                            
-                                                            if keys.webroot_key.contains("Error"){
-                                                                let toast = &mut self.toasts;
-                                                                self.output_text = "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
-                                                                let error_toast = Toast{
-                                                                    kind: ToastKind::Error,
-                                                                    text: "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".into(),
-                                                                    options: ToastOptions::default()
-                                                                        .show_progress(true)
-                                                                        .duration_in_seconds(6.0)
-                                                                };
-                                                                toast.add(error_toast);
-                                                            }
-                                                            self.keys = keys;
-                                                        }else{
-                                                            debug!("GetKeysClick Receive Error");
-                                                            let toast = &mut self.toasts;
-                                                            let error_toast = Toast{
-                                                                kind: ToastKind::Error,
-                                                                text: "GetKeysClick Receive Error".into(),
-                                                                options: ToastOptions::default()
-                                                                    .show_progress(true)
-                                                                    .duration_in_seconds(6.0)
-                                                            };
-                                                            toast.add(error_toast);
-                                                            self.output_text = format!("GetKeysClick -> Error receiving keys");
-                                                        }
+
                                                     }
                                                     
                                                     if ui.add_enabled(!self.ticket_data.service_number.is_empty(), Button::new("Check SEB").min_size(vec2(self.widget_size, 3.0)))
                                                     .clicked(){ 
-                                                        // request_seb_info(self.client, Some(self.ticket_info.customer_email)).await.unwrap();
+                                                        let client = self.client.clone();
+                                                        let email = self.customer_data.email.clone();
+                                                        spawn(async move {
+                                                            let seb_data: Result<LocalSebData, anyhow::Error> = request_seb_info(client, Some(email)).await;
+                                                            match seb_data{
+                                                                Ok(seb) => {
+                                                                    info!("SEB: {seb:?}");
+                                                                },
+                                                                Err(e) => info!("Error getting SEB data: {e:?}"),
+                                                            }
+                                                        });
                                                     }
                         
                                                     ui.end_row();

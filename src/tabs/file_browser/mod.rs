@@ -355,13 +355,8 @@ impl FileBrowser{
         Handles displaying of subcontents of given directory by calling list_subfolders
         and makes only directories collapsible so we can see its subcontents 
     */
-    fn display_path(
-        &self,
-        ui: &mut Ui,
-        path: &PathBuf,
-        command_tx: channel::Sender<Option<Command>>,
-    ){
-        // ui.separator();
+    fn display_path(&self, ui: &mut Ui, path: &PathBuf, command_tx: channel::Sender<Option<Command>>) {
+        
         let command_sender = command_tx.clone();
         let command_sender2 = command_tx.clone();
         let command_sender3 = command_tx.clone();
@@ -618,7 +613,7 @@ impl FileBrowser{
             if self.copied_items_src.len() == 1 {
                 info!("Path == {:?}", self.copied_items_src[0].file_name());
                 
-                if let Some(path) = self.copied_items_src[0].file_name(){
+                if let Some(_path) = self.copied_items_src[0].file_name(){
 
                 }
             }

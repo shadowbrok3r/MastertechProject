@@ -45,7 +45,7 @@ impl ComputerData{
             }   
         }
 
-        let seb_data = request_seb_info(client, None)
+        let seb_data: Result<LocalSebData, anyhow::Error> = request_seb_info(client, None)
             .await
             .or_else(|err|{
                 info!("Error: {:?}", err.to_string());

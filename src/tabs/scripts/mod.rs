@@ -9,9 +9,6 @@ use sha2::Digest;
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
 use crate::{app_state::MastertechContext, database::GetKeysResponse, tabs::tur_sheet::get_ticket::SendRequest};
 use rust_embed::Embed;
-// use quick_xml::de::from_file;
-use quick_xml::reader::Reader;
-use quick_xml::events::Event;
 
 #[derive(Embed)]
 #[folder = "src/assets/superanti/"]
@@ -20,6 +17,7 @@ pub struct SasAsset;
 #[cfg(target_os="windows")]
 use wmi::{COMLibrary, WMIConnection, WMIError};
 
+#[cfg(target_os="windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[async_trait]

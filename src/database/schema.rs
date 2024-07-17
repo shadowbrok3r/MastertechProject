@@ -3,9 +3,8 @@ use std::fmt::Display;
 
 use serde::{Serialize, Deserialize};
 use surrealdb::{opt::RecordId, sql::{Id, Thing}};
-use uuid::Uuid;
 
-use super::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, ServiceOrder}, SystemInformation};
+use super::{prestashop_schema::{Address, CustomerMessage, CustomerThread, Employee, Order}, SystemInformation};
 
 pub const _NS: &str = "Mastertech";
 pub const _DB: &str = "MastertechDB";
@@ -85,14 +84,14 @@ pub struct TaskPayload{
     pub service_ticket: Option<TicketPayload>,
     pub everest_initials: String,
     pub task_description: String, 
-    pub assignee: Option<UserId>, 
+    pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
-    pub due_date: String, 
+    pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
     pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
     pub completed: bool,
     pub status: Status,
-    pub dep: Option<String>
+    pub dep: String
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -247,6 +246,7 @@ pub struct HardwareTests{
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskNotePayload{
+    pub id: Option<TaskNoteId>,
     pub task_id: Option<TaskId>,
     pub everest_initials: String,
     pub created_at: String,
@@ -350,11 +350,11 @@ pub enum Category{
     CompletedTasks,
 }
 
-#[derive(Deserialize)]
-struct CommandRequest {
-    _client_id: String,
-    _command: String,
-}
+// #[derive(Deserialize)]
+// struct CommandRequest {
+//     _client_id: String,
+//     _command: String,
+// }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default)]
 pub enum Store{

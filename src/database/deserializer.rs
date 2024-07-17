@@ -1,4 +1,4 @@
-use serde::de::{self, Deserialize, Deserializer};
+use serde::de::{self, Deserializer};
 use std::fmt;
 
 pub fn deserialize_to_string<'de, D: Deserializer<'de>>(deserializer: D) 

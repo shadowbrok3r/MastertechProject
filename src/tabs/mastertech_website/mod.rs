@@ -1,43 +1,49 @@
-use eframe::egui::Ui;
-use log::debug;
-use task_layout::TaskLayout;
-use tokio::spawn;
+use std::collections::BTreeMap;
 
-use crate::{app_state::MastertechContext, database::schema::{Status, TaskPayload}, utilities::{ColumnLayout, FilterTasks}};
+use crate::{app_state::MastertechContext, database::{database::DATABASE, schema::{Status, TaskPayload}}, utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks}};
+use eframe::egui::Ui;
+use tokio::spawn;
+use log::debug;
+use tracing::info;
+
 
 pub mod sortable;
 pub mod update_tasks;
 pub mod interact_tasks;
-pub mod task_cards;
-pub mod task_layout;
 pub mod filter;
 
 impl MastertechContext {
     pub fn mastertech_website(&mut self, ui: &mut Ui){ 
-        // ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
-        // ui.shrink_width_to_current();
-        // ui.shrink_height_to_current();
-        // ui.vertical(|ui|{ui.add_space(8.0);});
-        // ui.horizontal(|ui|{ui.add_space(8.0);});
+        ui.style_mut().spacing.button_padding = (4.0, 7.0).into();
+        ui.shrink_width_to_current();
+        ui.shrink_height_to_current();
+        ui.vertical(|ui|{ui.add_space(8.0);});
+        ui.horizontal(|ui|{ui.add_space(8.0);});
 
-        // let sender = self.db_data_sender.clone();
+        let sender = self.db_data_sender.clone();
 
-        // if self.query_tasks_first_run{
-        //     self.query_tasks_first_run = false;
-        //     if let Some(db) = &self.database{
-        //         let database = db.clone();
-        //         spawn(async move {
-        //             let task_data = database.query("SELECT * FROM task").await.unwrap();
-                
-        //             match sender.try_send(task_data){
-        //                 Ok(_) => {
-        //                     debug!("Sent task data");
-        //                 },
-        //                 Err(err) => debug!("Send error: {:?}", err.to_string()),
-        //             }
-        //         });
-        //     }
-        // }
+        if self.query_tasks_first_run{
+            self.query_tasks_first_run = false;
+            spawn(async move {
+                let task_data: Result<surrealdb::Response, surrealdb::Error> = DATABASE.query("SELECT * FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note").await;
+                match task_data{
+                    Ok(mut res) => {
+                        let task_data: Result<Vec<TaskPayload>, surrealdb::Error> = res.take(0);
+                        match task_data {
+                            Ok(tasks) => {
+                                match sender.try_send(tasks){
+                                    Ok(_) => info!("Sent task data"),
+                                    Err(err) => debug!("Send error: {:?}", err.to_string()),
+                                }
+                            },
+                            Err(e) => info!("Error unwrapping task data: {e:?}"),
+                        }
+                    },
+                    Err(e) => info!("Error retrieving task data: {e:?}"),
+                }
+
+            });
+        }
 
         if let Ok(data) = self.db_data_receiver.try_recv(){
             self.task_payload = Some(data);
@@ -45,37 +51,42 @@ impl MastertechContext {
 
         if let Some(tasks) = self.task_payload.clone(){
             if let Some(users) = self.store_users.as_ref(){
-                let page = "my_tasks";
-                let col_names = vec!["Todo".to_string(), "In Repair".to_string(), "Complete".to_string()];
-                let database = self.database.as_ref().unwrap().clone();   
+                let page = "MyTasks";
                 let current_user = self.current_user.as_ref().unwrap();
-                self.task_map.clear();
-                let tasks_by_column = &mut self.task_map;
-
-                if !self.task_layouts.contains_key(page) {
-                    let task_layout_opts = TaskLayout::new(
-                        tasks_by_column.clone(),
-                        col_names,
-                        database,
-                        self.ui_actions_tx.clone(),
-                        Some(users.clone()),
-                    );
-                    self.task_layouts.insert(page.to_string(), task_layout_opts);
-                } else if let Some(task_layout) = self.task_layouts.get_mut(page) {
-                    for mut status in Status::VALUES{
-                        let filtered: Vec<TaskPayload> = tasks
-                            .filter_by_status(&status)
-                            .filter_by_assignee(current_user);
-                        tasks_by_column.insert(status.as_str().to_string(), filtered);
+    
+                let mut vals = Status::VALUES;
+                    // Define the custom sort order
+                let order = |mut name: Status| match name.as_str() {
+                    "Todo" => 1,
+                    "In Repair" => 2,
+                    "Complete" => 3,
+                    _ => 4, // Default case if there are other unexpected items
+                };
+                
+                vals.sort_unstable_by_key(|x| order(x.clone()));
+                
+                if let Some(layout) = self.task_layouts.get_mut(page){
+                    if self.rerun_filtering_my_tasks{
+                        self.rerun_filtering_my_tasks = false;
+                        let mut map = BTreeMap::new();
+                        vals.iter_mut().for_each(|status| {
+                            let filtered = tasks.filter_by_status(&status).filter_by_assignee(current_user);
+                            map.entry(status.as_str().to_string()).or_insert(filtered);
+                        });
+                        layout.task_map = map;
                     }
-                    task_layout.update_tasks(tasks_by_column.clone(), col_names.clone());
-                    task_layout.layout_cols(ui);
+                    layout.layout_cols(ui);
+                } else {
+                    let mut map = BTreeMap::new();
+                    vals.iter_mut().for_each(|status| {
+                        let filtered = tasks.filter_by_status(&status).filter_by_assignee(current_user);
+                        map.entry(status.as_str().to_string()).or_insert(filtered);
+                    });
+                    let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();
+                    let layout = TaskLayout::new(map, user_names, self.ui_actions_tx.clone(), users.clone());
+                    self.task_layouts.insert(page.to_string(), layout);
                 }
             }
         }
-        // if let Some(tasks) = &self.task_payload{
-        //     let task_layout = TaskLayout::new();
-        //     let _ = task_layout.task_card(tasks, ui);
-        // }
     }
 }

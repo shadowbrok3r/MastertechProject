@@ -1,11 +1,7 @@
 #[allow(non_snake_case)]
-use std::error::Error;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-use crate::database::schema::Store;
-
+use async_trait::async_trait;
+use std::error::Error;
 #[async_trait]
 pub trait _SendReq<T>{
     async fn retrieve_data(&self, so_number: &str, client: reqwest::Client) -> Result<T, Box<dyn Error>>;

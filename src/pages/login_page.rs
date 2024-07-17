@@ -1,11 +1,11 @@
 use crossbeam::channel::Sender;
-use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Spinner, Stroke, TextEdit, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use serde::{Deserialize, Serialize};
 use tokio::spawn;
 
-use crate::{app_state::{AppState, MainPages, MasterTechApp}, database::database::Database, utilities::crypto::pass_hash::save_encrypted_user_data};
+use crate::{app_state::{AppState, MainPages, MasterTechApp}, database::database::{Database, DATABASE}, utilities::crypto::pass_hash::save_encrypted_user_data};
 pub const HASH: &[u8; 31] = b"TheUltimagicalSecretestPassword";
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -23,52 +23,38 @@ impl Default for Login{
     } 
 }
 
+
 impl Login{
-    pub fn login(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>){
-        let user = self.username.clone();
-        let pass = self.password.clone();
-        let _ = save_encrypted_user_data(&self, HASH);
+    pub async fn login(login: Login, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) -> anyhow::Result<(), anyhow::Error>{
+        let _ = save_encrypted_user_data(&login, HASH);
 
-        spawn(async move {
-            let database = Database::new(user, pass, None).await;
+        let database = Database::new(login.username, login.password, None).await;
 
-            // #[cfg(target_arch="wasm32-unknown-unknown")]
-            match database{
-                Ok(db) => {
-                    if let Some(ref usr) = db.user{
-                        let usr = serde_json::to_string(&usr).unwrap();
-                    }else{ 
-                        info!("no usr"); 
-                        let _ = db.database.invalidate().await;
-                        match appstate_tx.send(AppState::NoAuth("No user was found".to_string())){
-                            Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                            Err(e) => info!("Error {e:?}"),
-                        }
-                    }
-
-                    match appstate_tx.send(AppState::Authenticated(MainPages::Tasks)){
-                        Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                        Err(e) => info!("Error {e:?}"),
-                    }
-                    match db_tx.send(Ok(db)){
-                        Ok(_) => {
-                            info!("Sent db connection across thread");
-                            drop(db_tx);
-                        },
-                        Err(err) => info!("Error sending db connection: {err:?}"),
-                    }
-                },
-                Err(e) => {
-                    info!("Error with db: {e:?}");
-                    match appstate_tx.send(AppState::NoAuth(e.to_string())){
-                        Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                        Err(e) => info!("Error {e:?}"),
-                    }
-                },
-            }
-        });
+        // #[cfg(target_arch="wasm32-unknown-unknown")]
+        match database{
+            Ok(db) => {
+                if let Some(ref usr) = db.user{
+                    let _usr = serde_json::to_string(&usr).unwrap();
+                }else{ 
+                    info!("no usr"); 
+                    let _ = DATABASE.invalidate().await;
+                    appstate_tx.try_send(AppState::NoAuth("No cookie or user was found".to_string()))?;
+                }
+                appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
+                db_tx.try_send(Ok(db))?;
+                
+            },
+            Err(e) => {
+                info!("Error with db: {e:?}");
+                let check = e.to_string().contains("Already connected");
+                if check { appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; }
+                else { appstate_tx.try_send(AppState::NoAuth(e.to_string()))?; }
+            },
+        }
+        Ok(())
     }
 }
+
 
 impl MasterTechApp{
     pub fn login_page(&mut self, ctx: &Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
@@ -85,7 +71,7 @@ impl MasterTechApp{
                     ui.add_space(50.0);
                     let font = FontId::proportional(30.0);
                     ui.style_mut().override_font_id = Some(font);
-                    ui.label("Mastertech Server");
+                    ui.label(format!("Mastertech Server {}", env!("CARGO_PKG_VERSION")));
                 });
                 s.strip(|s| 
                 {
@@ -101,18 +87,26 @@ impl MasterTechApp{
                             { 
                                 ui.add_space(ui.available_height() / 2.5);
                                 let font = FontId::proportional(18.0);
-                                ui.style_mut().override_font_id = Some(font);
+                                ui.style_mut().override_font_id = Some(font.clone());
 
                                 ui.label("Please Login");
                                 ui.add_space(20.0);
                                 if let Some(login) = self.login_mut(){
-
-                                    TextEdit::singleline(&mut login.username)
-                                        .hint_text("Email")
-                                        .desired_width(180.0)
-                                        .ui(ui);
-
-                                    ui.add_space(2.0);
+                                    let text_edit = TextEdit::singleline(&mut login.username)
+                                        .desired_width(180.0);
+                                    
+                                    let output = text_edit.show(ui);
+                                    let chars = login.username.chars().count() as f32;
+                                    let painter = ui.painter_at(output.response.rect);
+                                    let text_color = Color32::from_rgba_premultiplied(100, 100, 100, 100);
+                                    let galley = painter.layout(
+                                        String::from("@pclaptops.com"),
+                                        font,
+                                        text_color,
+                                        f32::INFINITY
+                                    );
+                                    painter.galley(Pos2::new(output.galley_pos.x + (chars as f32 * 11.75), output.galley_pos.y), galley, text_color);
+                                    ui.add_space(4.0);
 
                                     let enter = ui.input_mut(|i| i.key_pressed(Key::Enter));
 
@@ -126,7 +120,22 @@ impl MasterTechApp{
                                     {
                                         if enter && !login.password.is_empty() && !login.username.is_empty(){
                                             info!("ENTER PRESSED");
-                                            login.login(db_tx.clone(), appstate_tx.clone());
+                                            let user = login.username.clone();
+                                            let pass = login.password.clone();
+                                            let email = format!("{user}@pclaptops.com");
+                                            let login = Login {
+                                                username: email,
+                                                password: pass,
+                                            };
+                                            let tx = db_tx.clone();
+                                            let app_tx = appstate_tx.clone();
+                                            spawn(async move {
+                                                let res = Login::login(login,  tx, app_tx.clone()).await;
+                                                match res {
+                                                    Ok(_) => app_tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap(), 
+                                                    Err(e) => app_tx.try_send(AppState::NoAuth(e.to_string())).unwrap()
+                                                }
+                                            });
                                         }
                                     }
 
@@ -147,8 +156,8 @@ impl MasterTechApp{
                                             .size(30.0)
                                             .color(Color32::from_rgb(100, 10, 80))
                                             .ui(ui);
-
-                                        match appstate_tx.send(AppState::CreateAccount){
+                                        let app_tx = appstate_tx.clone();
+                                        match app_tx.try_send(AppState::CreateAccount){
                                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                             Err(e) => info!("Error {e:?}"),
                                         }
@@ -163,7 +172,20 @@ impl MasterTechApp{
                                     .ui(ui)
                                     .clicked()
                                     {
-                                        login.login(db_tx, appstate_tx.clone());
+                                        let user = login.username.clone();
+                                        let pass = login.password.clone();
+                                        let email = format!("{user}@pclaptops.com");
+                                        let login = Login {
+                                            username: email,
+                                            password: pass,
+                                        };
+                                        spawn(async move {
+                                                let res = Login::login(login, db_tx.clone(), appstate_tx.clone()).await;
+                                                match res {
+                                                    Ok(_) => appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap(), 
+                                                    Err(e) => appstate_tx.try_send(AppState::NoAuth(e.to_string())).unwrap()
+                                                }
+                                        });
                                     }
                                 }
                             });
