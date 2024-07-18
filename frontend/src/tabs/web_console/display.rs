@@ -112,8 +112,10 @@ impl MtechServerContext{
                                 // let url = format!("{}/websocket?role=master&room_id={}", dotenv::from_filename("WS_URL").unwrap(), name.clone());
                                 let _url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
                                 client.connected = false;
+                                client.delete_client();
                                 if let Some(ws_client) = &mut self.ws_client{
                                     ws_client.ws_sender.close();
+                                    
                                 }
                             }
                             ui.add_space(30.0);

@@ -382,7 +382,6 @@ pub struct User {
     pub email: String,
     pub store: Store,
     pub notifications: Option<Vec<NotificationId>>,
-    pub connected_clients: Option<Vec<ClientId>>,
     pub minio_access_key: Option<String>,
     pub minio_secret_key: Option<String>
 }
