@@ -71,7 +71,7 @@ impl MtechServerContext{
                                     .vertical(| strip| 
                                 {
                                     if let Some(ws_client) = &mut self.ws_client{
-                                        if client.connected {
+                                        if client.connected && name.clone() == self.current_client {
                                             ws_client.show(strip, name.clone());
                                         }
                                     }
@@ -137,12 +137,13 @@ impl MtechServerContext{
                             if button.clicked(){
                                 let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
                                 
-
+                                // let x = ewebsock::Options::default().
                                 match ewebsock::connect(&url, Default::default()) {
                                     Ok((mut ws_sender, ws_receiver)) => {
                                         client.connected = true;
                                         ws_sender.send(ewebsock::WsMessage::Text("Server Connected".to_string()));
-                                        self.ws_client = Some(WebSocketClient::new(ws_sender, ws_receiver));
+                                        self.ws_client = Some(WebSocketClient::new(ws_sender, ws_receiver, name.clone()));
+                                        self.current_client = name.clone();
                                     }
                                     Err(error) => {
                                         client.connected = false;

@@ -45,6 +45,7 @@ struct Auth {
 const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
+pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
 
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
@@ -65,7 +66,7 @@ impl Database{
                     Ok(_) => {
                         info!("Auth ok");
                         if !username.is_empty() || !password.is_empty(){
-                            let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE email = $email");
+                            let query = "SELECT id, name, everest_initials, email, store, minio_access_key, minio_secret_key FROM user WHERE email == $email";
                             DATABASE.set("email", username).await?;
                             let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
                             info!("user: {user:#?}");
@@ -94,15 +95,15 @@ impl Database{
                         params: 
                             Auth{
                                 email: username.clone(), 
-                                password: password
+                                password
                             }
                     }
                 ).await?;
                 
-                let query = format!("SELECT  id, name, everest_initials, email, store FROM user WHERE email = $email");
+                let query = "SELECT id, name, everest_initials, email, store, minio_access_key, minio_secret_key FROM user WHERE email == $email";
                 DATABASE.set("email", username.clone().to_lowercase()).await?;
-                info!("querying ");
                 let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
+                info!("querying {:?}", user.clone());
                     
                 let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
 
@@ -124,7 +125,7 @@ impl Database{
         ).await?;
 
         info!("signup: {:?}", signup);
-        let query = format!("SELECT  id, name, everest_initials, email, store FROM user WHERE email == $email");
+        let query = "SELECT  id, name, everest_initials, email, store, minio_access_key, minio_secret_key FROM user WHERE email == $email";
 
         DATABASE.set("email", email).await?;
 

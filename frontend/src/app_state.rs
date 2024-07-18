@@ -25,8 +25,8 @@ use crate::{
 };
 
 
-pub const SECRET_KEY: &str = "lUVgT6KPAR7uPZriAC1QPqSTB9aW12oAmgegk6gO";
-pub const ACCESS_KEY: &str = "DMAZwz4511ezKqEiF2vy";
+// pub const SECRET_KEY: &str = "lUVgT6KPAR7uPZriAC1QPqSTB9aW12oAmgegk6gO";
+// pub const ACCESS_KEY: &str = "DMAZwz4511ezKqEiF2vy";
 
 #[derive(Serialize)]
 pub struct MtechServer{
@@ -169,6 +169,7 @@ pub struct MtechServerContext{
     pub error: String,
     #[serde(skip)]
     pub ws_client: Option<WebSocketClient>,
+    pub current_client: String,
     #[serde(skip)]
     pub text_to_send: String,
 
@@ -208,8 +209,8 @@ impl MtechServer{
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         setup_custom_fonts(&cc.egui_ctx);
 
-        let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), "Quote Fullfilled".to_owned(), 
-            "Aging Tasks".to_owned(), "Web Console".to_owned(), "Customers".to_owned()]);
+        let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), //"Quote Fullfilled".to_owned(), "Aging Tasks".to_owned(),  
+            "Web Console".to_owned(), "Customers".to_owned()]);
         let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["My Tools".to_owned(), "Bug Report".to_owned()]);
         //"Terminal".to_owned(), 
         let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned(), "Ai Playground".to_owned()]);
@@ -251,12 +252,6 @@ impl MtechServer{
         //     }).spawn("./dummy_worker.js");
 
         // live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
-
-        bridge.send(Input {
-            url: "https://storage-api.master-tech.app".to_string(),
-            access_key: ACCESS_KEY.to_string(),
-            secret_key: SECRET_KEY.to_string(),
-        });
 
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(1);
@@ -321,6 +316,7 @@ impl MtechServer{
             // url: format!("{}websocket?room_id=0&role=master", dotenv::var("WS_URL").unwrap()),
             url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_string(),
             ws_client: None,
+            current_client: String::new(),
             error: Default::default(),
             // client_layout: None,
             text_to_send: Default::default(),

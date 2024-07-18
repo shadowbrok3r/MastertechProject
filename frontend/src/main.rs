@@ -1,3 +1,5 @@
+use database::STORAGE_URL;
+use mtechserver::webworker::Input;
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
@@ -37,6 +39,24 @@ impl eframe::App for MtechServer {
                     self.state = d.0;
                     if let Some(ref usr) = d.1{
                         self.context.current_user = Some(usr.clone());
+                        let bridge_op = &self.context.bridge;
+                        if let (
+                            Some(access_key), 
+                            Some(secret_key), 
+                            Some(bridge)
+                        ) = (
+                            usr.minio_access_key.clone(), 
+                            usr.minio_secret_key.clone(), 
+                            bridge_op
+                        ) {
+                            self.context.file_system.access_key = access_key.clone();
+                            self.context.file_system.secret_key = secret_key.clone();
+                            bridge.send(Input {
+                                url: STORAGE_URL.to_string(),
+                                access_key,
+                                secret_key,
+                            });
+                        }
                     }
                 },
                 Err(e) => {
@@ -66,6 +86,25 @@ impl eframe::App for MtechServer {
                         info!("Getting Initial data");
                         let user = usr.clone();
                         let name = usr.name.clone();
+
+                        let bridge_op = &self.context.bridge;
+                        if let (
+                            Some(access_key), 
+                            Some(secret_key), 
+                            Some(bridge)
+                        ) = (
+                            usr.minio_access_key.clone(), 
+                            usr.minio_secret_key.clone(), 
+                            bridge_op
+                        ) {
+                            self.context.file_system.access_key = access_key.clone();
+                            self.context.file_system.secret_key = secret_key.clone();
+                            bridge.send(Input {
+                                url: STORAGE_URL.to_string(),
+                                access_key,
+                                secret_key,
+                            });
+                        }
 
                         spawn_local(async move {
                             let listen_task_notes = listen_task_notes(notes_tx).await;
