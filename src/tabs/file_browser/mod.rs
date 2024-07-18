@@ -1,6 +1,7 @@
 use std::{env, cell::RefCell, collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::Ordering, Arc}};
 use eframe::egui::Ui;
 use log::{debug, info};
+use serde::{Deserialize, Serialize};
 use sysinfo::Disks;
 use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
 use walkdir::WalkDir;
@@ -18,11 +19,10 @@ pub mod command;
 impl MastertechContext {
     pub fn file_browse(&mut self, ui: &mut Ui) {
         if !self.show_deferred_viewport.load(Ordering::Relaxed) {
-            let (command_tx, command_rx) = crossbeam::channel::unbounded();
             // Lock the Mutex and show the GUI
             let file_browser_clone = Arc::clone(&self.file_browser);
             let mut file_browser = file_browser_clone.lock().unwrap();
-            file_browser.show(ui, command_tx, command_rx);
+            file_browser.show(ui);
         }
     }
 }
@@ -32,6 +32,7 @@ const _KB_FROM_BYTES: u64 = 1024;
 const _MB_FROM_BYTES: u64 = 1024*1024;
 const _GB_FROM_BYTES: u64 = 1024*1024*1024;
 
+#[derive(Serialize)]
 pub struct FileBrowser {
     /// Current opened path.
     path: PathBuf, 
@@ -58,20 +59,30 @@ pub struct FileBrowser {
     /// Update directory contents once displayed 
     first_refresh_contents: bool, 
     /// Metadata of each file
+    #[serde(skip)]
     file_metadata: RefCell<HashMap<PathBuf, MetaData>>, 
     /// MetaData of each folder
+    #[serde(skip)]
     folder_metadata: RefCell<HashMap<PathBuf, MetaData>>, 
     /// Send size of file in bytes
+    #[serde(skip)]
     metadata_tx: channel::Sender<u64>, 
     /// Send size of folder in bytes
+    #[serde(skip)]
     metadata_rx: channel::Receiver<u64>, 
     
     /// Progress percentage
     progress: f64, 
     /// Send progress 
+    #[serde(skip)]
     progress_tx: channel::Sender<u64>, 
     /// Retrieve progress 
+    #[serde(skip)]
     progress_rx: channel::Receiver<u64>, 
+    #[serde(skip)]
+    command_tx: channel::Sender<Option<Command>>,
+    #[serde(skip)]
+    command_rx: channel::Receiver<Option<Command>>,
     /// Animate the progress bar
     animated_progress: bool, 
     /// When CTRL+C is hit, get the selected files to be copied
@@ -97,6 +108,7 @@ impl FileBrowser{
         }
         let (progress_tx, progress_rx) = channel::unbounded();
         let (metadata_tx, metadata_rx) = channel::unbounded();
+        let (command_tx, command_rx) = crossbeam::channel::unbounded();
 
         Self {
             path,
@@ -113,11 +125,10 @@ impl FileBrowser{
             depth: 1,
             file_metadata: RefCell::new(HashMap::new()),
             folder_metadata: RefCell::new(HashMap::new()),
-            metadata_tx,
-            metadata_rx,
             progress: 0.0,
-            progress_tx,
-            progress_rx,
+            metadata_tx, metadata_rx,
+            progress_tx, progress_rx,
+            command_tx,  command_rx,
 
             animated_progress: false,
             copied_items_src: Vec::new(),
@@ -127,14 +138,9 @@ impl FileBrowser{
           }
     }
     
-    pub fn show(
-        &mut self, 
-        ui: &mut Ui,
-        command_tx: channel::Sender<Option<Command>>,
-        command_rx: channel::Receiver<Option<Command>> 
-    ) {     
+    pub fn show(&mut self, ui: &mut Ui ) {     
         let mut total_size = 0;
-        self.handle_keyboard_events(ui, command_tx.clone());
+        self.handle_keyboard_events(ui, self.command_tx.clone());
         ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
         ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
         ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
@@ -160,7 +166,7 @@ impl FileBrowser{
                     let path = PathBuf::from(&self.path_edit);
                     println!("Lost focus on self.path_edit");
 
-                    match command_tx.send(Some(Command::OpenPath(path))){
+                    match self.command_tx.send(Some(Command::OpenPath(path))){
                         Ok(_) => println!("sent task successfully"),
                         Err(e) => println!("{e}")
                     };
@@ -173,7 +179,7 @@ impl FileBrowser{
                     |ui | {
                         let response = ui.button("🏠").on_hover_text("Home");
                         if response.clicked(){
-                            match command_tx.send(Some(Command::Home)){
+                            match self.command_tx.send(Some(Command::Home)){
                                 Ok(_) => println!("Home"),
                                 Err(e) => println!("{e}"),
                             }
@@ -184,7 +190,7 @@ impl FileBrowser{
                 ui.add_enabled_ui(self.path.parent().is_some(), |ui| {
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
-                        match command_tx.send(Some(Command::UpDirectory)){
+                        match self.command_tx.send(Some(Command::UpDirectory)){
                             Ok(_) => println!("UpDirectory"),
                             Err(e) => println!("{e}"),
                         }
@@ -193,7 +199,7 @@ impl FileBrowser{
 
                 let response = ui.button("⟲").on_hover_text("Refresh");
                 if response.clicked() {
-                    match command_tx.send(Some(Command::Refresh)){
+                    match self.command_tx.send(Some(Command::Refresh)){
                         Ok(_) => println!("sent task successfully"),
                         Err(e) => println!("{e}")
                     }
@@ -211,7 +217,7 @@ impl FileBrowser{
                 self.progress = 0.0;
                 self.animated_progress = false; 
                 ui.ctx().request_repaint();
-                match command_tx.try_send(Some(Command::Refresh)){
+                match self.command_tx.try_send(Some(Command::Refresh)){
                     Ok(_) => debug!("Refreshing.."),
                     Err(e) => debug!("{e}"),
                 };
@@ -241,7 +247,7 @@ impl FileBrowser{
                             let path = Some(Command::OpenPath(PathBuf::from(drive)));
                             info!("Drive: {:?} -- Path: {:?}", drive, &path);
 
-                            match command_tx.send(path){
+                            match self.command_tx.send(path){
                                 Ok(_) => println!("Opening drive path"),
                                 Err(e) => println!("{e}"),
                             }
@@ -268,7 +274,7 @@ impl FileBrowser{
                             ).clicked() {
                                 if let Some(from) = self.selected_item.clone() {
                                     let to = from.with_file_name(&self.filename_edit);
-                                    match command_tx.send(Some(Command::Rename(from, to))){
+                                    match self.command_tx.send(Some(Command::Rename(from, to))){
                                         Ok(_) => {
                                             println!("ok");
                                         },
@@ -284,7 +290,7 @@ impl FileBrowser{
                     if self.new_folder && ui.button(RichText::new("📁 New Folder").small())
                         .clicked()
                     {
-                        match command_tx.send(Some(Command::CreateDirectory)){
+                        match self.command_tx.send(Some(Command::CreateDirectory)){
                             Ok(_) => println!("ok"),
                             Err(e) => print!("{e}")
                         }
@@ -325,7 +331,7 @@ impl FileBrowser{
                     ui.with_layout(ui.layout().with_main_justify(true), |ui| {
                         ui.vertical(|ui| {
                             for path in files[range].iter(){
-                                self.display_path(ui, path, command_tx.clone());
+                                self.display_path(ui, path);
                             }
                         });
                     });
@@ -334,7 +340,7 @@ impl FileBrowser{
                     // There was an error fetching the directory contents
                     // Send a command to fetch them in the background
                     let command = Command::ReadDirectory(self.path.clone());
-                    command_tx.send(Some(command)).unwrap();
+                    self.command_tx.send(Some(command)).unwrap();
                     ui.label("Loading...");
                 },
             });
@@ -348,20 +354,20 @@ impl FileBrowser{
             self.source_dir_size = total_size;
         }
         
-        if let Ok(Some(cmd)) = command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
+        if let Ok(Some(cmd)) = self.command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
     }
     
     /** 
         Handles displaying of subcontents of given directory by calling list_subfolders
         and makes only directories collapsible so we can see its subcontents 
     */
-    fn display_path(&self, ui: &mut Ui, path: &PathBuf, command_tx: channel::Sender<Option<Command>>) {
+    fn display_path(&self, ui: &mut Ui, path: &PathBuf) {
         
-        let command_sender = command_tx.clone();
-        let command_sender2 = command_tx.clone();
-        let command_sender3 = command_tx.clone();
-        // let command_sender4 = command_tx.clone();
-        let command_sender5 = command_tx.clone();
+        let command_sender = self.command_tx.clone();
+        let command_sender2 = self.command_tx.clone();
+        let command_sender3 = self.command_tx.clone();
+        // let command_sender4 = self.command_tx.clone();
+        let command_sender5 = self.command_tx.clone();
 
         let label = match path.is_dir() {true => "🗀   ", false => "🗋   "}.to_string() + get_file_name(path);
         let mut formatted_size = "".to_string();            
@@ -440,11 +446,7 @@ impl FileBrowser{
                     }).body(|ui| 
                     {
                         for sub_path in &contents {
-                            self.display_path(
-                                ui,
-                                &sub_path,
-                                command_tx.clone()
-                            );
+                            self.display_path(ui,&sub_path);
                         }
                     });
                 });
@@ -608,7 +610,7 @@ impl FileBrowser{
         if copy && shift{ // && self.selected_items
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Copied Items: {:?}", self.copied_items_src);
-            let command_tx = command_tx.clone();
+            let command_tx = self.command_tx.clone();
 
             if self.copied_items_src.len() == 1 {
                 info!("Path == {:?}", self.copied_items_src[0].file_name());
@@ -618,7 +620,7 @@ impl FileBrowser{
                 }
             }
             for path in &self.copied_items_src{
-                match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
+                match self.command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
                     Ok(_) => info!("Getting file size"),
                     Err(e) => println!("hovered sender error: {e:?}"),
                 }
@@ -626,10 +628,10 @@ impl FileBrowser{
         }else if cut && shift{
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Cut Items: {:?}", self.copied_items_src);
-            let command_tx = command_tx.clone();
+            let command_tx = self.command_tx.clone();
 
             for path in &self.copied_items_src{
-                match command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
+                match self.command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
                     Ok(_) => info!("Getting file size"),
                     Err(e) => println!("hovered sender error: {e:?}"),
                 }
@@ -639,7 +641,7 @@ impl FileBrowser{
             if let Some(selected_path) = &self.selected_item{
                 if selected_path.is_dir(){
                     self.copied_items_dest = PathBuf::from(selected_path);
-                    match command_tx.try_send(Some(
+                    match self.command_tx.try_send(Some(
                             Command::Copy(
                                 self.copied_items_src.clone(), 
                                 self.copied_items_dest.clone(), 
