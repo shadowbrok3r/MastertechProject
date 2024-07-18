@@ -1,11 +1,13 @@
+use crate::{app_state::MastertechContext, database::{database::DATABASE, deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}, filesystem::system_info::{generate_client_id, get_sysinfo}, tabs::file_browser::read_folder};
 use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
-use crate::{app_state::MastertechContext, database::{database::DATABASE, deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}, filesystem::system_info::{generate_client_id, get_sysinfo}};
+use std::{env, path::{Path, PathBuf}, process::Stdio, time::{Duration, Instant}};
 use tokio::{io::AsyncReadExt, process::Command, spawn, time::sleep};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crossbeam::channel::{Receiver, Sender};
-use std::{process::Stdio, time::{Duration, Instant}};
 use serde::{Deserialize, Serialize};
+use num_traits::ops::bytes;
 use surrealdb::sql::Thing;
+use bincode::serialize;
 use tracing::info;
 
 pub mod websocket;
@@ -139,6 +141,11 @@ pub enum Cmd{
     DismScan,
     ChkDsk,
     Mbr2Gpt,
+    ReadDir(String),
+    DirContents(Vec<String>),
+    ChangeDirectory(String),
+    Execute(String),
+    CopyTools(String),
     Quit,
     None
 }
@@ -262,11 +269,44 @@ impl WebConsoleFrontend {
                                     //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
                                     // });
                                 },
+                                Cmd::ReadDir(path) => {
+                                    info!("READING DIR");
+                                    let current_path = env::current_dir().unwrap_or_default();
+                                    let contents = if path == "current" {
+                                        let paths = read_folder(&current_path, 2, false);
+                                        info!("Current paths: {:?}", paths.clone());
+                                        paths
+                                    } else {
+                                        let p: PathBuf = Path::new(path.as_str()).to_path_buf();
+                                        if p.is_dir() {
+                                            let paths = read_folder(&p, 2, false);
+                                            info!("Paths: {:?}", paths.clone());
+                                            paths
+                                        } else {
+                                            let paths = read_folder(&current_path, 2, false);
+                                            info!("Paths: {:?}", paths.clone());
+                                            paths
+                                        }
+                                    };
+
+                                    let mut strings = Vec::new();
+                                    for x in contents {
+                                        strings.push(x.to_string_lossy().to_string());
+                                    }
+                                    let payload = serialize(&Cmd::DirContents(strings));
+                                    match payload {
+                                        Ok(bytes) => {
+                                            self.ws_sender.send(WsMessage::Binary(bytes));
+                                            
+                                        },
+                                        Err(e) => info!("Error serializing paths: {e:?}"),
+                                    }
+                                }
                                 Cmd::Quit => {
                                     self.connected = false;
                                 }
                                 _ => {
-                                    self.history.push(format!("Raw Binary: {:?}", bin));
+                                    // self.history.push(format!("Raw Binary: {:?}", bin));
                                 },
                             }
                         },
@@ -279,11 +319,11 @@ impl WebConsoleFrontend {
                             });
                         },
                         WsMessage::Ping(x) => {
-                            if self.timeout_counter.elapsed().as_secs() > 10 {
-                                info!("Its been over 10 seconds since last ping");
-                            }
+                            info!("Got a Ping: {x:?}");
+                            self.timeout_counter = Instant::now();
                         },
                         WsMessage::Pong(x) => {
+                            info!("Got a Pong: {x:?}");
                             self.timeout_counter = Instant::now();
                         },
                         _ => ()
@@ -493,10 +533,11 @@ impl WebConsoleFrontend {
 async fn live_computer_stats(tx: Sender<Vec<u8>>, connected: bool) 
     -> anyhow::Result<(), anyhow::Error>
 {
-    while connected{
+    loop {
+    
         sleep(Duration::from_secs(4)).await;
         let systeminfo: SystemInformation = get_sysinfo().await?;
-        info!("{:?}");
+        info!("{systeminfo:?}");
         tx.send(serialize_system_info(&systeminfo))?;
         // if app.lock().await.finish {
         //     break;

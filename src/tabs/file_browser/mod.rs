@@ -683,7 +683,7 @@ fn get_file_name(path: &PathBuf) -> &str {
 }
    
 /** Returns a Vec<PathBuf> of current directory contents and files. */
-fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
+pub fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBuf> {
     let result: Vec<_> = WalkDir::new(path).min_depth(depth).max_depth(depth)
         .into_iter()
         .filter_map(|e| e.ok()) // Only retreive the resulted items
@@ -720,3 +720,4 @@ fn read_folder(path: &PathBuf, depth: usize, read_dirs_only: bool) -> Vec<PathBu
 
     result
 }
+
