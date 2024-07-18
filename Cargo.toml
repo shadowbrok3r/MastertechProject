@@ -7,6 +7,7 @@ build = "build.rs"
 
 [dependencies]
 eframe = { version="0.28", features=["persistence", "wgpu", "serde"] } # "deadlock_detection", "callstack"
+egui = {path="egui/crates/egui/", features=["serde"]}
 egui_dock = { version = "0.13", features = ["serde"]}
 egui_extras = { version = "0.28", features = ["datepicker"]}
 reqwest = { version = "0.12", features = ["json", "stream", "cookies"] } # "blocking",

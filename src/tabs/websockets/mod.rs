@@ -1,4 +1,4 @@
-use crate::{app_state::MastertechContext, database::{database::DATABASE, deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}, filesystem::system_info::{generate_client_id, get_sysinfo}, tabs::file_browser::read_folder};
+use crate::{app_state::MastertechContext, database::{database::DATABASE, deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}, filesystem::system_info::{generate_client_id, get_sysinfo}, tabs::file_browser::{read_folder, FileBrowser}};
 use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use std::{env, path::{Path, PathBuf}, process::Stdio, time::{Duration, Instant}};
 use tokio::{io::AsyncReadExt, process::Command, spawn, time::sleep};
@@ -294,6 +294,7 @@ impl WebConsoleFrontend {
                                         strings.push(x.to_string_lossy().to_string());
                                     }
                                     let payload = serialize(&Cmd::DirContents(strings));
+                                    let x = serialize(&FileBrowser::new());
                                     match payload {
                                         Ok(bytes) => {
                                             self.ws_sender.send(WsMessage::Binary(bytes));
