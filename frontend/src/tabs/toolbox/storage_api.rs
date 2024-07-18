@@ -1,4 +1,4 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, Response, RichText, ScrollArea, Ui, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{iter, cell::RefCell, collections::{HashMap, HashSet}};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
@@ -14,20 +14,22 @@ use crate::app_state::{ACCESS_KEY, SECRET_KEY};
 
 const ONE_HOUR: Duration = Duration::from_secs(3600);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FileSystem {
-    root: Node,
-    /// HashSet of selected files (hold CTRL key to select multiple)
-    selected_items: RefCell<HashSet<String>>, 
-    bytes_tx: Sender<(Vec<u8>, u64)>,
+    pub root: Node,
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
-    progress: f64,
-    total_size: f64,
+    bytes_tx: Sender<(Vec<u8>, u64)>,
+    selected_items: RefCell<HashSet<String>>,
+    directory_paths: HashSet<String>,
     paths: Vec<String>,
-    directory_paths: HashSet<String>
+    total_size: f64,
+    progress: f64,
+    pub enter_directory: String,
+    pub execute_file: String,
+    pub open_folder: bool
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Node {
     File(String),
     Folder(HashMap<String, Node>),
@@ -44,7 +46,10 @@ impl FileSystem {
             progress: 0.0,
             total_size: 0.0,
             paths: Vec::new(),
-            directory_paths: HashSet::new()
+            directory_paths: HashSet::new(),
+            enter_directory: String::new(),
+            execute_file: String::new(),
+            open_folder: false
         }
     }
 
@@ -57,7 +62,7 @@ impl FileSystem {
 
             for (i, part) in parts.iter().enumerate() {
                 let part = part.to_string();
-                if i == parts.len() - 1 { // It's a file
+                if part.contains('.'){ // i == parts.len() - 1 { // It's a file
                     if let Some(folder) = current.as_folder_mut() {
                         folder.insert(part.clone(), Node::File(part.to_string()));
                     }
@@ -70,28 +75,29 @@ impl FileSystem {
                     }
                     current_path.push_str(&part);
                     self.directory_paths.insert(current_path.clone());
-
                 }
             }
         }
          
     }
 
-    pub fn display(&self, ui: &mut Ui) {
+    pub fn display(&mut self, ui: &mut Ui){
         let size = ui.available_size_before_wrap();
         ScrollArea::vertical().max_width(size.x)
             .max_height(size.y)
             .auto_shrink(false)
             .show(ui, |ui| 
         {
+            let x = self.root.clone();
             ui.with_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), |ui| {
-                self.display_path(ui, &self.root, "".to_string());
-            });
-        });
+                self.display_path(ui, &x, "".to_string());
+            }).inner
+        }).inner;
     }
 
-    fn display_path(&self, ui: &mut Ui, node: &Node, current_path: String) {      
+    fn display_path(&mut self, ui: &mut Ui, node: &Node, current_path: String){      
         let count = 0;
+        // let mut clicked_label: Option<String> = None;
         ui.vertical(|ui| 
         {
             if let Node::Folder(children) = node {
@@ -113,8 +119,8 @@ impl FileSystem {
 
                     if let Node::Folder(_) = node {
                         let id = ui.make_persistent_id(format!("{label}+++{:?}", count + 1));
-                        CollapsingState::load_with_default_open(ui.ctx(), id, false)
-                        .show_header(ui, |ui| 
+                        let res = CollapsingState::load_with_default_open(ui.ctx(), id, self.open_folder)
+                            .show_header(ui, |ui| 
                         {
                             
                             let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗀   {}", label)));
@@ -133,7 +139,13 @@ impl FileSystem {
                             if selectable_label.secondary_clicked(){
                                 ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",label).into()));
                             }
-                            
+                            if selectable_label.double_clicked(){
+                                self.open_folder = true;
+                                let path = self.path_lookup(&label.clone());
+                                if let Some(path) = path {
+                                    self.enter_directory = path.clone();
+                                }
+                            }
                             let _res = popup_below_widget(ui, format!("sub_menu-{:?}",label).into(), &selectable_label, CloseOnClickOutside, |ui| {
                                 ui.vertical_centered_justified(|ui| {
                                     ui.set_width(200.0);
@@ -152,10 +164,9 @@ impl FileSystem {
                                     }
                                 }).inner
                             });
-
-                        })
-                        .body(|ui| self.display_path(ui, &node, current_path.clone()));
-
+                            // selectable_label
+                        }).body(|ui| self.display_path(ui, &node, current_path.clone())).0;
+                        // Some(res)
                     } else if let Node::File(label) = node{
                         let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗋   {}", label)));
                         if selectable_label.clicked() {
@@ -169,13 +180,12 @@ impl FileSystem {
                                 self.selected_items.borrow_mut().insert(label.clone());
                             }
                         }
-                        if selectable_label.double_clicked() {
-
-                        }
                         if selectable_label.secondary_clicked(){
                             ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",label).into()));
                         }
-                        
+                        if selectable_label.double_clicked(){
+                            self.execute_file = label.clone();
+                        }
                         let _res = popup_below_widget(ui, format!("sub_menu-{:?}",label).into(), &selectable_label, CloseOnClickOutside, |ui| {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);
@@ -188,7 +198,13 @@ impl FileSystem {
                                 }
                             }).inner
                         });
-                    }
+                        // Some(selectable_label)
+                    };
+                    // if let Some(res) = response {
+                    //     if res.double_clicked(){
+                    //         clicked_label = Some(label.clone());
+                    //     }
+                    // }
                 }
             }
         });
@@ -206,7 +222,7 @@ impl FileSystem {
 
     fn path_lookup(&self, file_name: &str) -> Option<String> {
         self.paths.iter()
-            .find(|path| path.ends_with(file_name))
+            .find(|path| path.ends_with(format!("/{file_name}").as_str()))
             .cloned() // returns a clone of the matching path, if found
     }
     

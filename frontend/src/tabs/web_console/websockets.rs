@@ -1,6 +1,7 @@
 
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
-use database::{schema::ConnectedClient, DATABASE};
+use bincode::serialize;
+use database::{schema::{ConnectedClient, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::egui::{epaint::Shadow, Align, Button, CollapsingHeader, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, Strip};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
@@ -10,17 +11,21 @@ use surrealdb::Response;
 use wasm_bindgen_futures::spawn_local;
 use web_time::Instant;
 
+use crate::tabs::toolbox::storage_api::FileSystem;
+
 use super::charts::LinePlot;
 
 pub trait ClientHandler { 
     fn connect(&mut self);
     fn export_logs(&mut self, history: Vec<String>);
+    fn delete_client(&mut self);
 }
 
 pub enum ClientConnection{
     ClientUrl(String),
     Disconnect(String)
 }
+
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Cmd{
     LiveData,
@@ -32,6 +37,11 @@ pub enum Cmd{
     DismScan,
     ChkDsk,
     Mbr2Gpt,
+    ReadDir(String),
+    DirContents(Vec<String>),
+    ChangeDirectory(String),
+    Execute(String),
+    CopyTools(String),
     Quit,
     None
 }
@@ -52,7 +62,8 @@ pub struct WebSocketClient {
     pub sysinfo: Option<SystemInformation>,
     pub history: Vec<String>,
     pub loading: bool,
-    pub timeout_counter: Instant
+    pub timeout_counter: Instant,
+    pub file_system: FileSystem
 }
 
 impl WebSocketClient{
@@ -72,7 +83,8 @@ impl WebSocketClient{
             history: Vec::new(),
             temps: VecDeque::new(),
             loading: false, 
-            timeout_counter: Instant::now()
+            timeout_counter: Instant::now(),
+            file_system: FileSystem::new()
         }
     }
     
@@ -81,11 +93,11 @@ impl WebSocketClient{
             self.events.push(event);
         }
 
-        if self.timeout_counter.elapsed().as_secs() > 10 {
-            info!("Its been over 10 seconds since last ping");
-        }
+        // if self.timeout_counter.elapsed().as_secs() > 10 {
+        //     info!("Its been over 10 seconds since last ping");
+        // }
 
-        info!("Timer: {:?}", self.timeout_counter.elapsed().as_secs());
+        // info!("Timer: {:?}", self.timeout_counter.elapsed().as_secs());
 
         for event in &self.events {
             match event{
@@ -93,43 +105,29 @@ impl WebSocketClient{
                     // self.connected = true;
                     match msg{
                         WsMessage::Binary(bin) => {
-                            info!("Binary: {bin:?}");
+                            // info!("Binary: {bin:?}");
                             
-                            if let Some(sysinfo) = deserialize_system_info(bin){
-                                info!("Got sysinfo");
+                            if let Some(sysinfo) = deserializer::<SystemInformation>(bin){
+                                // info!("Got sysinfo");
                                 self.loading = false;
+                                let normalized_cpu_clock = normalize(sysinfo.cpu_clock, 0.0, 100.0); // Example range for CPU clock
+                                // let normalized_cpu_percentage = normalize(sysinfo.cpu_percentage, 0.0, 100.0);
+                                let total_ram = if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory)*100.0 } else { 0.0 };
+                                // let normalized_ram_usage = normalize(total_ram, 0.0, 100.0); // Example range for RAM usage
+                                self.cpu_percentage.push_back(sysinfo.cpu_percentage);
+                                self.cpu_clock.push_back(normalized_cpu_clock);
+                                self.ram_usage.push_back(total_ram);
                                 self.sysinfo = Some(sysinfo);
+                                // info!("normalized_ram_usage: {normalized_ram_usage:?}\nLen: {:?}", self.cpu_percentage.len());
+                            } else if let Some(cmd) = deserializer::<Cmd>(bin){
+                                if let Cmd::DirContents(paths) = cmd{
+                                    self.file_system.build_file_system(paths);
+                                }
+
                             } else{ 
                                 if bin.len() > 0 {
                                     self.loading = false;
                                     self.history.push(String::from_utf8_lossy(&bin).to_string());
-                                }
-                            }
-                            
-
-                            if let Some(sysinfo) = &self.sysinfo{
-                                let normalized_cpu_percentage = normalize(sysinfo.cpu_percentage, 0.0, 100.0);
-                                let normalized_cpu_clock = normalize(sysinfo.cpu_clock, 0.0, 5000.0); // Example range for CPU clock
-                                let _normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
-                                let normalized_ram_usage = normalize(sysinfo.used_memory, 0.0, 16000.0); // Example range for RAM usage
-        
-                                if self.cpu_percentage.len() < 30
-                                    // || self.component_temps.len() < 30
-                                    || self.cpu_clock.len() < 30
-                                    || self.ram_usage.len() < 30 {
-                                    self.cpu_percentage.push_back(normalized_cpu_percentage);
-                                    // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                                    self.cpu_clock.push_back(normalized_cpu_clock);
-                                    self.ram_usage.push_back(normalized_ram_usage);
-                                } else {
-                                    self.cpu_percentage.pop_front();
-                                    self.cpu_percentage.push_back(normalized_cpu_percentage);
-                                    // self.component_temps.pop_front();
-                                    // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                                    self.cpu_clock.pop_front();
-                                    self.cpu_clock.push_back(normalized_cpu_clock);
-                                    self.ram_usage.pop_front();
-                                    self.ram_usage.push_back(normalized_ram_usage);
                                 }
                             }
                         },
@@ -140,10 +138,12 @@ impl WebSocketClient{
                         },
                         WsMessage::Ping(_bytes) => {
                             self.loading = false;
+                            info!("Ping");
                             self.timeout_counter = Instant::now();
                             
                         },
                         WsMessage::Pong(_bytes) => {
+                            info!("Pong");
                             self.timeout_counter = Instant::now();
                         },
                         _ => {}
@@ -247,25 +247,74 @@ impl WebSocketClient{
             {
                 ui.add_space(10.0);
                 ui.vertical_centered(|ui| {
-                    if let Some(_sysinfo) = &self.sysinfo {
+                    if let Some(sysinfo) = &self.sysinfo {
+                        let _normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
+
+                        // if self.cpu_percentage.len() < 30
+                            // || self.component_temps.len() < 30
+                            // || self.cpu_clock.len() < 30
+                            // || self.ram_usage.len() < 30 {
+
+                            // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
+                        // } else {
+                        //     self.cpu_percentage.pop_front();
+                        //     self.cpu_percentage.push_back(normalized_cpu_percentage);
+                        //     self.cpu_clock.pop_front();
+                        //     self.cpu_clock.push_back(sysinfo.cpu_clock);
+                        //     self.ram_usage.pop_front();
+                        //     self.ram_usage.push_back(normalized_ram_usage);
+                        //     // self.component_temps.pop_front();
+                        //     // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
+                        // }
+
+                        if self.cpu_percentage.len() > 50
+                            || self.cpu_clock.len() > 50
+                            || self.ram_usage.len() > 50 {
+                            // || self.component_temps.len() < 30 
+                            self.cpu_percentage.clear();
+                            self.cpu_clock.clear();
+                            self.ram_usage.clear();
+                        }
+
+
                         let percentages = self.cpu_percentage.make_contiguous().to_owned();
                         let clocks = self.cpu_clock.make_contiguous().to_owned();
                         // let temps = self.component_temps.make_contiguous().to_owned();
                         let ram = self.ram_usage.make_contiguous().to_owned();
                 
-                        info!("sysinfo: {percentages:?}, {clocks:?}, {ram:?}");
-                        let mut cpu_usage_plot = LinePlot::new(&[0.0], &percentages.as_slice());
-                        let mut cpu_clock_plot = LinePlot::new(&[0.0], &clocks.as_slice());
+                        // info!("\nsysinfo: CPU %: {percentages:?}, \nCPU Clock: {clocks:?}, \nRAM usage: {ram:?}");
                         // let temps_plot = LinePlot::new(&[0.0], &temps.as_slice());
-                        let mut ram_usage_plot = LinePlot::new(&[0.0], &ram.as_slice());
+                        let width = ui.available_width() / 3.0;
+                        let mut cpu_usage_plot = LinePlot::new(&[0.0], &percentages.as_slice(), width);
+                        let mut cpu_clock_plot = LinePlot::new(&[0.0], &clocks.as_slice(), width);
+                        let mut ram_usage_plot = LinePlot::new(&[0.0], &ram.as_slice(), width);
                 
-                        cpu_usage_plot.ui(ui, "CPU Usage", cpu_usage_plot.line("CPU Usage (%)", Color32::from_rgb(170, 10, 150)));
-                        cpu_clock_plot.ui(ui, "CPU Clock", cpu_clock_plot.line("CPU Clock (MHz)", Color32::from_rgb(21, 232, 165)));
-                        // temps_plot.ui(ui, "System Temps", temps_plot.line("System Temps (°C)", Color32::from_rgb(255, 69, 0)));
-                        ram_usage_plot.ui(ui, "RAM Usage", ram_usage_plot.line("RAM Usage (MB)", Color32::from_rgb(0, 191, 255)));
+                        ui.horizontal(|ui| {
+
+                            // temps_plot.ui(ui, "System Temps", temps_plot.line("System Temps (°C)", Color32::from_rgb(255, 69, 0)));
+                            cpu_usage_plot.ui(ui, "CPU Usage", cpu_usage_plot.line("CPU(%)", Color32::from_rgb(170, 10, 150)));
+                            cpu_clock_plot.ui(ui, "CPU Clock", cpu_clock_plot.line("CPU (MHz)", Color32::from_rgb(21, 232, 165)));
+                            ram_usage_plot.ui(ui, "RAM Usage", ram_usage_plot.line("RAM (MB)", Color32::from_rgb(0, 191, 255)));
+                        });
                     }
                 });
                 ui.add_space(10.0);
+            });
+            let paths_id = ui.make_persistent_id("Directories");
+            let file_explorer_container = CollapsingHeader::new("File Explorer").id_source(paths_id);
+
+            file_explorer_container.show_background(true).show_unindented(ui, |ui| {
+                self.file_system.display(ui);
+                let new_dir = self.file_system.enter_directory.clone();
+                if !new_dir.is_empty(){
+                    info!("New directory: {:?}", new_dir);
+                    match serialize(&Cmd::ReadDir(new_dir.clone())){
+                        Ok(bytes) => {
+                            self.ws_sender.send(WsMessage::Binary(bytes));
+                        },
+                        Err(e) => self.history.push(e.to_string()),
+                    }
+                }
             });
 
             let client_id = ui.make_persistent_id(format!("history {:?}", name.clone()));
@@ -274,8 +323,6 @@ impl WebSocketClient{
             scroll.show_background(true).show_unindented(ui, |ui| 
             {
                 ui.allocate_ui(Vec2::new(ui.available_width(), ui.available_height() - 20.0), |ui| {
-
-                
                     ScrollArea::vertical()
                         .animated(true)
                         .max_height(ui.available_height())
@@ -426,19 +473,29 @@ impl WebSocketClient{
                 });
 
                 ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
-                    let text_edit = TextEdit::singleline(&mut self.input).hint_text("Raw Command Prompt > USE WISELY").ui(ui);
+                    let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").ui(ui);
                     let key_press = ui.input(|i| i.key_pressed(Key::Enter));
                     if text_edit.lost_focus() && key_press {
                         self.loading = true;
                         text_edit.request_focus();
                         self.history.push(format!("You\n{}", self.input.clone()));
-                        self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
+                        if self.input == "readFS" {
+                            match serialize(&Cmd::ReadDir("/".to_string())){
+                                Ok(bytes) => {
+                                    self.ws_sender.send(WsMessage::Binary(bytes));
+                                },
+                                Err(e) => self.history.push(e.to_string()),
+                            }
+                        } else {
+                            self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
+                        }
                     }
                 });
             });
         });
         // strip.empty();
     }
+
 }
 
 
@@ -449,10 +506,22 @@ impl ClientHandler for ConnectedClient {
     fn export_logs(&mut self, history: Vec<String>) {
         let id = self.id.clone().unwrap().0;
         spawn_local(async move {
-            // db.database.set("id", id).await.unwrap();
-            // db.database.set("history", history.clone()).await.unwrap();
-            let query = format!("UPDATE {id:?} SET command_history = {history:?}");
-            let update_history: Result<Response, surrealdb::Error> = DATABASE.query(query)
+            DATABASE.set("id", id).await.unwrap();
+            DATABASE.set("history", history.clone()).await.unwrap();
+            let query = "UPDATE $id SET command_history = $history";
+            let update_history: Result<Response, surrealdb::Error> = DATABASE
+                .query(query)
+                .await;
+
+            info!("History: {update_history:#?}");
+        });
+     }
+
+     fn delete_client(&mut self) {
+        let id = self.id.clone().unwrap().0;
+        spawn_local(async move {
+            let update_history: Result<Option<Record>, surrealdb::Error> = DATABASE
+                .delete((CONNECTED_CLIENT_TABLE, id.id))
                 .await;
 
             info!("History: {update_history:#?}");
@@ -471,6 +540,13 @@ pub fn deserialize_system_info(bytes: &[u8]) -> Option<SystemInformation> {
         Some(data)
     } else { None }
 }
+
+pub fn deserializer<T: Serialize + for<'a> Deserialize<'a> + 'static >(bytes: &[u8]) -> Option<T> {
+    if let Ok(data) = bincode::deserialize(bytes){
+        Some(data)
+    } else { None }
+}
+
 
 fn normalize(value: f32, min: f32, max: f32) -> f32 {
     (value - min) / (max - min)
