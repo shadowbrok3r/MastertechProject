@@ -63,11 +63,12 @@ pub struct WebSocketClient {
     pub history: Vec<String>,
     pub loading: bool,
     pub timeout_counter: Instant,
-    pub file_system: FileSystem
+    pub file_system: FileSystem,
+    pub client_name: String
 }
 
 impl WebSocketClient{
-    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
+    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client_name: String) -> Self {
         Self{
             // client,
             ws_sender,
@@ -84,7 +85,8 @@ impl WebSocketClient{
             temps: VecDeque::new(),
             loading: false, 
             timeout_counter: Instant::now(),
-            file_system: FileSystem::new()
+            file_system: FileSystem::new(),
+            client_name
         }
     }
     

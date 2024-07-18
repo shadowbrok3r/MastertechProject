@@ -1,3 +1,4 @@
+use database::STORAGE_URL;
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, Response, RichText, ScrollArea, Ui, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{iter, cell::RefCell, collections::{HashMap, HashSet}};
@@ -10,7 +11,7 @@ use futures::StreamExt;
 use bytes::Bytes;
 use log::info;
 
-use crate::app_state::{ACCESS_KEY, SECRET_KEY};
+// use crate::app_state::{ACCESS_KEY, SECRET_KEY};
 
 const ONE_HOUR: Duration = Duration::from_secs(3600);
 
@@ -26,7 +27,9 @@ pub struct FileSystem {
     progress: f64,
     pub enter_directory: String,
     pub execute_file: String,
-    pub open_folder: bool
+    pub open_folder: bool,
+    pub secret_key: String,
+    pub access_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +52,9 @@ impl FileSystem {
             directory_paths: HashSet::new(),
             enter_directory: String::new(),
             execute_file: String::new(),
-            open_folder: false
+            open_folder: false,
+            secret_key: String::new(),
+            access_key: String::new(),
         }
     }
 
@@ -234,18 +239,20 @@ impl FileSystem {
 
         let task = rfd::AsyncFileDialog::new().pick_files();
         let _tx = self.bytes_tx.clone();
+        let secret_key = self.secret_key.clone();
+        let access_key = self.access_key.clone();
         // self.total_size = bytes.len() as f64;
         spawn_local(async move {
             let name = "logan";
             let region = "us-west";
             let client = Client::new();
-            let credentials = Credentials::new(ACCESS_KEY, SECRET_KEY);
+            let credentials = Credentials::new(access_key, secret_key);
             let mut bytes: Bytes = Bytes::new();
             let files = task.await.unwrap();
             let mut file_name = String::new();
 
             let bucket = Bucket::new(
-                "https://storage-api.master-tech.app".to_string().parse::<Url>().unwrap(), 
+                STORAGE_URL.to_string().parse::<Url>().unwrap(), 
                 rusty_s3::UrlStyle::Path, name, region
             )
             .expect("Url has a valid scheme and host");
@@ -318,16 +325,18 @@ impl FileSystem {
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
+        let secret_key = self.secret_key.clone();
+        let access_key = self.access_key.clone();
         spawn_local(async move {
             let name = "logan";
             let region = "us-west";
             let bucket = Bucket::new(
-                "https://storage-api.master-tech.app".to_string().parse::<Url>().unwrap(), 
+                STORAGE_URL.to_string().parse::<Url>().unwrap(), 
                 rusty_s3::UrlStyle::Path, name, region
             )
             .expect("Url has a valid scheme and host");
 
-            let credentials = Credentials::new(ACCESS_KEY, SECRET_KEY);
+            let credentials = Credentials::new(access_key, secret_key);
             
             let mut action = GetObject::new(&bucket, Some(&credentials), &path);
             action
