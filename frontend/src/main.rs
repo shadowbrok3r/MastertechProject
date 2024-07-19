@@ -1,4 +1,4 @@
-use database::STORAGE_URL;
+use database::{schema::TaskPayload, STORAGE_URL};
 use mtechserver::webworker::Input;
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_notifications, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
@@ -217,7 +217,6 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(notifications) = self.context.notification_rx.try_recv(){
-            info!("Notifications: {:?}", notifications);
             self.context.notifications = notifications;
         }
 
@@ -227,7 +226,7 @@ impl eframe::App for MtechServer {
                     let task_modal = if let Some(notes) = &task.task_note{
                         let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
                         TaskModal::new(chat_modal, task.clone())
-                    }else{ TaskModal::new(ChatView::default(), task.clone()) };
+                    }else{ TaskModal::new(ChatView::new(Vec::new(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap()), task.clone()) };
                     self.context.current_modal = ModalType::TaskModal(task_modal);
                     self.context.task_modal_handler.open();
                 },
@@ -318,6 +317,13 @@ impl eframe::App for MtechServer {
                 handle_live_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
                 info!("Inserting note into modal");
                 task_modal.chat_view.insert_note(payload.1);
+            } else if let ModalType::ChatView(chat_view) = &mut self.context.current_modal{
+                let task = self.context.tasks.iter_mut().find(|task| task.id == chat_view.task_id );
+                if let Some(task) = task{
+                    handle_live_notes(payload.clone(), task).unwrap_or(());
+                    info!("Inserting note into modal");
+                    chat_view.insert_note(payload.1);
+                }
             }
         }
 
