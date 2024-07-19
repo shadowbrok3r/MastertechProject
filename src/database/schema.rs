@@ -164,7 +164,6 @@ pub struct CustomerData{
     pub cust_code: String,
     pub part_order_links: Option<Vec<String>>,
     pub computers: Option<Vec<ComputerId>>,
-    pub services: Option<Vec<TicketId>>,
     pub name: String,
     pub phone_number: String,
     pub phone_number_2: String,
