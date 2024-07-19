@@ -123,9 +123,6 @@ impl MtechServer{
                         Separator::default().shrink(20.0).ui(ui);
                         ui.add_space(10.0);
                         ui.vertical_centered(|ui| ui.label(RichText::new("Notifications").heading()));
-                        // let mut notifications = Vec::new();
-                        let read: Vec<Notification> = self.context.notifications.iter().filter(|n| n.status == "Read" ).cloned().collect();
-                        let unread: Vec<Notification> = self.context.notifications.iter().filter(|n| n.status == "Unread" ).cloned().collect();
 
                         ui.horizontal_top(|ui| {
                             let read_button = ui.button(RichText::new("Read").color(Color32::LIGHT_GREEN));
@@ -140,7 +137,12 @@ impl MtechServer{
                             .show(ui, |ui| 
                         {
                             
-                            let mut notifications = if self.context.read_notifications { read } else { unread };
+
+                            let mut notifications: Vec<Notification> = if self.context.read_notifications { 
+                                self.context.notifications.iter().filter(|n| n.status == "Read" ).cloned().collect() 
+                            } else { 
+                                self.context.notifications.iter().filter(|n| n.status == "Unread" ).cloned().collect() 
+                            };
 
                             for notification in notifications.iter_mut(){
                                 eframe::egui::Frame::none().fill(ui.style().visuals.extreme_bg_color)
