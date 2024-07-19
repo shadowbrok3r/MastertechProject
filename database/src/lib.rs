@@ -59,7 +59,6 @@ impl Database{
         match jwt{
             Some(jwt) => {
                 info!("We already have a jwt, attempting token auth");
-                info!("We already have a jwt, attempting token auth");
                 let auth = DATABASE.authenticate(jwt.clone()).await;
                 // Self::handle_auth(auth, jwt, username, password).await
                 match auth{

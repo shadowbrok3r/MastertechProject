@@ -283,10 +283,9 @@ pub struct Notification{
     /// description of notification
     pub notification_description: String, 
     /// type of notification
-    pub notification_type: NotificationType,
+    pub notification_type: String,
     /// Has the notification been read?
-    pub status: NotificationStatus, 
-    pub user_initials: String
+    pub status: String
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -1,5 +1,6 @@
 
-use database::{schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, Record, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE}, DATABASE};
+use async_trait::async_trait;
+use database::{schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, Notification, Record, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE}, DATABASE};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
 use mtechserver::webworker::LiveOutput;
@@ -32,10 +33,10 @@ pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Acti
     Ok(())
 }
 
-pub async fn get_customer_data() -> anyhow::Result<LiveOutput, anyhow::Error> { // tx: Sender<CustomerData>
+pub async fn get_customer_data(tx: Sender<Vec<CustomerData>>) -> anyhow::Result<LiveOutput, anyhow::Error> { // tx: Sender<CustomerData>
     debug!("get_customers");
     let customers: Vec<CustomerData> = DATABASE.query("SELECT * FROM customer").await?.take(0)?;
-    DATABASE.set("id", "value");
+    DATABASE.set("id", "value").await?;
     let computers: Vec<ComputerData> = DATABASE.query("SELECT * FROM computer where customer == $id").await?.take(0)?;
     let tickets: Vec<TicketPayload> = DATABASE.query("SELECT * FROM service_order where customer == $id").await?.take(0)?;
     let tasks: Vec<TaskPayload> = DATABASE.query("SELECT * FROM task where service_order == $id").await?.take(0)?;
@@ -44,7 +45,14 @@ pub async fn get_customer_data() -> anyhow::Result<LiveOutput, anyhow::Error> { 
     Ok(output)
 }
 
-
+pub async fn get_notifications(tx: Sender<Vec<Notification>>, id: Thing) -> anyhow::Result<(), anyhow::Error> { // tx: Sender<CustomerData>
+    debug!("get_notifications");
+    DATABASE.set("id", id).await?;
+    let notifications: Vec<Notification> = DATABASE.query("SELECT * FROM notification WHERE user == $id").await?.take(0)?;
+    info!("Notifications: {:?}", notifications.clone());
+    tx.try_send(notifications)?;
+    Ok(())
+}
 
 pub async fn get_associated_task_notes(tx: Sender<TaskNotePayload>, note_id: Id) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_associated_task_notes");
@@ -127,13 +135,12 @@ pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Resu
     info!("Updated notes: {update_task:?}");
     Ok(())
 }
-
+ 
+#[async_trait]
 impl Task for TaskPayload{
-    fn get_computer_data<T>(&mut self, tx: Sender<Option<T>>) //-> anyhow::Result<(), anyhow::Error> 
-        where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
+    async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error> 
     {
         let id: RecordId = self.id.clone().unwrap().0;
-        spawn_local(async move {
             let query = format!(
                 "SELECT service_ticket.computer FROM task WHERE id={id} FETCH service_ticket.computer"
             );
@@ -143,19 +150,12 @@ impl Task for TaskPayload{
                 .unwrap()
                 .take(0).unwrap();
             debug!("get_data: {get_data:#?}");
-
-                match tx.try_send(get_data){
-                    Ok(_) => debug!("Sent data"),
-                    Err(e) => error!("Error sending data: {e:?}")
-                };
-        });
+        Ok(get_data)
     }
 
-    fn get_customer_data<T>(&mut self, tx: Sender<Option<T>>) //-> anyhow::Result<(), anyhow::Error> 
-        where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
+    async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error> 
     {
         let id: RecordId = self.id.clone().unwrap().0;
-        spawn_local(async move {
             let query = format!(
                 "SELECT service_ticket.customer FROM task WHERE id={id} FETCH service_ticket.customer"
             );
@@ -165,20 +165,13 @@ impl Task for TaskPayload{
                 .unwrap()
                 .take(0).unwrap();
             debug!("get_data: {get_data:#?}");
-
-                match tx.try_send(get_data){
-                    Ok(_) => debug!("Sent data"),
-                    Err(e) => error!("Error sending data: {e:?}")
-                };
-        });
+        Ok(get_data)
         
     }
     
-    fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>) //-> anyhow::Result<(), anyhow::Error> 
-        where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
+    async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error> 
     {
         let id: RecordId = self.id.clone().unwrap().0;
-        spawn_local(async move {
             let query = format!(
                 "SELECT * FROM task_note WHERE id={id}"
             );
@@ -188,31 +181,19 @@ impl Task for TaskPayload{
                 .unwrap()
                 .take(0).unwrap();
             debug!("get_data: {get_data:#?}");
-
-                match tx.try_send(get_data){
-                    Ok(_) => debug!("Sent data"),
-                    Err(e) => error!("Error sending data: {e:?}")
-                };
-        });
+        Ok(get_data)
     }
 
-    fn get_ticket_payload<T>(&mut self, tx: Sender<Option<T>>)//-> anyhow::Result<(), anyhow::Error> 
-        where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
+    async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error> 
     {
         let id: RecordId = self.id.clone().unwrap().0;
-        spawn_local(async move {
             
             let get_data: Option<T> = DATABASE
                 .query(format!("SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id={id}"))
                 .await
                 .unwrap()
                 .take(0).unwrap();
-
-            match tx.try_send(get_data){
-                Ok(_) => debug!("Sent data"),
-                Err(e) => error!("Error sending data: {e:?}")
-            };
-        });
+        Ok(get_data)
     }
     // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>)//-> anyhow::Result<(), anyhow::Error> 
     //     where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 

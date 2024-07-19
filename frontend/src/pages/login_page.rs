@@ -44,8 +44,8 @@ impl Login{
                 db_tx.try_send(Ok(db))?;
             },
             Err(e) => {
-                info!("Error with db: {e:?}");
                 let check = e.to_string().contains("Already connected");
+                info!("{e:?} // Already connected? {:?}", check);
                 if check { appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; }
                 else { appstate_tx.try_send(AppState::NoAuth(e.to_string()))?; }
             },

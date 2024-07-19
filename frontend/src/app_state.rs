@@ -1,6 +1,7 @@
 use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, ui_tools::toasts::Toasts}};
-use database::{schema::{ConnectedClient, LiveTaskPayload, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
+use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database, DATABASE};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
+use serde_json::Value;
 use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -141,6 +142,10 @@ pub struct MtechServerContext{
     pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
     #[serde(skip)]
     pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
+    #[serde(skip)]
+    pub notification_tx: Sender<Vec<Notification>>,
+    #[serde(skip)]
+    pub notification_rx: Receiver<Vec<Notification>>,
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
@@ -202,6 +207,8 @@ pub struct MtechServerContext{
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
     #[serde(skip)]
     pub toasts: Toasts,
+    pub notifications: Vec<Notification>,
+    pub read_notifications: bool,
 }
 
 impl MtechServer{
@@ -265,7 +272,7 @@ impl MtechServer{
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
-
+        let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
 
@@ -292,6 +299,7 @@ impl MtechServer{
             new_ticket_tx, new_ticket_rx,
             notes_tx, notes_rx,
             new_note_tx, new_note_rx,
+            notification_tx, notification_rx,
 
             // MODALS / LAYOUTS
             ai_playground: AiPlayground::default(),
@@ -331,6 +339,8 @@ impl MtechServer{
             added_nodes: Vec::new(),
             new_note: false,
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
+            notifications: Vec::new(),
+            read_notifications: false,
         };
         
         Self { login: Login::default(), signup: Signup::default(), state: AppState::default(), context, tree }
@@ -414,18 +424,23 @@ pub fn check_authentication(
 ) -> Result<(AppState, Option<User>), Error>{
     let cookie = wasm_cookies::get("jwt");
     let user_cookie = wasm_cookies::get("user");
+    // info!("USER: {:?}", user_cookie);
     let mut state = AppState::default();
-    let mut current_user = None;
+    let mut current_user: Option<User> = None;
+
     if let (Some(cookie), Some(usr)) = (cookie, user_cookie){
         current_user = Some(serde_json::from_str(usr?.as_str())?);
+        let user = current_user.clone();
         let db_tx = db_tx.clone();
+        // let usr = usr
         spawn_local(async move {
-            let database = Database::new(
-                "".to_string(), 
-                "".to_string(), 
-                Some(cookie.unwrap())
-            ).await;
-            
+            let database = Database::new("".to_string(), "".to_string(), Some(cookie.unwrap())).await;
+            // let query = "SELECT * FROM user";
+            // if let Some(user) = user{
+            //     let _ = DATABASE.set("email", user.email).await;
+            //     let user: Vec<Value> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+            //     info!("user: {user:#?}");
+            // }
             match db_tx.try_send(database){
                 Ok(_) => {
                     info!("Sent DB");
@@ -436,6 +451,7 @@ pub fn check_authentication(
         });
         state = AppState::Authenticated(MainPages::Tasks);
     }
+
     info!("State // user   {:?} // {:?}", state, current_user);
     Ok((state, current_user))
 }
