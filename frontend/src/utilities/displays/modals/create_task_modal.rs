@@ -455,7 +455,7 @@ impl Tur {
         });
 
         ScrollArea::new([false, true])
-        .id_source("recomendations_scroll")
+        .id_source("data_scroll")
         .show(ui, |ui|{
             TextEdit::multiline(&mut format!("{:?}", self.data))
             .ui(ui);
