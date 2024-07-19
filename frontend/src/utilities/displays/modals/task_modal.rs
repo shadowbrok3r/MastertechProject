@@ -33,6 +33,7 @@ pub enum ModalAction{
     PartOrderPage,
     ComputerInfoPage,
     TaskNotePage,
+    ImportTask,
     #[default]
     None
 }

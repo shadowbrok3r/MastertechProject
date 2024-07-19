@@ -373,16 +373,15 @@ impl MtechServerContext{
                     });
             },
             ModalType::CreateTaskModal(create_task_modal) => {
-                let response = self.create_task_modal_handler.ui(
+                self.create_task_modal_handler.ui(
                     ctx, 
                     || CreateTaskModal::new("Create Task", self.store_users.clone()),
-                    |ui, _stay_open, page_state| create_task_modal.display(ui, page_state.to_owned()));
-
-                if let Some(response) = response{
-                    if let Some(_action) = response{
-                        // create_task_modal.set_state(action);
-                    }
-                }
+                    |ui, _stay_open, page_state| {
+                        let action = create_task_modal.display(ui, page_state.to_owned());
+                        if let Some(action) = action{
+                            *page_state = action;
+                        }
+                    });
             },
             ModalType::ChatView(chat_modal) => {
                 info!("opening chat");
