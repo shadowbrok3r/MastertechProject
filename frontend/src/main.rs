@@ -1,6 +1,6 @@
 use database::STORAGE_URL;
 use mtechserver::webworker::Input;
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_notifications, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
 use app_state::{check_authentication, AppState, MainPages, MtechServer};
@@ -81,7 +81,8 @@ impl eframe::App for MtechServer {
                     let store_users_tx = self.context.store_users_tx.clone();
                     let tx = self.context.connected_clients_tx.clone();
                     let notes_tx = self.context.notes_tx.clone();
-
+                    let notification_tx = self.context.notification_tx.clone();
+                    
                     if let Some(usr) = self.context.current_user.as_ref(){
                         info!("Getting Initial data");
                         let user = usr.clone();
@@ -121,10 +122,17 @@ impl eframe::App for MtechServer {
                             info!("listen_data: {listen_data:?}");
                         });
 
+                        // spawn_local(async move {
+                        //     let listen_data = listen_notifications(notification_tx.clone()).await;
+                        //     info!("listen_notifications: {listen_notifications:?}");
+                        // });
+
                         spawn_local(async move {
                             let get_tasks = get_tasks(initial_tasks_tx).await;
                             let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                             let get_connected_clients = get_connected_clients(tx, user.clone()).await;
+                            let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
+                            info!("get_notifications: {get_notifications:?}");
                             info!("get_connected_clients: {get_connected_clients:?}");
                             info!("get_tasks: {get_tasks:?}");
                             info!("get_store_users: {get_store_users:?}");
@@ -184,6 +192,9 @@ impl eframe::App for MtechServer {
                     } else {
                         info!("8");
                         info!("{e:?}");
+                        wasm_cookies::delete("jwt");
+                        wasm_cookies::delete("user");
+                        // eframe::web::storage::local_storage_get(key)
                         let toast = &mut self.context.toasts;
                         let auth_toast = Toast{
                             kind: ToastKind::Error,
@@ -203,6 +214,11 @@ impl eframe::App for MtechServer {
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
             self.context.store_users = Some(users);
+        }
+
+        if let Ok(notifications) = self.context.notification_rx.try_recv(){
+            info!("Notifications: {:?}", notifications);
+            self.context.notifications = notifications;
         }
 
         if let Ok(action) = self.context.ui_actions_rx.try_recv(){
@@ -331,8 +347,17 @@ impl eframe::App for MtechServer {
         }
     }
 
-    // Called by the frame work to save state before shutdown.
-    // fn save(&mut self, storage: &mut dyn eframe::Storage) {  eframe::set_value(storage, eframe::APP_KEY, self); }
+    fn persist_egui_memory(&self) -> bool {
+        true
+    }
+
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        
+    }
 }
 
 // When compiling to web using trunk:
@@ -394,7 +419,7 @@ fn set_style() -> Arc<Style>{
     custom_style.spacing.combo_height = 55.0; 
     custom_style.spacing.combo_width = 100.0;
     custom_style.interaction.multi_widget_text_select = false;
-    custom_style.interaction.selectable_labels = false;
+    custom_style.interaction.selectable_labels = true;
     custom_style.explanation_tooltips = false;
     custom_style.url_in_tooltip = true;
     custom_style.interaction.interact_radius = 10.0;
