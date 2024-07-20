@@ -3,7 +3,7 @@ use crossbeam::channel::Sender;
 use database::DATABASE;
 use database::schema::{Priority, Record, TaskPayload, User};
 use log::info;
-use surrealdb::sql::Id;
+use surrealdb::sql::{Id, Thing};
 use wasm_bindgen_futures::spawn_local;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
@@ -229,14 +229,15 @@ impl TaskLayout {
                                         });
                                     },
                                     TaskActions::MarkDueToday => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
+                                        let ids = tasks.iter().map(|t| t.id.clone().unwrap().0).collect::<Vec<Thing>>();
                                         
                                         spawn_local(async move {
-                                            let query = "fn::mark_all_completion($ids, $completion)";
-                                            let _ = DATABASE.set("ids", id);
-                                            let _ = DATABASE.set("completion", true);
-
-                                            let _x: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+                                            for id in ids{
+                                                let query = "fn::mark_all_due_today($id)";
+                                                info!("ID: {:?}", id.clone());
+                                                let _ = DATABASE.set("id", id);
+                                                let _x: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+                                            }
                                         });
                                     }, _ => {}
                                 }

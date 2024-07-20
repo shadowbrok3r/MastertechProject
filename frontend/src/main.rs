@@ -1,9 +1,9 @@
 use database::{schema::TaskPayload, STORAGE_URL};
-use mtechserver::webworker::Input;
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_notifications, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
+use mtechserver::{live_worker::LiveInput, webworker::Input};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_customer_data, get_notifications, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
-use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
 use app_state::{check_authentication, AppState, MainPages, MtechServer};
+use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
 use wasm_bindgen_futures::spawn_local;
 use eframe::egui::FontFamily;
 use log::{debug, info};
@@ -26,8 +26,10 @@ impl eframe::App for MtechServer {
 
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(items) = data_update.take() { self.context.file_system.build_file_system(items); }
-        // let live_data_update = self.context.live_data_update.as_mut().unwrap();
-        // if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
+        
+        let live_data_update = self.context.live_data_update.as_mut().unwrap();
+        if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
+
         // do some setting up in the initial frame of our update loop for 
         // 1. Getting database connection
         if self.context.first_run{ // || or if refresh button is hit
@@ -40,6 +42,12 @@ impl eframe::App for MtechServer {
                     if let Some(ref usr) = d.1{
                         self.context.current_user = Some(usr.clone());
                         let bridge_op = &self.context.bridge;
+                        // let live_bridge = &self.context.live_bridge;
+                        // info!("live bridge?");
+                        // if let Some(live_bridge) = live_bridge{
+                        //     info!("Have live bridge");
+                        //     live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
+                        // }
                         if let (
                             Some(access_key), 
                             Some(secret_key), 
@@ -82,13 +90,15 @@ impl eframe::App for MtechServer {
                     let tx = self.context.connected_clients_tx.clone();
                     let notes_tx = self.context.notes_tx.clone();
                     let notification_tx = self.context.notification_tx.clone();
-                    
+                    let live_output = self.context.live_output_tx.clone();
+
                     if let Some(usr) = self.context.current_user.as_ref(){
                         info!("Getting Initial data");
                         let user = usr.clone();
                         let name = usr.name.clone();
 
                         let bridge_op = &self.context.bridge;
+
                         if let (
                             Some(access_key), 
                             Some(secret_key), 
@@ -121,6 +131,7 @@ impl eframe::App for MtechServer {
                             let listen_data = listen_data(live_clients_tx).await;
                             info!("listen_data: {listen_data:?}");
                         });
+                        
 
                         // spawn_local(async move {
                         //     let listen_data = listen_notifications(notification_tx.clone()).await;
@@ -132,11 +143,20 @@ impl eframe::App for MtechServer {
                             let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                             let get_connected_clients = get_connected_clients(tx, user.clone()).await;
                             let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
+                            let get_custs = get_customer_data(live_output).await;
                             info!("get_notifications: {get_notifications:?}");
                             info!("get_connected_clients: {get_connected_clients:?}");
                             info!("get_tasks: {get_tasks:?}");
                             info!("get_store_users: {get_store_users:?}");
+                            info!("get_custs: {get_custs:?}");
                         });
+
+                        let live_bridge = &self.context.live_bridge;
+                        info!("live bridge?");
+                        if let Some(live_bridge) = live_bridge{
+                            info!("Have live bridge");
+                            live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
+                        }
 
                         let toast = &mut self.context.toasts;
                         let auth_toast = Toast{
@@ -218,6 +238,11 @@ impl eframe::App for MtechServer {
 
         if let Ok(notifications) = self.context.notification_rx.try_recv(){
             self.context.notifications = notifications;
+        }
+
+        if let Ok(live_output) = self.context.live_output_rx.try_recv() {
+            info!("Customers: {live_output:?}");
+            self.context.data_output = live_output;
         }
 
         if let Ok(action) = self.context.ui_actions_rx.try_recv(){
