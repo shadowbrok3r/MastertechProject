@@ -151,7 +151,7 @@ impl TaskLayout {
         let header_frame = Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
-            .outer_margin(Margin::symmetric(4.0, 1.0))
+            .outer_margin(Margin::symmetric(8.0, 1.0))
             .rounding(Rounding::same(5.0))
             .stroke(Stroke::new(0.4, Color32::WHITE));
 
@@ -206,37 +206,36 @@ impl TaskLayout {
                             });
 
                             if let Some(action) = res{
+                                let ids = tasks.iter().map(|t| t.id.clone().unwrap().0).collect::<Vec<Thing>>();
                                 match action{
                                     TaskActions::MarkComplete => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id.to_string()).collect::<Vec<String>>();
-                                        
-                                        info!("ids: {:?}", id);
                                         spawn_local(async move {
-                                            let _x: Vec<Record> = DATABASE.query("fn::mark_all_completion($ids, $completion)")
-                                                .bind(("ids", id))
-                                                .bind(("completion", true))
-                                                .await.unwrap().take(0).unwrap();
+                                            for id in ids{
+                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                    .bind(("record", id.clone()))
+                                                    .bind(("completion", true))
+                                                    .await.unwrap().take(0).unwrap();
+                                            }
                                         });
                                     },
                                     TaskActions::MarkIncomplete => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
                                         
                                         spawn_local(async move {
-                                            let _x: Vec<Record> = DATABASE.query("fn::mark_all_completion($ids, $completion)")
-                                                .bind(("ids", id))
-                                                .bind(("completion", false))
-                                                .await.unwrap().take(0).unwrap();
+                                            for id in ids{
+                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                    .bind(("record", id.clone()))
+                                                    .bind(("completion", false))
+                                                    .await.unwrap().take(0).unwrap();
+                                            }
                                         });
                                     },
                                     TaskActions::MarkDueToday => {
-                                        let ids = tasks.iter().map(|t| t.id.clone().unwrap().0).collect::<Vec<Thing>>();
-                                        
                                         spawn_local(async move {
                                             for id in ids{
                                                 let query = "fn::mark_all_due_today($id)";
                                                 info!("ID: {:?}", id.clone());
-                                                let _ = DATABASE.set("id", id);
-                                                let _x: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+                                                let _ = DATABASE.set("id", id).await.unwrap();
+                                                let _x: Option<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
                                             }
                                         });
                                     }, _ => {}
@@ -303,8 +302,9 @@ impl TaskLayout {
                     ui.vertical_centered_justified(|ui| {
                         ScrollArea::vertical()
                             .auto_shrink(false)
-                            .show_viewport(ui, |ui, _| 
+                            .show_rows(ui, 80.0, tasks.len(), |ui, _range|
                         {
+                            // info!("Row {}/{}", row + 1, total_rows);
                             let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
                             if !search_input.is_empty(){
                                 for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
@@ -315,7 +315,7 @@ impl TaskLayout {
                                     // }
                                 }
                             }else{
-                                for task in tasks {
+                                for task in &mut *tasks {
                                     task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
                                     // if let Some(action) = action{
                                     //     // if !TaskUiActions::None = action{

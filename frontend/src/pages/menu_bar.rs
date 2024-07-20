@@ -1,6 +1,8 @@
-use database::schema::{Notification, NotificationStatus};
+use database::schema::{Notification, NotificationStatus, Record};
+use database::DATABASE;
 use eframe::egui::{menu, Align, Context, Margin, Rangef, Rounding, ScrollArea, Separator, Style, TextEdit};
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
+use wasm_bindgen_futures::spawn_local;
 use crate::utilities::ui_tools::autocomplete::AutoCompleteTextEdit;
 use std::collections::BTreeSet;
 use log::info;
@@ -159,7 +161,15 @@ impl MtechServer{
                                         ui.colored_label(Color32::LIGHT_RED, RichText::new(notification.notification_type.clone()).font(FontId::proportional(12.0)));
                                         ui.add_space(80.0);
                                         let button = Button::new(RichText::new("X").color(Color32::LIGHT_RED)).ui(ui);
-                                        if button.clicked(){ notification.status = "Read".to_string(); }
+                                        if button.clicked(){ 
+                                            notification.status = "Read".to_string(); 
+                                            // let id = notification
+                                            // spawn_local(async move {
+                                            //     let _x: Option<Record> = DATABASE.query("UPDATE notification SET status = 'Read' WHERE id == $id")
+                                            //         // .bind(("id", id.clone()))
+                                            //         .await.unwrap().take(0).unwrap();
+                                            // });
+                                        }
                                     });
 
                                     eframe::egui::Frame::none().fill(ui.style().visuals.window_fill)
