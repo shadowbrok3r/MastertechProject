@@ -37,16 +37,16 @@ pub struct DataResult{
 }
 
 #[derive(Serialize)]
-struct Auth {
-    email: String,
-    password: String,
+pub struct Auth {
+    pub email: String,
+    pub password: String,
 }
 
 const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
 pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
-
+pub const DB_URL: &str = "surrealdb.master-tech.app";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
 impl Database{

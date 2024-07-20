@@ -1,11 +1,10 @@
 use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, ui_tools::toasts::Toasts}};
 use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database, DATABASE};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
-use serde_json::Value;
 use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use crossbeam::channel::{self, Receiver, Sender};
-use mtechserver::webworker::{Input, LiveInput, LiveOutput, LiveWorker, WebWorker};
+use mtechserver::{webworker::{Input, WebWorker}, live_worker::{LiveInput, LiveOutput, LiveWorker}};
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use egui_ratatui::RataguiBackend;
@@ -73,20 +72,14 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub current_user: Option<User>,
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
-    // pub task: TaskPayload,
     ///Gets data from the first run of the main loop
     pub first_run: bool,
-
     pub clients: HashMap<String, ConnectedClient>,
-    /// Database connection
-    // #[serde(skip)]
-    // pub database: Option<Database>,
-
     /// All contained task data from database
     pub live_tasks: Option<LiveTaskPayload>,
     pub tasks: Vec<TaskPayload>,
+    pub data_output: LiveOutput,
     pub store_users: Option<Vec<User>>,
-
     /// Receives task data over crossbeam channel
     #[serde(skip)]
     pub tasks_tx: Sender<(Action, TaskPayload)>,
@@ -146,15 +139,19 @@ pub struct MtechServerContext{
     pub notification_tx: Sender<Vec<Notification>>,
     #[serde(skip)]
     pub notification_rx: Receiver<Vec<Notification>>,
+    #[serde(skip)]
+    pub live_output_tx: Sender<LiveOutput>,
+    #[serde(skip)]
+    pub live_output_rx: Receiver<LiveOutput>,
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
-    // #[serde(skip)]
-    // pub live_bridge: Option<gloo_worker::WorkerBridge<LiveWorker>>,
+    #[serde(skip)]
+    pub live_bridge: Option<gloo_worker::WorkerBridge<LiveWorker>>,
     #[serde(skip)]
     pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
-    // #[serde(skip)]
-    // pub live_data_update: Option<Rc<Cell<Option<LiveOutput>>>>,
+    #[serde(skip)]
+    pub live_data_update: Option<Rc<Cell<Option<LiveOutput>>>>,
     #[serde(skip)]
     pub file_system: FileSystem,
     #[serde(skip)]
@@ -243,22 +240,22 @@ impl MtechServer{
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
-        // let live_data_update = Rc::new(std::cell::Cell::new(None));
-        // let live_sender = live_data_update.clone();
-        // let context = ctx.clone();
+        let live_data_update = Rc::new(std::cell::Cell::new(None));
+        let live_sender = live_data_update.clone();
+        let context = ctx.clone();
         let bridge = <WebWorker as Spawnable>::spawner()
             .callback(move |response| {
                 sender.set(Some(response.buckets));
-                ctx.request_repaint();
+                context.request_repaint();
             }).spawn("./dummy_worker.js");
 
-        // let live_bridge = <LiveWorker as Spawnable>::spawner()
-        //     .callback(move |response| {
-        //         live_sender.set(Some(response));
-        //         ctx.request_repaint();
-        //     }).spawn("./dummy_worker.js");
+        let live_bridge = <LiveWorker as Spawnable>::spawner()
+            .callback(move |response| {
+                live_sender.set(Some(response));
+                ctx.request_repaint();
+            }).spawn("./live_worker.js");
 
-        // live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
+        
 
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(1);
@@ -273,6 +270,7 @@ impl MtechServer{
         let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
+        let (live_output_tx, live_output_rx) = channel::unbounded::<LiveOutput>();
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
 
@@ -284,6 +282,7 @@ impl MtechServer{
             task_map: BTreeMap::new(),
             live_tasks: None,
             tasks,
+            data_output: LiveOutput::default(),
             store_users: None,
 
             // CHANNEL SENDERS / RECEIVERS
@@ -300,6 +299,7 @@ impl MtechServer{
             notes_tx, notes_rx,
             new_note_tx, new_note_rx,
             notification_tx, notification_rx,
+            live_output_tx, live_output_rx,
 
             // MODALS / LAYOUTS
             ai_playground: AiPlayground::default(),
@@ -330,8 +330,8 @@ impl MtechServer{
             text_to_send: Default::default(),
             // MISC / EVERYTHING ELSE
             bridge: Some(bridge),
-            // live_bridge: Some(live_bridge),
-            // live_data_update: Some(live_data_update),
+            live_bridge: Some(live_bridge),
+            live_data_update: Some(live_data_update),
             data_update: Some(data_update),
             search_input: String::new(),
             open_tabs,
@@ -346,7 +346,20 @@ impl MtechServer{
         Self { login: Login::default(), signup: Signup::default(), state: AppState::default(), context, tree }
     }
 
-    // fn _canvas_id() -> String { "mtech_canvas".into() }
+    pub fn login_mut(&mut self) -> Option<&mut Login> {
+        match self.state{
+            AppState::NoAuth(_) => Some(&mut self.login),
+            AppState::Authenticated(MainPages::Tasks) => None,
+            _ => None
+        }
+    }
+    
+    pub fn signup_mut(&mut self) -> Option<&mut Signup> {
+        match self.state{
+            AppState::CreateAccount => Some(&mut self.signup),
+            _ => None
+        }
+    }
 }
 
 impl MtechServerContext{
@@ -401,26 +414,7 @@ impl MtechServerContext{
     }
 }
 
-/// Private method to access login state only within NoAuth context
-impl MtechServer{
-    pub fn login_mut(&mut self) -> Option<&mut Login> {
-        match self.state{
-            AppState::NoAuth(_) => Some(&mut self.login),
-            AppState::Authenticated(MainPages::Tasks) => None,
-            _ => None
-        }
-    }
-    pub fn signup_mut(&mut self) -> Option<&mut Signup> {
-        match self.state{
-            AppState::CreateAccount => Some(&mut self.signup),
-            _ => None
-        }
-    }
-}
-
-pub fn check_authentication(
-    db_tx: Sender<anyhow::Result<Database, Error>>
-) -> Result<(AppState, Option<User>), Error>{
+pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(AppState, Option<User>), Error>{
     let cookie = wasm_cookies::get("jwt");
     let user_cookie = wasm_cookies::get("user");
     // info!("USER: {:?}", user_cookie);
@@ -470,7 +464,8 @@ impl TabViewer for MtechServerContext {
             "Web Console" => self.web_console(ui),
             "Completed Tasks" => self.completed_tasks(ui),
             "Bug Report" => self.github(ui),
-            _ => { } 
+            "Customers" => self.customer_view(ui),
+            _ => {  }
         }
     }
 
@@ -507,7 +502,8 @@ impl TabViewer for MtechServerContext {
             &"Store Tasks".to_string(),
             &"My Tasks".to_string(),
             &"Ai Playground".to_string(),
-            &"Completed Tasks".to_string()
+            &"Completed Tasks".to_string(),
+            &"Customers".to_string(),
         ];
 
         for tab in tabs{
