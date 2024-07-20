@@ -175,8 +175,8 @@ impl MtechServerContext{
 
                             if export.clicked() {
                                 if let Some(ws_client) = &self.ws_client {
-                                        // info!("History: {:?}", ws_client.history.clone());
-                                        client.export_logs(ws_client.history.clone());
+                                    // info!("History: {:?}", ws_client.history.clone());
+                                    client.export_logs(ws_client.history.clone());
                                 }
                             }
 
