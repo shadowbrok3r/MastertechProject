@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{fs::File, sync:: Arc};
+use std::{fs::File, sync::{ Arc, Condvar, Mutex}};
 use crossbeam::channel::Sender;
 use crate::utilities::toasts::{Toast, ToastKind, ToastOptions};
 use log::{debug, error, info};
@@ -7,7 +7,7 @@ use app_state::{AppState, MasterTechApp};
 use pages::login_page::HASH;
 use simplelog::{WriteLogger, Config, LevelFilter};
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, Stroke, Vec2, ViewportBuilder};
-use database::{database::{Database, DATABASE}, schema::{ComputerData, ComputerId, HardwareTests, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
+use database::{database::{Database, DATABASE}, schema::{ComputerData, ComputerId, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
 use crate::utilities::themes::carl_dark::{Aesthetix, CarlDark};
 use surrealdb::sql::Thing;
 use tabs::tur_sheet::scaffold::AsanaResponse;
@@ -39,14 +39,37 @@ impl eframe::App for MasterTechApp {
                     self.state = AppState::Authenticated(app_state::MainPages::Tasks);
                     
                     let tx = self.context.db_tx.clone();
-                    let sysinfo_tx = self.context.computer_specs_tx.clone();
-                    
+                    let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
+                    let pair_clone = Arc::clone(&pair);
                     spawn(async move {
-                        match ComputerData::default().get_computer_data(sysinfo_tx).await{
-                            Ok(x) => info!("Computer Data: {x:?}"),
+                        match ComputerData::default().get_computer_data().await{ // sysinfo_tx
+                            Ok(data) => {
+                                let (lock, cvar) = &*pair_clone;
+                                let mut comp_data = lock.lock().unwrap();
+
+                                *comp_data = data;
+                                info!("Computer Data: {comp_data:?}");
+                                cvar.notify_one();
+                            },
                             Err(e) => info!("Error getting specs: {e:?}"),
                         }
                     });
+                    // Wait for the spawned task to complete and notify the condition variable
+                    let (lock, cvar) = &*pair;
+                    let mut comp_data = lock.lock().unwrap();
+                    while comp_data.cpu.is_empty() {
+                        comp_data = cvar.wait(comp_data).unwrap();
+                    }
+                    // Access the shared data after notification
+                    self.context.computer_data = comp_data.clone();
+                    for disk in &self.context.computer_data.drives{
+                        self.context.disk_num += 1;
+                        if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                            let disk_json = serde_json::to_value(&disk).unwrap_or_default();
+                            disks_arr.push(disk_json);
+                        } else { debug!("Expected self.context.drives to be an Array"); }
+                    }
+                    self.context.output_text += format!("{:#?}", &self.context.computer_data.seb_info.as_mut()).as_str();
 
                     spawn(async move {
                         let db = Database::new(login.username, login.password, None).await;
@@ -99,17 +122,19 @@ impl eframe::App for MasterTechApp {
             }
         }
 
-        if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
-            self.context.computer_data = computer_data;
-            for disk in &self.context.computer_data.drives{
-                self.context.disk_num += 1;
-                if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                    let disk_json = serde_json::to_value(&disk).unwrap_or_default();
-                    disks_arr.push(disk_json);
-                } else { debug!("Expected self.context.drives to be an Array"); }
-            }
-            self.context.output_text += format!("{:#?}", &self.context.computer_data.seb_info.as_mut()).as_str();
-        };
+
+
+        // if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
+        //     self.context.computer_data = computer_data;
+        //     for disk in &self.context.computer_data.drives{
+        //         self.context.disk_num += 1;
+        //         if let Some(disks_arr) = self.context.disks.as_array_mut() {
+        //             let disk_json = serde_json::to_value(&disk).unwrap_or_default();
+        //             disks_arr.push(disk_json);
+        //         } else { debug!("Expected self.context.drives to be an Array"); }
+        //     }
+        //     self.context.output_text += format!("{:#?}", &self.context.computer_data.seb_info.as_mut()).as_str();
+        // };
 
         if let Ok(db) = self.context.db_rx.try_recv(){
             info!("Received DB connection from thread");
@@ -315,6 +340,24 @@ impl eframe::App for MasterTechApp {
         self.context.handle_modals(ctx);
         self.context.toasts.show(ctx);
         self.viewport_loader(ctx);
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let id = self.context.client_uuid.clone();
+        if let Some(id) = id{
+            spawn(async move {
+                let res: Result<Option<Record>, surrealdb::Error> = DATABASE
+                    .query("UPDATE connected_client SET connected = false WHERE id == $id")
+                    .bind(("id", id.clone()))
+                    .await
+                    .unwrap().take(0);
+
+                match res{
+                    Ok(data) => info!("Disconnected. {data:?}"),
+                    Err(e) => info!("Error Creating Client: {e:?}"),
+                }
+            });
+        }
     }
 }
 

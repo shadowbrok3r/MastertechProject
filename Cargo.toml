@@ -48,9 +48,11 @@ sha2 = { version = "0.10", features = ["std"] }
 wmi = "0.13"
 surrealdb = { version = "1.5", features = ["default"] }
 # surrealdb-alpha = { version = "2", features = ["default"] }
-
+# windows_x86_64_msvc
+# known-folders 
+# robocopyrs 
+# planif = "0.2"
 quickxml_to_serde = "0.6"
-
 memmap2 = "0.9"
 breakpad-symbols = { version = "0.22" }
 minidump = { version = "0.22" }

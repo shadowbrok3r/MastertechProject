@@ -24,7 +24,7 @@ use crate::{database::{schema::{ComputerData, ComputerId, DriveData, LocalSebDat
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 impl ComputerData{
-    pub async fn get_computer_data(&mut self, tx: Sender<ComputerData>) -> anyhow::Result<Self, anyhow::Error>{
+    pub async fn get_computer_data(&mut self) -> anyhow::Result<Self, anyhow::Error>{ // , tx: Sender<ComputerData>
         info!("Getting sysinfo");
         let sys = System::new_all();
         let mut disks = Disks::new_with_refreshed_list();
@@ -106,13 +106,13 @@ impl ComputerData{
 
         self.id = Some(ComputerId(Thing::from((COMPUTER_TABLE,  id.clone().as_str()))));
 
-        match tx.try_send(self.to_owned()) {
-            Ok(_) => {
-                info!("Sent sysinfo");
-                drop(tx)
-            },
-            Err(e) => info!("Couldnt send sysinfo: {e:?}")
-        }
+        // match tx.try_send(self.to_owned()) {
+        //     Ok(_) => {
+        //         info!("Sent sysinfo");
+        //         drop(tx)
+        //     },
+        //     Err(e) => info!("Couldnt send sysinfo: {e:?}")
+        // }
 
         Ok(self.to_owned())
     }

@@ -105,6 +105,7 @@ pub struct MastertechContext {
     pub ticket_data: TicketData,
     pub customer_data: CustomerData,
     pub computer_data: ComputerData,
+    // pub computer_data_test: Arc<Mutex<ComputerData>>,
     pub task_notes: Vec<TaskNotePayload>,
 
     pub rerun_filtering_my_tasks: bool,
@@ -212,6 +213,7 @@ impl MasterTechApp {
             task_payload: None,
             task_data: LiveTaskPayload::default(),
             computer_data: ComputerData::default(),
+            // computer_data_test: Arc::new(Mutex::new(ComputerData::default())),
             ticket_data: TicketData::default(),
             customer_data: CustomerData::default(),
             task_notes: Vec::new(),
