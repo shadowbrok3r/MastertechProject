@@ -1,8 +1,6 @@
-use database::schema::{Notification, NotificationStatus, Record};
-use database::DATABASE;
-use eframe::egui::{menu, Align, Context, Margin, Rangef, Rounding, ScrollArea, Separator, Style, TextEdit};
+use database::schema::Notification;
+use eframe::egui::{menu, Align, Context, Margin, Rounding, ScrollArea, Separator, TextEdit};
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
-use wasm_bindgen_futures::spawn_local;
 use crate::utilities::ui_tools::autocomplete::AutoCompleteTextEdit;
 use std::collections::BTreeSet;
 use log::info;
@@ -195,3 +193,4 @@ impl MtechServer{
     });
     }
 }
+
