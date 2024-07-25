@@ -366,11 +366,11 @@ impl eframe::App for MasterTechApp {
 async fn main() -> eframe::Result<()> {
     // puffin::set_scopes_on(true);
     
+    // console_subscriber::init();
+    // Init the logger
     // Configure log level and log file
     let log_level = LevelFilter::Info; 
     let log_file = File::create("output.log").unwrap();
-
-    // Init the logger
     WriteLogger::init( 
         log_level,
         Config::default(),
