@@ -38,7 +38,7 @@ impl Login{
                 }else{ 
                     info!("no usr"); 
                     let _ = DATABASE.invalidate().await;
-                    appstate_tx.try_send(AppState::NoAuth("No cookie or user was found".to_string()))?;
+                    appstate_tx.try_send(AppState::Login)?;
                 }
                 appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
                 db_tx.try_send(Ok(db))?;

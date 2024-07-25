@@ -32,45 +32,44 @@ impl eframe::App for MasterTechApp {
 
         if self.context.specs_first_run{
             self.context.specs_first_run = false;
+            let tx = self.context.db_tx.clone();
+            let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
+            let pair_clone = Arc::clone(&pair);
+            spawn(async move {
+                match ComputerData::default().get_computer_data().await{ // sysinfo_tx
+                    Ok(data) => {
+                        let (lock, cvar) = &*pair_clone;
+                        let mut comp_data = lock.lock().unwrap();
+
+                        *comp_data = data;
+                        info!("Computer Data: {comp_data:?}");
+                        cvar.notify_one();
+                    },
+                    Err(e) => info!("Error getting specs: {e:?}"),
+                }
+            });
+            // Wait for the spawned task to complete and notify the condition variable
+            let (lock, cvar) = &*pair;
+            let mut comp_data = lock.lock().unwrap();
+            while comp_data.cpu.is_empty() {
+                comp_data = cvar.wait(comp_data).unwrap();
+            }
+            // Access the shared data after notification
+            self.context.computer_data = comp_data.clone();
+            for disk in &self.context.computer_data.drives{
+                self.context.disk_num += 1;
+                if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                    let disk_json = serde_json::to_value(&disk).unwrap_or_default();
+                    disks_arr.push(disk_json);
+                } else { debug!("Expected self.context.drives to be an Array"); }
+            }
+            self.context.output_text += format!("{:#?}", &self.context.computer_data.seb_info.as_mut()).as_str();
 
             let loaded_data = load_encrypted_user_data(HASH);
             match loaded_data{
                 Some(login) => {
                     self.state = AppState::Authenticated(app_state::MainPages::Tasks);
-                    
-                    let tx = self.context.db_tx.clone();
-                    let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
-                    let pair_clone = Arc::clone(&pair);
-                    spawn(async move {
-                        match ComputerData::default().get_computer_data().await{ // sysinfo_tx
-                            Ok(data) => {
-                                let (lock, cvar) = &*pair_clone;
-                                let mut comp_data = lock.lock().unwrap();
-
-                                *comp_data = data;
-                                info!("Computer Data: {comp_data:?}");
-                                cvar.notify_one();
-                            },
-                            Err(e) => info!("Error getting specs: {e:?}"),
-                        }
-                    });
-                    // Wait for the spawned task to complete and notify the condition variable
-                    let (lock, cvar) = &*pair;
-                    let mut comp_data = lock.lock().unwrap();
-                    while comp_data.cpu.is_empty() {
-                        comp_data = cvar.wait(comp_data).unwrap();
-                    }
-                    // Access the shared data after notification
-                    self.context.computer_data = comp_data.clone();
-                    for disk in &self.context.computer_data.drives{
-                        self.context.disk_num += 1;
-                        if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                            let disk_json = serde_json::to_value(&disk).unwrap_or_default();
-                            disks_arr.push(disk_json);
-                        } else { debug!("Expected self.context.drives to be an Array"); }
-                    }
-                    self.context.output_text += format!("{:#?}", &self.context.computer_data.seb_info.as_mut()).as_str();
-
+                
                     spawn(async move {
                         let db = Database::new(login.username, login.password, None).await;
                         info!("DB: {db:?}");
@@ -121,20 +120,6 @@ impl eframe::App for MasterTechApp {
                 },
             }
         }
-
-
-
-        // if let Ok(computer_data) = self.context.computer_specs_rx.try_recv(){
-        //     self.context.computer_data = computer_data;
-        //     for disk in &self.context.computer_data.drives{
-        //         self.context.disk_num += 1;
-        //         if let Some(disks_arr) = self.context.disks.as_array_mut() {
-        //             let disk_json = serde_json::to_value(&disk).unwrap_or_default();
-        //             disks_arr.push(disk_json);
-        //         } else { debug!("Expected self.context.drives to be an Array"); }
-        //     }
-        //     self.context.output_text += format!("{:#?}", &self.context.computer_data.seb_info.as_mut()).as_str();
-        // };
 
         if let Ok(db) = self.context.db_rx.try_recv(){
             info!("Received DB connection from thread");
@@ -333,7 +318,9 @@ impl eframe::App for MasterTechApp {
                     app_state::MainPages::WebConsole => self.main_page(ctx),
                 }
             },
-            app_state::AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
+            app_state::AppState::NoAuth(_reason) => self.main_page(ctx),
+                // self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
+            app_state::AppState::Login => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
             _ => {}
         }
 
@@ -364,8 +351,6 @@ impl eframe::App for MasterTechApp {
 // #[cfg(not(feature = "compat_mode"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
-    // puffin::set_scopes_on(true);
-    
     // console_subscriber::init();
     // Init the logger
     // Configure log level and log file
@@ -380,10 +365,8 @@ async fn main() -> eframe::Result<()> {
     eframe::run_native(
         format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
         eframe::NativeOptions {
-            viewport: ViewportBuilder::default()
-                .with_inner_size([945.0, 750.0])
-                .with_drag_and_drop(true)
-                .with_icon(load_icon()),
+            viewport: ViewportBuilder::default().with_inner_size([945.0, 750.0])
+                .with_drag_and_drop(true).with_icon(load_icon()),
             ..Default::default()
         },
         Box::new(|cc| Ok(Box::new(MasterTechApp::new(cc)))),
@@ -443,7 +426,7 @@ pub fn get_store_users(tx: Sender<Vec<User>>, store: Store) {
             .take(0)
             .unwrap();
         
-        match tx.try_send(data){
+        match tx.try_send(data) {
             Ok(_) => info!("Sent Data from querying tasks"),
             Err(e) => error!("Error sending Task Data: {e:?}")
         };
