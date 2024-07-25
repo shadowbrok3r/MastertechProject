@@ -1,11 +1,10 @@
 use crate::{app_state::MastertechContext, database::{database::DATABASE, deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}, filesystem::system_info::{generate_client_id, get_sysinfo}, tabs::file_browser::{read_folder, FileBrowser}};
 use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
-use std::{env, path::{Path, PathBuf}, process::Stdio, time::{Duration, Instant}};
-use tokio::{io::AsyncReadExt, process::Command, spawn, time::sleep};
+use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crossbeam::channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
-use num_traits::ops::bytes;
 use surrealdb::sql::Thing;
 use bincode::serialize;
 use tracing::info;
@@ -128,6 +127,7 @@ pub struct WebConsoleFrontend {
     pub history: Vec<String>,
     pub connected: bool,
     pub timeout_counter: Instant,
+    pub process: Arc<Mutex<Option<ChildStdin>>>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -166,7 +166,8 @@ impl WebConsoleFrontend {
             history: Vec::new(),
             send_specs: false,
             connected: false,
-            timeout_counter: Instant::now()
+            timeout_counter: Instant::now(),
+            process: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -176,6 +177,7 @@ impl WebConsoleFrontend {
         while let Some(event) = self.ws_receiver.try_recv() {
             self.events.push(event);
         }
+        
         if let Ok(sysinfo) = &mut self.rx.try_recv(){
             self.ws_sender.send(WsMessage::Binary(std::mem::take(sysinfo)));
         }
@@ -187,6 +189,8 @@ impl WebConsoleFrontend {
         if self.timeout_counter.elapsed().as_secs() > 10 {
             info!("Its been over 10 seconds since last ping");
         }
+
+
 
         for event in &self.events{
             match event{
@@ -315,16 +319,17 @@ impl WebConsoleFrontend {
                             self.history.push(format!("Raw Command: {}", txt.clone()));
                             let tx = self.command_tx.clone();
                             let text = txt.clone();
+                            let process = Arc::clone(&self.process);
                             spawn(async move {
-                                handle_command_payload(text.clone(), tx.clone()).await.unwrap();
+                                process_command(text.clone(), tx.clone(), process).await;
                             });
                         },
-                        WsMessage::Ping(x) => {
-                            info!("Got a Ping: {x:?}");
+                        WsMessage::Ping(_x) => {
+                            // info!("Got a Ping: {x:?}");
                             self.timeout_counter = Instant::now();
                         },
-                        WsMessage::Pong(x) => {
-                            info!("Got a Pong: {x:?}");
+                        WsMessage::Pong(_x) => {
+                            // info!("Got a Pong: {x:?}");
                             self.timeout_counter = Instant::now();
                         },
                         _ => ()
@@ -531,7 +536,7 @@ impl WebConsoleFrontend {
     
 }
 
-async fn live_computer_stats(tx: Sender<Vec<u8>>, connected: bool) 
+async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) 
     -> anyhow::Result<(), anyhow::Error>
 {
     loop {
@@ -546,27 +551,19 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>, connected: bool)
     }
     Ok(())
 }
-async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) 
-    -> anyhow::Result<(), anyhow::Error>  
-{ 
-    println!("string_payload: {}", string_payload.clone());
-    // let command_payload = split(string_payload.as_str()).unwrap_or(Vec::new());
-
-    #[cfg(target_os="windows")]{ handle_windows_cmd(string_payload, tx.clone()).await?; }
-    #[cfg(target_os="linux")]{ handle_linux_cmd(string_payload, tx.clone()).await?; }
-
-    Ok(())
+async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) -> anyhow::Result<ChildStdin, anyhow::Error>  { 
+    // #[cfg(target_os="windows")]{ return handle_windows_cmd(string_payload, tx.clone()).await?; }
+    // #[cfg(target_os="linux")]{ return handle_linux_cmd(string_payload, tx.clone()).await?; }
+    Ok(handle_windows_cmd(string_payload, tx.clone()).await?)
 }
 
 #[cfg(target_os="windows")]
-async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>)
-    -> anyhow::Result<(), anyhow::Error> 
-{
-    use tokio::time::Instant;
+async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>)-> anyhow::Result<ChildStdin, anyhow::Error> {
+    use tokio::{io::{AsyncBufReadExt, BufReader}, process::{Child, ChildStdin}, time::Instant};
 
     let start = Instant::now();
     info!("Executing command: {}", command_payload);
-    let mut process = Command::new("cmd")
+    let mut process: Child = Command::new("cmd")
         .arg("/C")
         .arg(&command_payload)
         .stdin(Stdio::piped())
@@ -574,17 +571,39 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>)
         .stderr(Stdio::piped())
         .spawn()?;
 
-    // Handle stdout and stderr
-    let mut stdout = process.stdout.take().expect("Failed to open stdout");
-    let mut stderr = process.stderr.take().expect("Failed to open stderr");
+    // Create a Tokio stream for stdout
+    let mut stdout = process.stdout.take().expect("Failed to get stdout");
+    // Create a Tokio stream for stderr
+    let mut stderr = process.stderr.take().expect("Failed to get stderr");
+    let stdin: ChildStdin = process.stdin.take().expect("Failed to open stdin");
+    
+    // let mut stdout_stream = BufReader::new(stdout).lines();
+    // let mut stderr_stream = BufReader::new(stderr).lines();
+    // Use a loop to select between stdout and stderr streams
+    // loop {
+    //     select! {
+    //         Ok(line) = stdout_stream.next_line() => match line {
+    //             Some(line) => {
+    //                 // tx_clone.send(stderr_buf).ok();
+    //                 info!("stdout: {}", line);
+    //             },
+    //             None => break,
+    //         },
+    //         Ok(line) = stderr_stream.next_line() => match line {
+    //             Some(line) => {
+    //                 // tx_clone.send(stderr_buf).ok();
+    //                 info!("stderr: {}", line);
+    //             },
+    //             None => break,
+    //         },
+    //         else => break, // Exit the loop when both streams are exhausted
+    //     }
+    // }
 
     let tx_clone = tx.clone();
     tokio::spawn(async move {
         let mut stdout_buf = Vec::new();
         stdout.read_to_end(&mut stdout_buf).await.ok();
-        info!(
-            "{:?}", stdout_buf
-        );
         tx_clone.send(stdout_buf).ok();
     });
 
@@ -596,14 +615,44 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>)
     });
 
     let output = process.wait_with_output().await?;
+    info!("output: {:?}", output);
     let duration = start.elapsed();
     info!("Command executed in {:?}", duration);
     let tx_clone = tx.clone();
     if !output.status.success() {
+        info!("output status not successfull");
         tx_clone.send(output.stderr).ok();
     }
 
-    Ok(())
+    Ok(stdin)
+}
+
+async fn process_command(text: String, tx: Sender<Vec<u8>>, process: Arc<Mutex<Option<ChildStdin>>>) {
+    let mut process = process.lock().await;
+    if let Some(ref mut stdin) = *process {
+        if text == "quit".to_string(){
+            // drop(child.stdin);
+        } else {
+            info!("We have stdin!!");
+            let input = text.clone();
+            match stdin.write_all(input.as_bytes()).await {
+                Ok(_) => info!("Wrote to stdin"),
+                Err(e) => info!("error writing to stdin: {e:?}"),
+            }
+            match stdin.flush().await {
+                Ok(_) => info!("Flushed stdin"),
+                Err(e) => info!("Error flushing stdin: {:?}", e),
+            }
+        }
+    } else {
+        info!("No stdin yet");
+        match handle_command_payload(text.clone(), tx.clone()).await {
+            Ok(stdin) => {
+                *process = Some(stdin);
+            }
+            Err(e) => info!("error running command: {e:?}"),
+        }
+    }
 }
 
 #[cfg(target_os="linux")]
