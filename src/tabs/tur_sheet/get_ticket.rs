@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc, SecondsFormat};
 use crossbeam::channel;
 use async_trait::async_trait;
+use regex::Regex;
 use reqwest::header::{CONTENT_TYPE, ACCEPT, AUTHORIZATION};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
@@ -25,53 +26,44 @@ pub struct SendRequest {
 }
 
 impl SendRequest{       
-    pub async fn get_cps(so_number: String, client: reqwest::Client) 
-        -> anyhow::Result<GetKeysResponse, anyhow::Error>
-    {
+    pub async fn get_cps(so_number: String, client: reqwest::Client) -> anyhow::Result<GetKeysResponse, anyhow::Error> {
 
-            let params: Value = serde_json::json!({
-                "user_email": "logan.lees@pclaptops.com", 
-                "user_password": "Poolparty1",
-                "action": ScaffoldActions::FetchKeys,
-                "application": ScaffoldApps::SoftwareLicenseFetch, 
-                "company": if so_number.len() == 8 { "pcl" } else { "prestashop" },
-                "id_order": so_number,
-            });
+        let mut params: HashMap<&str, &str> = HashMap::new();
+        params.insert("user_email", "logan.lees@pclaptops.com");
+        params.insert("user_password", "Poolparty1");
+        params.insert("application", "software_license_fetch");
+        params.insert("id_order", &so_number);
+        params.insert("action", "fetch_keys");
+        params.insert("company", if so_number.len() == 8 { "pcl" } else { "prestashop" });
 
-            let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-                .header(CONTENT_TYPE, "application/json")
-                .header(ACCEPT, "application/json")
-                .json(&params)
-                .send()
-                .await?;
+        let response = client.post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .form(&params)
+            .send()
+            .await?;
+    
+        // "\t\nSAS: 8YG4-YHSJ-MJGWE\nWRAV: SA28-TAOG-53DB-6AB9-E6AE\n"
+        let response_text = response.text().await?;
+
+        let mut _webroot_key = "";
+        let mut _superanti_key = "";
+
+        if response_text.contains("WRAV: ") || response_text.contains("SAS: "){
+            let re = Regex::new(r"SAS: (\w{4}-\w{4}-\w{5})\nWRAV: (\w{4}-\w{4}-\w{4}-\w{4}-\w{4})\n").unwrap();
+            let captures = re.captures(&response_text).expect("Regex did not match");
+            _webroot_key = captures.get(2).map_or("", |m| m.as_str());
+            _superanti_key = captures.get(1).map_or("", |m| m.as_str());
+        } else{
+            _webroot_key = "Error";
+            _superanti_key = "Check console";
+        }
+
+        let response_keys = GetKeysResponse {
+            webroot_key: _webroot_key.to_string(),
+            superanti_key: _superanti_key.to_string(),
+        };
         
-            let mut response_text = response.text().await?;
-            debug!("response: {:?}", response_text);
-
-            let mut _webroot_key = "";
-            let mut _superanti_key = "";
-
-            if response_text.contains("WRAV: ") || response_text.contains("SAS: "){
-                let wrav_offset = response_text.find("WRAV: ").unwrap_or(response_text.len());
-
-                response_text.drain(..wrav_offset); 
-
-                let split_lines: Vec<&str> = response_text.split("\nSAS: ").collect();
-
-                let split_wrav: Vec<&str> = split_lines[0].split("WRAV: ").collect();
-
-                _webroot_key = split_wrav[1].trim();
-                _superanti_key = split_lines[1].trim();
-            }
-            else{
-                _webroot_key = "Error";
-                _superanti_key = "Check console";
-            }
-
-            let response_keys = GetKeysResponse {
-                webroot_key: _webroot_key.to_string(),
-                superanti_key: _superanti_key.to_string(),
-            };
         Ok(response_keys)
     }
 
