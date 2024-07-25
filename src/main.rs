@@ -35,12 +35,12 @@ impl eframe::App for MasterTechApp {
             let tx = self.context.db_tx.clone();
             let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
             let pair_clone = Arc::clone(&pair);
+            
             spawn(async move {
                 match ComputerData::default().get_computer_data().await{ // sysinfo_tx
                     Ok(data) => {
                         let (lock, cvar) = &*pair_clone;
                         let mut comp_data = lock.lock().unwrap();
-
                         *comp_data = data;
                         info!("Computer Data: {comp_data:?}");
                         cvar.notify_one();
@@ -48,6 +48,7 @@ impl eframe::App for MasterTechApp {
                     Err(e) => info!("Error getting specs: {e:?}"),
                 }
             });
+
             // Wait for the spawned task to complete and notify the condition variable
             let (lock, cvar) = &*pair;
             let mut comp_data = lock.lock().unwrap();
