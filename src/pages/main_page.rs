@@ -65,7 +65,7 @@ impl MasterTechApp {
                     }
                     if self.context.current_user.is_none(){
                         if Button::new("Login").ui(ui).clicked(){
-                            let _ = self.context.app_state_tx.send(crate::app_state::AppState::NoAuth("Needs Login".to_string()));
+                            let _ = self.context.app_state_tx.send(crate::app_state::AppState::Login);
                         }
                     }
                     ui.add_space(20.0);

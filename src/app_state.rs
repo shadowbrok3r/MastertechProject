@@ -31,6 +31,7 @@ pub enum AppState{
     Authenticated(MainPages),
     CreateAccount,
     NoAuth(String),
+    Login
 }
 
 impl Default for AppState{
@@ -358,7 +359,7 @@ impl MastertechContext {
 impl MasterTechApp{
     pub fn login_mut(&mut self) -> Option<&mut Login> {
         match self.state{
-            AppState::NoAuth(_) => Some(&mut self.login),
+            AppState::Login => Some(&mut self.login),
             AppState::Authenticated(MainPages::Tasks) => None,
             _ => None
         }
