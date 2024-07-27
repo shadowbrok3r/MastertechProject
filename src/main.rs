@@ -1,18 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{fs::File, sync::{ Arc, Condvar, Mutex}};
-use crossbeam::channel::Sender;
-use crate::utilities::toasts::{Toast, ToastKind, ToastOptions};
-use log::{debug, error, info};
-use app_state::{AppState, MasterTechApp};
-use pages::login_page::HASH;
-use simplelog::{WriteLogger, Config, LevelFilter};
-use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, Stroke, Vec2, ViewportBuilder};
-use database::{database::{Database, DATABASE}, schema::{ComputerData, ComputerId, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
-use crate::utilities::themes::carl_dark::{Aesthetix, CarlDark};
-use surrealdb::sql::Thing;
-use tabs::tur_sheet::scaffold::AsanaResponse;
-use tokio::spawn;
 use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
+use database::{database::{Database, DATABASE}, schema::{ComputerData, ComputerId, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
+use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, Stroke, Vec2, ViewportBuilder};
+use crate::utilities::themes::carl_dark::{Aesthetix, CarlDark};
+use crate::utilities::toasts::{Toast, ToastKind, ToastOptions};
+use simplelog::{WriteLogger, Config, LevelFilter};
+use std::{fs::File, sync::{ Arc, Condvar, Mutex}};
+use tabs::tur_sheet::scaffold::AsanaResponse;
+use app_state::{AppState, MasterTechApp};
+use crossbeam::channel::Sender;
+use log::{debug, error, info};
+use pages::login_page::HASH;
+use surrealdb::sql::Thing;
+use tokio::spawn;
 
 pub mod app_state;
 pub mod tabs;
@@ -354,6 +354,7 @@ async fn main() -> eframe::Result<()> {
     // console_subscriber::init();
     // Init the logger
     // Configure log level and log file
+    egui_logger::builder().init().unwrap(); 
     let log_level = LevelFilter::Info; 
     let log_file = File::create("output.log").unwrap();
     WriteLogger::init( 
