@@ -113,8 +113,10 @@ impl Database{
 
     
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
-        let _db_url = dotenv::var("DB_URL").unwrap_or("surrealdb.master-tech.app".to_string());
+        let db_url = dotenv::var("DB_URL").unwrap_or("surrealdb.master-tech.app".to_string());
         // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
+        DATABASE.connect::<Wss>(&db_url).await?;
+        DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE.signup(
             Scope { 

@@ -1,13 +1,16 @@
+use bytes::Bytes;
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
+use crate::utilities::{displays::chats::ChatView, get_data::delete_task, DisplayModal, ModalTypes, Updatable};
+use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
+use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
 use wasm_bindgen_futures::spawn_local;
 use database::schema::TaskPayload;
+use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use serde::Serialize;
 use log::info;
-
-use crate::utilities::{displays::chats::ChatView, get_data::delete_task, DisplayModal, ModalTypes, Updatable};
 
 use super::ModalState;
 
@@ -97,6 +100,8 @@ pub struct SpecialPartOrder {
     part_description: String,           //  "Test",
     part_lcd_toggle: bool,            //  "0"
     spo_status: SpoStatus,
+    #[serde(skip)]
+    files: Arc<Mutex<Option<Vec<FileHandle>>>>
 }
 
 impl DisplayModal for TaskModal {
@@ -646,6 +651,7 @@ impl Default for SpecialPartOrder {
             part_description: String::new(),
             part_lcd_toggle: false,
             spo_status: SpoStatus::AwaitingQuote,
+            files: Arc::new(Mutex::new(None))
         }
     }
 }
@@ -767,8 +773,13 @@ impl SpecialPartOrder {
 
                                 
                                 if file_upload.clicked() {
-                                    // task = Some(AsyncFileDialog::new().pick_files());
-                                }
+                                    let data_clone = Arc::clone(&self.files);
+                                    spawn_local(async move {
+                                        let mut data = data_clone.lock().unwrap();
+                                        *data = AsyncFileDialog::new().pick_files().await;
+                                    });
+                                    // *data = Some(AsyncFileDialog::new().pick_files());
+                                };
                                 if toggle.clicked() {
                                     info!("self.part_lcd_toggle: {}", self.part_lcd_toggle);
                                 }
@@ -779,7 +790,7 @@ impl SpecialPartOrder {
                             ui.horizontal_top(|ui| { 
                                 if Button::new("Submit").min_size(Vec2::new(50.0, 20.0)).ui(ui).clicked() {
 
-                                    let spo = SpecialPartOrder {
+                                    let mut spo = SpecialPartOrder {
                                         customer_name: self.customer_name.clone(),
                                         customer_phone_number: self.customer_phone_number.clone(),
                                         notes: self.notes.clone(),
@@ -795,21 +806,27 @@ impl SpecialPartOrder {
                                         part_description: self.part_description.clone(),
                                         part_lcd_toggle: self.part_lcd_toggle.clone(),
                                         spo_status: self.spo_status.clone(),
+                                        files: self.files.clone()
                                     };
 
+                                    let data_clone = Arc::clone(&self.files);
+
                                     spawn_local(async move {
-                                        // let mut bytes: Bytes = Bytes::new();
-                                        // let mut file_name = String::new();
+                                        let data = data_clone.lock().unwrap();
+                                        let mut bytes: Bytes = Bytes::new();
+                                        let mut file_name = String::new();
 
-                                        // if let Some(task) = task{
-                                        //     let files = task.await.unwrap();
-                                        //     for file_handle in files {
-                                        //         file_name = file_handle.file_name();
-                                        //         bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
-                                        //     }
-                                        // }
+                                        if let Some(ref files) = *data{
+                                            for file_handle in files {
+                                                file_name = file_handle.file_name();
+                                                bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
+                                                info!("file_name: {:?}", file_name);
+                                            }
+                                        }
 
-                                        let _params: Value = serde_json::json!({
+
+
+                                        let params: Value = serde_json::json!({
                                             "user_email": "logan.lees@pclaptops.com", 
                                             "user_password": "Poolparty1",
                                             "format_data": "text",
@@ -818,14 +835,14 @@ impl SpecialPartOrder {
                                             "payload": spo,
                                         });
 
-                                        // let client = Client::new();
-                                        // client.post("https://scaffold.pclaptops.com/api/index")
-                                        //     .header(CONTENT_TYPE, "application/json")
-                                        //     .header(ACCEPT, "application/json")
-                                        //     .json(&params)
-                                        //     .send()
-                                        //     .await
-                                        //     .unwrap();
+                                        let client = Client::new();
+                                        client.post("https://scaffold.pclaptops.com/api/index")
+                                            .header(CONTENT_TYPE, "application/json")
+                                            .header(ACCEPT, "application/json")
+                                            .json(&params)
+                                            .send()
+                                            .await
+                                            .unwrap();
 
                                     });
                                 }
