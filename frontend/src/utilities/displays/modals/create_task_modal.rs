@@ -314,6 +314,7 @@ impl Tur {
             // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
             self.ticket_data.service_number = service_num;
         }
+        ui.horizontal(|ui| ui.add_space(250.0));
         Grid::new("ticket_info_grid")
             .spacing(vec2(4.0, 7.0))
             .min_col_width( 135.0+3.0)
