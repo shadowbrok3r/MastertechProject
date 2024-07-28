@@ -400,7 +400,8 @@ impl MastertechContext {
                                             .min_size(Vec2::new(width, 20.0)))
                                         .clicked()
                                     {  
-                                       self.submit_tur_mastertech(); 
+                                        info!("Submitting TUR sheet");
+                                        self.submit_tur_mastertech();
                                     }
                                 }); // horizontal_top
                             }); // vertical center
