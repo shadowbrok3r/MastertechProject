@@ -1,14 +1,14 @@
 use std::{env, cell::RefCell, collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::Ordering, Arc}};
-use eframe::egui::Ui;
-use log::{debug, info};
-use serde::{Deserialize, Serialize};
-use sysinfo::Disks;
 use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
-use walkdir::WalkDir;
-use pollster::block_on;
-use crossbeam::channel;
-use crate::app_state::MastertechContext;
 use self::{command::Command, io::{format_path_metadata, MetaData}};
+use crate::{app_state::MastertechContext, utilities::toasts::{Toast, ToastKind, ToastOptions, Toasts}};
+use crossbeam::channel;
+use pollster::block_on;
+use log::{debug, info};
+use serde::Serialize;
+use eframe::egui::Ui;
+use walkdir::WalkDir;
+use sysinfo::Disks;
 
 pub mod io;
 pub mod file_copy;
@@ -92,7 +92,10 @@ pub struct FileBrowser {
 
     drive_letters: Vec<String>,
 
-    source_dir_size: u64
+    source_dir_size: u64,
+
+    #[serde(skip)]
+    toasts: Toasts,
 }
 
 impl FileBrowser{
@@ -101,7 +104,7 @@ impl FileBrowser{
         let mut filename_edit = String::new();
 
         let path_edit = path.to_str().unwrap_or_default().to_string();
-        println!("filebrowser::new() {}", &path_edit);
+        info!("filebrowser::new() {}", &path_edit);
         if path.is_file() {
             filename_edit = get_file_name(&path).to_string();
             path.pop();
@@ -134,13 +137,14 @@ impl FileBrowser{
             copied_items_src: Vec::new(),
             copied_items_dest: PathBuf::new(),
             drive_letters: Vec::new(),
-            source_dir_size: 0
+            source_dir_size: 0,
+            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
           }
     }
     
     pub fn show(&mut self, ui: &mut Ui ) {     
         let mut total_size = 0;
-        self.handle_keyboard_events(ui, self.command_tx.clone());
+        self.handle_keyboard_events(ui);
         ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
         ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
         ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
@@ -164,11 +168,11 @@ impl FileBrowser{
 
                 if response.lost_focus() {
                     let path = PathBuf::from(&self.path_edit);
-                    println!("Lost focus on self.path_edit");
+                    info!("Lost focus on self.path_edit");
 
                     match self.command_tx.send(Some(Command::OpenPath(path))){
-                        Ok(_) => println!("sent task successfully"),
-                        Err(e) => println!("{e}")
+                        Ok(_) => info!("sent task successfully"),
+                        Err(e) => info!("{e}")
                     };
                 }
             });
@@ -180,8 +184,8 @@ impl FileBrowser{
                         let response = ui.button("🏠").on_hover_text("Home");
                         if response.clicked(){
                             match self.command_tx.send(Some(Command::Home)){
-                                Ok(_) => println!("Home"),
-                                Err(e) => println!("{e}"),
+                                Ok(_) => info!("Home"),
+                                Err(e) => info!("{e}"),
                             }
                         }
                     }
@@ -191,8 +195,8 @@ impl FileBrowser{
                     let response = ui.button("⬆").on_hover_text("Parent Folder"); //
                     if response.clicked() {
                         match self.command_tx.send(Some(Command::UpDirectory)){
-                            Ok(_) => println!("UpDirectory"),
-                            Err(e) => println!("{e}"),
+                            Ok(_) => info!("UpDirectory"),
+                            Err(e) => info!("{e}"),
                         }
                     }
                 });
@@ -200,8 +204,8 @@ impl FileBrowser{
                 let response = ui.button("⟲").on_hover_text("Refresh");
                 if response.clicked() {
                     match self.command_tx.send(Some(Command::Refresh)){
-                        Ok(_) => println!("sent task successfully"),
-                        Err(e) => println!("{e}")
+                        Ok(_) => info!("sent task successfully"),
+                        Err(e) => info!("{e}")
                     }
                 }
 
@@ -248,8 +252,8 @@ impl FileBrowser{
                             info!("Drive: {:?} -- Path: {:?}", drive, &path);
 
                             match self.command_tx.send(path){
-                                Ok(_) => println!("Opening drive path"),
-                                Err(e) => println!("{e}"),
+                                Ok(_) => info!("Opening drive path"),
+                                Err(e) => info!("{e}"),
                             }
                         };
                     }
@@ -276,7 +280,7 @@ impl FileBrowser{
                                     let to = from.with_file_name(&self.filename_edit);
                                     match self.command_tx.send(Some(Command::Rename(from, to))){
                                         Ok(_) => {
-                                            println!("ok");
+                                            info!("ok");
                                         },
                                         Err(e) => {
                                             print!("{e}");
@@ -291,7 +295,7 @@ impl FileBrowser{
                         .clicked()
                     {
                         match self.command_tx.send(Some(Command::CreateDirectory)){
-                            Ok(_) => println!("ok"),
+                            Ok(_) => info!("ok"),
                             Err(e) => print!("{e}")
                         }
                     }
@@ -354,6 +358,7 @@ impl FileBrowser{
             self.source_dir_size = total_size;
         }
         
+        self.toasts.show(ui.ctx());
         if let Ok(Some(cmd)) = self.command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
     }
     
@@ -385,7 +390,7 @@ impl FileBrowser{
                         let command = Command::ReadDirectory(path.clone()); // Contents are not cached, fetch in the background
                         match command_sender.send(Some(command)){
                             Ok(_) => drop(command_sender),
-                            Err(e) => println!("error: {e:?}")
+                            Err(e) => info!("error: {e:?}")
                         }
                         vec![] // Return an empty Vec for now
                     }
@@ -401,7 +406,7 @@ impl FileBrowser{
                         if selectable_label.secondary_clicked() && !self.folder_metadata.borrow().contains_key(path){
                             match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
                                 Ok(_) => drop(command_sender5),
-                                Err(e) => println!("hovered sender error: {e:?}"),
+                                Err(e) => info!("hovered sender error: {e:?}"),
                             }
                         } 
                         if let Some(metadata) = self.folder_metadata.borrow_mut().get(path)
@@ -439,7 +444,7 @@ impl FileBrowser{
                         { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
                             match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
                                 Ok(_) => drop(command_sender2),
-                                Err(e) => println!("error: {e:?}"),
+                                Err(e) => info!("error: {e:?}"),
                             }
                         }
 
@@ -460,7 +465,7 @@ impl FileBrowser{
                 if selectable_label.clicked() {
                     match command_sender3.send(Some(Command::Select(path.clone()))) {
                         Ok(_) => drop(command_sender3),
-                        Err(e) => println!("error: {e:?}"),
+                        Err(e) => info!("error: {e:?}"),
                     }
                     // If the control key is down and the item was not selected, select it 
                     if modifiers.ctrl { self.selected_items.borrow_mut().insert(path.clone());} 
@@ -601,39 +606,45 @@ impl FileBrowser{
         }
     }
 
-    fn handle_keyboard_events(&mut self, ui: &Ui, command_tx: channel::Sender<Option<Command>>){
+    fn handle_keyboard_events(&mut self, ui: &Ui){
         let cut = ui.input_mut(|i| i.key_pressed(Key::X));
         let copy = ui.input_mut(|i| i.key_pressed(Key::C));
         let paste = ui.input_mut(|i| i.key_pressed(Key::V));
         let shift = ui.input_mut(|i| i.modifiers.shift);
         
         if copy && shift{ // && self.selected_items
+            let copy_toast = Toast{
+                kind: ToastKind::Info,
+                text: "Copied".into(),
+                options: ToastOptions::default()
+                    .show_progress(true)
+                    .duration_in_seconds(6.0)
+            };
+            self.toasts.add(copy_toast);
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Copied Items: {:?}", self.copied_items_src);
-            let command_tx = self.command_tx.clone();
 
             if self.copied_items_src.len() == 1 {
                 info!("Path == {:?}", self.copied_items_src[0].file_name());
                 
-                if let Some(_path) = self.copied_items_src[0].file_name(){
-
+                if let Some(path) = self.copied_items_src[0].file_name(){
+                    info!("Single path: {:?}", path);
                 }
             }
             for path in &self.copied_items_src{
                 match self.command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
                     Ok(_) => info!("Getting file size"),
-                    Err(e) => println!("hovered sender error: {e:?}"),
+                    Err(e) => info!("hovered sender error: {e:?}"),
                 }
             }
         }else if cut && shift{
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Cut Items: {:?}", self.copied_items_src);
-            let command_tx = self.command_tx.clone();
 
             for path in &self.copied_items_src{
                 match self.command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
                     Ok(_) => info!("Getting file size"),
-                    Err(e) => println!("hovered sender error: {e:?}"),
+                    Err(e) => info!("hovered sender error: {e:?}"),
                 }
             }
         }else if paste && shift{
@@ -649,8 +660,8 @@ impl FileBrowser{
                             )
                         )
                     ){
-                        Ok(_) => println!("Source: {:?}\nDest: {:?}\n", self.copied_items_src, self.copied_items_dest),
-                        Err(e) => println!("{e}"),
+                        Ok(_) => info!("Source: {:?}\nDest: {:?}\n", self.copied_items_src, self.copied_items_dest),
+                        Err(e) => info!("{e}"),
                     }
                 }else {
                     self.copied_items_dest = PathBuf::from(&self.path_edit);

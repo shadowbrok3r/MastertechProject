@@ -27,13 +27,13 @@ impl ComputerData{
     pub async fn get_computer_data(&mut self) -> anyhow::Result<Self, anyhow::Error>{ // , tx: Sender<ComputerData>
         info!("Getting sysinfo");
         let sys = System::new_all();
+        info!("Pulling Disks");
         let mut disks = Disks::new_with_refreshed_list();
-        let mut data = ComputerData::new();
         let client = Client::new();
 
         for disk in &mut disks{
             if !disk.is_removable(){
-                data.add_disk(
+                self.add_disk(
                     DriveData{
                         drive_type: format!("{:?}", disk.kind()),
                         total_size: (disk.total_space() / ( 1024 * 1024 * 1024)).to_formatted_string(&Locale::en),
@@ -41,7 +41,7 @@ impl ComputerData{
                         drive_letter: disk.mount_point().to_str().unwrap_or("").to_string()
                     }
                 );
-                println!("DriveData: {:?}", disk.name());
+                info!("DriveData: {:?}", disk.name());
             }   
         }
 
@@ -57,15 +57,15 @@ impl ComputerData{
 
         #[cfg(target_os = "windows")]
         {
+            info!("pulling GPU");
             let gpu =  String::from_utf8(
                 tokio::process::Command::new("cmd")
-                .args(["/C", "wmic path win32_VideoController get name"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
-                .await?
-                .stdout
+                    .args(["/C", "wmic path win32_VideoController get name"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
+                    .await?
+                    .stdout
             );
-
             let clone_gpu_name = gpu.clone().unwrap_or("no gpu detected".to_string());
             let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
             if parse_gpu_name[0].is_empty(){
@@ -94,12 +94,14 @@ impl ComputerData{
         if let Ok(seb) = seb_data{
             self.seb_info = Some(seb);
         }
-
+        info!("Pulling CPU");
         self.cpu = sys.cpus()[0].brand().trim().to_string();
+        info!("Pulling RAM");
         self.ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_formatted_string(&Locale::en).trim().to_string();
+        info!("Pulling OS");
         self.operating_system = System::long_os_version().unwrap_or_default(); //sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
+        info!("Pulling Hostname");
         self.hostname = System::host_name().unwrap_or_default();
-        self.drives = data.drives;
 
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
