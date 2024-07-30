@@ -67,7 +67,7 @@ pub async fn send_payload(
     task_data.service_ticket = ticket_id.clone();
     task_data.service_number = Some(ticket_data.service_number.clone());
     task_data.priority = schema::Priority::Normal;
-    task_data.dep = Some(queried_salesman.store.clone().as_str().to_string());
+    // task_data.dep = Some(queried_salesman.store.clone().as_str().to_string());
     task_data.everest_initials = queried_salesman.everest_initials;
     task_data.assignee = Some(queried_salesman.id);
 

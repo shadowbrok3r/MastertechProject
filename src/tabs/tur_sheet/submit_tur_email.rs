@@ -50,7 +50,7 @@ impl MastertechContext{
                                                 
         let cust_code = &self.customer_data.cust_code;
         let doc_alias = &self.ticket_data.doc_alias;
-        let _department = &self.ticket_data.dep;
+        // let _department = &self.ticket_data.dep;
         //let juris = &self.ticket_data.juris;
         let ticket_total = &self.ticket_data.ticket_total;
         let cust_email = &self.customer_data.email;

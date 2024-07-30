@@ -91,7 +91,6 @@ pub struct TaskPayload{
     pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
     pub completed: bool,
     pub status: Status,
-    pub dep: String
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -108,7 +107,6 @@ pub struct LiveTaskPayload{
     pub task_note: Option<Vec<TaskNoteId>>,
     pub completed: bool,
     pub status: Status,
-    pub dep: Option<String>
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -126,7 +124,6 @@ pub struct TicketPayload{
     pub checkin_notes: String,
     pub tech: String,
     pub salesman: String,
-    pub dep: String, // Store
     pub terms: String,
     pub ticket_total: String,
     pub doc_alias: String, // type of order (service,sales,transfer)
@@ -150,7 +147,6 @@ pub struct TicketData{
     pub checkin_notes: String,
     pub tech: String,
     pub salesman: String,
-    pub dep: String, // Store
     pub terms: String,
     pub ticket_total: String,
     pub doc_alias: String, // type of order (service,sales,transfer)
@@ -268,8 +264,6 @@ pub struct PrestashopPayload{
 pub struct ModifyTask{
     /// unique id for tasks
     pub task_id: TaskId,
-    /// ability to change store
-    // pub dep: Option<String>, 
     /// change priority
     pub priority: Option<Priority>, 
     /// change which status task is part of
