@@ -25,7 +25,7 @@ impl MtechServerContext{
                     self.rerun_filtering_my_tasks = false;
                     let mut map = BTreeMap::new();
                     vals.iter_mut().for_each(|status| {
-                        let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user);
+                        let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user).filter_by_my_store(users, current_user);
                         map.entry(status.as_str().to_string()).or_insert(filtered);
                     });
                     layout.task_map = map;
@@ -34,7 +34,7 @@ impl MtechServerContext{
             } else {
                 let mut map = BTreeMap::new();
                 vals.iter_mut().for_each(|status| {
-                    let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user);
+                    let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user).filter_by_my_store(users, current_user);
                     map.entry(status.as_str().to_string()).or_insert(filtered);
                 });
                 let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();

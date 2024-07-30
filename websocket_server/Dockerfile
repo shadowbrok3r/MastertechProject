@@ -17,9 +17,9 @@ FROM ubuntu:latest AS mold
 RUN  apt-get update \
   && apt-get install -y wget \
   && rm -rf /var/lib/apt/lists/*
-RUN wget https://github.com/rui314/mold/releases/download/v2.32.0/mold-2.32.0-x86_64-linux.tar.gz
-RUN tar -xzf mold-2.32.0-x86_64-linux.tar.gz
-RUN mv mold-2.32.0-x86_64-linux/bin/* /usr/bin/
+RUN wget https://github.com/rui314/mold/releases/download/v2.32.1/mold-2.32.1-x86_64-linux.tar.gz
+RUN tar -xzf mold-2.32.1-x86_64-linux.tar.gz
+RUN mv mold-2.32.1-x86_64-linux/bin/* /usr/bin/
 
 ## STAGE 3
 FROM messense/rust-musl-cross:x86_64-musl as builder
