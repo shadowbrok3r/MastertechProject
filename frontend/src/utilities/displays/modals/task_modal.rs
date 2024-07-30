@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
-use crate::utilities::{displays::chats::ChatView, get_data::delete_task, DisplayModal, ModalTypes, Updatable};
+use crate::utilities::{displays::chats::ChatView, get_data::delete_task, DisplayModal, ModalTypes};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
@@ -305,10 +305,10 @@ fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
                                         }
                                     }
 
-                                    ui.colored_label(Color32::LIGHT_RED, "Store:");
-                                    ui.label(&ticket.dep);
+                                    // ui.colored_label(Color32::LIGHT_RED, "Store:");
+                                    // ui.label(&ticket.dep);
                                     ui.end_row();
-                                    ui.colored_label(Color32::LIGHT_RED, "");
+                                    // ui.colored_label(Color32::LIGHT_RED, "");
                                 });
                             });
                         });

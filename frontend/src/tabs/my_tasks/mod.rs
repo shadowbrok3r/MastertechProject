@@ -11,7 +11,7 @@ impl MtechServerContext{
 
             let mut vals = Status::VALUES;
                 // Define the custom sort order
-            let order = |mut name: Status| match name.as_str() {
+            let order = |name: Status| match name.as_str() {
                 "Todo" => 1,
                 "In Repair" => 2,
                 "Complete" => 3,
@@ -25,7 +25,7 @@ impl MtechServerContext{
                     self.rerun_filtering_my_tasks = false;
                     let mut map = BTreeMap::new();
                     vals.iter_mut().for_each(|status| {
-                        let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user);
+                        let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user); //.filter_by_my_store(users, current_user);
                         map.entry(status.as_str().to_string()).or_insert(filtered);
                     });
                     layout.task_map = map;
@@ -34,11 +34,12 @@ impl MtechServerContext{
             } else {
                 let mut map = BTreeMap::new();
                 vals.iter_mut().for_each(|status| {
-                    let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user);
+                    let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user); //.filter_by_my_store(users, current_user);
                     map.entry(status.as_str().to_string()).or_insert(filtered);
                 });
-                let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();
-                let layout = TaskLayout::new(map, user_names, self.ui_actions_tx.clone(), users.clone());
+                let col_names = vals.iter().map(|v| v.as_str().to_string()).collect::<Vec<String>>();
+                // let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();
+                let layout = TaskLayout::new(map, col_names, self.ui_actions_tx.clone(), users.clone());
                 self.task_layouts.insert(page.to_string(), layout);
             }
         }

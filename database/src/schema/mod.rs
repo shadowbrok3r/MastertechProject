@@ -88,7 +88,6 @@ pub struct TaskPayload{
     pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
     pub completed: bool,
     pub status: Status,
-    pub dep: String
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -106,7 +105,6 @@ pub struct LiveTaskPayload{
     pub task_note: Option<Vec<TaskNoteId>>, // 
     pub completed: bool,
     pub status: Status,
-    pub dep: String
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -124,7 +122,6 @@ pub struct TicketPayload{
     pub checkin_notes: String,
     pub tech: String,
     pub salesman: String,
-    pub dep: String, // Store
     pub terms: String,
     pub ticket_total: String,
     pub doc_alias: String, // type of order (service,sales,transfer)
@@ -146,7 +143,6 @@ pub struct TicketData{ // Live Ticket Payload
     pub checkin_notes: String,
     pub tech: String,
     pub salesman: String,
-    pub dep: String, // Store
     pub terms: String,
     pub ticket_total: String,
     pub doc_alias: String, // type of order (service,sales,transfer)
@@ -252,8 +248,6 @@ pub struct TaskNotePayload{
 pub struct ModifyTask{
     /// unique id for tasks
     pub task_id: TaskId,
-    /// ability to change store
-    // pub dep: Option<String>, 
     /// change priority
     pub priority: Option<Priority>, 
     /// change which status task is part of
@@ -362,7 +356,7 @@ pub enum Store{
 }
 
 impl Store{
-    pub fn as_str(&mut self) -> &str{
+    pub fn as_str(&self) -> &str{
         match self{
             Store::RIV => "RIV",
             Store::LTN => "LTN",
@@ -383,13 +377,13 @@ pub struct User {
     pub everest_initials: String,
     pub email: String,
     pub store: Store,
-    pub notifications: Option<Vec<NotificationId>>,
+    // pub notifications: Option<Vec<NotificationId>>,
     pub minio_access_key: Option<String>,
     pub minio_secret_key: Option<String>
 }
 
 impl Priority{
-    pub fn as_str(&mut self) -> &str{
+    pub fn as_str(&self) -> &str{
         match self{
             Priority::Normal => "Normal",
             Priority::Rfs => "Rfs",
@@ -402,7 +396,7 @@ impl Priority{
 }
 
 impl Status{
-    pub fn as_str(&mut self) -> &str{
+    pub fn as_str(&self) -> &str{
         match self{
             Status::Todo => "Todo",
             Status::InRepair => "In Repair",

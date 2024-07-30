@@ -248,8 +248,7 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayl
         priority: live_task.priority,
         task_note: existing_task.task_note.clone(), // Preserve the existing task_note
         completed: live_task.completed,
-        status: live_task.status,
-        dep: live_task.dep,
+        status: live_task.status
     }
 }
 

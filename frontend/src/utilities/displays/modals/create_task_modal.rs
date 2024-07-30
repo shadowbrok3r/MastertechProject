@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use crossbeam::channel::{Receiver, Sender};
-use database::{schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, PrestashopPayload, SubResource}, ComputerId, CustomerData, CustomerId, LiveTaskPayload, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, TicketId, User, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
+use database::{schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, PrestashopPayload, SubResource}, CustomerData, CustomerId, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, TicketId, User, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use eframe::egui::{vec2, Grid, ScrollArea};
 use egui_extras::{DatePickerButton, Size, StripBuilder};
@@ -204,7 +204,7 @@ impl CreateTaskModal {
                         .selected_text(RichText::new(format!("{}", &self.task_priority.as_str())))
                         .show_ui(ui, |ui| 
                     {
-                        for mut priority in Priority::VALUES{
+                        for priority in Priority::VALUES{
                             ui.selectable_value(&mut self.task_priority, priority.to_owned(), priority.as_str());
                         }
                     });
@@ -258,7 +258,7 @@ impl CreateTaskModal {
                     task_note: None,
                     completed: false,
                     status: Status::Todo,
-                    dep: format!("{:?}", usr.store),
+                    // dep: format!("{:?}", usr.store),
                     ..Default::default()
                 };
 

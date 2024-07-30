@@ -5,7 +5,7 @@ use log::info;
 
 use crate::app_state::MtechServerContext;
 
-const TOKEN: &str = "Bearer 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";
+const TOKEN: &str = "Bearer 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";
 
 
 pub struct GithubIssue {
@@ -82,9 +82,8 @@ impl GithubIssue {
 }
 
 pub async fn create_new_issue(title: String, body: String, client: Client)  
-    -> anyhow::Result<(), anyhow::Error> 
+    -> anyhow::Result<String, anyhow::Error> 
 {
-    // Now you can use the method on the instance of ScaffoldRequestBuilder
     let params = serde_json::json!({
         "title": title,
         "body": body,
@@ -94,8 +93,8 @@ pub async fn create_new_issue(title: String, body: String, client: Client)
         ]
     });
 
-    let _res = client
-        .post("https://api.github.com/repos/shadowbrok3r/Mtechserver2.0/issues")
+    let res = client
+        .post("https://api.github.com/repos/shadowbrok3r/MtechServer2.0/issues")
         .header(AUTHORIZATION, TOKEN)
         .header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "MtechServer")
@@ -105,5 +104,5 @@ pub async fn create_new_issue(title: String, body: String, client: Client)
         .text()
         .await?;
 
-    Ok(())
+    Ok(res)
 }
