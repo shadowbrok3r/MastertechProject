@@ -54,6 +54,7 @@ pub async fn send_payload(
     mut task_data: LiveTaskPayload,
     mut task_notes: Vec<TaskNotePayload>,
 )  -> anyhow::Result<Vec<Record>, anyhow::Error> {
+    info!("Send_Payload");
     let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
     let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
     
@@ -89,7 +90,7 @@ pub async fn send_payload(
             let service_ticket_record: Vec<Record> = DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
             info!("service_ticket_record: {service_ticket_record:?}");
         }
-    }else{
+    } else {
         let create_cust_record: Vec<Record> = DATABASE.create(CUSTOMER_TABLE).content(customer_data.clone()).await.unwrap();
         info!("create_cust_record created: {create_cust_record:?}");
         let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;

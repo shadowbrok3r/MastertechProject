@@ -553,12 +553,11 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool)
 }
 async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) -> anyhow::Result<ChildStdin, anyhow::Error>  { 
     // #[cfg(target_os="windows")]{ return handle_windows_cmd(string_payload, tx.clone()).await?; }
-    // #[cfg(target_os="linux")]{ return handle_linux_cmd(string_payload, tx.clone()).await?; }
-    Ok(handle_windows_cmd(string_payload, tx.clone()).await?)
+    if cfg!(target_os="windows") { Ok(handle_windows_cmd(string_payload, tx.clone()).await?) }
+    else { Ok(handle_linux_cmd(string_payload, tx.clone()).await?) }
 }
 
-#[cfg(target_os="windows")]
-async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>)-> anyhow::Result<ChildStdin, anyhow::Error> {
+async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> anyhow::Result<ChildStdin, anyhow::Error> {
     use tokio::{io::{AsyncBufReadExt, BufReader}, process::{Child, ChildStdin}, time::Instant};
 
     let start = Instant::now();
@@ -655,10 +654,7 @@ async fn process_command(text: String, tx: Sender<Vec<u8>>, process: Arc<Mutex<O
     }
 }
 
-#[cfg(target_os="linux")]
-async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>)
-    -> anyhow::Result<(), anyhow::Error> 
-{
+async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> anyhow::Result<ChildStdin, anyhow::Error> {
     info!("Executing command: {}", command_payload);
     let mut process = Command::new("sh")
         .arg("-c")
@@ -672,6 +668,7 @@ async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>)
     // Handle stdout and stderr
     let mut stdout = process.stdout.take().expect("Failed to open stdout");
     let mut stderr = process.stderr.take().expect("Failed to open stderr");
+    let stdin: ChildStdin = process.stdin.take().expect("Failed to open stdin");
 
     let tx_clone = tx.clone();
     tokio::spawn(async move {
@@ -693,6 +690,6 @@ async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>)
         tx_clone.send(output.stderr).ok();
     }
 
-    Ok(())
+    Ok(stdin)
 }
 
