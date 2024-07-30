@@ -64,9 +64,6 @@ impl TaskLayout {
                     if existing.assignee != new.assignee {
                         existing.assignee = new.assignee.clone();
                     }
-                    if existing.dep != new.dep {
-                        existing.dep = new.dep.clone();
-                    }
                     if existing.due_date != new.due_date {
                         existing.due_date = new.due_date.clone();
                     }

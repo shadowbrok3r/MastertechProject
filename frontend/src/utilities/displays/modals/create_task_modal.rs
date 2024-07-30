@@ -258,7 +258,7 @@ impl CreateTaskModal {
                     task_note: None,
                     completed: false,
                     status: Status::Todo,
-                    dep: format!("{:?}", usr.store),
+                    // dep: format!("{:?}", usr.store),
                     ..Default::default()
                 };
 
