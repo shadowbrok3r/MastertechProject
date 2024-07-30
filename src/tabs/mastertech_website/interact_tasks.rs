@@ -150,10 +150,4 @@ impl Interaction for TaskPayload {
             }
         }).response
     }
-    
-    fn interact_dep(&mut self, ui: &mut Ui) -> Response {
-        ui.label("Store:");
-        let dep = ui.text_edit_singleline(&mut self.dep);
-        dep
-    }
 }

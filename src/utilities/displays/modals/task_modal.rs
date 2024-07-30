@@ -298,10 +298,10 @@ fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
                                         }
                                     }
 
-                                    ui.colored_label(Color32::LIGHT_RED, "Store:");
-                                    ui.label(&ticket.dep);
+                                    // ui.colored_label(Color32::LIGHT_RED, "Store:");
+                                    // ui.label(&ticket.dep);
                                     ui.end_row();
-                                    ui.colored_label(Color32::LIGHT_RED, "");
+                                    // ui.colored_label(Color32::LIGHT_RED, "");
                                 });
                             });
                         });
