@@ -1,7 +1,5 @@
 use eframe::egui::{Color32, NumExt, Response, TextStyle, Ui, Vec2b};
-use egui_plot::{
-    Bar, BarChart, CoordinatesFormatter, Corner, Legend, Line, LineStyle, Plot, PlotPoint, PlotPoints, VPlacement
-};
+use egui_plot::{CoordinatesFormatter, Corner, Legend, Line, LineStyle, Plot, PlotPoint, PlotPoints, VPlacement};
 use log::info;
 
 const MINS_PER_DAY: f64 = 24.0 * 60.0;
@@ -19,9 +17,9 @@ pub struct LinePlot<'a> {
     width: f32
 }
 
-pub struct Bchart<'a> {
-    y_values: &'a [f32],
-}
+// pub struct Bchart<'a> {
+//     y_values: &'a [f32],
+// }
 
 // impl <'a> Bchart<'a> {
 //     pub fn histogram(&self, y: &'a [f32], color: Color32) -> Line {

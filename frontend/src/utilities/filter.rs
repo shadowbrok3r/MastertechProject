@@ -1,10 +1,7 @@
-use std::cmp::Reverse;
-
 use database::schema::{Priority, User, Status, TaskPayload};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
-
+use std::cmp::Reverse;
 use super::FilterTasks;
-
 
 impl FilterTasks for Vec<TaskPayload>{
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload> {
@@ -40,6 +37,15 @@ impl FilterTasks for Vec<TaskPayload>{
     fn filter_by_date(&self, date: &String) -> Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| task.due_date >= *date)
+            .cloned()
+            .collect()
+    }
+
+    fn filter_by_my_store(&self, assignees: &Vec<User>, current_user: &User) -> Vec<TaskPayload> {
+        self.into_iter()
+            .filter(|task| 
+                assignees.into_iter().any(|user| user.store == current_user.store && task.assignee.0.id == user.id.0.id)
+            )
             .cloned()
             .collect()
     }

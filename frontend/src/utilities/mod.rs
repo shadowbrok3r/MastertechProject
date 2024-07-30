@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
 use displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::{ModalAction, TaskModal}, ModalResponse, ModalState}};
-use database::schema::{Priority, Record, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User};
+use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Id as SurrealId;
 use crossbeam::channel::Sender;
@@ -75,7 +75,6 @@ pub trait Interaction{ // This is correctly implemented
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_completed(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_status(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
-    fn interact_dep(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_priority(&mut self, ui: &mut Ui) -> Response; // , task: Rc<RefCell<TaskPayload>>
     fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response; // , task: Rc<RefCell<TaskPayload>>
 }
@@ -86,6 +85,7 @@ pub trait FilterTasks{
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
     fn filter_by_date(&self, date: &String) -> Vec<TaskPayload>;
+    fn filter_by_my_store(&self, assignees: &Vec<User>, current_user: &User) -> Vec<TaskPayload>;
     /// Filters a list of tasks by their name based on a fuzzy search input.
     /// # Parameters
     /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.

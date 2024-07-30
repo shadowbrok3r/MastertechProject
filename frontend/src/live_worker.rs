@@ -1,15 +1,9 @@
-use database::schema::{ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketData, TicketPayload, DB, NS, USER_SCOPE};
-use database::{Auth, Database, DATABASE, DB_URL};
+use database::schema::{ComputerData, CustomerData, TicketData};
 use gloo_worker::{HandlerId, WorkerScope};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use surrealdb::engine::remote::ws::{Client as SurrealClient, Wss};
-use surrealdb::opt::auth::Scope;
-use surrealdb::{method::Stream, Notification};
-use wasm_bindgen_futures::spawn_local;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use futures::StreamExt;
 use gloo_worker::Registrable;
-use gloo_console::{log, error};
+use gloo_console::log;
 
 fn main() {
     LiveWorker::registrar().register();
@@ -58,7 +52,7 @@ impl gloo_worker::Worker for LiveWorker {
     ) {
         let msg = format!("{:?}", msg);
         log!(msg);
-        let scope: WorkerScope<LiveWorker> = scope.clone();
+        let _scope: WorkerScope<LiveWorker> = scope.clone();
         // spawn_local(async move {
             // let result = get_customer_data().await;
             // match result {

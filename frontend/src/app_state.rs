@@ -1,10 +1,10 @@
-use crate::{tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, ui_tools::toasts::Toasts}};
-use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database, DATABASE};
+use crate::{pages::account_settings_page::AccountMod, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::{displays::modals::{ChatModalHandler, Modal, TaskModalHandler}, ui_tools::toasts::Toasts}};
+use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
 use crossbeam::channel::{self, Receiver, Sender};
-use mtechserver::{webworker::{Input, WebWorker}, live_worker::{LiveInput, LiveOutput, LiveWorker}};
+use mtechserver::{webworker::WebWorker, live_worker::{LiveOutput, LiveWorker}};
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use egui_ratatui::RataguiBackend;
@@ -34,6 +34,7 @@ pub struct MtechServer{
     login: Login,
     #[serde(skip)]
     signup: Signup,
+    pub account_mod: AccountMod,
     pub context: MtechServerContext,
     pub state: AppState,
     #[serde(skip)]
@@ -47,6 +48,7 @@ pub enum MainPages{
     ChatGpt,
     Downloads,
     WebConsole,
+    AccountSettings
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -343,7 +345,7 @@ impl MtechServer{
             read_notifications: false,
         };
         
-        Self { login: Login::default(), signup: Signup::default(), state: AppState::default(), context, tree }
+        Self { login: Login::default(), signup: Signup::default(), account_mod: AccountMod::default(), state: AppState::default(), context, tree }
     }
 
     pub fn login_mut(&mut self) -> Option<&mut Login> {
@@ -357,6 +359,13 @@ impl MtechServer{
     pub fn signup_mut(&mut self) -> Option<&mut Signup> {
         match self.state{
             AppState::CreateAccount => Some(&mut self.signup),
+            _ => None
+        }
+    }
+
+    pub fn account_mut(&mut self) -> Option<&mut AccountMod> {
+        match self.state{
+            AppState::Authenticated(MainPages::AccountSettings) => Some(&mut self.account_mod),
             _ => None
         }
     }
@@ -423,7 +432,7 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> R
 
     if let (Some(cookie), Some(usr)) = (cookie, user_cookie){
         current_user = Some(serde_json::from_str(usr?.as_str())?);
-        let user = current_user.clone();
+        let _user = current_user.clone();
         let db_tx = db_tx.clone();
         // let usr = usr
         spawn_local(async move {

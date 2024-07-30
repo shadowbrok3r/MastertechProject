@@ -2,17 +2,14 @@ use serde::Serialize;
 use crate::app_state::{AppState, MtechServer};
 use crossbeam::channel::Sender;
 use database::{schema::Store, Database};
-use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
 use wasm_cookies::CookieOptions;
-// use egui_form::{validator::validator::Validate, Form, FormField, _validator_field_path};
-// use egui_form::validator::field_path;
 
 #[derive(Serialize, Debug, Default, Clone)]
 pub struct Signup {
-    // #[validate(length(min = 3, max = 10))]
     #[serde(skip)]
     pub first_name: String,
     #[serde(skip)]
@@ -75,8 +72,6 @@ impl Signup{
 
 impl MtechServer{
     pub fn signup_page(&mut self, ctx: &Context, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) {
-        // wasm_cookies::delete("user");
-        // wasm_cookies::delete("jwt");
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
             .show(ctx, |ui| 
@@ -84,72 +79,74 @@ impl MtechServer{
             StripBuilder::new(ui)
                 .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
                 .sizes(Size::remainder(), 3)
-                .vertical(|mut s| {
-                    s.cell(|ui| {
-                        ui.add_space(50.0);
-                        ui.label(RichText::new("Mastertech Server").raised().heading());
-                    });
+                .horizontal(|mut s| {
+                    s.empty();
+                    // s.cell(|ui| {
+                    //     ui.add_space(ui.available_width() / 3.0);
+                    //     ui.label(RichText::new("Mastertech Server").raised().heading());
+                    // });
                     s.strip(|s| 
                     {
                         s
                             .cell_layout(Layout::centered_and_justified(Direction::TopDown))
                             .sizes(Size::remainder(), 3)
-                            .horizontal(|mut s| 
+                            .vertical(|mut s| 
                         {
-                            s.empty();
                             s.cell(|ui| 
                             {
-                                ui.vertical_centered(|ui| 
+                                ui.group(|ui| 
                                 { 
-                                    ui.add_space(ui.available_height() / 2.5);
+                                    ui.add_space(100.0);
 
                                     ui.label(RichText::new("Signup").heading());
                                     let font = FontId::proportional(18.0);
                                     ui.style_mut().override_font_id = Some(font);
     
-                                    // ui.label("Please Login");
                                     ui.add_space(20.0);
                                     if let Some(signup) = self.signup_mut(){
+                                        let width = ui.available_width() / 5.9;
+                                        ui.horizontal_top(|ui| {
+                                            ui.add_space(width);
+                                            TextEdit::singleline(&mut signup.first_name)
+                                                .hint_text("First Name")
+                                                .desired_width(180.0)
+                                                .ui(ui);
 
-                                    
+                                            ui.add_space(5.0);
 
-                                        TextEdit::singleline(&mut signup.first_name)
-                                            .hint_text("First Name")
-                                            .desired_width(180.0)
-                                            .ui(ui);
-
-                                        ui.add_space(5.0);
-
-                                        TextEdit::singleline(&mut signup.last_name)
-                                            .hint_text("Last Name")
-                                            .desired_width(180.0)
-                                            .ui(ui);
-
-                                        ui.add_space(5.0);
-
-                                        TextEdit::singleline(&mut signup.email)
-                                            .hint_text("Email")
-                                            .desired_width(180.0)
-                                            .ui(ui);
+                                            TextEdit::singleline(&mut signup.last_name)
+                                                .hint_text("Last Name")
+                                                .desired_width(180.0)
+                                                .ui(ui);
+                                        });
 
                                         ui.add_space(5.0);
 
-                                        TextEdit::singleline(&mut signup.password)
-                                            .hint_text("Password")
-                                            .desired_width(180.0)
-                                            .password(true)
-                                            .ui(ui);
+                                        ui.horizontal_top(|ui| {
+                                            ui.add_space(width);
+                                            TextEdit::singleline(&mut signup.email)
+                                                .hint_text("Email")
+                                                .desired_width(180.0)
+                                                .ui(ui);
+
+                                            ui.add_space(5.0);
+
+                                            TextEdit::singleline(&mut signup.password)
+                                                .hint_text("Password")
+                                                .desired_width(180.0)
+                                                .password(true)
+                                                .ui(ui);
+                                        });
 
                                         ui.add_space(5.0);
-
-                                        ui.horizontal_centered(|ui| {
-
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(ui.available_width() / 2.8);
                                             ComboBox::new("StoreComboBox", "")
-                                                .selected_text("RIV")
+                                                .selected_text(signup.store.as_str())
                                                 .width(180.0)
                                                 .show_ui(ui, |ui| 
                                             {
-                                                for mut store in Store::VALUES{
+                                                for store in Store::VALUES{
                                                     ui.selectable_value(&mut signup.store, store.to_owned(), store.as_str());
                                                 }
                                             });
@@ -157,31 +154,35 @@ impl MtechServer{
                                                 
                                         ui.add_space(10.0);
 
-                                        if Button::new("Login")
-                                            .fill(Color32::from_rgb(30, 30, 35))
-                                            .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
-                                            .min_size(Vec2::new(140.0, 15.0))
-                                            .ui(ui)
-                                            .clicked()
-                                        {
-                                            match appstate_tx.try_send(AppState::NoAuth("Login".to_string())){
-                                                Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                                Err(e) => info!("Error {e:?}"),
+                                        ui.vertical_centered(|ui| {
+                                            if Button::new("Login")
+                                                .fill(Color32::from_rgb(30, 30, 35))
+                                                .min_size(Vec2::new(140.0, 15.0))
+                                                .ui(ui)
+                                                .clicked()
+                                            {
+                                                match appstate_tx.try_send(AppState::NoAuth("Login".to_string())){
+                                                    Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
+                                                    Err(e) => info!("Error {e:?}"),
+                                                }
                                             }
-                                        }
+                                            
+                                            ui.add_space(10.0);
 
-                                        if Button::new("Create Account")
-                                            .fill(Color32::from_rgb(30, 30, 35))
-                                            .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
-                                            .min_size(Vec2::new(180.0, 40.0))
-                                            .ui(ui)
-                                            .clicked()
-                                        {
-                                            signup.signup(db_tx.clone(), appstate_tx.clone());
-                                        }
+                                            if Button::new("Create Account")
+                                                .fill(Color32::from_rgb(30, 30, 35))
+                                                .min_size(Vec2::new(180.0, 40.0))
+                                                .ui(ui)
+                                                .clicked()
+                                            {
+                                                signup.signup(db_tx.clone(), appstate_tx.clone());
+                                            }
+                                        });
                                     }
+                                    ui.add_space(100.0);
                                 });
                             });
+                            s.empty();
                             s.empty();
                         });
                     });
@@ -189,7 +190,4 @@ impl MtechServer{
                 });
         });
     }
-
-
-
 }

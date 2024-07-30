@@ -99,7 +99,11 @@ impl MtechServer{
                         ui.vertical_centered_justified( |ui| {
 
                             if ui.add(Button::new("Account Settings")).clicked(){
-                                
+                                self.state = AppState::Authenticated(MainPages::AccountSettings);
+                                match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::AccountSettings)){
+                                    Ok(_) => info!("Switching to AccountSettings Page"),
+                                    Err(e) => info!("Error: {e:?}"),
+                                }
                             }
                             if ui.add(Button::new("Downloads")).clicked(){
                                 self.state = AppState::Authenticated(MainPages::Downloads);
@@ -136,8 +140,6 @@ impl MtechServer{
                             .auto_shrink(false)
                             .show(ui, |ui| 
                         {
-                            
-
                             let mut notifications: Vec<Notification> = if self.context.read_notifications { 
                                 self.context.notifications.iter().filter(|n| n.status == "Read" ).cloned().collect() 
                             } else { 
@@ -187,7 +189,15 @@ impl MtechServer{
                     ui.label("Welcome, ");
                 });
             }else{
-                ui.add(Button::new("Login"));
+                ui.vertical_centered(|ui| {
+                    if Button::new("Login").ui(ui).clicked(){
+                        self.state = AppState::Authenticated(MainPages::Downloads);
+                        match self.context.app_state_tx.try_send(AppState::NoAuth("clicked login button".to_string())) {
+                            Ok(_) => info!("Switching to Login Page"),
+                            Err(e) => info!("Error: {e:?}"),
+                        }
+                    }
+                });
             }
         })
     });

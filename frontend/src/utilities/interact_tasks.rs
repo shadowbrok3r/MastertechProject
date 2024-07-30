@@ -109,7 +109,7 @@ impl Interaction for TaskPayload {
             .height(ui.available_height())
             .show_ui(ui, |ui| 
         {
-            for mut status in Status::VALUES{
+            for status in Status::VALUES{
                 let status_change = ui.selectable_value(&mut self.status, status.to_owned(), status.as_str());
                 if status_change.clicked(){
                     self.update_status(status.clone());
@@ -125,7 +125,7 @@ impl Interaction for TaskPayload {
             .height(ui.available_height() - 2.0)
             .show_ui(ui, |ui| 
         {
-            for mut priority in Priority::VALUES{
+            for priority in Priority::VALUES{
                 let priority_change = ui.selectable_value(&mut self.priority, priority.to_owned(), priority.as_str());
                 if priority_change.clicked(){
                     self.update_priority(Some(priority.clone()));
@@ -148,11 +148,5 @@ impl Interaction for TaskPayload {
                 }
             }
         }).response
-    }
-    
-    fn interact_dep(&mut self, ui: &mut Ui) -> Response {
-        ui.label("Store:");
-        let dep = ui.text_edit_singleline(&mut self.dep);
-        dep
     }
 }
