@@ -1,6 +1,8 @@
 use database::schema::Notification;
+use database::DATABASE;
 use eframe::egui::{menu, Align, Context, Margin, Rounding, ScrollArea, Separator, TextEdit};
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
+use wasm_bindgen_futures::spawn_local;
 use crate::utilities::ui_tools::autocomplete::AutoCompleteTextEdit;
 use std::collections::BTreeSet;
 use log::info;
@@ -116,6 +118,23 @@ impl MtechServer{
                             if ui.add(Button::new("Logout")).clicked(){
                                 wasm_cookies::delete("user");
                                 wasm_cookies::delete("jwt");
+                                spawn_local(async move {
+                                    let invalidation = DATABASE.invalidate().await;
+                                    info!("invalidated connection: {:?}", invalidation);
+                                }) ;
+
+                                if let Some(window) = web_sys::window(){
+                                    let reload = window.location().reload();
+                                    info!("Reloading winodw: {reload:?}");
+                                    if let Ok(storage) = window.local_storage(){
+                                        if let Some(storage) = storage{
+                                            let clear = storage.clear();
+                                            info!("Clearing storage: {clear:?}");
+                                        }
+                                    }
+                                } else {
+                                    info!("No window");
+                                }
                                 let logout_msg = "Logged out".to_string();
                                 self.state = AppState::NoAuth(logout_msg.clone());
                                 match self.context.app_state_tx.try_send(AppState::NoAuth(logout_msg)){

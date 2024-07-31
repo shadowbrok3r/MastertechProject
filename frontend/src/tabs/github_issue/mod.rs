@@ -1,12 +1,11 @@
 use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
-use reqwest::{header::{ACCEPT, AUTHORIZATION, USER_AGENT}, Client};
+use reqwest::{header::{ACCEPT, USER_AGENT}, Client};
 use wasm_bindgen_futures::spawn_local;
 use log::info;
 
 use crate::app_state::MtechServerContext;
 
-const TOKEN: &str = "Bearer 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";
-
+const TOKEN: &str = "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";
 
 pub struct GithubIssue {
     pub github_issue_descript: String,
@@ -81,28 +80,14 @@ impl GithubIssue {
     }
 }
 
-pub async fn create_new_issue(title: String, body: String, client: Client)  
-    -> anyhow::Result<String, anyhow::Error> 
-{
-    let params = serde_json::json!({
-        "title": title,
-        "body": body,
-        "assignees": ["shadowbrok3r"],
-        "labels": [
-            "bug"
-        ]
-    });
-
-    let res = client
-        .post("https://api.github.com/repos/shadowbrok3r/MtechServer2.0/issues")
-        .header(AUTHORIZATION, TOKEN)
-        .header(ACCEPT, "application/vnd.github+json")
+pub async fn create_new_issue(title: String, body: String, client: Client) -> anyhow::Result<String, anyhow::Error> {
+    let params = serde_json::json!({ "title": title, "body": body, "assignees": ["shadowbrok3r"], "labels": ["bug"] });
+    let res = client.post("https://api.github.com/repos/shadowbrok3r/MtechServer2.0/issues")
+        .bearer_auth(TOKEN).header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "MtechServer")
-        .json(&params)
-        .send()
-        .await?
-        .text()
-        .await?;
-
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .json(&params).send().await?
+        .text().await?;
+    
     Ok(res)
 }
