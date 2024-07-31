@@ -1,11 +1,11 @@
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_customer_data, get_notifications, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout}, ModalType, TaskUiActions};
+use database::{schema::TaskPayload, STORAGE_URL};
+use mtechserver::{live_worker::LiveInput, webworker::Input};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_customer_data, get_notifications, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use app_state::{check_authentication, AppState, MainPages, MtechServer};
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
-use mtechserver::{live_worker::LiveInput, webworker::Input};
 use wasm_bindgen_futures::spawn_local;
 use eframe::egui::FontFamily;
-use database::STORAGE_URL;
 use log::{debug, info};
 use surrealdb::Action;
 use std::sync::Arc;
@@ -371,25 +371,16 @@ impl eframe::App for MtechServer {
         // Always checking authentication.
         match &self.state{
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
-            AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
-            AppState::Authenticated(MainPages::AccountSettings) => self.account_settings_page(ctx, self.context.app_state_tx.clone()),
-            AppState::Authenticated(_) => self.main_page(ctx),
             AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
+            AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
+            AppState::Authenticated(_) => self.main_page(ctx),
             AppState::CreateAccount => self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())
         }
     }
 
-    fn persist_egui_memory(&self) -> bool {
-        true
-    }
-
-    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
-        
-    }
-
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        
-    }
+    fn persist_egui_memory(&self) -> bool { true }
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) { }
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) { }
 }
 
 // When compiling to web using trunk:
