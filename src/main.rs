@@ -356,13 +356,13 @@ async fn main() -> eframe::Result<()> {
     // Init the logger
     // Configure log level and log file
     egui_logger::builder().init().unwrap(); 
-    let log_level = LevelFilter::Info; 
-    let log_file = File::create("output.log").unwrap();
-    WriteLogger::init( 
-        log_level,
-        Config::default(),
-        log_file
-    ).unwrap();
+    // let log_level = LevelFilter::Info; 
+    // let log_file = File::create("output.log").unwrap();
+    // WriteLogger::init( 
+    //     log_level,
+    //     Config::default(),
+    //     log_file
+    // ).unwrap();
 
     eframe::run_native(
         format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),

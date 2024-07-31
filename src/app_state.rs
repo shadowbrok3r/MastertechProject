@@ -1,5 +1,6 @@
 use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, LocalSebData, PrestashopPayload, TaskNotePayload, TaskPayload, TicketData, User}, GetKeysResponse}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
 use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
+use egui_logger::LoggerUi;
 use log::info;
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
@@ -147,6 +148,7 @@ pub struct MastertechContext {
     pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
+    pub logger_ui: LoggerUi
 }
 
 impl MasterTechApp {
@@ -161,7 +163,7 @@ impl MasterTechApp {
         let [_a, _b] = tree.main_surface_mut()
             .split_left(NodeIndex::root(),0.30, vec!["File Browser 📂".to_owned(),]);
         let [_a, b] = tree.main_surface_mut()
-            .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(),"Websockets".to_owned()]);
+            .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(), "Logs".to_owned(), "Websockets".to_owned()]);
         let [_, _] = tree.main_surface_mut()
             .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned()]);
         let [_, _] = tree.main_surface_mut()
@@ -296,6 +298,7 @@ impl MasterTechApp {
             initial_tasks_tx,  initial_tasks_rx,
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
+            logger_ui: LoggerUi::default()
         };
         let context = mastertech_context;
 
@@ -375,6 +378,7 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
+            "Logs" => egui_logger::logger_ui().show(ui),
             "Scripts" => self.scripts(ui),
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
