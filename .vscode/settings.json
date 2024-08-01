@@ -1,0 +1,8 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./Cargo.toml",
+        "Mastertech4.0/Cargo.toml",
+        "MtechServer2.0/Cargo.toml",
+    ],
+    "rust-analyzer.showUnlinkedFileNotification": true
+}

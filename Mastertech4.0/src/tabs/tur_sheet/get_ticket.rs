@@ -15,8 +15,8 @@ use std::{error::Error, path::PathBuf, fs::{File, self}, io::BufReader, collecti
 use log::{info, debug, trace, error};
 use std::result::Result;
 use std::fmt::Debug;
-use crate::database::schema::Store;
-use crate::database::{GetKeysResponse, schema::{ExtendedSeb, LocalSebData}};
+use database::schema::Store;
+use database::schema::{ExtendedSeb, LocalSebData, GetKeysResponse};
 use crate::tabs::tur_sheet::scaffold::{ScaffoldActions, ScaffoldApps};
 
 use super::email_builder::AsanaTask;

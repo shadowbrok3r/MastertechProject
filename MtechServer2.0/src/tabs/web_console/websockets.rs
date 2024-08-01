@@ -1,7 +1,7 @@
 
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
 use bincode::serialize;
-use database::{schema::{ConnectedClient, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{Cmd, ConnectedClient, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::egui::{epaint::Shadow, Align, Button, CollapsingHeader, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, Strip};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
@@ -24,26 +24,6 @@ pub trait ClientHandler {
 pub enum ClientConnection{
     ClientUrl(String),
     Disconnect(String)
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Cmd{
-    LiveData,
-    Command,
-    Tuneup,
-    Cps,
-    Qc,
-    SfcScan,
-    DismScan,
-    ChkDsk,
-    Mbr2Gpt,
-    ReadDir(String),
-    DirContents(Vec<String>),
-    ChangeDirectory(String),
-    Execute(String),
-    CopyTools(String),
-    Quit,
-    None
 }
 
 pub struct WebSocketClient {

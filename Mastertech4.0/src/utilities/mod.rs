@@ -1,5 +1,5 @@
 use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
-use crate::database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, User};
+use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, User};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Id as SurrealId;
 use crossbeam::channel::Sender;

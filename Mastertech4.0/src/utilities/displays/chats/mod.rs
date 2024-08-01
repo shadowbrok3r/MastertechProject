@@ -2,7 +2,7 @@ use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
 use tokio::spawn;
-use crate::database::{schema::{Record, TaskId, TaskNotePayload, User}, database::DATABASE};
+use database::{DATABASE, schema::{Record, TaskId, TaskNotePayload, User}};
 use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
 // use crate::utilities::get_data::TaskNoteMod;
 use chrono::{DateTime, Local};
@@ -228,7 +228,7 @@ impl ChatView {
                                                 .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
 
                                             if btn.clicked(){
-                                                let mut item = item.clone();
+                                                let _item = item.clone();
                                                 spawn(async move {
                                                     // match item.delete_note().await{
                                                     //     Ok(_) => info!("Deleted Note"),

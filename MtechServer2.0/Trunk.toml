@@ -2,7 +2,7 @@
 
 [build]
 # The index HTML file to drive the bundling process.
-target = "frontend/index.html"
+target = "index.html"
 # Build in release mode.
 release = false
 # The output dir for all final assets.

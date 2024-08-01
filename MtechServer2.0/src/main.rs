@@ -1,14 +1,17 @@
-use database::{schema::TaskPayload, STORAGE_URL};
-use mtechserver::{live_worker::LiveInput, webworker::Input};
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_connected_clients, get_customer_data, get_notifications, get_store_users, get_tasks}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout, update_or_insert_notes}, ModalType, TaskUiActions};
 use crate::utilities::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
-use app_state::{check_authentication, AppState, MainPages, MtechServer};
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
+use mtechserver::{live_worker::LiveInput, webworker::Input};
+use app_state::{AppState, MainPages, MtechServer};
+use database::{schema::TaskPayload, STORAGE_URL};
 use wasm_bindgen_futures::spawn_local;
 use eframe::egui::FontFamily;
 use log::{debug, info};
 use surrealdb::Action;
 use std::sync::Arc;
+
+#[cfg(target_arch="wasm32")]
+use app_state::check_authentication;
 
 pub mod tabs;
 pub mod app_state;
@@ -35,6 +38,7 @@ impl eframe::App for MtechServer {
         if self.context.first_run{ // || or if refresh button is hit
             self.context.first_run = false;
 
+            #[cfg(target_arch="wasm32")]
             match check_authentication(self.context.db_tx.clone()){
                 Ok(d) => {
                     info!("1");
@@ -167,8 +171,8 @@ impl eframe::App for MtechServer {
                         toast.add(auth_toast);
                     }else{
                         info!("4");
+                        #[cfg(target_arch="wasm32")]
                         match check_authentication(self.context.db_tx.clone()){
-
                             Ok(d) => {
                                 self.state = d.0;
                                 if let Some(ref usr) = d.1{
@@ -212,8 +216,10 @@ impl eframe::App for MtechServer {
                     } else {
                         info!("8");
                         info!("{e:?}");
-                        wasm_cookies::delete("jwt");
-                        wasm_cookies::delete("user");
+                        #[cfg(target_arch="wasm32")]{
+                            wasm_cookies::delete("jwt");
+                            wasm_cookies::delete("user");
+                        }
                         // eframe::web::storage::local_storage_get(key)
                         let toast = &mut self.context.toasts;
                         let auth_toast = Toast{
@@ -421,7 +427,7 @@ fn main() {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+        viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([400.0, 300.0])
             .with_min_inner_size([300.0, 220.0])
             .with_icon(

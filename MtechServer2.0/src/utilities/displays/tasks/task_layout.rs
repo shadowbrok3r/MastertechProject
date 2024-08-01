@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
-use database::DATABASE;
+use database::{self, DATABASE};
 use database::schema::{Priority, Record, TaskPayload, User};
 use log::info;
 use surrealdb::sql::{Id, Thing};

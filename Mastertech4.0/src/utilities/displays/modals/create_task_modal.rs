@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use database::schema::{CustomerData, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, User, TASK_TABLE};
+use database::DATABASE;
 use tokio::spawn;
-use crate::{database::{database::DATABASE, schema::{CustomerData, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, User, TASK_TABLE}}, utilities::autocomplete::AutoCompleteTextEdit};
+use crate::utilities::autocomplete::AutoCompleteTextEdit;
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use eframe::egui::{vec2, Grid, ScrollArea};
 use egui_extras::DatePickerButton;

@@ -48,9 +48,11 @@ impl Signup{
                     let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure();
                     if let Some(ref cookie) = db.jwt{
                         if let Some(ref usr) = db.user{
-                            wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                             let usr = serde_json::to_string(&usr).unwrap();
-                            wasm_cookies::set("user", &usr, &cookie_opts);
+                            #[cfg(target_arch="wasm32")]{
+                                wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
+                                wasm_cookies::set("user", &usr, &cookie_opts);
+                            }
                             info!("set cookies");
                         }else{ info!("no usr"); }
                     }else{ info!("no cookie"); }

@@ -1,16 +1,15 @@
+use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
+use crate::utilities::{FilterTasks, Sortable, TaskUiActions, Displayable};
+use database::{DATABASE, schema::{Priority, Record, TaskPayload, User}};
 use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
 use tokio::spawn;
-use crate::database::database::DATABASE;
-use crate::database::schema::{Priority, Record, TaskPayload, User};
 use log::info;
 use surrealdb::sql::Id;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
-use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
-use crate::utilities::{FilterTasks, Sortable, TaskUiActions, Displayable};
 
 // use super::sub_menu::sub_menu;
 

@@ -1,14 +1,15 @@
 use chrono::{DateTime, Utc};
 use crossbeam::channel::Sender;
+use database::schema::updatable::Updatable;
 use eframe::egui::{RichText, Ui};
 use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
 use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
 use eframe::egui::Vec2;
 use egui_extras::{Size, StripBuilder};
-use crate::database::schema::{TaskPayload, User};
+use database::schema::{TaskPayload, User};
 use log::info;
 
-use crate::utilities::{Displayable, Interaction, TaskUiActions, Updatable};
+use crate::utilities::{Displayable, Interaction, TaskUiActions};
 
 impl Displayable for TaskPayload{
     fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>){

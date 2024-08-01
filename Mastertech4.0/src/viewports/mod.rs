@@ -1,7 +1,5 @@
-use std::sync::{atomic::Ordering, Arc};
-
 use eframe::egui::{CentralPanel, Context, ViewportBuilder, ViewportId};
-
+use std::sync::{atomic::Ordering, Arc};
 use crate::app_state::MasterTechApp;
 
 impl MasterTechApp{

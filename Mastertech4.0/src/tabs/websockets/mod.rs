@@ -1,10 +1,12 @@
-use crate::{app_state::MastertechContext, database::{database::DATABASE, deserialize_command, schema::{ClientId, ComputerId, ConnectedClient, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, serialize_system_info, SystemInformation}, filesystem::system_info::{generate_client_id, get_sysinfo}, tabs::file_browser::{read_folder, FileBrowser}};
+use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::{read_folder, FileBrowser}};
+use database::{schema::{utilities::{deserialize_command, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::{ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
+use crate::filesystem::system_info::get_sysinfo;
 use crossbeam::channel::{Receiver, Sender};
-use serde::{Deserialize, Serialize};
+use anyhow::{Result, Error};
 use surrealdb::sql::Thing;
 use bincode::serialize;
 use tracing::info;
@@ -128,26 +130,6 @@ pub struct WebConsoleFrontend {
     pub connected: bool,
     pub timeout_counter: Instant,
     pub process: Arc<Mutex<Option<ChildStdin>>>
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Cmd{
-    LiveData,
-    Command,
-    Tuneup,
-    Cps,
-    Qc,
-    SfcScan,
-    DismScan,
-    ChkDsk,
-    Mbr2Gpt,
-    ReadDir(String),
-    DirContents(Vec<String>),
-    ChangeDirectory(String),
-    Execute(String),
-    CopyTools(String),
-    Quit,
-    None
 }
 
 impl WebConsoleFrontend {
@@ -298,7 +280,7 @@ impl WebConsoleFrontend {
                                         strings.push(x.to_string_lossy().to_string());
                                     }
                                     let payload = serialize(&Cmd::DirContents(strings));
-                                    let x = serialize(&FileBrowser::new());
+                                    let _x = serialize(&FileBrowser::new());
                                     match payload {
                                         Ok(bytes) => {
                                             self.ws_sender.send(WsMessage::Binary(bytes));
@@ -536,29 +518,24 @@ impl WebConsoleFrontend {
     
 }
 
-async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) 
-    -> anyhow::Result<(), anyhow::Error>
-{
+async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) -> Result<(), Error>{
     loop {
-    
         sleep(Duration::from_secs(4)).await;
         let systeminfo: SystemInformation = get_sysinfo().await?;
         info!("{systeminfo:?}");
         tx.send(serialize_system_info(&systeminfo))?;
-        // if app.lock().await.finish {
-        //     break;
-        // }
+        // if app.lock().await.finish { break; }
     }
     Ok(())
 }
-async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) -> anyhow::Result<ChildStdin, anyhow::Error>  { 
+async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) -> Result<ChildStdin, Error>  { 
     // #[cfg(target_os="windows")]{ return handle_windows_cmd(string_payload, tx.clone()).await?; }
     if cfg!(target_os="windows") { Ok(handle_windows_cmd(string_payload, tx.clone()).await?) }
     else { Ok(handle_linux_cmd(string_payload, tx.clone()).await?) }
 }
 
-async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> anyhow::Result<ChildStdin, anyhow::Error> {
-    use tokio::{io::{AsyncBufReadExt, BufReader}, process::{Child, ChildStdin}, time::Instant};
+async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Result<ChildStdin, Error> {
+    use tokio::{process::{Child, ChildStdin}, time::Instant};
 
     let start = Instant::now();
     info!("Executing command: {}", command_payload);
@@ -654,7 +631,7 @@ async fn process_command(text: String, tx: Sender<Vec<u8>>, process: Arc<Mutex<O
     }
 }
 
-async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> anyhow::Result<ChildStdin, anyhow::Error> {
+async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Result<ChildStdin, Error> {
     info!("Executing command: {}", command_payload);
     let mut process = Command::new("sh")
         .arg("-c")

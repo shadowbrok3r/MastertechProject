@@ -31,9 +31,11 @@ impl Login{
                 let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure().expires_after(duration);
                 let database = db.clone();
                 if let (Some(ref cookie), Some(ref usr)) = (database.jwt, database.user){
-                    wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                     let usr = serde_json::to_string(&usr)?;
-                    wasm_cookies::set("user", &usr, &cookie_opts);
+                    #[cfg(target_arch="wasm32")]{
+                        wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
+                        wasm_cookies::set("user", &usr, &cookie_opts);
+                    }
                     info!("set cookies");
                 }else{ 
                     info!("no usr or no cookie"); 

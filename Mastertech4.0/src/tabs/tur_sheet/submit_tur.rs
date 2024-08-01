@@ -1,14 +1,11 @@
+use crate::{app_state::MastertechContext, tabs::tur_sheet::get_ticket::SendRequest};
 use std::{collections::HashMap, path::PathBuf};
-
+use database::schema::{Store, User};
+use serde_json::Value;
 use chrono::DateTime;
 use log::info;
-use serde_json::Value;
-
-use crate::{app_state::MastertechContext, database::schema::{Store, User}, tabs::tur_sheet::get_ticket::SendRequest};
 
 use super::email_builder::{AsanaTask, TaskAssignee};
-
-
 
 impl MastertechContext{
     pub fn submit_tur(&mut self){
@@ -232,7 +229,7 @@ impl MastertechContext{
                         <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",
             );
 
-            let mut store: Store = self.current_user.clone().unwrap_or(User::default()).store;
+            let store: Store = self.current_user.clone().unwrap_or(User::default()).store;
 
             if store.as_str() == "RIV"{
 

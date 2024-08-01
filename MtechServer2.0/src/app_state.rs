@@ -423,6 +423,7 @@ impl MtechServerContext{
     }
 }
 
+#[cfg(target_arch="wasm32")]
 pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(AppState, Option<User>), Error>{
     let cookie = wasm_cookies::get("jwt");
     let user_cookie = wasm_cookies::get("user");

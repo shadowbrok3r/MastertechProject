@@ -1,6 +1,6 @@
-use crate::{app_state::MastertechContext, database::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order}, schema::{CustomerData, CustomerId, PrestashopPayload, CUSTOMER_TABLE}}};
+use database::schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, PrestashopPayload, SubResource}, CustomerData, CustomerId, CUSTOMER_TABLE};
 use reqwest::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE}, Client};
-use crate::database::prestashop_schema::SubResource;
+use crate::app_state::MastertechContext;
 use serde_json::{from_value, Value};
 use std::collections::HashMap;
 use surrealdb::sql::Thing;
