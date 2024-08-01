@@ -1,0 +1,138 @@
+services:
+# docker image tag mtechserver:latest shadowbrok3r/mtechserver:latest 
+# docker push shadowbrok3r/mtechserver:latest
+# podman push 9038b33bb284 docker://docker.io/shadowbrok3r/mtechserver:latest  
+############################################## -- TRAEFIK REVERSE PROXY -- ##############################################
+  traefik:
+    image: traefik:latest
+    container_name: "traefikprox"
+    networks:
+      - web
+    # ports:
+      # The HTTP port
+      # - "80:80"
+      # The HTTPS port
+      # - "443:443"
+    environment:
+      - "DO_AUTH_TOKEN=dop_v1_9b0eaa05dc3409e10d8c51b6e84d9f08ea260075110927b31133aeb28744f949"
+      - "LEGO_DISABLE_CNAME_SUPPORT=true"
+    command:
+    - "--log.level=DEBUG"
+    # - "--serverstransport.insecureskipverify=true"
+    # API
+    # - "--api=true"
+    # - "--api.insecure=true" 
+    # - "--api.dashboard=true"
+    # Providers
+    - "--providers.docker"
+    - "--providers.docker.network=web"
+    # EntryPoints
+    - "--entrypoints.https.http.tls.domains[0].main=master-tech.app" # $DOMAINNAME_CLOUD_SERVER
+    - "--entrypoints.https.http.tls.domains[0].sans=*.master-tech.app" # $DOMAINNAME_CLOUD_SERVER
+    - "--entrypoints.web.http.redirections.entryPoint.to=https"
+    - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+    - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+    - "--entryPoints.web.address=:80"
+    - "--entrypoints.websecure.address=:443"
+
+    # Certificate Resolver
+    - "--certificatesresolvers.digitalocean.acme.caserver=https://acme-v02.api.letsencrypt.org/directory"
+    # - "--certificatesresolvers.digitalocean.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+    - "--certificatesresolvers.digitalocean.acme.dnschallenge.provider=digitalocean"
+    - "--certificatesresolvers.digitalocean.acme.dnschallenge.delaybeforecheck=1"
+    - "--certificatesresolvers.digitalocean.acme.email=darkmagic502@yahoo.com"
+    - "--certificatesresolvers.digitalocean.acme.storage=/letsencrypt/acme.json"
+    - "--certificatesresolvers.digitalocean.acme.dnschallenge.disablepropagationcheck=true"
+    volumes:
+      # So that Traefik can listen to the Docker events
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Create a letsencrypt dir within the folder where the docker-compose file is
+      - "./letsencrypt:/letsencrypt"
+    labels:
+      # Routers
+      - "traefik.http.routers.dashboard.rule=Host(`dash.master-tech.app`)" # && (PathPrefix(`/api`) || PathPrefix(`/traefik`))
+      # - "traefik.http.routers.dashboard.service=api@internal" # disable if you wanna use /api for jack shit
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.tls.certresolver=digitalocean"
+      - "traefik.http.routers.dashboard.middlewares=auth, stripdash, corsHeader"
+      # Middlewares
+      - "traefik.http.middlewares.stripdash.stripprefix.prefixes=/traefik" # , /api
+      - "traefik.http.middlewares.auth.basicauth.users=shadowbroker:$$2y$$05$$zp8iDtuHIIMMcBygnG/AmewCVJbYuLtVIJDx/NEkQRH1Gsly5WvLu"
+      - "traefik.http.middlewares.corsHeader.headers.accesscontrolallowmethods=*"
+      - "traefik.http.middlewares.corsHeader.headers.accesscontrolallowheaders=*"
+      - "traefik.http.middlewares.corsHeader.headers.accesscontrolalloworiginlist=*"
+      - "traefik.http.middlewares.corsHeader.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.corsHeader.headers.accessControlAllowCredentials=true"
+      - "traefik.http.middlewares.corsHeader.headers.addVaryHeader=true"
+
+############################################## -- FRONTEND -- ##############################################
+  frontend:
+    container_name: "wasm"
+    runtime: io.containerd.wasmedge.v1
+    platform: wasi/wasm32
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    restart: always
+    networks:
+        - web
+    # ports:
+    #   - 8080:8080
+    # expose:
+      # - 8080
+    command: trunk serve
+    volumes:
+      - ./dist:/dist
+    labels:
+      # Routers
+      - "traefik.http.routers.wasm.rule=Host(`master-tech.app`)"
+      - "traefik.http.routers.wasm.entrypoints=websecure" 
+      - "traefik.http.routers.wasm.tls=true"
+      - "traefik.http.routers.wasm.tls.certresolver=cloudflare"
+      - "traefik.http.routers.wasm.middlewares=corsHeader"
+      # Services
+      - "traefik.http.routers.wasm.service=wasm"
+      - "traefik.http.services.wasm.loadbalancer.server.port=8080"
+
+############################################## -- SURREALDB -- ##############################################
+  surrealdb:
+    container_name: "surrealdb"
+    image: surrealdb/surrealdb:v1.5.2
+    user: root
+    restart: always
+    entrypoint: /surreal
+    networks:
+        - web
+    ports:
+      - 8000:8000
+    expose:
+      - 8000
+    environment:
+      - SURREAL_USER=root
+      - SURREAL_PASS=toor1019
+      - LISTEN_ADDRESSES=0.0.0.0:8000
+      - SURREAL_AUTH=true
+    command: start -A --auth --log info 
+    # volumes:
+      # - ./server/src/database:/surreal-data
+    #   - database_backups:/database_backups
+    labels:
+      # Routers
+      - "traefik.http.routers.surreal.rule=Host(`surreal.master-tech.app`)"
+      - "traefik.http.routers.surreal.entrypoints=websecure"
+      - "traefik.http.routers.surreal.tls=true"
+      - "traefik.http.routers.surreal.tls.certresolver=digitalocean"
+      - "traefik.http.routers.surreal.service=surreal"
+      - "traefik.http.routers.surreal.middlewares=corsHeader, websocketHeader"
+      # Middlewares
+      - "traefik.http.middlewares.websocketHeader.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.middlewares.websocketHeader.headers.customrequestheaders.Connection=keep-alive, Upgrade"
+      - "traefik.http.middlewares.websocketHeader.headers.customrequestheaders.Upgrade=Websocket"
+      # Services
+      - "traefik.http.services.surreal.loadbalancer.server.port=8000"
+
+networks:
+  web: 
+    driver: bridge
+    name: web

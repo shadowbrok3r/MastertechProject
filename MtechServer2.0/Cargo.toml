@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members=[ "frontend", "database" ] #  , "websocket_server"
+exclude = ["websocket_server"]
+package.exclude = ["websocket_server"]
+
+[workspace.dependencies]
+database = { path = "database" }
+serde = { version = "1", features = ["derive"] }
+surrealdb = { version = "1.5", features = ["protocol-ws"] } # kv-speedb "protocol-http", "native-tls"
+log="0.4"
+chrono = "0.4"
+dotenv = "0.15"
+serde_json = "1"

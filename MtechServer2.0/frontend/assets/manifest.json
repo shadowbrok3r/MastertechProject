@@ -1,0 +1,23 @@
+{
+  "name": "mtechserver PWA",
+  "short_name": "mtechserver-pwa",
+  "icons": [
+    {
+      "src": "./pcllogo.png",
+      "sizes": "48x48",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./mtechlogo.png",
+      "sizes": "48x48",
+      "type": "image/png"
+    }
+  ],
+  "lang": "en-US",
+  "id": "/index.html",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "black",
+  "theme_color": "#404040"
+}

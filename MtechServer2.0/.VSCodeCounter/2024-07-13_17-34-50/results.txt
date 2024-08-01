@@ -1,0 +1,179 @@
+Date : 2024-07-13 17:34:50
+Directory : /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0
+Total : 100 files,  20661 codes, 1826 comments, 2885 blanks, all 25372 lines
+
+Languages
++------------+------------+------------+------------+------------+------------+
+| language   | files      | code       | comment    | blank      | total      |
++------------+------------+------------+------------+------------+------------+
+| Rust       |         71 |      9,026 |      1,066 |      1,393 |     11,485 |
+| TOML       |          9 |      8,380 |         99 |        917 |      9,396 |
+| SurrealQL  |          9 |      2,907 |        510 |        511 |      3,928 |
+| YAML       |          3 |        148 |        107 |         19 |        274 |
+| HTML       |          1 |        106 |         10 |         24 |        140 |
+| Docker     |          2 |         47 |         32 |         17 |         96 |
+| JSON       |          1 |         23 |          0 |          1 |         24 |
+| JavaScript |          1 |         21 |          2 |          3 |         26 |
+| Properties |          3 |          3 |          0 |          0 |          3 |
++------------+------------+------------+------------+------------+------------+
+
+Directories
++-------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                                                          | files      | code       | comment    | blank      | total      |
++-------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                                                             |        100 |     20,661 |      1,826 |      2,885 |     25,372 |
+| . (Files)                                                                                                                     |          5 |      6,820 |        127 |        720 |      7,667 |
+| .cargo                                                                                                                        |          1 |          4 |          9 |          7 |         20 |
+| .github                                                                                                                       |          2 |         51 |         70 |         14 |        135 |
+| .github/workflows                                                                                                             |          2 |         51 |         70 |         14 |        135 |
+| database                                                                                                                      |         13 |      3,575 |        592 |        611 |      4,778 |
+| database (Files)                                                                                                              |          2 |         14 |          4 |          2 |         20 |
+| database/backups                                                                                                              |          9 |      2,907 |        510 |        511 |      3,928 |
+| database/backups (Files)                                                                                                      |          2 |        741 |        126 |        124 |        991 |
+| database/backups/Local                                                                                                        |          5 |      1,419 |        262 |        258 |      1,939 |
+| database/backups/Production                                                                                                   |          2 |        747 |        122 |        129 |        998 |
+| database/src                                                                                                                  |          2 |        654 |         78 |         98 |        830 |
+| database/src (Files)                                                                                                          |          1 |        130 |          7 |         29 |        166 |
+| database/src/schema                                                                                                           |          1 |        524 |         71 |         69 |        664 |
+| frontend                                                                                                                      |         73 |      8,327 |        958 |      1,296 |     10,581 |
+| frontend (Files)                                                                                                              |          3 |        156 |         21 |         32 |        209 |
+| frontend/assets                                                                                                               |          2 |         44 |          2 |          4 |         50 |
+| frontend/src                                                                                                                  |         68 |      8,127 |        935 |      1,260 |     10,322 |
+| frontend/src (Files)                                                                                                          |          5 |        838 |        104 |        112 |      1,054 |
+| frontend/src/pages                                                                                                            |          7 |        538 |         24 |         78 |        640 |
+| frontend/src/tabs                                                                                                             |         16 |      1,604 |        118 |        253 |      1,975 |
+| frontend/src/tabs (Files)                                                                                                     |          1 |         47 |          0 |          3 |         50 |
+| frontend/src/tabs/aging_tasks                                                                                                 |          1 |          6 |         30 |          4 |         40 |
+| frontend/src/tabs/ai_playground                                                                                               |          1 |        184 |          3 |         29 |        216 |
+| frontend/src/tabs/completed_tasks                                                                                             |          1 |         18 |          6 |          2 |         26 |
+| frontend/src/tabs/github_issue                                                                                                |          1 |         87 |          1 |         21 |        109 |
+| frontend/src/tabs/my_tasks                                                                                                    |          1 |         28 |         24 |          4 |         56 |
+| frontend/src/tabs/quote_fulfilled_tasks                                                                                       |          1 |          0 |          0 |          1 |          1 |
+| frontend/src/tabs/store_tasks                                                                                                 |          1 |         22 |          2 |          4 |         28 |
+| frontend/src/tabs/terminal                                                                                                    |          2 |        139 |          1 |         20 |        160 |
+| frontend/src/tabs/toolbox                                                                                                     |          2 |        340 |          8 |         61 |        409 |
+| frontend/src/tabs/web_console                                                                                                 |          4 |        733 |         43 |        104 |        880 |
+| frontend/src/utilities                                                                                                        |         40 |      5,147 |        689 |        817 |      6,653 |
+| frontend/src/utilities (Files)                                                                                                |          9 |      1,068 |        136 |        187 |      1,391 |
+| frontend/src/utilities/ai                                                                                                     |         13 |        474 |         60 |        113 |        647 |
+| frontend/src/utilities/ai (Files)                                                                                             |          7 |        326 |         45 |         72 |        443 |
+| frontend/src/utilities/ai/tools                                                                                               |          4 |        130 |         12 |         33 |        175 |
+| frontend/src/utilities/ai/utils                                                                                               |          2 |         18 |          3 |          8 |         29 |
+| frontend/src/utilities/displays                                                                                               |         14 |      2,794 |        245 |        385 |      3,424 |
+| frontend/src/utilities/displays (Files)                                                                                       |          1 |          3 |          0 |          1 |          4 |
+| frontend/src/utilities/displays/chats                                                                                         |          5 |      1,043 |        105 |        166 |      1,314 |
+| frontend/src/utilities/displays/modals                                                                                        |          4 |      1,307 |         90 |        166 |      1,563 |
+| frontend/src/utilities/displays/tasks                                                                                         |          4 |        441 |         50 |         52 |        543 |
+| frontend/src/utilities/ui_tools                                                                                               |          4 |        811 |        248 |        132 |      1,191 |
+| websocket_server                                                                                                              |          6 |      1,884 |         70 |        237 |      2,191 |
+| websocket_server (Files)                                                                                                      |          4 |      1,639 |          8 |        199 |      1,846 |
+| websocket_server/.cargo                                                                                                       |          1 |          0 |          9 |          3 |         12 |
+| websocket_server/src                                                                                                          |          1 |        245 |         53 |         35 |        333 |
++-------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++-------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| filename                                                                                                                      | language   | code       | comment    | blank      | total      |
++-------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/.cargo/config.toml                                               | TOML       |          4 |          9 |          7 |         20 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/.github/workflows/pages.yml                                      | YAML       |         31 |         39 |          5 |         75 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/.github/workflows/rust.yml                                       | YAML       |         20 |         31 |          9 |         60 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/Cargo.lock                                                       | TOML       |      6,687 |          2 |        691 |      7,380 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/Cargo.toml                                                       | TOML       |         13 |          0 |          2 |         15 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/Dockerfile                                                       | Docker     |         14 |         28 |         12 |         54 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/Trunk.toml                                                       | TOML       |          9 |         60 |         10 |         79 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/.env                                                    | Properties |          1 |          0 |          0 |          1 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/Cargo.toml                                              | TOML       |         13 |          4 |          2 |         19 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/06.27.2024.surql                                | SurrealQL  |        383 |         63 |         62 |        508 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/Local/Backup.surql                              | SurrealQL  |        340 |         60 |         59 |        459 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/Local/database.surql                            | SurrealQL  |        332 |         57 |         60 |        449 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/Local/localhost-2024-06-17.surql                | SurrealQL  |        339 |         60 |         61 |        460 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/Local/v2-data-2024-06-17.surql                  | SurrealQL  |        326 |         58 |         50 |        434 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/Local/v2-schema-2024-06-17.surql                | SurrealQL  |         82 |         27 |         28 |        137 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/Production/master-techapp-2024-07-04-TEST.surql | SurrealQL  |        375 |         62 |         65 |        502 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/Production/master-techapp-2024-07-04.surql      | SurrealQL  |        372 |         60 |         64 |        496 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/backups/db.surql                                        | SurrealQL  |        358 |         63 |         62 |        483 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/src/lib.rs                                              | Rust       |        130 |          7 |         29 |        166 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/database/src/schema/mod.rs                                       | Rust       |        524 |         71 |         69 |        664 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/docker-compose.yml                                               | YAML       |         97 |         37 |          5 |        139 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/.env                                                    | Properties |          1 |          0 |          0 |          1 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/Cargo.toml                                              | TOML       |         49 |         11 |          8 |         68 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/assets/manifest.json                                    | JSON       |         23 |          0 |          1 |         24 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/assets/sw.js                                            | JavaScript |         21 |          2 |          3 |         26 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/index.html                                              | HTML       |        106 |         10 |         24 |        140 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/app_state.rs                                        | Rust       |        431 |         38 |         55 |        524 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/dummy_worker.rs                                     | Rust       |          5 |          0 |          0 |          5 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/lib.rs                                              | Rust       |          1 |          0 |          0 |          1 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/main.rs                                             | Rust       |        334 |         39 |         36 |        409 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/pages/downloads_page.rs                             | Rust       |         59 |          3 |         12 |         74 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/pages/login_page.rs                                 | Rust       |        173 |          4 |         22 |        199 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/pages/main_page.rs                                  | Rust       |         28 |          1 |          2 |         31 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/pages/menu_bar.rs                                   | Rust       |        114 |          9 |         11 |        134 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/pages/mod.rs                                        | Rust       |          6 |          0 |          0 |          6 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/pages/signup_page.rs                                | Rust       |        158 |          7 |         30 |        195 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/pages/webconsole_page.rs                            | Rust       |          0 |          0 |          1 |          1 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/aging_tasks/mod.rs                             | Rust       |          6 |         30 |          4 |         40 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/ai_playground/mod.rs                           | Rust       |        184 |          3 |         29 |        216 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/completed_tasks/mod.rs                         | Rust       |         18 |          6 |          2 |         26 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/github_issue/mod.rs                            | Rust       |         87 |          1 |         21 |        109 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/mod.rs                                         | Rust       |         47 |          0 |          3 |         50 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/my_tasks/mod.rs                                | Rust       |         28 |         24 |          4 |         56 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/quote_fulfilled_tasks/mod.rs                   | Rust       |          0 |          0 |          1 |          1 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/store_tasks/mod.rs                             | Rust       |         22 |          2 |          4 |         28 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/terminal/chart.rs                              | Rust       |        104 |          0 |         13 |        117 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/terminal/mod.rs                                | Rust       |         35 |          1 |          7 |         43 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/toolbox/mod.rs                                 | Rust       |         38 |          0 |         12 |         50 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/toolbox/storage_api.rs                         | Rust       |        302 |          8 |         49 |        359 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/web_console/charts.rs                          | Rust       |         84 |         10 |         14 |        108 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/web_console/display.rs                         | Rust       |        167 |          2 |         19 |        188 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/web_console/mod.rs                             | Rust       |         47 |          1 |         12 |         60 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/tabs/web_console/websockets.rs                      | Rust       |        435 |         30 |         59 |        524 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/chat.rs                                | Rust       |         70 |          0 |          8 |         78 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/conv.rs                                | Rust       |         70 |         14 |         16 |        100 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/gpts.rs                                | Rust       |          4 |          7 |          7 |         18 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/mod.rs                                 | Rust       |          9 |          2 |          6 |         17 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/model.rs                               | Rust       |          7 |          0 |          2 |          9 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/oa_client.rs                           | Rust       |          9 |          0 |          4 |         13 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/tool_call.rs                           | Rust       |        157 |         22 |         29 |        208 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/tools/ai_tools.rs                      | Rust       |         24 |          0 |          5 |         29 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/tools/mod.rs                           | Rust       |         16 |          3 |          8 |         27 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/tools/spec.rs                          | Rust       |         50 |          4 |         12 |         66 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/tools/weather.rs                       | Rust       |         40 |          5 |          8 |         53 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/utils/mod.rs                           | Rust       |          2 |          3 |          4 |          9 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ai/utils/x_value.rs                       | Rust       |         16 |          0 |          4 |         20 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/chats/highlighter.rs             | Rust       |        164 |         10 |         19 |        193 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/chats/markdown_editor.rs         | Rust       |        256 |         28 |         49 |        333 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/chats/mod.rs                     | Rust       |        237 |          6 |         40 |        283 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/chats/parser.rs                  | Rust       |        228 |         59 |         44 |        331 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/chats/viewer.rs                  | Rust       |        158 |          2 |         14 |        174 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/mod.rs                           | Rust       |          3 |          0 |          1 |          4 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/modals/ai_chat.rs                | Rust       |          0 |          0 |          1 |          1 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/modals/create_task_modal.rs      | Rust       |        293 |         21 |         38 |        352 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/modals/mod.rs                    | Rust       |        280 |         23 |         44 |        347 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/modals/task_modal.rs             | Rust       |        734 |         46 |         83 |        863 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/tasks/mod.rs                     | Rust       |          3 |          0 |          0 |          3 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/tasks/sub_menu.rs                | Rust       |          0 |         15 |          3 |         18 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/tasks/task_cards.rs              | Rust       |        158 |         31 |         16 |        205 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/displays/tasks/task_layout.rs             | Rust       |        280 |          4 |         33 |        317 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/filter.rs                                 | Rust       |         64 |          8 |         12 |         84 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/get_other.rs                              | Rust       |         52 |          0 |         11 |         63 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/get_tasks.rs                              | Rust       |         79 |          1 |         12 |         92 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/handle_live_data.rs                       | Rust       |        197 |         62 |         32 |        291 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/interact_tasks.rs                         | Rust       |        155 |          3 |         22 |        180 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/mod.rs                                    | Rust       |        230 |         27 |         36 |        293 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/sortable.rs                               | Rust       |         34 |         13 |          7 |         54 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/task_crud.rs                              | Rust       |         78 |         19 |         13 |        110 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ui_tools/autocomplete.rs                  | Rust       |        208 |         65 |         25 |        298 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ui_tools/carl_dark.rs                     | Rust       |        330 |         92 |         61 |        483 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ui_tools/mod.rs                           | Rust       |          3 |          0 |          0 |          3 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/ui_tools/toasts.rs                        | Rust       |        270 |         91 |         46 |        407 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/utilities/update_tasks.rs                           | Rust       |        179 |          3 |         42 |        224 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/frontend/src/webworker.rs                                        | Rust       |         67 |         27 |         21 |        115 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/websocket_server/.cargo/config.toml                              | TOML       |          0 |          9 |          3 |         12 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/websocket_server/.env                                            | Properties |          1 |          0 |          0 |          1 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/websocket_server/Cargo.lock                                      | TOML       |      1,590 |          2 |        190 |      1,782 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/websocket_server/Cargo.toml                                      | TOML       |         15 |          2 |          4 |         21 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/websocket_server/Dockerfile                                      | Docker     |         33 |          4 |          5 |         42 |
+| /home/shadowbroker/Documents/Tech/Programming/MtechServer2.0/websocket_server/src/main.rs                                     | Rust       |        245 |         53 |         35 |        333 |
+| Total                                                                                                                         |            |     20,661 |      1,826 |      2,885 |     25,372 |
++-------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
