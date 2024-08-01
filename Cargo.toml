@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "Mastertech4.0",
+    "MtechServer2.0",
+    "database"
+]
