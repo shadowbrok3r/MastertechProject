@@ -1,9 +1,22 @@
 
-
-use crate::{database::{database::DATABASE, schema::{Priority, Record, Status, Store, TaskNotePayload, TaskPayload}}, utilities::Updatable};
-use log::info;
+use super::{Priority, Store, TaskNotePayload, TaskPayload, Status, Record};
 use surrealdb::opt::RecordId;
+use crate::DATABASE;
 use tokio::spawn;
+use log::info;
+
+pub trait Updatable { // This is correctly implemented
+    fn update_completed(&self, completed: bool);
+    fn update_due_date(&self, due_date: String);
+    fn update_assignee_initials(&self, initials: String);
+    fn update_task_name(&self, name: String);
+    fn update_status(&self, status: Status);
+    fn update_dep(&self, store: Store);
+    fn update_priority(&self, priority: Option<Priority>);
+    fn update_task_description(&self, description: String);
+    fn update_checkin_notes(&self, checkin_notes: Option<String>);
+    fn update_task_notes(&self, new_msg: String);
+}
 
 impl Updatable for TaskPayload {
     fn update_completed(&self, completed: bool) {
@@ -218,4 +231,3 @@ impl Updatable for TaskPayload {
         });
     }
 }
-

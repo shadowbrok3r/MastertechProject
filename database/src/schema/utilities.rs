@@ -1,18 +1,52 @@
-
-
-use crate::{database::{database::DATABASE, schema::{ClientId, ConnectedClient, Record, Store, TaskId, TaskNotePayload, TaskPayload, User, TASK_NOTE_TABLE, TASK_TABLE}}, utilities::Task};
-use crossbeam::channel::Sender;
-use log::{debug, error, info};
+use crate::{DATABASE, schema::{Cmd, SystemInformation, ClientId, ConnectedClient, Record, Store, TaskId, TaskNotePayload, TaskPayload, User, TASK_NOTE_TABLE, TASK_TABLE}};
+use async_trait::async_trait;
 use surrealdb::sql::{Id, Thing};
-use serde::{Deserialize, Serialize};
-use surrealdb::opt::RecordId;
-use tokio::spawn;
+use crossbeam::channel::Sender;
+use anyhow::{Result, Error};
+use log::{info, debug};
+use serde::Serialize;
 use std::fmt::Debug;
-// use crate::app_state::NewTicketChannel;
 
-// use super::Task;
+pub async fn query_user_from_email(email: String) -> Result<User, Error>{
+    let query = format!("SELECT id, name, everest_initials, email, store FROM user WHERE email == $email"); //  OR email == $email
 
-pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> anyhow::Result<(), anyhow::Error> {
+    if email.contains("@pclaptops.com"){
+        DATABASE.set("email", email.clone()).await?;
+    } else {
+        DATABASE.set("email", format!("{}@pclaptops.com", email.clone())).await?;
+    }
+
+    info!("Email: {}", email);
+    let user: Option<User> = DATABASE.query(query).await?.take(0)?;
+    info!("user: {:?}", user.clone());
+    // let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
+    Ok(user.unwrap())
+}
+
+pub async fn query_id<'a, T>(table: &'a str, id: T) 
+    -> Result<Option<Record>, Error>
+        where T: Serialize + Debug + Clone
+{
+    let query = format!("SELECT * FROM {table} WHERE id == ${table}");
+    DATABASE.set(table, id).await.unwrap();
+    let record: Option<Record> = DATABASE.query(query.clone()).await?.take(0).unwrap();
+    info!("Query: {:?}  // {}", record, query);
+    Ok(record)
+}
+
+pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
+    bincode::serialize(system_info).expect("Failed to serialize SystemInformation")
+}
+
+pub fn _deserialize_system_info(bytes: &[u8]) -> SystemInformation {
+    bincode::deserialize(bytes).expect("Failed to deserialize SystemInformation")
+}
+
+pub fn deserialize_command(bytes: &[u8]) -> Cmd {
+    bincode::deserialize(bytes).expect("Failed to deserialize Cmd")
+}
+
+pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
     debug!("get_tasks");
     let query = format!("SELECT * FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note");
     let query_results: Vec<TaskPayload> = DATABASE.query(query).await?.take(0)?;
@@ -20,7 +54,7 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> anyhow::Result<(), anyho
     Ok(())
 }
 
-// pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Action, LiveTaskPayload)) -> anyhow::Result<(), anyhow::Error> {
+// pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Action, LiveTaskPayload)) -> Result<(), Error> {
 //     debug!("get_associated_ticket");
 //     let service_num = new_task.1.clone().service_number.unwrap_or_default();
 //     DATABASE.set("service_num", service_num).await?;
@@ -32,7 +66,7 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> anyhow::Result<(), anyho
 //     Ok(())
 // }
 
-pub async fn get_associated_task_notes(tx: Sender<TaskNotePayload>, note_id: Id) -> anyhow::Result<(), anyhow::Error> {
+pub async fn get_associated_task_notes(tx: Sender<TaskNotePayload>, note_id: Id) -> Result<(), Error> {
     debug!("get_associated_task_notes");
     DATABASE.set("id", note_id).await?;
     let note: Option<TaskNotePayload> = DATABASE.query(format!("SELECT * FROM task_note WHERE id == $id")).await?.take(0)?;
@@ -42,7 +76,7 @@ pub async fn get_associated_task_notes(tx: Sender<TaskNotePayload>, note_id: Id)
     Ok(())
 }
 
-pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> anyhow::Result<(), anyhow::Error> {
+pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), Error> {
     debug!("get_store_users");
     DATABASE.set("store", store).await?;
     let data: Vec<User> = DATABASE.query("SELECT name, store, everest_initials, id, email FROM user WHERE store == $store").await?.take(0)?;
@@ -50,7 +84,7 @@ pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> anyhow::Res
     Ok(())
 }
 
-pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>, user_id: User) -> anyhow::Result<(), anyhow::Error> {
+pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>, user_id: User) -> Result<(), Error> {
     debug!("get_connected_clients");
     DATABASE.set("id", user_id.id.0).await?;
     let query: Vec<ConnectedClient> = DATABASE.query("SELECT * FROM connected_client WHERE assigned_user == $id").await?.take(0)?;
@@ -58,7 +92,7 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>, user_id: Us
     Ok(())
 }
 
-pub async fn disconnect_client(tx: Sender<Vec<ClientId>>, id: ClientId) -> anyhow::Result<(), anyhow::Error> {
+pub async fn disconnect_client(tx: Sender<Vec<ClientId>>, id: ClientId) -> Result<(), Error> {
     DATABASE.set("id", id.0.id).await?;
     let query: Vec<ClientId> = DATABASE.update("UPDATE connected_client SET connected = false WHERE id == $id").await?;
     tx.try_send(query)?;
@@ -66,14 +100,14 @@ pub async fn disconnect_client(tx: Sender<Vec<ClientId>>, id: ClientId) -> anyho
     Ok(())
 }
 
-pub async fn modify_connected_client(tx: Sender<Vec<ConnectedClient>>, user_id: User) -> anyhow::Result<(), anyhow::Error> {
+pub async fn modify_connected_client(tx: Sender<Vec<ConnectedClient>>, user_id: User) -> Result<(), Error> {
     DATABASE.set("id", user_id.id.0).await?;
     let query: Vec<ConnectedClient> = DATABASE.query("SELECT * FROM connected_client WHERE assigned_user == $id").await?.take(0)?;
     tx.try_send(query)?;
     Ok(())
 }
 
-pub async fn delete_task(id: Thing) -> anyhow::Result<(), anyhow::Error> {
+pub async fn delete_task(id: Thing) -> Result<(), Error> {
     let id = id.clone();
     info!("deleting id: {id:?}");
     DATABASE.set("id", id.id.clone()).await?;
@@ -82,12 +116,14 @@ pub async fn delete_task(id: Thing) -> anyhow::Result<(), anyhow::Error> {
 }
 
 
+#[async_trait]
 pub trait TaskNoteMod {
-    async fn delete_note(&mut self) -> anyhow::Result<(), anyhow::Error>;
+    async fn delete_note(&mut self) -> Result<(), Error>;
 }
 
+#[async_trait]
 impl TaskNoteMod for TaskNotePayload {
-    async fn delete_note(&mut self) -> anyhow::Result<(), anyhow::Error> {
+    async fn delete_note(&mut self) -> Result<(), Error> {
         let id = self.id.clone();
         if let Some(id) = id {
             info!("deleting id: {:?}", id.clone());
@@ -99,7 +135,7 @@ impl TaskNoteMod for TaskNotePayload {
     }
 }
 
-pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Result<(), anyhow::Error>{
+pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> Result<(), Error>{
     let id = task_id.clone();
     let task_note = TaskNotePayload { task_id: Some(id), note: new_msg, ..Default::default() };
 
@@ -115,7 +151,7 @@ pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Resu
 }
 
 // impl Task for TaskPayload{
-//     fn get_computer_data<T>(&mut self, tx: Sender<Option<T>>) //-> anyhow::Result<(), anyhow::Error> 
+//     fn get_computer_data<T>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error> 
 //         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
 //     {
 //         let id: RecordId = self.id.clone().unwrap().0;
@@ -137,7 +173,7 @@ pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Resu
 //         });
 //     }
 
-//     fn get_customer_data<T>(&mut self, tx: Sender<Option<T>>) //-> anyhow::Result<(), anyhow::Error> 
+//     fn get_customer_data<T>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error> 
 //         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
 //     {
 //         let id: RecordId = self.id.clone().unwrap().0;
@@ -160,7 +196,7 @@ pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Resu
         
 //     }
     
-//     fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>) //-> anyhow::Result<(), anyhow::Error> 
+//     fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error> 
 //         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
 //     {
 //         let id: RecordId = self.id.clone().unwrap().0;
@@ -182,7 +218,7 @@ pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Resu
 //         });
 //     }
 
-//     fn get_ticket_payload<T>(&mut self, tx: Sender<Option<T>>)//-> anyhow::Result<(), anyhow::Error> 
+//     fn get_ticket_payload<T>(&mut self, tx: Sender<Option<T>>)//-> Result<(), Error> 
 //         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
 //     {
 //         let id: RecordId = self.id.clone().unwrap().0;
@@ -200,7 +236,7 @@ pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Resu
 //             };
 //         });
 //     }
-//     // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>)//-> anyhow::Result<(), anyhow::Error> 
+//     // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>)//-> Result<(), Error> 
 //     //     where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
 //     // {
 //     //     let id: RecordId = self.service_ticket.clone().unwrap().clone().0;

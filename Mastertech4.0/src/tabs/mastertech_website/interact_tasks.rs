@@ -1,8 +1,8 @@
+use database::schema::{updatable::Updatable, Priority, Status, TaskPayload, TicketPayload, User};
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use crate::{database::schema::{Priority, Status, TaskPayload, TicketPayload, User}, utilities::{displays::tasks::task_cards::date_colors, Interaction}};
+use crate::utilities::{displays::tasks::task_cards::date_colors, Interaction};
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
 use egui_extras::DatePickerButton;
-use crate::utilities::Updatable;
 use log::info;
 
 

@@ -9,11 +9,9 @@ RUN update-ca-certificates
 RUN cargo install trunk
 # COPY ./dist /dist
 COPY Trunk.toml Trunk.toml
-COPY ./frontend ./frontend
-COPY ./database ./database
 COPY Cargo.toml Cargo.toml
 COPY .cargo /.cargo
-COPY frontend/index.html frontend/index.html 
+COPY index.html index.html 
 # COPY rust-toolchain.toml rust-toolchain.toml 
 
 CMD [ "trunk", "serve", "--release" ]
@@ -47,7 +45,7 @@ CMD [ "trunk", "serve", "--release" ]
 # COPY ./frontend ./frontend
 # COPY ./database ./database
 # COPY Cargo.toml Cargo.toml
-# COPY frontend/index.html frontend/index.html 
+# COPY index.html index.html 
 # 
 # FROM scratch
 # ENTRYPOINT [ "mtechserver-bb39a05226a8fb4c_bg.wasm" ]

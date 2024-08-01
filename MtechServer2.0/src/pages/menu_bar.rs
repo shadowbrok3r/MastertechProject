@@ -1,5 +1,5 @@
 use database::schema::Notification;
-use database::DATABASE;
+use database::{self, DATABASE};
 use eframe::egui::{menu, Align, Context, Margin, Rounding, ScrollArea, Separator, TextEdit};
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use wasm_bindgen_futures::spawn_local;
@@ -116,8 +116,10 @@ impl MtechServer{
                             }
                             
                             if ui.add(Button::new("Logout")).clicked(){
-                                wasm_cookies::delete("user");
-                                wasm_cookies::delete("jwt");
+                                #[cfg(target_arch="wasm32")]{
+                                    wasm_cookies::delete("user");
+                                    wasm_cookies::delete("jwt");
+                                }
                                 spawn_local(async move {
                                     let invalidation = DATABASE.invalidate().await;
                                     info!("invalidated connection: {:?}", invalidation);

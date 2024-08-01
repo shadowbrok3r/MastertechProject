@@ -1,24 +1,24 @@
-
-use std::fmt::Display;
+use std::collections::HashMap;
 
 use serde::{Serialize, Deserialize};
 use surrealdb::{opt::RecordId, sql::{Id, Thing}};
+pub mod prestashop_schema;
+pub mod deserializer;
+pub mod utilities;
+pub mod updatable;
 
-use super::{prestashop_schema::{Address, CustomerMessage, CustomerThread, Employee, Order}, SystemInformation};
-
-pub const _NS: &str = "Mastertech";
-pub const _DB: &str = "MastertechDB";
-pub const _USER_SCOPE: &str = "user";
-
+pub const NS: &str = "Mastertech";
+pub const DB: &str = "MastertechDB";
+pub const USER_SCOPE: &str = "user";
 pub const TICKET_TABLE: &str = "service_order";
 pub const CUSTOMER_TABLE: &str = "customer";
 pub const COMPUTER_TABLE: &str = "computer";
 pub const TASK_TABLE: &str = "task";
-pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 pub const TASK_NOTE_TABLE: &str = "task_note";
-pub const _SEB_TABLE: &str = "seb_data";
-pub const _USER_TABLE: &str = "user";
-pub const _NOTIFICATION_TABLE: &str = "notification";
+pub const SEB_TABLE: &str = "seb_data";
+pub const USER_TABLE: &str = "user";
+pub const NOTIFICATION_TABLE: &str = "notification";
+pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -77,6 +77,7 @@ impl Default for UserId {
     }
 }
 
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct TaskPayload{
     pub id: Option<TaskId>,
@@ -98,13 +99,14 @@ pub struct LiveTaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
     pub service_ticket: Option<TicketId>,
+    // #[serde(skip)]
     pub everest_initials: String,
     pub task_description: String, 
-    pub assignee: Option<UserId>,
+    pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
-    pub due_date: String, 
+    pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
-    pub task_note: Option<Vec<TaskNoteId>>,
+    pub task_note: Option<Vec<TaskNoteId>>, // 
     pub completed: bool,
     pub status: Status,
 }
@@ -115,7 +117,7 @@ pub struct TicketPayload{
     pub created_at: Option<String>,
     pub customer: Option<CustomerData>,
     pub computer: Option<ComputerData>,
-    pub service_task: Option<TaskId>,
+    pub service_ticket: Option<TaskId>,
     pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
@@ -132,13 +134,11 @@ pub struct TicketPayload{
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct TicketData{
+pub struct TicketData{ // Live Ticket Payload
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
-    // pub due_date: Option<String>, // GET RID OF THIS, WHY IS IT HERE
     pub customer: Option<CustomerId>,
     pub computer: Option<ComputerId>,
-    pub service_task: Option<TaskId>,
     pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
@@ -159,10 +159,9 @@ pub struct CustomerData{
     pub id: Option<CustomerId>, 
     pub cust_code: String,
     pub part_order_links: Option<Vec<String>>,
-    pub computers: Option<Vec<ComputerId>>,
     pub name: String,
     pub phone_number: String,
-    pub phone_number_2: String,
+    pub phone_number_2: String, // Option<String>
     pub email: String,
     pub li_doc: String,
     pub li_amnt: String,
@@ -181,6 +180,10 @@ pub struct ComputerData{
     pub gpu: String,
     pub ram: String,
     pub drives: Vec<DriveData>,
+}
+impl ComputerData{
+    pub fn new() -> Self { ComputerData{ drives: Vec::new(), ..Default::default() } }
+    pub fn add_disk(&mut self, disk: DriveData){ self.drives.push(disk); }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -248,17 +251,6 @@ pub struct TaskNotePayload{
     pub note: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PrestashopPayload{
-    pub customer: CustomerData,
-    pub order: Order,
-    pub sales_rep: Option<Employee>,
-    pub split_rep: Option<Employee>,
-    pub address: Address,
-    pub customer_threads: Vec<CustomerThread>,
-    pub customer_messages: Vec<CustomerMessage>
-}
-
 // I will probably end up merging ModifyTask and TaskPayload since they contain most of the exact same data
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ModifyTask{
@@ -278,6 +270,17 @@ pub struct ModifyTask{
     pub task_description: Option<String>, 
 }
 
+#[derive(Serialize, Debug, Clone, Deserialize, Default)]
+pub struct ConnectedClient{ // <'a>
+    pub id: Option<ClientId>,
+    pub assigned_user: Option<UserId>,
+    pub client_hash: String,
+    pub connection_string: String,
+    pub command_history: Option<Vec<String>>,
+    pub connected: bool,
+}
+
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Notification{
     /// receiver of notification
@@ -285,10 +288,9 @@ pub struct Notification{
     /// description of notification
     pub notification_description: String, 
     /// type of notification
-    pub notification_type: NotificationType,
+    pub notification_type: String,
     /// Has the notification been read?
-    pub status: NotificationStatus, 
-    pub user_initials: String
+    pub status: String
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -343,11 +345,65 @@ pub enum Category{
     CompletedTasks,
 }
 
-// #[derive(Deserialize)]
-// struct CommandRequest {
-//     _client_id: String,
-//     _command: String,
-// }
+#[derive(Deserialize)]
+struct CommandRequest {
+    _client_id: String,
+    _command: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+pub struct GetKeysResponse{
+    pub webroot_key: String,
+    pub superanti_key: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SystemInformation {
+    /// Live CPU usage as a percentaget
+    pub cpu_percentage: f32,
+    /// Live CPU clock speed
+    pub cpu_clock: f32,
+    /// Live system temps
+    pub component_temps: HashMap<String, f32>,
+    /// Live RAM usage in Mb
+    pub used_memory: f32,
+    /// Total RAM
+    pub total_memory: f32,
+    /// Disk usage
+    pub disks: String,
+    /// Name of machine
+    pub name: String,
+    /// Kernel version
+    pub kernel_version: String,
+    /// OS version
+    pub os_version: String,
+    /// Hostname based on DNS
+    pub hostname: String,
+    /// Number of Physical CPU's
+    pub number_of_cpus: String,
+
+    pub network_interfaces: HashMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Cmd{
+    LiveData,
+    Command,
+    Tuneup,
+    Cps,
+    Qc,
+    SfcScan,
+    DismScan,
+    ChkDsk,
+    Mbr2Gpt,
+    ReadDir(String),
+    DirContents(Vec<String>),
+    ChangeDirectory(String),
+    Execute(String),
+    CopyTools(String),
+    Quit,
+    None
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default)]
 pub enum Store{
@@ -358,21 +414,19 @@ pub enum Store{
     AF,
     WJ, 
     ORE,
-    SAN,
-    None
+    SAN
 }
 
 impl Store{
-    pub fn as_str(&mut self) -> &str{
+    pub fn as_str(&self) -> &str{
         match self{
             Store::RIV => "RIV",
             Store::LTN => "LTN",
             Store::MUR => "MUR",
-            Store::AF => "AF",
-            Store::WJ => "WJ",
+            Store::AF =>  "AF",
+            Store::WJ =>  "WJ",
             Store::ORE => "ORE",
             Store::SAN => "SAN",
-            Store::None => "MUR"
         }
     }
     pub fn store_email(&self) -> &'static str {
@@ -384,21 +438,9 @@ impl Store{
             Store::AF => "pclaf@pclaptops.com",
             Store::SAN => "pclsan@pclaptops.com",
             Store::ORE => "pclore@pclaptops.com",
-            _ => "pclmur@pclaptops.com"
         }
     }
-    pub const _VALUES: [Self; 7] = [Self::RIV, Self::LTN, Self::MUR, Self::AF, Self::WJ, Self::ORE, Self::SAN];
-}
-
-
-#[derive(Serialize, Debug, Clone, Deserialize, Default)]
-pub struct ConnectedClient{ // <'a>
-    pub id: Option<ClientId>,
-    pub assigned_user: Option<UserId>,
-    pub client_hash: String,
-    pub connection_string: String,
-    pub command_history: Vec<String>,
-    pub connected: bool,
+    pub const VALUES: [Self; 7] = [Self::RIV, Self::LTN, Self::MUR, Self::AF, Self::WJ, Self::ORE, Self::SAN];
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
@@ -406,15 +448,15 @@ pub struct User {
     pub id: UserId,
     pub name: String,
     pub everest_initials: String,
-    // #[serde(skip)]
     pub email: String,
     pub store: Store,
-    pub notifications: Option<Vec<NotificationId>>,
-    pub connected_clients: Option<Vec<ClientId>>
+    // pub notifications: Option<Vec<NotificationId>>,
+    pub minio_access_key: Option<String>,
+    pub minio_secret_key: Option<String>
 }
 
 impl Priority{
-    pub fn as_str(&mut self) -> &str{
+    pub fn as_str(&self) -> &str{
         match self{
             Priority::Normal => "Normal",
             Priority::Rfs => "Rfs",
@@ -427,7 +469,7 @@ impl Priority{
 }
 
 impl Status{
-    pub fn as_str(&mut self) -> &str{
+    pub fn as_str(&self) -> &str{
         match self{
             Status::Todo => "Todo",
             Status::InRepair => "In Repair",
@@ -435,35 +477,4 @@ impl Status{
         }
     }
     pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
-}
-impl ComputerData{
-    pub fn new() -> Self{
-        ComputerData{
-            drives: Vec::new(),
-            ..Default::default()
-        }
-    }
-
-    pub fn add_disk(&mut self, disk: DriveData){
-        self.drives.push(disk);
-    }
-}
-
-
-impl Display for SystemInformation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "==> cpu_percentage: {} \n==> comps: {:?} \n==> used_memory: {} \n==> total_memory: {} \n==> disks: {} \n==> name: {} \n==> kernel_version: {} \n==> os_version: {} \n==> hostname: {} \n==> number_of_cpus: {} \n==> network_interfaces: {:#?} \n", 
-            self.cpu_percentage,
-            self.component_temps,
-            self.used_memory,
-            self.total_memory,
-            self.disks,
-            self.name,
-            self.kernel_version,
-            self.os_version,
-            self.hostname,
-            self.number_of_cpus,
-            self.network_interfaces,
-        )
-    }
 }

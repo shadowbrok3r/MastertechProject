@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
-use crate::{app_state::MastertechContext, database::GetKeysResponse, tabs::tur_sheet::get_ticket::SendRequest};
+use crate::{app_state::MastertechContext, tabs::tur_sheet::get_ticket::SendRequest};
+use database::schema::GetKeysResponse;
 use rust_embed::Embed;
 
 #[derive(Embed)]

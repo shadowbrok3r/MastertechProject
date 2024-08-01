@@ -1,5 +1,5 @@
 use std::cmp::Reverse;
-use crate::database::schema::{Priority, User, Status, TaskPayload};
+use database::schema::{Priority, User, Status, TaskPayload};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
 use crate::utilities::FilterTasks;

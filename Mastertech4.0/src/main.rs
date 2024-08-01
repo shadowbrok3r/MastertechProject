@@ -1,11 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use filesystem::system_info::ComputerInfo;
 use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
-use database::{database::{Database, DATABASE}, schema::{ComputerData, ComputerId, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
+use database::{schema::{ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}, Database, DATABASE};
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use tabs::{logger::logging::builder, tur_sheet::scaffold::AsanaResponse};
 use crate::utilities::themes::carl_dark::{Aesthetix, CarlDark};
 use crate::utilities::toasts::{Toast, ToastKind, ToastOptions};
-use std::{fs::File, sync::{ Arc, Condvar, Mutex}};
+use std::sync::{Arc, Condvar, Mutex};
 use app_state::{AppState, MasterTechApp};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
@@ -19,9 +20,7 @@ pub mod tabs;
 pub mod pages;
 pub mod viewports;
 pub mod utilities;
-pub mod requests;
 mod filesystem;
-mod database;
 
 // #[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
@@ -148,7 +147,7 @@ impl eframe::App for MasterTechApp {
         }
 
         while let Ok(message) = self.context.rx.try_recv() {       
-            if let Ok(info) = serde_json::from_str::<database::GetKeysResponse>(&message) {
+            if let Ok(info) = serde_json::from_str::<GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
                     self.context.keys = info;
                 }
@@ -234,7 +233,7 @@ impl eframe::App for MasterTechApp {
             if let Some(computer_id) = computer.id.clone() {
                 owned_computers.push(computer_id);
             }
-            customer.computers = Some(owned_computers);
+            // customer.computers = Some(owned_computers);
             if let Some(ticket_id) = &ticket.id {
                 services.push(ticket_id.clone());
             }

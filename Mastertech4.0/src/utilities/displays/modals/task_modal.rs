@@ -1,3 +1,4 @@
+use database::schema::TaskPayload;
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
 use egui_extras::{Size, StripBuilder};
 use chrono::{DateTime, Utc};
@@ -6,7 +7,7 @@ use serde::Serialize;
 use log::info;
 use tokio::spawn;
 
-use crate::{database::schema::TaskPayload, utilities::{displays::chats::ChatView, DisplayModal, ModalTypes}};
+use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes};
 
 use super::ModalState;
 

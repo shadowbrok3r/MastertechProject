@@ -1,14 +1,61 @@
-[workspace]
-resolver = "2"
-members=[ "frontend", "database" ] #  , "websocket_server"
-exclude = ["websocket_server"]
-package.exclude = ["websocket_server"]
+[package]
+name = "mtechserver"
+version = "2.0.2"
+edition = "2021"
 
-[workspace.dependencies]
-database = { path = "database" }
-serde = { version = "1", features = ["derive"] }
-surrealdb = { version = "1.5", features = ["protocol-ws"] } # kv-speedb "protocol-http", "native-tls"
-log="0.4"
-chrono = "0.4"
-dotenv = "0.15"
-serde_json = "1"
+[dependencies]
+# surrealdb-alpha = { workspace=true }
+wasm-bindgen = "0.2"
+web-time = "1.1"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+gloo-worker = "0.5"
+gloo-net = { version = "0.6", features = ["http"]}
+web-sys = { version = "0.3", features = ["Storage", "Window", "Location"] }
+wasm-cookies = { version= "0.2" }
+ewebsock = "0.6"
+egui_plot = "0.28"
+rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] } # default-features = false
+# rust-s3 = {version = "0.23.0-beta2", features = ["wasm"], default-features = false}
+async-openai-wasm = { version = "0.23" }
+derive_more = {version = "0.99", features = ["from"]}
+rpc-router = "0.1"
+schemars = "0.8"
+mime_guess = "2"
+reqwest = { version = "0.12", features = ["stream", "json"] }
+bytes = "1.6"
+gloo-console = "0.3.0"
+
+database = { workspace=true }
+once_cell = { workspace=true }
+async-trait = { workspace=true }
+log  = { workspace=true }
+serde = { workspace=true }
+chrono = { workspace=true }
+dotenv = { workspace=true }
+serde_json = { workspace=true }
+surrealdb = { workspace=true }
+egui_extras = { workspace=true }
+egui_dock = { workspace=true }
+anyhow = { workspace=true }
+eframe = { workspace=true }
+ratframe = { workspace=true }
+ratatui = { workspace=true }
+crossbeam = { workspace=true }
+futures = { workspace=true }
+egui_ratatui = { workspace=true }
+fuzzy-matcher = { workspace=true }
+uuid = { workspace=true }
+bincode = { workspace=true }
+rfd = { workspace=true }
+regex = { workspace=true }
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+
+[[bin]]
+name = "dummy_worker"
+path = "src/dummy_worker.rs"
+
+[[bin]]
+name = "live_worker"
+path = "src/live_worker.rs"

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::{app_state::MastertechContext, database::{database::DATABASE, schema::{Status, TaskPayload}}, utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks}};
+use crate::{app_state::MastertechContext, utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks}};
+use database::{schema::{Status, TaskPayload}, DATABASE};
 use eframe::egui::Ui;
 use tokio::spawn;
 use log::debug;
@@ -8,7 +9,6 @@ use tracing::info;
 
 
 pub mod sortable;
-pub mod update_tasks;
 pub mod interact_tasks;
 pub mod filter;
 
@@ -56,7 +56,7 @@ impl MastertechContext {
     
                 let mut vals = Status::VALUES;
                     // Define the custom sort order
-                let order = |mut name: Status| match name.as_str() {
+                let order = |name: Status| match name.as_str() {
                     "Todo" => 1,
                     "In Repair" => 2,
                     "Complete" => 3,

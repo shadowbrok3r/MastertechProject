@@ -4,8 +4,8 @@ use egui_extras::{Size, StripBuilder};
 use log::info;
 use serde::{Deserialize, Serialize};
 use tokio::spawn;
-
-use crate::{app_state::{AppState, MainPages, MasterTechApp}, database::database::{Database, DATABASE}, utilities::crypto::pass_hash::save_encrypted_user_data};
+use database::{Database, DATABASE};
+use crate::{app_state::{AppState, MainPages, MasterTechApp}, utilities::crypto::pass_hash::save_encrypted_user_data};
 pub const HASH: &[u8; 31] = b"TheUltimagicalSecretestPassword";
 
 #[derive(Serialize, Deserialize, Debug)]

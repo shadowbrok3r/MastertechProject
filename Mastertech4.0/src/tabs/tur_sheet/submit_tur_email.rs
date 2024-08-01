@@ -1,8 +1,8 @@
 use std::{collections::HashMap, path::PathBuf};
 use lettre::{{Message, SmtpTransport, Transport}, transport::smtp::authentication::Credentials, message::header::ContentType};
 use serde_json::Value;
-
-use crate::{app_state::MastertechContext, database::schema::{Store, User}};
+use database::schema::{Store, User};
+use crate::app_state::MastertechContext;
 
 use super::email_builder::{email_builder, Info};
 

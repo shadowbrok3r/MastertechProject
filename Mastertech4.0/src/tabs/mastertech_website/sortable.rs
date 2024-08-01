@@ -1,5 +1,6 @@
 use chrono::{DateTime, Timelike};
-use crate::{database::schema::{Priority, TaskPayload}, utilities::Sortable};
+use database::schema::{Priority, TaskPayload};
+use crate::utilities::Sortable;
 
 impl Sortable for Vec<TaskPayload>{
     fn sort_task_payloads(&mut self) -> &mut Vec<TaskPayload> {
