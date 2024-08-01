@@ -1,0 +1,25 @@
+MtechServer2.0/dist
+# Rust compile target directories:
+MtechServer2.0/target
+MtechServer2.0/target_ra
+MtechServer2.0/target_wasm
+MtechServer2.0/dist/**
+MtechServer2.0/dist/*
+MtechServer2.0/dist/dummy_worker_bg.wasm
+MtechServer2.0/dist/dummy_worker.js
+MtechServer2.0/dist/icon-256.png
+MtechServer2.0/dist/manifest.json
+MtechServer2.0/dist/mtechlogo.png
+MtechServer2.0/dist/sw.js
+MtechServer2.0/dist/pcllogo.png
+MtechServer2.0/websocket_server/output.log
+MtechServer2.0/rust-toolchain.toml
+
+Mastertech4.0/target
+Mastertech4.0/dist
+Mastertech4.0/
+Mastertech4.0/.env
+Mastertech4.0/Cargo.lock
+Mastertech4.0/output.log
+Mastertech4.0/data.enc
+Mastertech4.0/git-MasterTech.exe
