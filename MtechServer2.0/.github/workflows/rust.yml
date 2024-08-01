@@ -1,0 +1,59 @@
+on: [push, pull_request, workflow_dispatch]
+
+name: CI
+
+env:
+  # --cfg=web_sys_unstable_apis is required to enable the web_sys clipboard API which egui_web uses
+  # https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.Clipboard.html
+  # https://rustwasm.github.io/docs/wasm-bindgen/web-sys/unstable-apis.html
+  RUSTFLAGS: --cfg=web_sys_unstable_apis # -D warnings
+  #RUSTDOCFLAGS: -D warnings
+
+jobs:
+  trunk:
+    name: trunk
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: 1.79.0
+          target: wasm32-unknown-unknown
+          override: true
+      - name: Download and install Trunk binary
+        run: wget -qO- https://github.com/thedodd/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xzf-
+      - name: Build
+        run: ./trunk build
+#  release:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions-rs/toolchain@v1
+#        with:
+#          toolchain: stable
+#          target: wasm32-unknown-unknown
+
+#      - uses: jetli/trunk-action@v0.1.0
+#      - uses: jetli/wasm-bindgen-action@v0.1.0
+
+#      - uses: actions/checkout@v2#
+
+#      - run: trunk build --release --public-url /${{ github.event.repository.name }}/
+
+#      - uses: peaceiris/actions-gh-pages@v3
+#        if: github.ref == 'refs/heads/main'
+#        with:
+#          github_token: ${{ secrets.GITHUB_TOKEN }}
+#          publish_dir: ./dist
+        
+  # build:
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #       - os: self-hosted
+  #         TARGET: wasm32-unknown-unknown
+  #       # - os: windows-latest
+  #       #   TARGET: x86_64-pc-windows-msvc
+  #       #   EXTENSION: .exe
