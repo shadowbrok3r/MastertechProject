@@ -1,12 +1,8 @@
+pub use super::{logger_ui, LoggerUi, try_mut_log};
+use log::SetLoggerError;
 use std::sync::Mutex;
 
-pub use ui::logger_ui;
-pub use ui::LoggerUi;
-
-use log::SetLoggerError;
-use ui::try_mut_log;
-
-const LEVELS: [log::Level; log::Level::Trace as usize] = [
+pub const LEVELS: [log::Level; log::Level::Trace as usize] = [
     log::Level::Error,
     log::Level::Warn,
     log::Level::Info,
@@ -79,34 +75,9 @@ impl log::Log for EguiLogger {
     fn flush(&self) {}
 }
 
-/// Initializes the global logger.
-/// Should be called very early in the program.
-/// Defaults to max level Debug.
-///
-/// This is now deprecated, use [`builder()`] instead.
-#[deprecated(
-    since = "0.5.0",
-    note = "Please use `egui_logger::builder().init()` instead"
-)]
-pub fn init() -> Result<(), SetLoggerError> {
-    builder().init()
-}
+pub type GlobalLog = Vec<(log::Level, String, String)>;
 
-/// Same as [`init()`] accepts a [`log::LevelFilter`] to set the max level
-/// use [`Trace`](log::LevelFilter::Trace) with caution
-///
-/// This is now deprecated, use [`builder()`] instead.
-#[deprecated(
-    since = "0.5.0",
-    note = "Please use `egui_logger::builder().max_level(max_level).init()` instead"
-)]
-pub fn init_with_max_level(max_level: log::LevelFilter) -> Result<(), SetLoggerError> {
-    builder().max_level(max_level).init()
-}
-
-pub(crate) type GlobalLog = Vec<(log::Level, String, String)>;
-
-static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
+pub static LOG: Mutex<GlobalLog> = Mutex::new(Vec::new());
 
 /**
 This returns the Log builder with default values.

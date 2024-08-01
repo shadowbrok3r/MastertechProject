@@ -1,27 +1,27 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
 use database::{database::{Database, DATABASE}, schema::{ComputerData, ComputerId, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}};
-use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, Stroke, Vec2, ViewportBuilder};
+use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
+use tabs::{logger::logging::builder, tur_sheet::scaffold::AsanaResponse};
 use crate::utilities::themes::carl_dark::{Aesthetix, CarlDark};
 use crate::utilities::toasts::{Toast, ToastKind, ToastOptions};
-use simplelog::{WriteLogger, Config, LevelFilter};
 use std::{fs::File, sync::{ Arc, Condvar, Mutex}};
-use tabs::tur_sheet::scaffold::AsanaResponse;
 use app_state::{AppState, MasterTechApp};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
 use pages::login_page::HASH;
 use surrealdb::sql::Thing;
 use tokio::spawn;
+// use simplelog::{WriteLogger, Config, LevelFilter};
 
 pub mod app_state;
 pub mod tabs;
-mod filesystem;
-mod database;
 pub mod pages;
 pub mod viewports;
 pub mod utilities;
 pub mod requests;
+mod filesystem;
+mod database;
 
 // #[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
@@ -189,8 +189,7 @@ impl eframe::App for MasterTechApp {
             let mut owned_computers: Vec<ComputerId> = Vec::new();
             let mut services: Vec<TicketId> = Vec::new();
 
-            #[cfg(target_os="windows")]
-            {
+            #[cfg(target_os="windows")] {
                 let cps = &mut self.context.current_antivirus;
                 let mut cps_v = Vec::new();
                 let installed_antivirus = ComputerData::get_antivirus()
@@ -355,7 +354,7 @@ async fn main() -> eframe::Result<()> {
     // console_subscriber::init();
     // Init the logger
     // Configure log level and log file
-    egui_logger::builder().init().unwrap(); 
+    builder().init().unwrap(); 
     // let log_level = LevelFilter::Info; 
     // let log_file = File::create("output.log").unwrap();
     // WriteLogger::init( 
@@ -446,7 +445,7 @@ pub fn get_tasks(tx: Sender<Vec<TaskPayload>>){
             .unwrap()
             .take(0);
 
-        match query_results{
+        match query_results {
             Ok(data) => {
                 match tx.try_send(data){
                     Ok(_) => drop(tx),
@@ -458,7 +457,7 @@ pub fn get_tasks(tx: Sender<Vec<TaskPayload>>){
     });
 }
 
-pub(crate) fn load_icon() -> eframe::egui::IconData {
+pub(crate) fn load_icon() -> IconData {
 	let (icon_rgba, icon_width, icon_height) = {
 		let icon = include_bytes!("assets/masterlogoV2.ico");
 		let image = image::load_from_memory(icon)
