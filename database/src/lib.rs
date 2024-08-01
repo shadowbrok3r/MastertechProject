@@ -1,18 +1,13 @@
-pub mod schema;
-
-use log::info;
+use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Scope}, Error, Surreal};
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use once_cell::sync::Lazy;
+use serde_json::Value;
 use std::fmt::Debug;
 use schema::User;
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
-use serde_json::Value;
-
-use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Scope}, Error, Surreal // http::{Client as HttpClient, Https},
-};
-        
-
+use log::info;
 use self::schema::Record;
+
+pub mod schema;
 
 #[derive(Clone, Debug, Default)]
 pub struct Database{
