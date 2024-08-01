@@ -17,5 +17,4 @@ surrealdb = { workspace=true }
 uuid = { workspace=true }
 async-trait = { workspace=true }
 once_cell = { workspace=true }
-tokio ={ workspace=true }
 # surrealdb-alpha = { workspace=true }
