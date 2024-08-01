@@ -1,12 +1,10 @@
-pub mod logging;
-use std::sync::Mutex;
-
-use egui::{Color32, RichText};
+use eframe::egui::{widgets, Align, Color32, Layout, RichText, ScrollArea, Ui};
+use logging::{GlobalLog, LEVELS, LOG};
 use regex::{Regex, RegexBuilder};
+use std::sync::Mutex;
+pub mod logging;
 
-use crate::{GlobalLog, LEVELS, LOG};
-
-pub(crate) fn try_mut_log<F, T>(f: F) -> Option<T>
+pub fn try_mut_log<F, T>(f: F) -> Option<T>
 where
     F: FnOnce(&mut GlobalLog) -> T,
 {
@@ -99,7 +97,7 @@ impl LoggerUi {
     }
 
     /// This draws the Logger UI
-    pub fn show(self, ui: &mut egui::Ui) {
+    pub fn show(self, ui: &mut Ui) {
         if let Ok(ref mut logger_ui) = self.log_ui().lock() {
             logger_ui.ui(ui);
         } else {
@@ -107,7 +105,7 @@ impl LoggerUi {
         }
     }
 
-    pub(crate) fn ui(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn ui(&mut self, ui: &mut Ui) {
         try_mut_log(|logs| {
             let dropped_entries = logs.len().saturating_sub(self.max_log_length);
             drop(logs.drain(..dropped_entries));
@@ -167,7 +165,7 @@ impl LoggerUi {
 
         ui.horizontal(|ui| {
             ui.label("Max Log output");
-            ui.add(egui::widgets::DragValue::new(&mut self.max_log_length).speed(1));
+            ui.add(widgets::DragValue::new(&mut self.max_log_length).speed(1));
         });
 
         ui.horizontal(|ui| {
@@ -180,11 +178,11 @@ impl LoggerUi {
 
         let mut logs_displayed: usize = 0;
 
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, true])
+        ScrollArea::vertical()
+            .auto_shrink([false, false])
             .max_height(ui.available_height() - 30.0)
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
+            // .stick_to_bottom(true)
+            .show_rows(ui, 15.0, logs_displayed, |ui, _row| {
                 try_get_log(|logs| {
                     logs.iter().for_each(|(level, string, target)| {
                         if (!self.search_term.is_empty() && !self.match_string(string))
@@ -245,7 +243,7 @@ impl LoggerUi {
                 try_get_log(|logs| logs.len()).unwrap_or_default()
             ));
             ui.label(format!("Displayed: {}", logs_displayed));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Copy").clicked() {
                     ui.output_mut(|o| {
                         try_get_log(|logs| {

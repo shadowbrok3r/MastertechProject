@@ -18,22 +18,6 @@ pub mod logger;
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
         ui.label("Secret menu... -.-");
-        ui.menu_button("Sub menu", |ui| {
-            ui.label("(.)(.)");
-        });
-        if ui.button("update").clicked(){
-            // let (tx, rx) = crossbeam::channel::unbounded();
-
-            // let client = self.client.clone();
-
-            // spawn(async move {
-            //     let _ = run(client, tx.clone()).await;
-            // });
-            
-            // while let Ok(res) = rx.recv(){
-            //     self.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
-            // }
-        }
     }
 
     pub fn file_browser_popup(&mut self, ui: &mut Ui) {

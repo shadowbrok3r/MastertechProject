@@ -1,7 +1,5 @@
-use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, LocalSebData, PrestashopPayload, TaskNotePayload, TaskPayload, TicketData, User}, GetKeysResponse}, pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
-use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
-use egui_logger::LoggerUi;
-use log::info;
+use crate::{database::{database::Database, schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, LocalSebData, PrestashopPayload, TaskNotePayload, TaskPayload, TicketData, User}, GetKeysResponse}, pages::login_page::Login, tabs::{file_browser::FileBrowser, logger::{logger_ui, LoggerUi}, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
+use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText, Window};
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use crossbeam::channel::{Receiver, Sender};
@@ -11,6 +9,7 @@ use chrono::{DateTime, Utc};
 use egui_file::FileDialog;
 use serde_json::Value;
 use anyhow::Error;
+use log::info;
 
 pub struct MasterTechApp {
     pub context: MastertechContext,
@@ -148,7 +147,6 @@ pub struct MastertechContext {
     pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
-    pub logger_ui: LoggerUi
 }
 
 impl MasterTechApp {
@@ -298,7 +296,6 @@ impl MasterTechApp {
             initial_tasks_tx,  initial_tasks_rx,
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
-            logger_ui: LoggerUi::default()
         };
         let context = mastertech_context;
 
@@ -374,16 +371,14 @@ impl TabViewer for MastertechContext {
     type Tab = String;
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
-            "Logs" => egui_logger::logger_ui().show(ui),
+            "Logs" => logger_ui().show(ui),
             "Scripts" => self.scripts(ui),
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
             "Minidump Analysis" => self.mini_dump(ui),
-            // "Profiler" => self.puffin_profiler(ui),
             "QC ☑️" => self.quality_check(ui),
             "Tasks" => self.mastertech_website(ui),
             "Bug Tracker" => self.github(ui),

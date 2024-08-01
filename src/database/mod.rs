@@ -91,7 +91,7 @@ pub async fn send_payload(
             info!("service_ticket_record: {service_ticket_record:?}");
         }
     } else {
-        let create_cust_record: Vec<Record> = DATABASE.create(CUSTOMER_TABLE).content(customer_data.clone()).await.unwrap();
+        let create_cust_record: Vec<Record> = DATABASE.create(CUSTOMER_TABLE).content(customer_data.clone()).await?;
         info!("create_cust_record created: {create_cust_record:?}");
         let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;
         info!("create_computer_record created: {create_computer_record:?}");
