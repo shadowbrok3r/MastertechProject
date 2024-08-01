@@ -1,0 +1,32 @@
+[build]
+pre-build = [
+    "apt-get update",
+    "apt-get install -y mingw-w64",
+    "apt-get clean",
+    "rm -rf /var/lib/apt/lists/*",
+    "rustup target add x86_64-pc-windows-gnu"
+]
+
+[build.env]
+# volumes = ["VOL1_ARG", "VOL2_ARG=/path/to/volume"]
+
+passthrough = [
+    "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER",
+    "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_AR",
+    "CARGO_BUILD_TARGET",
+    "CROSS_CONTAINER_UID",
+    "CROSS_CONTAINER_ENGINE"
+]
+# [build.dockerfile]
+
+
+#[target.x86_64-unknown-linux-gnu]
+#image = "linux-x64"
+
+[target.x86_64-pc-windows-gnu]
+image = "windows11-x64"
+
+# Get-Content Dockerfile | docker build -
+
+#####     (LOCAL) 
+# docker build -t linux-x64 .

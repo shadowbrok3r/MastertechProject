@@ -1,0 +1,13 @@
+/target
+/dist
+.idea/.gitignore
+.idea/Mastertech4.0.iml
+.idea/modules.xml
+.idea/vcs.xml
+.idea/inspectionProfiles/Project_Default.xml
+.env
+.idea/codeStyles/codeStyleConfig.xml
+Cargo.lock
+output.log
+data.enc
+git-MasterTech.exe
