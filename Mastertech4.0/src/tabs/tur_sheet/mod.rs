@@ -4,7 +4,7 @@ use database::schema::{CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebD
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use get_ticket::{request_seb_info, SendRequest};
 use egui_extras::{*, DatePickerButton};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, thread::sleep, time::Duration};
 use egui_file::FileDialog;
 use std::path::PathBuf; 
 use log::{debug, info};
@@ -115,13 +115,39 @@ impl MastertechContext {
                                                         info!("Data changed: {}", self.ticket_data.service_number);
                                                     };
 
-                                                    ui.add(
-                                                        TextEdit::singleline(&mut self.customer_data.name)
-                                                        .hint_text("Customer Name  ")
-                                                        .vertical_align(Align::Center)
-                                                        .margin(vec2(4.0, 4.0))
-                                                        .min_size(vec2(self.widget_size+2.0,14.0))
-                                                    );
+                                                    if let Some(usr) = &self.current_user {
+                                                        if usr.email == "tyler.naylor@pclaptops.com".to_string() && self.customer_data.name.len() > 0 {
+                                                            let name = self.customer_data.name.split_at(2);
+                                                            let pt1 = name.0;
+                                                            let pt2 = name.1;
+                                                            let new_pt1 = pt1.to_uppercase();
+                                                            self.customer_data.name = new_pt1 + pt2;
+
+                                                            ui.add(
+                                                                TextEdit::singleline(&mut self.customer_data.name)
+                                                                .hint_text("Customer Name  ")
+                                                                .vertical_align(Align::Center)
+                                                                .margin(vec2(4.0, 4.0))
+                                                                .min_size(vec2(self.widget_size+2.0,14.0))
+                                                            );
+                                                        } else {
+                                                            ui.add(
+                                                                TextEdit::singleline(&mut self.customer_data.name)
+                                                                .hint_text("Customer Name  ")
+                                                                .vertical_align(Align::Center)
+                                                                .margin(vec2(4.0, 4.0))
+                                                                .min_size(vec2(self.widget_size+2.0,14.0))
+                                                            );
+                                                        }
+                                                    } else {
+                                                        ui.add(
+                                                            TextEdit::singleline(&mut self.customer_data.name)
+                                                            .hint_text("Customer Name  ")
+                                                            .vertical_align(Align::Center)
+                                                            .margin(vec2(4.0, 4.0))
+                                                            .min_size(vec2(self.widget_size+2.0,14.0))
+                                                        );
+                                                    }
 
                                                     ui.end_row();
 
@@ -393,15 +419,28 @@ impl MastertechContext {
                                         && !self.customer_data.name.is_empty()
                                         && !self.customer_data.phone_number.is_empty()
                                         && !self.ticket_data.tech.is_empty();
-                                    if ui
-                                        .add_enabled(check, 
-                                            Button::new( RichText::new("Master-Tech.app"))
-                                            .min_size(Vec2::new(width, 20.0)))
-                                        .clicked()
-                                    {  
+
+                                    let txt = if let Some(usr) = &self.current_user {
+                                        if usr.email == "logan.lees@pclaptops.com".to_string() && self.taco_first_run {
+                                            "Bitch"
+                                        } else { "Master-Tech.app" }
+                                    } else { "Master-Tech.app" };
+
+                                    let button = ui.add_enabled(check, 
+                                        Button::new( RichText::new(txt))
+                                        .min_size(Vec2::new(width, 20.0))
+                                    );
+                                    if button.clicked() && self.taco_first_run {  
+                                        sleep(Duration::from_nanos(2));
+                                        self.taco_first_run = false;
+                                        info!("Submitting TUR sheet");
+                                        self.submit_tur_mastertech();    
+                                    } else if button.clicked() {
+                                        self.taco_first_run = true;
                                         info!("Submitting TUR sheet");
                                         self.submit_tur_mastertech();
                                     }
+
                                 }); // horizontal_top
                             }); // vertical center
                         }); // cell

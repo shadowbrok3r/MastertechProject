@@ -7,9 +7,7 @@ use tokio::spawn;
 impl MastertechContext{
     pub fn submit_tur_mastertech(&mut self) {
         let due_date = Some(
-            self.date.unwrap_or(
-                DateTime::default()
-            ).to_rfc3339_opts(SecondsFormat::Secs,  true)
+            self.date.unwrap_or(DateTime::default()).to_rfc3339_opts(SecondsFormat::Secs,  true)
         );
         let mut task_data = self.task_data.clone();
         let customer_data = self.customer_data.clone();
@@ -39,7 +37,7 @@ pub async fn send_payload(
     computer_data: ComputerData,
     mut task_data: LiveTaskPayload,
     mut task_notes: Vec<TaskNotePayload>,
-)  -> anyhow::Result<Vec<Record>, anyhow::Error> {
+) -> anyhow::Result<Vec<Record>, anyhow::Error> {
     info!("Send_Payload");
     let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
     let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
@@ -53,20 +51,18 @@ pub async fn send_payload(
     task_data.service_ticket = ticket_id.clone();
     task_data.service_number = Some(ticket_data.service_number.clone());
     task_data.priority = Priority::Normal;
-    // task_data.dep = Some(queried_salesman.store.clone().as_str().to_string());
     task_data.everest_initials = queried_salesman.everest_initials;
     task_data.assignee = queried_salesman.id;
 
-
     if let Some(cust) = query_id(CUSTOMER_TABLE, customer_id).await?{
-        let update_cust_record: Option<Record> = DATABASE.update(cust.id).content(customer_data.clone()).await.unwrap();
+        let update_cust_record: Option<Record> = DATABASE.update(cust.id).content(customer_data.clone()).await?;
         info!("Customer updated: {update_cust_record:?}");
 
         if let Some(computer_record) = query_id(COMPUTER_TABLE, computer_id).await?{
-            let create_computer_record: Option<Record> = DATABASE.update(computer_record.id).content(computer_data).await.unwrap();
+            let create_computer_record: Option<Record> = DATABASE.update(computer_record.id).content(computer_data).await?;
             info!("create_computer_record: {create_computer_record:?}");
         }else{
-            let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await.unwrap();
+            let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;
             info!("create_computer_record: {create_computer_record:?}");
         }
         if let Some(ticket) = query_id(TICKET_TABLE, ticket_id).await?{
@@ -84,7 +80,7 @@ pub async fn send_payload(
         let service_ticket_record: Vec<Record> = DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
         info!("service_ticket_record created: {service_ticket_record:?}");
     }
-    
+
     let create_task_record: Vec<Record> = DATABASE.create(TASK_TABLE).content(task_data).await?;
     info!("create_task_record: {create_task_record:?}");
 
@@ -94,8 +90,17 @@ pub async fn send_payload(
             note.task_id = task_id.clone();
             let create_task_note_record: Vec<Record> = DATABASE.create(TASK_NOTE_TABLE).content(note).await?;
             info!("create_task_note_record: {:?}", create_task_note_record);
+
+            if let (Some(record), Some(note_record)) = (create_task_record.get(0), create_task_note_record.get(0)) {
+                let update_task: Option<Record> = DATABASE.query("UPDATE $task SET task_note += $note")
+                    .bind(("task", record.id.clone()))
+                    .bind(("note", note_record))
+                    .await?.take(0)?;
+                
+                info!("Update_task with notes: {update_task:?}");
+            }
         }
     }
-
+    
     Ok(create_task_record)
 }

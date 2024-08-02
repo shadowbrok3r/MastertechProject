@@ -1,0 +1,215 @@
+Date : 2024-08-01 22:54:06
+Directory : d:\Users\Owner\Documents\GitHub\MasterTechProject
+Total : 125 files,  19693 codes, 2559 comments, 2990 blanks, all 25242 lines
+
+Languages
++------------+------------+------------+------------+------------+------------+
+| language   | files      | code       | comment    | blank      | total      |
++------------+------------+------------+------------+------------+------------+
+| Rust       |         96 |     14,804 |      1,684 |      2,186 |     18,674 |
+| SurrealQL  |         11 |      4,363 |        636 |        683 |      5,682 |
+| YAML       |          3 |        148 |        107 |         19 |        274 |
+| TOML       |          8 |        147 |         88 |         34 |        269 |
+| HTML       |          1 |        107 |         10 |         24 |        141 |
+| Docker     |          2 |         45 |         32 |         17 |         94 |
+| Markdown   |          1 |         34 |          0 |         23 |         57 |
+| JSON       |          1 |         23 |          0 |          1 |         24 |
+| JavaScript |          1 |         21 |          2 |          3 |         26 |
+| Properties |          1 |          1 |          0 |          0 |          1 |
++------------+------------+------------+------------+------------+------------+
+
+Directories
++---------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                                                | files      | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                                                   |        125 |     19,693 |      2,559 |      2,990 |     25,242 |
+| . (Files)                                                                                                           |          2 |         65 |          3 |         25 |         93 |
+| MtechServer2.0                                                                                                      |         80 |      8,916 |        943 |      1,329 |     11,188 |
+| MtechServer2.0 (Files)                                                                                              |          5 |        281 |        137 |         56 |        474 |
+| MtechServer2.0\.cargo                                                                                               |          1 |          4 |          9 |          7 |         20 |
+| MtechServer2.0\.github                                                                                              |          2 |         51 |         70 |         14 |        135 |
+| MtechServer2.0\.github\workflows                                                                                    |          2 |         51 |         70 |         14 |        135 |
+| MtechServer2.0\assets                                                                                               |          2 |         44 |          2 |          4 |         50 |
+| MtechServer2.0\src                                                                                                  |         65 |      8,242 |        657 |      1,201 |     10,100 |
+| MtechServer2.0\src (Files)                                                                                          |          6 |      1,046 |         81 |        125 |      1,252 |
+| MtechServer2.0\src\pages                                                                                            |          8 |        771 |         32 |         94 |        897 |
+| MtechServer2.0\src\tabs                                                                                             |         17 |      1,796 |        144 |        272 |      2,212 |
+| MtechServer2.0\src\tabs (Files)                                                                                     |          1 |         48 |          0 |          3 |         51 |
+| MtechServer2.0\src\tabs\aging_tasks                                                                                 |          1 |          6 |         30 |          4 |         40 |
+| MtechServer2.0\src\tabs\ai_playground                                                                               |          1 |        184 |          3 |         29 |        216 |
+| MtechServer2.0\src\tabs\completed_tasks                                                                             |          1 |         31 |          2 |          1 |         34 |
+| MtechServer2.0\src\tabs\customer                                                                                    |          1 |        121 |          8 |         14 |        143 |
+| MtechServer2.0\src\tabs\github_issue                                                                                |          1 |         74 |          0 |         19 |         93 |
+| MtechServer2.0\src\tabs\my_tasks                                                                                    |          1 |         41 |          2 |          4 |         47 |
+| MtechServer2.0\src\tabs\quote_fulfilled_tasks                                                                       |          1 |          0 |          0 |          1 |          1 |
+| MtechServer2.0\src\tabs\store_tasks                                                                                 |          1 |         37 |          0 |          5 |         42 |
+| MtechServer2.0\src\tabs\terminal                                                                                    |          2 |        139 |          1 |         20 |        160 |
+| MtechServer2.0\src\tabs\toolbox                                                                                     |          2 |        362 |         17 |         55 |        434 |
+| MtechServer2.0\src\tabs\web_console                                                                                 |          4 |        753 |         81 |        117 |        951 |
+| MtechServer2.0\src\utilities                                                                                        |         34 |      4,629 |        400 |        710 |      5,739 |
+| MtechServer2.0\src\utilities (Files)                                                                                |          7 |      1,044 |        114 |        175 |      1,333 |
+| MtechServer2.0\src\utilities\ai                                                                                     |         13 |        474 |         60 |        113 |        647 |
+| MtechServer2.0\src\utilities\ai (Files)                                                                             |          7 |        326 |         45 |         72 |        443 |
+| MtechServer2.0\src\utilities\ai\tools                                                                               |          4 |        130 |         12 |         33 |        175 |
+| MtechServer2.0\src\utilities\ai\utils                                                                               |          2 |         18 |          3 |          8 |         29 |
+| MtechServer2.0\src\utilities\displays                                                                               |         14 |      3,111 |        226 |        422 |      3,759 |
+| MtechServer2.0\src\utilities\displays (Files)                                                                       |          1 |          3 |          0 |          1 |          4 |
+| MtechServer2.0\src\utilities\displays\chats                                                                         |          5 |      1,057 |        104 |        172 |      1,333 |
+| MtechServer2.0\src\utilities\displays\modals                                                                        |          4 |      1,559 |         80 |        204 |      1,843 |
+| MtechServer2.0\src\utilities\displays\tasks                                                                         |          4 |        492 |         42 |         45 |        579 |
+| MtechServer2.0\websocket_server                                                                                     |          5 |        294 |         68 |         47 |        409 |
+| MtechServer2.0\websocket_server (Files)                                                                             |          3 |         49 |          6 |          9 |         64 |
+| MtechServer2.0\websocket_server\.cargo                                                                              |          1 |          0 |          9 |          3 |         12 |
+| MtechServer2.0\websocket_server\src                                                                                 |          1 |        245 |         53 |         35 |        333 |
+| database                                                                                                            |         17 |      5,451 |        987 |        862 |      7,300 |
+| database (Files)                                                                                                    |          1 |         17 |          3 |          1 |         21 |
+| database\backups                                                                                                    |         11 |      4,363 |        636 |        683 |      5,682 |
+| database\backups (Files)                                                                                            |          2 |        741 |        126 |        124 |        991 |
+| database\backups\Local                                                                                              |          5 |      1,419 |        262 |        258 |      1,939 |
+| database\backups\Production                                                                                         |          4 |      2,203 |        248 |        301 |      2,752 |
+| database\src                                                                                                        |          5 |      1,071 |        348 |        178 |      1,597 |
+| database\src (Files)                                                                                                |          1 |        131 |          7 |         25 |        163 |
+| database\src\schema                                                                                                 |          4 |        940 |        341 |        153 |      1,434 |
+| displays                                                                                                            |         26 |      5,261 |        626 |        774 |      6,661 |
+| displays (Files)                                                                                                    |          1 |         15 |          0 |          2 |         17 |
+| displays\src                                                                                                        |         25 |      5,246 |        626 |        772 |      6,644 |
+| displays\src (Files)                                                                                                |          1 |          4 |          2 |          0 |          6 |
+| displays\src\chats                                                                                                  |          5 |      1,061 |        104 |        173 |      1,338 |
+| displays\src\markdown_editor                                                                                        |          4 |        805 |         95 |        126 |      1,026 |
+| displays\src\modals                                                                                                 |          5 |      1,907 |        113 |        263 |      2,283 |
+| displays\src\tasks                                                                                                  |          4 |        492 |         42 |         45 |        579 |
+| displays\src\ui_tools                                                                                               |          4 |        857 |        250 |        140 |      1,247 |
+| displays\src\views                                                                                                  |          2 |        120 |         20 |         25 |        165 |
++---------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++---------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| filename                                                                                                            | language   | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\Cargo.toml                                                        | TOML       |         31 |          3 |          2 |         36 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\.cargo\config.toml                                 | TOML       |          4 |          9 |          7 |         20 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\.github\workflows\pages.yml                        | YAML       |         31 |         39 |          5 |         75 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\.github\workflows\rust.yml                         | YAML       |         20 |         31 |          9 |         60 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\Cargo.toml                                         | TOML       |         56 |          2 |          5 |         63 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\Dockerfile                                         | Docker     |         12 |         28 |         12 |         52 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\Trunk.toml                                         | TOML       |          9 |         60 |         10 |         79 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\assets\manifest.json                               | JSON       |         23 |          0 |          1 |         24 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\assets\sw.js                                       | JavaScript |         21 |          2 |          3 |         26 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\docker-compose.yml                                 | YAML       |         97 |         37 |          5 |        139 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\index.html                                         | HTML       |        107 |         10 |         24 |        141 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\app_state.rs                                   | Rust       |        472 |         38 |         53 |        563 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\dummy_worker.rs                                | Rust       |          5 |          0 |          0 |          5 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\lib.rs                                         | Rust       |          2 |          0 |          0 |          2 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\live_worker.rs                                 | Rust       |         45 |          9 |         13 |         67 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\main.rs                                        | Rust       |        454 |         34 |         42 |        530 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\pages\account_settings_page.rs                 | Rust       |        133 |         14 |         20 |        167 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\pages\downloads_page.rs                        | Rust       |         59 |          3 |         12 |         74 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\pages\login_page.rs                            | Rust       |        175 |          1 |         17 |        193 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\pages\main_page.rs                             | Rust       |         28 |          1 |          2 |         31 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\pages\menu_bar.rs                              | Rust       |        202 |          8 |         19 |        229 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\pages\mod.rs                                   | Rust       |          7 |          0 |          0 |          7 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\pages\signup_page.rs                           | Rust       |        167 |          5 |         23 |        195 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\pages\webconsole_page.rs                       | Rust       |          0 |          0 |          1 |          1 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\aging_tasks\mod.rs                        | Rust       |          6 |         30 |          4 |         40 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\ai_playground\mod.rs                      | Rust       |        184 |          3 |         29 |        216 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\completed_tasks\mod.rs                    | Rust       |         31 |          2 |          1 |         34 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\customer\mod.rs                           | Rust       |        121 |          8 |         14 |        143 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\github_issue\mod.rs                       | Rust       |         74 |          0 |         19 |         93 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\mod.rs                                    | Rust       |         48 |          0 |          3 |         51 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\my_tasks\mod.rs                           | Rust       |         41 |          2 |          4 |         47 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\quote_fulfilled_tasks\mod.rs              | Rust       |          0 |          0 |          1 |          1 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\store_tasks\mod.rs                        | Rust       |         37 |          0 |          5 |         42 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\terminal\chart.rs                         | Rust       |        104 |          0 |         13 |        117 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\terminal\mod.rs                           | Rust       |         35 |          1 |          7 |         43 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\toolbox\mod.rs                            | Rust       |         38 |          0 |         12 |         50 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\toolbox\storage_api.rs                    | Rust       |        324 |         17 |         43 |        384 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\web_console\charts.rs                     | Rust       |         83 |         12 |         15 |        110 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\web_console\display.rs                    | Rust       |        169 |          3 |         19 |        191 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\web_console\mod.rs                        | Rust       |         47 |          1 |         12 |         60 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\tabs\web_console\websockets.rs                 | Rust       |        454 |         65 |         71 |        590 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\chat.rs                           | Rust       |         70 |          0 |          8 |         78 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\conv.rs                           | Rust       |         70 |         14 |         16 |        100 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\gpts.rs                           | Rust       |          4 |          7 |          7 |         18 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\mod.rs                            | Rust       |          9 |          2 |          6 |         17 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\model.rs                          | Rust       |          7 |          0 |          2 |          9 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\oa_client.rs                      | Rust       |          9 |          0 |          4 |         13 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\tool_call.rs                      | Rust       |        157 |         22 |         29 |        208 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\tools\ai_tools.rs                 | Rust       |         24 |          0 |          5 |         29 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\tools\mod.rs                      | Rust       |         16 |          3 |          8 |         27 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\tools\spec.rs                     | Rust       |         50 |          4 |         12 |         66 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\tools\weather.rs                  | Rust       |         40 |          5 |          8 |         53 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\utils\mod.rs                      | Rust       |          2 |          3 |          4 |          9 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\ai\utils\x_value.rs                  | Rust       |         16 |          0 |          4 |         20 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\chats\highlighter.rs        | Rust       |        164 |         10 |         19 |        193 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\chats\markdown_editor.rs    | Rust       |        256 |         28 |         49 |        333 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\chats\mod.rs                | Rust       |        251 |          5 |         46 |        302 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\chats\parser.rs             | Rust       |        228 |         59 |         44 |        331 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\chats\viewer.rs             | Rust       |        158 |          2 |         14 |        174 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\mod.rs                      | Rust       |          3 |          0 |          1 |          4 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\modals\ai_chat.rs           | Rust       |          0 |          0 |          1 |          1 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\modals\create_task_modal.rs | Rust       |        531 |         27 |         78 |        636 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\modals\mod.rs               | Rust       |        280 |         23 |         44 |        347 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\modals\task_modal.rs        | Rust       |        748 |         30 |         81 |        859 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\tasks\mod.rs                | Rust       |          3 |          0 |          0 |          3 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\tasks\sub_menu.rs           | Rust       |          0 |         15 |          3 |         18 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\tasks\task_cards.rs         | Rust       |        207 |          3 |         10 |        220 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\displays\tasks\task_layout.rs        | Rust       |        282 |         24 |         32 |        338 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\filter.rs                            | Rust       |         72 |          8 |         10 |         90 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\get_data.rs                          | Rust       |        172 |         23 |         26 |        221 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\handle_live_data.rs                  | Rust       |        223 |         38 |         33 |        294 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\interact_tasks.rs                    | Rust       |        132 |          1 |         19 |        152 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\mod.rs                               | Rust       |        233 |         28 |         37 |        298 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\sortable.rs                          | Rust       |         34 |         13 |          7 |         54 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\utilities\update_tasks.rs                      | Rust       |        178 |          3 |         43 |        224 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\src\webworker.rs                                   | Rust       |         68 |          0 |         17 |         85 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\websocket_server\.cargo\config.toml                | TOML       |          0 |          9 |          3 |         12 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\websocket_server\.env                              | Properties |          1 |          0 |          0 |          1 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\websocket_server\Cargo.toml                        | TOML       |         15 |          2 |          4 |         21 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\websocket_server\Dockerfile                        | Docker     |         33 |          4 |          5 |         42 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\MtechServer2.0\websocket_server\src\main.rs                       | Rust       |        245 |         53 |         35 |        333 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\README.md                                                         | Markdown   |         34 |          0 |         23 |         57 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\Cargo.toml                                               | TOML       |         17 |          3 |          1 |         21 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\06.27.2024.surql                                 | SurrealQL  |        383 |         63 |         62 |        508 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Local\Backup.surql                               | SurrealQL  |        340 |         60 |         59 |        459 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Local\database.surql                             | SurrealQL  |        332 |         57 |         60 |        449 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Local\localhost-2024-06-17.surql                 | SurrealQL  |        339 |         60 |         61 |        460 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Local\v2-data-2024-06-17.surql                   | SurrealQL  |        326 |         58 |         50 |        434 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Local\v2-schema-2024-06-17.surql                 | SurrealQL  |         82 |         27 |         28 |        137 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Production\master-techapp-2024-07-04-TEST.surql  | SurrealQL  |        375 |         62 |         65 |        502 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Production\master-techapp-2024-07-04.surql       | SurrealQL  |        372 |         60 |         64 |        496 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Production\master-techapp-2024-07-18.surql       | SurrealQL  |        650 |         63 |         84 |        797 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\Production\production-2024-07-20.surql           | SurrealQL  |        806 |         63 |         88 |        957 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\backups\db.surql                                         | SurrealQL  |        358 |         63 |         62 |        483 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\src\lib.rs                                               | Rust       |        131 |          7 |         25 |        163 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\src\schema\deserializer.rs                               | Rust       |         38 |          0 |          9 |         47 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\src\schema\mod.rs                                        | Rust       |        466 |         33 |         55 |        554 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\src\schema\prestashop_schema.rs                          | Rust       |        293 |         66 |         37 |        396 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\database\src\schema\utilities.rs                                  | Rust       |        143 |        242 |         52 |        437 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\Cargo.toml                                               | TOML       |         15 |          0 |          2 |         17 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\chats\highlighter.rs                                 | Rust       |        164 |         10 |         19 |        193 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\chats\markdown_editor.rs                             | Rust       |        256 |         28 |         49 |        333 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\chats\mod.rs                                         | Rust       |        255 |          5 |         47 |        307 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\chats\parser.rs                                      | Rust       |        228 |         59 |         44 |        331 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\chats\viewer.rs                                      | Rust       |        158 |          2 |         14 |        174 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\lib.rs                                               | Rust       |          4 |          2 |          0 |          6 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\markdown_editor\highlighter.rs                       | Rust       |        164 |         10 |         19 |        193 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\markdown_editor\mod.rs                               | Rust       |        255 |         24 |         49 |        328 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\markdown_editor\parser.rs                            | Rust       |        228 |         59 |         44 |        331 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\markdown_editor\viewer.rs                            | Rust       |        158 |          2 |         14 |        174 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\modals\ai_chat.rs                                    | Rust       |          0 |          0 |          1 |          1 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\modals\create_task_modal.rs                          | Rust       |        628 |         45 |        100 |        773 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\modals\mod.rs                                        | Rust       |        391 |         26 |         59 |        476 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\modals\modal_types.rs                                | Rust       |        140 |         12 |         22 |        174 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\modals\task_modal.rs                                 | Rust       |        748 |         30 |         81 |        859 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\tasks\mod.rs                                         | Rust       |          3 |          0 |          0 |          3 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\tasks\sub_menu.rs                                    | Rust       |          0 |         15 |          3 |         18 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\tasks\task_cards.rs                                  | Rust       |        207 |          3 |         10 |        220 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\tasks\task_layout.rs                                 | Rust       |        282 |         24 |         32 |        338 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\ui_tools\autocomplete.rs                             | Rust       |        208 |         65 |         25 |        298 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\ui_tools\carl_dark.rs                                | Rust       |        330 |         92 |         61 |        483 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\ui_tools\mod.rs                                      | Rust       |         49 |          2 |          8 |         59 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\ui_tools\toasts.rs                                   | Rust       |        270 |         91 |         46 |        407 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\views\mod.rs                                         | Rust       |          0 |          1 |          0 |          1 |
+| d:\Users\Owner\Documents\GitHub\MasterTechProject\displays\src\views\part_order.rs                                  | Rust       |        120 |         19 |         25 |        164 |
+| Total                                                                                                               |            |     19,693 |      2,559 |      2,990 |     25,242 |
++---------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+

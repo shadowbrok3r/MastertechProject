@@ -1,4 +1,4 @@
-use crate::{pages::login_page::Login, tabs::{file_browser::FileBrowser,logger::logger_ui, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
+use crate::{pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
 use database::{schema::{prestashop_schema::PrestashopPayload, ClientId, ComputerData, ConnectedClient, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData, User}, Database};
 use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
@@ -83,6 +83,7 @@ pub struct MastertechContext {
     pub toasts: Toasts,
     pub animate_progress_bar: bool,
     pub specs_first_run: bool,
+    pub taco_first_run: bool,
     pub file_browse_run: bool,
     pub query_tasks_first_run: bool,
     pub get_specs: bool,
@@ -265,6 +266,7 @@ impl MasterTechApp {
             send_specs: false,
 
             specs_first_run: true,
+            taco_first_run: false,
             file_browse_run: false,
             query_tasks_first_run: true,
             get_specs: false,
@@ -375,7 +377,7 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
-            "Logs" => logger_ui().show(ui),
+            // "Logs" => logger_ui().show(ui),
             "Scripts" => self.scripts(ui),
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
