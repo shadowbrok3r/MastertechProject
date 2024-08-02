@@ -255,20 +255,20 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayl
 pub async fn listen_data<T>(tx: Sender<(Action, T)>) -> anyhow::Result<(), anyhow::Error> 
     where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin 
 {
-    let client_stream: Stream<Client, Vec<T>> = DATABASE.select(CONNECTED_CLIENT_TABLE).live().await?;
+    let client_stream: Stream<Vec<T>> = DATABASE.select(CONNECTED_CLIENT_TABLE).live().await?;
     handle_streams(client_stream, tx).await?;
     Ok(())
 }
 
 pub async fn listen_task_notes(tx: Sender<(Action, TaskNotePayload)>) -> anyhow::Result<(), anyhow::Error> {
     info!("Listening to task notes");
-    let note_stream: Stream<Client, Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await?;
+    let note_stream: Stream<Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await?;
     handle_streams(note_stream, tx).await?;
     Ok(())
 }
 
 pub async fn listen_tasks(tx: Sender<(Action, LiveTaskPayload)>) -> anyhow::Result<(), anyhow::Error> {
-    let task_stream: Stream<Client, Vec<LiveTaskPayload>> = DATABASE.select(TASK_TABLE).live().await?;
+    let task_stream: Stream<Vec<LiveTaskPayload>> = DATABASE.select(TASK_TABLE).live().await?;
     handle_streams(task_stream, tx).await?;
     Ok(())
 }

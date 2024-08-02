@@ -11,6 +11,7 @@ database = { path = "database" }
 eframe = { version="0.28", features=["persistence", "serde", "wgpu", "default_fonts"] } # wgpu
 egui_extras = { version = "0.28", features = ["datepicker"]}
 surrealdb = { version = "1.5", features = ["protocol-ws"] } # kv-speedb "protocol-http", "native-tls"
+surrealdb-alpha = { version="2", features = ["protocol-ws"] }
 egui_dock = { version = "0.13", features = ["serde"]}
 tokio = { version = "1.38", features = ["full", "tracing"] }
 serde = { version = "1", features = ["derive"] }
@@ -33,3 +34,8 @@ async-trait = "0.1"
 once_cell = "1.19.0"
 simplelog = "0.12"
 bytes = "1.6"
+
+[profile.dev]
+debug = true
+lto = false
+strip = false

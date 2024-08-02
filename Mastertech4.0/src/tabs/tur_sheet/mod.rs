@@ -420,22 +420,21 @@ impl MastertechContext {
                                         && !self.customer_data.phone_number.is_empty()
                                         && !self.ticket_data.tech.is_empty();
 
-                                    let txt = if let Some(usr) = &self.current_user {
-                                        if usr.email == "logan.lees@pclaptops.com".to_string() && self.taco_first_run {
-                                            "Bitch"
-                                        } else { "Master-Tech.app" }
-                                    } else { "Master-Tech.app" };
+                                    // let txt = if let Some(usr) = &self.current_user {
+                                    //     if usr.email == "tyler.naylor@pclaptops.com".to_string() && self.taco_first_run {
+                                    //         "Bitch"
+                                    //     } else { "Master-Tech.app" }
+                                    // } else { "Master-Tech.app" };
 
                                     let button = ui.add_enabled(check, 
-                                        Button::new( RichText::new(txt))
+                                        Button::new( RichText::new("Master-Tech.app"))
                                         .min_size(Vec2::new(width, 20.0))
                                     );
-                                    if button.clicked() && self.taco_first_run {  
-                                        sleep(Duration::from_nanos(2));
-                                        self.taco_first_run = false;
-                                        info!("Submitting TUR sheet");
-                                        self.submit_tur_mastertech();    
-                                    } else if button.clicked() {
+                                    // if self.taco_first_run && txt == "Bitch" {  
+                                    //     sleep(Duration::from_secs(1));
+                                    //     self.taco_first_run = false;
+                                    // } 
+                                    if button.clicked() {
                                         self.taco_first_run = true;
                                         info!("Submitting TUR sheet");
                                         self.submit_tur_mastertech();
