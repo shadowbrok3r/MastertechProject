@@ -29,6 +29,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub trait ComputerInfo {
     async fn get_computer_data(&mut self) -> anyhow::Result<ComputerData, anyhow::Error>;
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error>;
+    #[cfg(target_os="windows")]
     fn get_antivirus() -> io::Result<Vec<(String, Option<bool>)>>;
 }
 
