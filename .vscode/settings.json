@@ -4,6 +4,7 @@
         "Mastertech4.0/Cargo.toml",
         "MtechServer2.0/Cargo.toml",
         "displays/Cargo.toml",
+        "websocket_server/Cargo.toml",
     ],
     "rust-analyzer.showUnlinkedFileNotification": true
 }
