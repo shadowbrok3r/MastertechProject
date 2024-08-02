@@ -45,11 +45,11 @@ impl Signup{
             // #[cfg(target_arch="wasm32-unknown-unknown")]
             match database{
                 Ok(db) => {
-                    let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure();
                     if let Some(ref cookie) = db.jwt{
                         if let Some(ref usr) = db.user{
-                            let usr = serde_json::to_string(&usr).unwrap();
                             #[cfg(target_arch="wasm32")]{
+                                let usr = serde_json::to_string(&usr).unwrap();
+                                let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure();
                                 wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                                 wasm_cookies::set("user", &usr, &cookie_opts);
                             }

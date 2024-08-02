@@ -15,7 +15,6 @@ pub mod interact_tasks;
 pub mod filter;
 pub mod handle_live_data;
 pub mod sortable;
-pub mod ui_tools;
 pub mod ai;
 
 #[derive(Debug, Clone)]

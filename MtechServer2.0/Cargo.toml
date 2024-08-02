@@ -23,12 +23,13 @@ rpc-router = "0.1"
 schemars = "0.8"
 mime_guess = "2"
 reqwest = { version = "0.12", features = ["stream", "json"] }
-bytes = "1.6"
 gloo-console = "0.3.0"
 
+displays = { workspace=true }
 database = { workspace=true }
 once_cell = { workspace=true }
 async-trait = { workspace=true }
+bytes = { workspace=true }
 log  = { workspace=true }
 serde = { workspace=true }
 chrono = { workspace=true }

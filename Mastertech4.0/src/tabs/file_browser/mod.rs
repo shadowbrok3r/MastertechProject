@@ -1,7 +1,8 @@
 use std::{env, cell::RefCell, collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::Ordering, Arc}};
 use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
 use self::{command::Command, io::{format_path_metadata, MetaData}};
-use crate::{app_state::MastertechContext, utilities::toasts::{Toast, ToastKind, ToastOptions, Toasts}};
+use crate::app_state::MastertechContext;
 use crossbeam::channel;
 use pollster::block_on;
 use log::{debug, info};

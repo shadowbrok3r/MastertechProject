@@ -4,7 +4,7 @@ use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFami
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use crossbeam::channel::{Receiver, Sender};
-use crate::utilities::toasts::Toasts;
+use displays::ui_tools::toasts::Toasts;
 use egui_ratatui::RataguiBackend;
 use chrono::{DateTime, Utc};
 use egui_file::FileDialog;

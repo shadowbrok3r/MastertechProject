@@ -13,7 +13,7 @@ use serde_json::{from_value, Value};
 use surrealdb::sql::Thing;
 use wasm_bindgen_futures::spawn_local;
 
-use crate::utilities::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, ModalTypes};
+use crate::ui_tools::{autocomplete::AutoCompleteTextEdit, DisplayModal, ModalTypes};
 
 use super::{task_modal::ModalAction, ModalState};
 

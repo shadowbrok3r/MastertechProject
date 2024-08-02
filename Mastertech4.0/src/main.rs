@@ -1,19 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use filesystem::system_info::ComputerInfo;
-use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
 use database::{schema::{ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}, Database, DATABASE};
+use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
+use displays::ui_tools::{toasts::{Toast, ToastKind, ToastOptions}, carl_dark::{Aesthetix, CarlDark}};
 use tabs::{logger::logging::builder, tur_sheet::scaffold::AsanaResponse};
-use crate::utilities::themes::carl_dark::{Aesthetix, CarlDark};
-use crate::utilities::toasts::{Toast, ToastKind, ToastOptions};
-use std::sync::{Arc, Condvar, Mutex};
+use filesystem::system_info::ComputerInfo;
 use app_state::{AppState, MasterTechApp};
+use std::sync::{Arc, Condvar, Mutex};
 use crossbeam::channel::Sender;
 use log::{debug, error, info};
 use pages::login_page::HASH;
 use surrealdb::sql::Thing;
 use tokio::spawn;
-// use simplelog::{WriteLogger, Config, LevelFilter};
 
 pub mod app_state;
 pub mod tabs;
@@ -22,7 +20,6 @@ pub mod viewports;
 pub mod utilities;
 mod filesystem;
 
-// #[cfg(not(feature = "compat_mode"))]
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // most important part of the whole app.. setting up our styling

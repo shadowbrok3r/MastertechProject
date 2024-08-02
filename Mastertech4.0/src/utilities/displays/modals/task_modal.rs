@@ -1,11 +1,15 @@
-use database::schema::TaskPayload;
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
+use database::schema::{utilities::delete_task, TaskPayload};
+// use reqwest::{Client, header::{ACCEPT, CONTENT_TYPE}};
+use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
+use std::sync::{Arc, Mutex};
+// use serde_json::Value;
 use serde::Serialize;
-use log::info;
+// use bytes::Bytes;
 use tokio::spawn;
+use log::info;
 
 use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes};
 
@@ -33,6 +37,7 @@ pub enum ModalAction{
     PartOrderPage,
     ComputerInfoPage,
     TaskNotePage,
+    ImportTask,
     #[default]
     None
 }
@@ -96,6 +101,8 @@ pub struct SpecialPartOrder {
     part_description: String,           //  "Test",
     part_lcd_toggle: bool,            //  "0"
     spo_status: SpoStatus,
+    #[serde(skip)]
+    files: Arc<Mutex<Option<Vec<FileHandle>>>>
 }
 
 impl DisplayModal for TaskModal {
@@ -149,12 +156,12 @@ impl DisplayModal for TaskModal {
                                 let task_id = self.task.id.as_ref().unwrap().0.clone();
 
                                 let id = task_id.clone();
-                                // spawn(async move {
-                                    // match delete_task(id).await {
-                                    //     Ok(_) => info!("Deleted task"),
-                                    //     Err(e) => info!("Error: {e:?}"),
-                                    // }
-                                // });
+                                spawn(async move {
+                                    match delete_task(id).await {
+                                        Ok(_) => info!("Deleted task"),
+                                        Err(e) => info!("Error: {e:?}"),
+                                    }
+                                });
                             }
 
                             ui.add_space(200.0);
@@ -645,6 +652,7 @@ impl Default for SpecialPartOrder {
             part_description: String::new(),
             part_lcd_toggle: false,
             spo_status: SpoStatus::AwaitingQuote,
+            files: Arc::new(Mutex::new(None))
         }
     }
 }
@@ -763,11 +771,14 @@ impl SpecialPartOrder {
                                 let toggle = ui.checkbox(&mut self.part_lcd_toggle, "LCD?");
                                 ui.add_space(ui.available_width() / 2.0);
                                 let file_upload = ui.selectable_label(false, "Upload Picture");
-
-                                
                                 if file_upload.clicked() {
-                                    // task = Some(AsyncFileDialog::new().pick_files());
-                                }
+                                    // let data_clone = Arc::clone(&self.files);
+                                    // spawn(async move {
+                                    //     let mut data = data_clone.lock().unwrap();
+                                    //     *data = AsyncFileDialog::new().pick_files().await;
+                                    // });
+                                    // *data = Some(AsyncFileDialog::new().pick_files());
+                                };
                                 if toggle.clicked() {
                                     info!("self.part_lcd_toggle: {}", self.part_lcd_toggle);
                                 }
@@ -778,7 +789,7 @@ impl SpecialPartOrder {
                             ui.horizontal_top(|ui| { 
                                 if Button::new("Submit").min_size(Vec2::new(50.0, 20.0)).ui(ui).clicked() {
 
-                                    let spo = SpecialPartOrder {
+                                    let _spo = SpecialPartOrder {
                                         customer_name: self.customer_name.clone(),
                                         customer_phone_number: self.customer_phone_number.clone(),
                                         notes: self.notes.clone(),
@@ -794,39 +805,45 @@ impl SpecialPartOrder {
                                         part_description: self.part_description.clone(),
                                         part_lcd_toggle: self.part_lcd_toggle.clone(),
                                         spo_status: self.spo_status.clone(),
+                                        files: self.files.clone()
                                     };
 
-                                    spawn(async move {
-                                        // let mut bytes: Bytes = Bytes::new();
-                                        // let mut file_name = String::new();
+                                    // let data_clone = Arc::clone(&self.files);
 
-                                        // if let Some(task) = task{
-                                        //     let files = task.await.unwrap();
-                                        //     for file_handle in files {
-                                        //         file_name = file_handle.file_name();
-                                        //         bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
-                                        //     }
-                                        // }
+                                    // spawn(async move {
+                                    //     let data = data_clone.lock().unwrap();
+                                    //     let mut bytes: Bytes = Bytes::new();
+                                    //     let mut file_name = String::new();
 
-                                        let _params: Value = serde_json::json!({
-                                            "user_email": "logan.lees@pclaptops.com", 
-                                            "user_password": "Poolparty1",
-                                            "format_data": "text",
-                                            "action": "create",
-                                            "application": "customer_request_order", 
-                                            "payload": spo,
-                                        });
+                                    //     if let Some(ref files) = *data{
+                                    //         for file_handle in files {
+                                    //             file_name = file_handle.file_name();
+                                    //             bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
+                                    //             info!("file_name: {:?}", file_name);
+                                    //         }
+                                    //     }
 
-                                        // let client = Client::new();
-                                        // client.post("https://scaffold.pclaptops.com/api/index")
-                                        //     .header(CONTENT_TYPE, "application/json")
-                                        //     .header(ACCEPT, "application/json")
-                                        //     .json(&params)
-                                        //     .send()
-                                        //     .await
-                                        //     .unwrap();
 
-                                    });
+
+                                    //     let params: Value = serde_json::json!({
+                                    //         "user_email": "logan.lees@pclaptops.com", 
+                                    //         "user_password": "Poolparty1",
+                                    //         "format_data": "text",
+                                    //         "action": "create",
+                                    //         "application": "customer_request_order", 
+                                    //         "payload": spo,
+                                    //     });
+
+                                    //     let client = Client::new();
+                                    //     client.post("https://scaffold.pclaptops.com/api/index")
+                                    //         .header(CONTENT_TYPE, "application/json")
+                                    //         .header(ACCEPT, "application/json")
+                                    //         .json(&params)
+                                    //         .send()
+                                    //         .await
+                                    //         .unwrap();
+
+                                    // });
                                 }
                             });
                         });
@@ -835,7 +852,5 @@ impl SpecialPartOrder {
             });
             s.empty();
         });
-        
-        
     }
 }

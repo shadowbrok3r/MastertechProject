@@ -1,12 +1,9 @@
-use database::schema::{updatable::Updatable, Priority, Status, TaskPayload, TicketPayload, User};
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Id, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use crate::utilities::{displays::tasks::task_cards::date_colors, Interaction};
+use crate::utilities::{displays::tasks::task_cards::date_colors, Interaction, Updatable};
+use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
 use chrono::{DateTime, NaiveDate, Utc, Datelike};
 use egui_extras::DatePickerButton;
 use log::info;
-
-
-
 
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response {
@@ -110,7 +107,7 @@ impl Interaction for TaskPayload {
             .height(ui.available_height())
             .show_ui(ui, |ui| 
         {
-            for mut status in Status::VALUES{
+            for status in Status::VALUES{
                 let status_change = ui.selectable_value(&mut self.status, status.to_owned(), status.as_str());
                 if status_change.clicked(){
                     self.update_status(status.clone());
@@ -126,7 +123,7 @@ impl Interaction for TaskPayload {
             .height(ui.available_height() - 2.0)
             .show_ui(ui, |ui| 
         {
-            for mut priority in Priority::VALUES{
+            for priority in Priority::VALUES{
                 let priority_change = ui.selectable_value(&mut self.priority, priority.to_owned(), priority.as_str());
                 if priority_change.clicked(){
                     self.update_priority(Some(priority.clone()));

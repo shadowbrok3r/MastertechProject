@@ -790,7 +790,7 @@ impl SpecialPartOrder {
                             ui.horizontal_top(|ui| { 
                                 if Button::new("Submit").min_size(Vec2::new(50.0, 20.0)).ui(ui).clicked() {
 
-                                    let mut spo = SpecialPartOrder {
+                                    let spo = SpecialPartOrder {
                                         customer_name: self.customer_name.clone(),
                                         customer_phone_number: self.customer_phone_number.clone(),
                                         notes: self.notes.clone(),
@@ -813,14 +813,14 @@ impl SpecialPartOrder {
 
                                     spawn_local(async move {
                                         let data = data_clone.lock().unwrap();
-                                        let mut bytes: Bytes = Bytes::new();
-                                        let mut file_name = String::new();
+                                        let mut _bytes: Bytes = Bytes::new();
+                                        let mut _file_name = String::new();
 
                                         if let Some(ref files) = *data{
                                             for file_handle in files {
-                                                file_name = file_handle.file_name();
-                                                bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
-                                                info!("file_name: {:?}", file_name);
+                                                _file_name = file_handle.file_name();
+                                                _bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
+                                                info!("file_name: {:?}", _file_name);
                                             }
                                         }
 

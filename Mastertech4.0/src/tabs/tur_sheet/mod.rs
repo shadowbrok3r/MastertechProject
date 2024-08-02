@@ -1,7 +1,7 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
 use database::schema::{CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TicketData};
-use crate::utilities::autocomplete::AutoCompleteTextEdit;
+use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use get_ticket::{request_seb_info, SendRequest};
 use egui_extras::{*, DatePickerButton};
 use std::collections::BTreeSet;

@@ -1,12 +1,13 @@
-use database::schema::Notification;
-use database::{self, DATABASE};
 use eframe::egui::{menu, Align, Context, Margin, Rounding, ScrollArea, Separator, TextEdit};
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
+use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
+use crate::app_state::{AppState, MainPages, MtechServer};
+use crate::utilities::TaskUiActions;
 use wasm_bindgen_futures::spawn_local;
-use crate::utilities::ui_tools::autocomplete::AutoCompleteTextEdit;
+use database::schema::Notification;
+use database::{self, DATABASE};
 use std::collections::BTreeSet;
 use log::info;
-use crate::{app_state::{AppState, MainPages, MtechServer}, utilities::TaskUiActions};
 
 impl MtechServer{
     pub fn menu_bar(&mut self, ctx: &Context) {

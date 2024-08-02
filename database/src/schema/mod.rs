@@ -1,11 +1,10 @@
+use surrealdb::{opt::RecordId, sql::{Id, Thing}};
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
-use serde::{Serialize, Deserialize};
-use surrealdb::{opt::RecordId, sql::{Id, Thing}};
 pub mod prestashop_schema;
 pub mod deserializer;
 pub mod utilities;
-pub mod updatable;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -415,6 +414,81 @@ pub enum Store{
     WJ, 
     ORE,
     SAN
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SpecialPartOrder {
+    customer_name: String,          //  "kathleen Hoffmon",
+    customer_phone_number: String,          //  "801-888-8888",
+    notes: String,          //  "These are some notes",
+    system_order_number: String,            //  "123456",
+    id_location: String,            //  "Riverdale",
+    request_type: String,           //  "Any",
+    shipping_method: String,            //  "2 - 2-3 Day Express",
+    part_manufacturer: Manufacturer,          //  "PC Laptops",
+    manufacturer_model_number: String,          //  "12345Test",
+    manufacturer_serial_number: String,             //  "123456789",
+    manufacturer_part_number: String,           //  "324657687",
+    part_color: String,             //  "N/A",
+    part_description: String,           //  "Test",
+    part_lcd_toggle: bool,            //  "0"
+    spo_status: SpoStatus,
+}
+
+#[derive(PartialEq, Default, Debug, Serialize, Clone)]
+pub enum SpoStatus {
+    #[default]
+    AwaitingQuote,
+    QuoteFullfilled,
+    OrderPendingDM,
+}
+
+#[derive(PartialEq, Default, Debug, Serialize, Clone)]
+pub enum Manufacturer {
+    #[default]
+    Pclaptops,
+    Other,
+}
+
+impl Manufacturer{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            Manufacturer::Pclaptops => "PC Laptops",
+            Manufacturer::Other => "Other",
+        }
+    }
+}
+
+impl SpoStatus{
+    pub fn as_str(&mut self) -> &str{
+        match self{
+            SpoStatus::AwaitingQuote => "Awaiting Quote",
+            SpoStatus::OrderPendingDM => "Pending DM",
+            SpoStatus::QuoteFullfilled => "Quote Fullfilled"
+        }
+    }
+}
+
+impl Default for SpecialPartOrder {
+    fn default() -> Self {
+        Self {
+            customer_name: String::new(),
+            customer_phone_number: String::new(),
+            notes: String::new(),
+            system_order_number: String::new(),
+            id_location: "0".to_string(),
+            request_type: String::new(),
+            shipping_method: "2 - 2-3 Day Express".to_string(),
+            part_manufacturer: Manufacturer::Pclaptops,
+            manufacturer_model_number: String::new(),
+            manufacturer_serial_number: String::new(),
+            manufacturer_part_number: String::new(),
+            part_color: "N/A".to_string(),
+            part_description: String::new(),
+            part_lcd_toggle: false,
+            spo_status: SpoStatus::AwaitingQuote,
+        }
+    }
 }
 
 impl Store{

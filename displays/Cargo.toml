@@ -4,5 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+database = { workspace=true }
 eframe = { workspace=true }
 log = { workspace=true }
+serde = { workspace=true }
+fuzzy-matcher = { workspace=true }
+surrealdb = { workspace=true }
+egui_extras = { workspace=true }
+chrono = { workspace=true }
+serde_json = { workspace=true }
+crossbeam = { workspace=true }

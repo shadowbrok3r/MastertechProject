@@ -6,13 +6,14 @@ members = [ "Mastertech4.0", "MtechServer2.0", "database" , "displays"]
 # package.exclude = ["websocket_server"]
 
 [workspace.dependencies]
+displays = { path = "displays" }
+database = { path = "database" }
 eframe = { version="0.28", features=["persistence", "serde", "wgpu", "default_fonts"] } # wgpu
 egui_extras = { version = "0.28", features = ["datepicker"]}
 surrealdb = { version = "1.5", features = ["protocol-ws"] } # kv-speedb "protocol-http", "native-tls"
 egui_dock = { version = "0.13", features = ["serde"]}
 tokio = { version = "1.38", features = ["full", "tracing"] }
 serde = { version = "1", features = ["derive"] }
-database = { path = "database" }
 ratatui = { version = "0.27", default-features = false }
 log="0.4"
 chrono = "0.4"
@@ -31,3 +32,4 @@ regex = "1.10"
 async-trait = "0.1"
 once_cell = "1.19.0"
 simplelog = "0.12"
+bytes = "1.6"
