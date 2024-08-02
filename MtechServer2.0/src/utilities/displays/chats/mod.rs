@@ -2,20 +2,15 @@ use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
 use database::{schema::{Record, TaskId, TaskNotePayload, User}, DATABASE};
-use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
+use displays::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::utilities::get_data::TaskNoteMod;
 use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local};
 use eframe::emath::Vec2;
-use log::{debug, info};
 use serde::Serialize;
+use log::info;
 
 use super::modals::ModalState;
-
-pub mod markdown_editor;
-pub mod highlighter;
-pub mod parser;
-pub mod viewer;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatView{

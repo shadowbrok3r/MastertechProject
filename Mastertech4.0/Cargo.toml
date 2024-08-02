@@ -108,10 +108,10 @@ strip = "debuginfo"
 debug = false
 opt-level = 3
 
-# [profile.dev]
-# debug = true
-# lto = false
-# strip = false
+[profile.dev]
+debug = true
+lto = false
+strip = false
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "2"

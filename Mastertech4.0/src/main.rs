@@ -1,14 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use database::{schema::{ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}, Database, DATABASE};
 use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
+use database::{schema::{ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}, Database, DATABASE};
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use displays::ui_tools::{toasts::{Toast, ToastKind, ToastOptions}, carl_dark::{Aesthetix, CarlDark}};
-use tabs::{logger::logging::builder, tur_sheet::scaffold::AsanaResponse};
+use std::{fs::File, sync::{Arc, Condvar, Mutex}};
+use tabs::tur_sheet::scaffold::AsanaResponse;
+use log::{debug, error, info, LevelFilter};
 use filesystem::system_info::ComputerInfo;
 use app_state::{AppState, MasterTechApp};
-use std::sync::{Arc, Condvar, Mutex};
+use simplelog::{Config, WriteLogger};
 use crossbeam::channel::Sender;
-use log::{debug, error, info};
 use pages::login_page::HASH;
 use surrealdb::sql::Thing;
 use tokio::spawn;
@@ -173,7 +174,7 @@ impl eframe::App for MasterTechApp {
         if let Ok(data) = self.context.prestashop_api_rx.try_recv(){
             let customer = &mut self.context.customer_data;
             let ticket = &mut self.context.ticket_data;
-            let _task = &mut self.context.task_data;
+            // let _task = &mut self.context.task_data;
             let task_notes = &mut self.context.task_notes;
             let computer = &mut self.context.computer_data;
 
@@ -350,14 +351,14 @@ async fn main() -> eframe::Result<()> {
     // console_subscriber::init();
     // Init the logger
     // Configure log level and log file
-    builder().init().unwrap(); 
-    // let log_level = LevelFilter::Info; 
-    // let log_file = File::create("output.log").unwrap();
-    // WriteLogger::init( 
-    //     log_level,
-    //     Config::default(),
-    //     log_file
-    // ).unwrap();
+    // builder().init().unwrap(); 
+    let log_level = LevelFilter::Info; 
+    let log_file = File::create("output.log").unwrap();
+    WriteLogger::init( 
+        log_level,
+        Config::default(),
+        log_file
+    ).unwrap();
 
     eframe::run_native(
         format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
