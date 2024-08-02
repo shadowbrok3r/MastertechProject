@@ -3,7 +3,7 @@ use eframe::egui::{
 };
 use tokio::spawn;
 use database::{DATABASE, schema::{Record, TaskId, TaskNotePayload, User}};
-use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
+use displays::markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
 // use crate::utilities::get_data::TaskNoteMod;
 use chrono::{DateTime, Local};
 use eframe::emath::Vec2;
@@ -11,11 +11,6 @@ use log::info;
 use serde::Serialize;
 
 use super::modals::ModalState;
-
-pub mod markdown_editor;
-pub mod highlighter;
-pub mod parser;
-pub mod viewer;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatView{
@@ -261,7 +256,7 @@ impl ChatView {
                                             Align::Center,
                                         ), |ui| {
                                             ui.set_width(ui.available_width());
-                                            viewer::easy_mark(ui, &item.note);
+                                            displays::markdown_editor::viewer::easy_mark(ui, &item.note);
                                         });
                                     });
                                 });

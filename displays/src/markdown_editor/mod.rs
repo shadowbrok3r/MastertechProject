@@ -1,16 +1,13 @@
 use eframe::egui::{text::CCursorRange, *};
-use super::highlighter;
+pub mod highlighter;
+pub mod parser;
+pub mod viewer;
 
-// #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-// #[cfg_attr(feature = "serde", serde(default))]
 #[derive(Debug, Clone)]
 pub struct EasyMarkEditor {
     message: String,
     highlight_editor: bool,
     show_rendered: bool,
-    // default_msg: String,
-    // show_example: bool,
-    // #[cfg_attr(feature = "serde", serde(skip))]
     pub highlighter: highlighter::MemoizedEasymarkHighlighter,
 }
 
@@ -29,7 +26,6 @@ impl Default for EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             // default_msg: DEFAULT_CODE.trim().to_owned(),
-            // show_example: false,
         }
     }
 }
@@ -42,7 +38,6 @@ impl EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             // default_msg: DEFAULT_CODE.trim().to_owned(),
-            // show_example: false,
         }
     }
 
@@ -63,7 +58,7 @@ impl EasyMarkEditor {
                     .max_height(f32::INFINITY)
                     .show(&mut columns[1], |ui| {
                         // TODO(emilk): we can save some more CPU by caching the rendered output.
-                        super::viewer::easy_mark(ui, &self.message);
+                        self::viewer::easy_mark(ui, &self.message);
                     });
             });
         } else {

@@ -27,12 +27,12 @@ impl Login{
         let database = Database::new(email, pass, None).await;
         match database{
             Ok(db) => {
-                let duration = web_time::Duration::from_secs(345600);
-                let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure().expires_after(duration);
                 let database = db.clone();
                 if let (Some(ref cookie), Some(ref usr)) = (database.jwt, database.user){
-                    let usr = serde_json::to_string(&usr)?;
                     #[cfg(target_arch="wasm32")]{
+                        let duration = web_time::Duration::from_secs(345600);
+                        let usr = serde_json::to_string(&usr)?;
+                        let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure().expires_after(duration);
                         wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                         wasm_cookies::set("user", &usr, &cookie_opts);
                     }

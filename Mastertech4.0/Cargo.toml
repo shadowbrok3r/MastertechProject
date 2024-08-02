@@ -45,10 +45,15 @@ crossterm = "0.28"
 hex = "0.4.3"
 ring = "0.17.8"
 egui_tracing = "0.2.2"
+
+database = { workspace=true }
+displays = { workspace=true }
+
 tokio = { workspace=true }
 serde_json = { workspace=true }
 serde = { workspace=true }
 log  = { workspace=true }
+bytes = { workspace=true }
 egui_extras = { workspace=true }
 egui_dock = { workspace=true }
 anyhow = { workspace=true }
@@ -63,7 +68,6 @@ bincode = { workspace=true }
 rfd = { workspace=true }
 regex = { workspace=true }
 chrono = { workspace=true }
-database = { workspace=true }
 simplelog = { workspace=true }
 async-trait = { workspace=true }
 surrealdb = { workspace=true }

@@ -4,7 +4,7 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use database::schema::{CustomerData, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, User, TASK_TABLE};
 use database::DATABASE;
 use tokio::spawn;
-use crate::utilities::autocomplete::AutoCompleteTextEdit;
+use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use eframe::egui::{vec2, Grid, ScrollArea};
 use egui_extras::DatePickerButton;
@@ -107,7 +107,7 @@ impl DisplayModal for CreateTaskModal {
                         .selected_text(RichText::new(format!("{}", &self.task_priority.as_str())))
                         .show_ui(ui, |ui| 
                     {
-                        for mut priority in Priority::VALUES{
+                        for priority in Priority::VALUES{
                             ui.selectable_value(&mut self.task_priority, priority.to_owned(), priority.as_str());
                         }
                     });

@@ -65,7 +65,7 @@ impl FileSystem {
             let mut current_path = String::new();
             let mut current = &mut self.root;
 
-            for (i, part) in parts.iter().enumerate() {
+            for (_i, part) in parts.iter().enumerate() {
                 let part = part.to_string();
                 if part.contains('.'){ // i == parts.len() - 1 { // It's a file
                     if let Some(folder) = current.as_folder_mut() {
@@ -124,7 +124,7 @@ impl FileSystem {
 
                     if let Node::Folder(_) = node {
                         let id = ui.make_persistent_id(format!("{label}+++{:?}", count + 1));
-                        let res = CollapsingState::load_with_default_open(ui.ctx(), id, self.open_folder)
+                        let _res = CollapsingState::load_with_default_open(ui.ctx(), id, self.open_folder)
                             .show_header(ui, |ui| 
                         {
                             

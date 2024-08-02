@@ -1,5 +1,6 @@
+use async_trait::async_trait;
 use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
-use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, User};
+use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User};
 use serde::{Deserialize, Serialize};
 use surrealdb::sql::Id as SurrealId;
 use crossbeam::channel::Sender;
@@ -13,8 +14,7 @@ pub mod crypto;
 pub mod ui_action;
 pub mod data_channels;
 pub mod displays;
-pub mod toasts;
-pub mod autocomplete;
+pub mod update_tasks;
 
 #[derive(Debug, Clone)]
 pub enum TaskUiActions{
@@ -51,6 +51,7 @@ pub trait ColumnLayout{
     // fn card_layout(&mut self, ui: &mut Ui) -> Option<TaskUiActions>;
 }
 
+// #[async_trait]
 pub trait Updatable { // This is correctly implemented
     fn update_completed(&self, completed: bool);
     fn update_due_date(&self, due_date: String);
@@ -81,6 +82,7 @@ pub trait FilterTasks{
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
     fn filter_by_date(&self, date: &String) -> Vec<TaskPayload>;
+    fn filter_by_my_store(&self, assignees: &Vec<User>, current_user: &User) -> Vec<TaskPayload>;
     /// Filters a list of tasks by their name based on a fuzzy search input.
     /// # Parameters
     /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.
@@ -96,29 +98,28 @@ pub trait Sortable{
 }
 
 pub trait LiveUpdate{
-    fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-    fn handle_live_update(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
-    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
+    fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
+    fn handle_live_update(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
+    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
 }
 
+#[async_trait]
 pub trait Task{ // <T: Serialize + for<'a> Deserialize<'a> + Debug>
-    fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
-    fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
+    async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error>;
+    async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error>;
     // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
-    fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
-    fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>);
+    async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error>;
+    async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error>;
     // fn create_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
     // fn get_data(&mut self, data: T)    -> anyhow::Result<Vec<Record>, anyhow::Error>;
     // fn modify_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
     // fn delete_data(&mut self, data: T) -> anyhow::Result<Vec<Record>, anyhow::Error>;
 }
 
-
 pub trait DisplayModal{
     fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>;
     // fn set_state(self, action: ModalAction);
 }
-
 
 pub trait ModalTypes: Default{
     fn modal_state(&mut self) -> &mut ModalState;
@@ -291,4 +292,3 @@ pub trait ModalTypes: Default{
         ui.separator();
     }
 }
-

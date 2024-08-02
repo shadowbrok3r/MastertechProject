@@ -1,9 +1,9 @@
-use std::borrow::BorrowMut;
 use eframe::egui::{Ui, Align, Button, Color32, Frame, Layout, Margin, RichText, Rounding, ScrollArea,  Stroke, Vec2, Widget};
-use egui_extras::{Size, StripBuilder};
-use log::info;
-use crate::utilities::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use crate::app_state::MtechServerContext;
+use egui_extras::{Size, StripBuilder};
+use std::borrow::BorrowMut;
+use log::info;
 
 use super::websockets::{ClientHandler, WebSocketClient};
 

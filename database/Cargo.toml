@@ -17,4 +17,5 @@ surrealdb = { workspace=true }
 uuid = { workspace=true }
 async-trait = { workspace=true }
 once_cell = { workspace=true }
+reqwest = { version = "0.12", features = ["json"] }
 # surrealdb-alpha = { workspace=true }
