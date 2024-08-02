@@ -1,4 +1,4 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Scope}, Error, Surreal};
+use surrealdb::{engine::remote::ws::{Client as WsClient, Ws}, opt::auth::{Jwt, Record as SurrealRec/*Scope*/}, Error, Surreal}; 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use once_cell::sync::Lazy;
 use serde_json::Value;
@@ -41,14 +41,14 @@ const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
 pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
-pub const DB_URL: &str = "surrealdb.master-tech.app";
+pub const DB_URL: &str = "localhost:8000"; // "surrealdb.master-tech.app";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = dotenv::var("DB_URL").unwrap_or("surrealdb.master-tech.app".to_string());
+        let db_url = dotenv::var("DB_URL").unwrap_or(DB_URL.to_string());
 
-        DATABASE.connect::<Wss>(&db_url).await?;
+        DATABASE.connect::<Ws>(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt{
@@ -82,10 +82,10 @@ impl Database{
 
                 // Select a specific namespace / database
                 let jwt = DATABASE.signin(
-                    Scope { 
+                    SurrealRec { 
                         namespace: NS, 
                         database: DB, 
-                        scope: USER_SCOPE, // access: "user"
+                        access: USER_SCOPE, // access: "user"
                         params: 
                             Auth{
                                 email: username.clone(), 
@@ -108,14 +108,14 @@ impl Database{
 
     
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = dotenv::var("DB_URL").unwrap_or("surrealdb.master-tech.app".to_string());
+        let db_url = dotenv::var("DB_URL").unwrap_or(DB_URL.to_string());
         // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
-        DATABASE.connect::<Wss>(&db_url).await?;
+        DATABASE.connect::<Ws>(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE.signup(
-            Scope { 
-                namespace: NS, database: DB, scope: USER_SCOPE,
+            SurrealRec { 
+                namespace: NS, database: DB, access: USER_SCOPE,
                 params: signup.clone()
             }
         ).await?;

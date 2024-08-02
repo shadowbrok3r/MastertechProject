@@ -64,15 +64,9 @@ pub struct RecordSuccess{
     pub success: bool
 }
 
-// A specific sentinel value for default initialization
-const DEFAULT_USER_ID: RecordId = RecordId {
-    tb: String::new(),
-    id: Id::String(String::new()),
-};
-
 impl Default for UserId {
     fn default() -> Self {
-        UserId(DEFAULT_USER_ID.clone())
+        UserId(Thing::from((String::new(), Id::String(String::new()))).clone())
     }
 }
 
