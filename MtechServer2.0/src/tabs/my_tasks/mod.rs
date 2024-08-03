@@ -23,11 +23,13 @@ impl MtechServerContext{
             if let Some(layout) = self.task_layouts.get_mut(page){
                 if self.rerun_filtering_my_tasks{
                     self.rerun_filtering_my_tasks = false;
+                    log::info!("Reruning my tasks filter");
                     let mut map = BTreeMap::new();
                     vals.iter_mut().for_each(|status| {
                         let filtered = self.tasks.filter_by_status(&status).filter_by_assignee(current_user); //.filter_by_my_store(users, current_user);
                         map.entry(status.as_str().to_string()).or_insert(filtered);
                     });
+                    // layout.update_tasks(map);
                     layout.task_map = map;
                 }
                 layout.layout_cols(ui);

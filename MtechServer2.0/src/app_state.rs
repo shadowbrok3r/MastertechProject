@@ -261,7 +261,7 @@ impl MtechServer{
         
 
         let (db_tx, db_rx) = channel::unbounded();
-        let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(1);
+        let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
         let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
@@ -270,7 +270,7 @@ impl MtechServer{
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
         let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
-        let (new_ticket_tx, new_ticket_rx) = channel::bounded::<NewTicketChannel>(1);
+        let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let (live_output_tx, live_output_rx) = channel::unbounded::<LiveOutput>();
