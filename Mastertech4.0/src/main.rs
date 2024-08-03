@@ -203,8 +203,8 @@ impl eframe::App for MasterTechApp {
 
             let sales_rep = data.sales_rep.unwrap_or_default();
             let split_rep = data.split_rep.unwrap_or_default();
-            let email = sales_rep.email.split_once("@").clone().unwrap_or(("!! Getting Tech !!", "")).0.to_string();
-            let email_split_rep = split_rep.email.split_once("@").clone().unwrap_or(("!! Getting Salesman !!", "")).0.to_string();
+            let email = sales_rep.email.split_once("@").clone().unwrap_or(("", "")).0.to_string();
+            let email_split_rep = split_rep.email.split_once("@").clone().unwrap_or(("", "")).0.to_string();
 
             for msg in data.customer_messages{
                 task_notes.push(TaskNotePayload{

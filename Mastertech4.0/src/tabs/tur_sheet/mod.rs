@@ -398,26 +398,27 @@ impl MastertechContext {
                                 .horizontal_top(|ui|
                                 {
                                     let width = ui.available_width() / 2.0;
-                                    let check = !self.ticket_data.service_number.is_empty()
-                                        && !self.customer_data.name.is_empty()
-                                        && !self.customer_data.phone_number.is_empty()
-                                        && !self.ticket_data.salesman.is_empty()
-                                        && !self.ticket_data.tech.is_empty();
-                                    if ui
-                                    .add_enabled(
-                                        check,
-                                        Button::new(RichText::new("Submit TUR").color(Color32::from_rgb(255, 204, 255)))
-                                        .min_size(Vec2::new(width, 20.0))
-                                        .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
-                                    )
-                                    .clicked()
-                                    {  
-                                        self.submit_tur();
-                                    }
+                                    // let check = !self.ticket_data.service_number.is_empty()
+                                    //     && !self.customer_data.name.is_empty()
+                                    //     && !self.customer_data.phone_number.is_empty()
+                                    //     && !self.ticket_data.salesman.is_empty()
+                                    //     && !self.ticket_data.tech.is_empty();
+                                    // if ui
+                                    // .add_enabled(
+                                    //     check,
+                                    //     Button::new(RichText::new("Submit TUR").color(Color32::from_rgb(255, 204, 255)))
+                                    //     .min_size(Vec2::new(width, 20.0))
+                                    //     .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
+                                    // )
+                                    // .clicked()
+                                    // {  
+                                    //     self.submit_tur();
+                                    // }
 
                                     let check = !self.ticket_data.service_number.is_empty()
                                         && !self.customer_data.name.is_empty()
                                         && !self.customer_data.phone_number.is_empty()
+                                        && !self.ticket_data.salesman.is_empty()
                                         && !self.ticket_data.tech.is_empty();
 
                                     // let txt = if let Some(usr) = &self.current_user {

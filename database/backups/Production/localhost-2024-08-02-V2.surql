@@ -47,6 +47,12 @@ UPDATE $task SET task_note = $new_arr;
 } COMMENT 'Finds the associated task with the given note ID, and removes it from the list of notes in that task' PERMISSIONS FULL;
 
 -- ------------------------------
+-- access
+-- ------------------------------
+
+DEFINE ACCESS user ON DATABASE TYPE RECORD SIGNUP (CREATE user CONTENT { email: $email, everest_initials: $everest_initials, name: $name, password: crypto::argon2::generate($password), store: $store }) SIGNIN (SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(password, $password));
+
+-- ------------------------------
 -- TABLE: computer
 -- ------------------------------
 
@@ -179,7 +185,7 @@ FOR $user IN $users { IF string::contains($value.note, $user.email) { CREATE not
 -- TABLE: user
 -- ------------------------------
 
-DEFINE TABLE user TYPE ANY SCHEMAFULL PERMISSIONS FOR select, create FULL, FOR update, delete WHERE id = $auth.id;
+DEFINE TABLE user SCHEMAFULL PERMISSIONS FOR select, create FULL, FOR update, delete WHERE $access = "users" AND id = $auth.id;
 
 DEFINE FIELD email ON user TYPE string ASSERT string::is::email($value) PERMISSIONS FULL;
 DEFINE FIELD everest_initials ON user TYPE string PERMISSIONS FULL;

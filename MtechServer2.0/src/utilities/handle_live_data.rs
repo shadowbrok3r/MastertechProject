@@ -151,7 +151,7 @@ pub fn update_or_insert(
         for task in tasks.iter_mut() {
             if let Some(existing_id) = &task.id {
                 if existing_id == id{
-                    debug!("ID's match: {:?} // {:?}", existing_id, id);
+                    info!("ID's match: {:?} // {:?}", existing_id, id);
                     let updated_task = convert_live_to_task(new_task.clone(), task, new_ticket);
                     *task = updated_task;
                     updated = true;
@@ -161,13 +161,13 @@ pub fn update_or_insert(
         }
 
         if !updated {
-            debug!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
+            info!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
             let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);  
             // if let Some(ticket) = new_ticket{
             //     new_task_converted.service_ticket = Some(ticket.clone());
             //     new_task_converted.service_number = Some(ticket.service_number);
             // }
-            debug!("new_task_converted: {new_task_converted:?}");
+            info!("new_task_converted: {new_task_converted:?}");
             // Insert the new task if it does not exist
             tasks.push(new_task_converted);
         }

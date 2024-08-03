@@ -306,7 +306,7 @@ impl eframe::App for MtechServer {
                 for (_, tasks) in layout.task_map.iter_mut(){ // .zip(tasks) 
                     for task in tasks.iter_mut(){
                         if task.id.clone().unwrap().0.id == channel.new_task.1.id.clone().unwrap().0.id{
-                            debug!("\nReplacing {:?}\n with \n{:?}\n", task.task_name.clone(), channel.new_task.1.task_name.clone());
+                            info!("\nReplacing {:?}\n with \n{:?}\n", task.task_name.clone(), channel.new_task.1.task_name.clone());
                             match update_or_insert_layout(
                                 &mut self.context.tasks, 
                                 channel.new_task.1.clone(), 
@@ -323,7 +323,7 @@ impl eframe::App for MtechServer {
                             }
                         } else {
                             match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
-                                Ok(_) => {},// info!("Updated existing task"),
+                                Ok(_) => info!("Updated existing task"),
                                 Err(e) => info!("Error updating existing task: {e:?}"),
                             }
                         }

@@ -6,11 +6,8 @@ use log::info;
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {
         if let Some(users) = self.store_users.as_ref(){
-            
             let page = "StoreTasks";
-            
             let current_user = self.current_user.as_ref().unwrap();
-
             if let Some(layout) = self.task_layouts.get_mut(page){
                 if self.rerun_filtering_store_tasks{
                     self.rerun_filtering_store_tasks = false;
@@ -26,7 +23,6 @@ impl MtechServerContext{
             } else {
                 let mut map = BTreeMap::new();
                 users.iter().for_each(|u| {
-                    info!("Users: {u:?}");
                     if u.store == current_user.store{
                     let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(false); //.filter_by_my_store(users, current_user);
                         map.entry(u.everest_initials.to_string()).or_insert(filtered);

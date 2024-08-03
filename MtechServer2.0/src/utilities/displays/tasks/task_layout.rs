@@ -77,10 +77,28 @@ impl TaskLayout {
                         existing.status = new.status.clone();
                     }
 
-                    // In the update logic, check this flag
-                    // if !existing.is_editing {
-                    //     existing.service_name = new.service_name;
-                    // }
+                    /* if let (Some(existing_id), Some(new_id)) = (existing.id.clone(), new.id.clone()){
+                        if existing_id != new_id {
+                            existing_payloads.push(new.clone());
+                        } else {
+                            // Update only non-UI bound fields or compare changes before updating
+                            if existing.assignee != new.assignee {
+                                existing.assignee = new.assignee.clone();
+                            }
+                            if existing.due_date != new.due_date {
+                                existing.due_date = new.due_date.clone();
+                            }
+                            if existing.everest_initials != new.everest_initials {
+                                existing.everest_initials = new.everest_initials.clone();
+                            }
+                            if existing.priority != new.priority {
+                                existing.priority = new.priority.clone();
+                            }
+                            if existing.status != new.status {
+                                existing.status = new.status.clone();
+                            }
+                        }
+                    }  */
                 }
             } else {
                 // Insert new key if it does not exist
