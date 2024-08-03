@@ -1,6 +1,6 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use crate::app_state::{AppState, MainPages, MtechServer};
-use database::{schema::{Store, USER_TABLE}, DATABASE};
+use database::{schema::{Store, USER_TABLE}, set_db_selection, DatabaseSelection, DATABASE};
 use surrealdb::{opt::RecordId, sql::Id};
 use egui_extras::{Size, StripBuilder};
 use wasm_bindgen_futures::spawn_local;
@@ -13,7 +13,8 @@ pub struct AccountMod {
     pub name: String,
     pub email: String,
     pub password: String,
-    pub store: Store
+    pub store: Store,
+    pub database: DatabaseSelection,
 }
 
 impl AccountMod{
@@ -21,13 +22,25 @@ impl AccountMod{
         let acc_mod: AccountMod = Self {
             name: self.name.clone(),
             email: self.email.clone(),
-            password: self.password.clone(),
-            store: self.store.clone()
+            store: self.store.clone(),
+            ..Default::default()
         };
         let account_modification = acc_mod.clone();
         spawn_local(async move {
             let x: Result<Option<RecordId>, surrealdb::Error> = DATABASE.update((USER_TABLE, user_id))
                 .merge(account_modification).await;
+            info!("X: {x:?}");
+        });
+    }
+
+    pub fn change_password(&self, user_id: Id){
+        let password = self.password.clone();
+        spawn_local(async move {
+            let x: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+                .query("UPDATE $usr SET password = crypto::argon2::generate($pass)")
+                .bind(("usr", user_id))
+                .bind(("pass", password))
+                .await;
             info!("X: {x:?}");
         });
     }
@@ -55,52 +68,86 @@ impl MtechServer{
                             {
                                 ui.group(|ui| 
                                 { 
-                                    ui.add_space(100.0);
+                                    ui.vertical_centered(|ui| {
 
-                                    ui.label(RichText::new("Modify Account").heading());
-                                    let font = FontId::proportional(18.0);
-                                    ui.style_mut().override_font_id = Some(font);
-    
-                                    ui.add_space(20.0);
+                                    
+                                        ui.add_space(100.0);
 
-                                    if let (Some(ref mut usr), Some(acc_mod)) = (self.context.current_user.clone(), self.account_mut()){
-                                        let width = ui.available_width() / 5.9;
+                                        ui.label(RichText::new("Modify Account").heading());
+                                        let font = FontId::proportional(18.0);
+                                        ui.style_mut().override_font_id = Some(font);
+        
+                                        ui.add_space(20.0);
 
-                                        ui.horizontal_top(|ui| {
-                                            ui.add_space(width);
-                                            TextEdit::singleline(&mut usr.name)
-                                                .hint_text("Name")
-                                                .desired_width(180.0)
-                                                .ui(ui);
+                                        if let (Some(ref mut usr), Some(acc_mod)) = (self.context.current_user.clone(), self.account_mut()){
+                                            let width = ui.available_width() / 3.0 + 10.0;
+
+                                                // ui.add_space(width);
+                                                TextEdit::singleline(&mut usr.name)
+                                                    .hint_text("Name")
+                                                    .desired_width(180.0)
+                                                    .ui(ui);
+
+                                                ui.add_space(5.0);
+
+                                                TextEdit::singleline(&mut usr.email)
+                                                    .hint_text("Email")
+                                                    .desired_width(180.0)
+                                                    .ui(ui);
+
+                                                // let mut email = usr.email.split_once("@").unwrap_or(("", "")).0;
+                                                // let text_edit = TextEdit::singleline(&mut email).desired_width(180.0);
+                                            
+                                                // let output = text_edit.show(ui);
+                                                // let chars = usr.email.chars().count() as f32;
+                                                // let painter = ui.painter_at(output.response.rect);
+                                                // let text_color = Color32::from_rgba_premultiplied(100, 100, 100, 100);
+                                                // let font = FontId::proportional(18.0);
+                                                // let galley = painter.layout(
+                                                //     String::from("@pclaptops.com"),
+                                                //     font,
+                                                //     text_color,
+                                                //     f32::INFINITY
+                                                // );
+                                                // painter.galley(Pos2::new(output.galley_pos.x + (chars as f32 * 11.75), output.galley_pos.y), galley, text_color);
 
                                             ui.add_space(5.0);
 
-                                            TextEdit::singleline(&mut usr.email)
-                                                .hint_text("Email")
-                                                .desired_width(180.0)
-                                                .ui(ui);
+                                            ui.horizontal_top(|ui| {
+                                                ui.add_space(width);
+                                                ComboBox::new("StoreComboBox", "")
+                                                    .selected_text(acc_mod.store.as_str())
+                                                    .width(180.0)
+                                                    .show_ui(ui, |ui| 
+                                                {
+                                                    for store in Store::VALUES {
+                                                        ui.selectable_value(&mut acc_mod.store, store, store.as_str());
+                                                    }
+                                                });
+                                            });
 
-                                            // let mut email = usr.email.split_once("@").unwrap_or(("", "")).0;
-                                            // let text_edit = TextEdit::singleline(&mut email).desired_width(180.0);
-                                        
-                                            // let output = text_edit.show(ui);
-                                            // let chars = usr.email.chars().count() as f32;
-                                            // let painter = ui.painter_at(output.response.rect);
-                                            // let text_color = Color32::from_rgba_premultiplied(100, 100, 100, 100);
-                                            // let font = FontId::proportional(18.0);
-                                            // let galley = painter.layout(
-                                            //     String::from("@pclaptops.com"),
-                                            //     font,
-                                            //     text_color,
-                                            //     f32::INFINITY
-                                            // );
-                                            // painter.galley(Pos2::new(output.galley_pos.x + (chars as f32 * 11.75), output.galley_pos.y), galley, text_color);
-                                        });
+                                            ui.horizontal_top(|ui| {
+                                                ui.add_space(width);
+                                                let db = ComboBox::new("Database", "")
+                                                    .selected_text(format!("{:?}", acc_mod.database))
+                                                    .width(180.0)
+                                                    .show_ui(ui, |ui| 
+                                                {
+                                                    ui.selectable_value(&mut acc_mod.database, DatabaseSelection::Stable, "Stable");
+                                                    ui.selectable_value(&mut acc_mod.database, DatabaseSelection::Beta, "Beta");
+                                                });
+                                                if db.response.clicked(){
+                                                    if acc_mod.database == DatabaseSelection::Stable {
+                                                        set_db_selection(DatabaseSelection::Stable);
+                                                    } else {
+                                                        set_db_selection(DatabaseSelection::Beta);
+                                                    }
+                                                    info!("Database changed: {:?}", acc_mod.database);
+                                                }
+                                            });
 
-                                        ui.add_space(5.0);
-
-                                        ui.horizontal_top(|ui| {
-                                            ui.add_space(width);
+                                            ui.add_space(5.0);
+                                            
                                             TextEdit::singleline(&mut acc_mod.password)
                                                 .hint_text("Password")
                                                 .desired_width(180.0)
@@ -109,22 +156,6 @@ impl MtechServer{
 
                                             ui.add_space(5.0);
 
-                                            ComboBox::new("StoreComboBox", "")
-                                                .selected_text(acc_mod.store.as_str())
-                                                .width(180.0)
-                                                .show_ui(ui, |ui| 
-                                            {
-                                                for store in Store::VALUES {
-                                                    ui.selectable_value(&mut acc_mod.store, store, store.as_str());
-                                                }
-                                            });
-                                        });
-
-                                        ui.add_space(5.0);
-                                                
-                                        ui.add_space(10.0);
-
-                                        ui.vertical_centered(|ui| {
                                             if Button::new("Update Account")
                                                 .fill(Color32::from_rgb(30, 30, 35))
                                                 .min_size(Vec2::new(140.0, 15.0))
@@ -141,7 +172,7 @@ impl MtechServer{
                                                     email,
                                                     name: usr.name.clone(),
                                                     store: acc_mod.store,
-                                                    password: acc_mod.password.clone(),
+                                                    ..Default::default()
                                                 };
 
                                                 info!("Account Mod: {:?}", acc_mod);
@@ -151,8 +182,23 @@ impl MtechServer{
                                                     Err(e) => info!("Error {e:?}"),
                                                 }
                                             }
-                                        });
-                                    }
+                                            ui.add_space(5.0);
+                                            
+                                            let button = Button::new("Change Password")
+                                                .fill(Color32::from_rgb(30, 30, 35))
+                                                .min_size(Vec2::new(140.0, 15.0));
+
+                                            let enabled_button = ui.add_enabled(if acc_mod.password.len() > 0 { true } else { false }, button);
+
+                                            if enabled_button.clicked() {
+                                                acc_mod.change_password(usr.id.0.id.clone());
+                                                match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
+                                                    Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
+                                                    Err(e) => info!("Error {e:?}"),
+                                                }
+                                            }
+                                        }
+                                    });
                                     ui.add_space(100.0);
                                 });
                             });

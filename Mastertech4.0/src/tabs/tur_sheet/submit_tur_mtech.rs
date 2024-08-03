@@ -46,8 +46,8 @@ pub async fn send_payload(
     
     let task_id = task_data.id.clone();
     let ticket_id = ticket_data.id.clone();
-    // let customer_id = customer_data.id.clone();
-    // let computer_id = computer_data.id.clone();
+    let customer_id = customer_data.id.clone();
+    let computer_id = computer_data.id.clone();
 
     task_data.task_name = format!("{} - {}", &customer_data.name, ticket_data.service_number.clone());
     task_data.service_ticket = ticket_id.clone();
@@ -56,34 +56,34 @@ pub async fn send_payload(
     task_data.everest_initials = queried_salesman.everest_initials;
     task_data.assignee = queried_salesman.id;
 
-    // if let Some(cust) = query_id(CUSTOMER_TABLE, customer_id).await?{
-    //     let update_cust_record: Option<Record> = DATABASE.update(cust.id).content(customer_data.clone()).await?;
-    //     info!("Customer updated: {update_cust_record:?}");
+    if let Some(cust) = query_id(CUSTOMER_TABLE, customer_id).await?{
+        let update_cust_record: Option<Record> = DATABASE.update(cust.id).content(customer_data.clone()).await?;
+        info!("Customer updated: {update_cust_record:?}");
 
-    //     if let Some(computer_record) = query_id(COMPUTER_TABLE, computer_id).await?{
-                // if send_specs{
-    //         let create_computer_record: Option<Record> = DATABASE.update(computer_record.id).content(computer_data).await?;
-    //         info!("create_computer_record: {create_computer_record:?}");
-                // }
-    //     }else{
-    //         let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;
-    //         info!("create_computer_record: {create_computer_record:?}");
-    //     }
-    //     if let Some(ticket) = query_id(TICKET_TABLE, ticket_id).await?{
-    //         let service_ticket_record: Option<Record> = DATABASE.update(ticket.id).content(ticket_data).await?;
-    //         info!("service_ticket_record: {service_ticket_record:?}");
-    //     }else{
-    //         let service_ticket_record: Vec<Record> = DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
-    //         info!("service_ticket_record: {service_ticket_record:?}");
-    //     }
-    // } else {
-    //     let create_cust_record: Vec<Record> = DATABASE.create(CUSTOMER_TABLE).content(customer_data.clone()).await?;
-    //     info!("create_cust_record created: {create_cust_record:?}");
-    //     let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;
-    //     info!("create_computer_record created: {create_computer_record:?}");
-    //     let service_ticket_record: Vec<Record> = DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
-    //     info!("service_ticket_record created: {service_ticket_record:?}");
-    // }
+        if let Some(computer_record) = query_id(COMPUTER_TABLE, computer_id).await?{
+                if send_specs{
+            let create_computer_record: Option<Record> = DATABASE.update(computer_record.id).content(computer_data).await?;
+            info!("create_computer_record: {create_computer_record:?}");
+                }
+        }else{
+            let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;
+            info!("create_computer_record: {create_computer_record:?}");
+        }
+        if let Some(ticket) = query_id(TICKET_TABLE, ticket_id).await?{
+            let service_ticket_record: Option<Record> = DATABASE.update(ticket.id).content(ticket_data).await?;
+            info!("service_ticket_record: {service_ticket_record:?}");
+        }else{
+            let service_ticket_record: Vec<Record> = DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
+            info!("service_ticket_record: {service_ticket_record:?}");
+        }
+    } else {
+        let create_cust_record: Vec<Record> = DATABASE.create(CUSTOMER_TABLE).content(customer_data.clone()).await?;
+        info!("create_cust_record created: {create_cust_record:?}");
+        let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;
+        info!("create_computer_record created: {create_computer_record:?}");
+        let service_ticket_record: Vec<Record> = DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
+        info!("service_ticket_record created: {service_ticket_record:?}");
+    }
 
     let create_task_record: Vec<Record> = DATABASE.create(TASK_TABLE).content(task_data).await?;
     info!("create_task_record: {create_task_record:?}");

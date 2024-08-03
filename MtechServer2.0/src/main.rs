@@ -323,7 +323,12 @@ impl eframe::App for MtechServer {
                             }
                         } else {
                             match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
-                                Ok(_) => info!("Updated existing task"),
+                                Ok(_) => {
+                                    self.context.rerun_filtering_my_tasks = true;
+                                    self.context.rerun_filtering_store_tasks = true;
+                                    self.context.rerun_filtering_completed = true;
+                                    info!("Updated existing task")
+                                },
                                 Err(e) => info!("Error updating existing task: {e:?}"),
                             }
                         }

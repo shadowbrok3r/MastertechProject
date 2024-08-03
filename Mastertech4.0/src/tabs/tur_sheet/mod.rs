@@ -395,7 +395,7 @@ impl MastertechContext {
                                 ui.vertical(|ui| ui.add_space(15.0));
 
                                 ui
-                                .horizontal_top(|ui|
+                                .vertical_centered(|ui|
                                 {
                                     let width = ui.available_width() / 2.0;
                                     // let check = !self.ticket_data.service_number.is_empty()
@@ -429,6 +429,7 @@ impl MastertechContext {
 
                                     let button = ui.add_enabled(check, 
                                         Button::new( RichText::new("Master-Tech.app"))
+                                        .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
                                         .min_size(Vec2::new(width, 20.0))
                                     );
                                     // if self.taco_first_run && txt == "Bitch" {  
