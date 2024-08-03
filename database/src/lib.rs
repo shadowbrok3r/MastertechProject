@@ -1,8 +1,9 @@
 use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Record as SurrealRec/*Scope*/}, Error, Surreal}; 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
 use serde_json::Value;
-use std::fmt::Debug;
+use std::{default, fmt::Debug, sync::RwLock};
 use schema::User;
 use log::info;
 use self::schema::Record;
@@ -37,6 +38,17 @@ pub struct Auth {
     pub password: String,
 }
 
+#[derive(Debug, Default, PartialEq, Serialize, Clone)]
+pub enum DatabaseSelection {
+    #[default]
+    Stable,
+    Beta
+}
+
+lazy_static! {
+    pub static ref DB_SELECTION: RwLock<DatabaseSelection> = RwLock::new(DatabaseSelection::Beta);
+}
+
 const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
@@ -45,11 +57,23 @@ pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
 pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
+pub fn set_db_selection(selection: DatabaseSelection) {
+    let mut db_selection = DB_SELECTION.write().unwrap();
+    *db_selection = selection;
+}
+
+pub fn get_db_url() -> String {
+    let db_selection = DB_SELECTION.read();
+    match *db_selection.unwrap() {
+        DatabaseSelection::Stable => DB_URL.to_string(), 
+        DatabaseSelection::Beta => DB_URL_DEV.to_string(), 
+    }
+}
+
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = dotenv::var("DB_URL").unwrap_or(DB_URL_DEV.to_string());
 
-        DATABASE.connect::<Wss>(&db_url).await?;
+        DATABASE.connect::<Wss>(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt{
@@ -109,7 +133,7 @@ impl Database{
 
     
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = dotenv::var("DB_URL").unwrap_or(DB_URL_DEV.to_string());
+        let db_url = get_db_url();
         // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
         DATABASE.connect::<Wss>(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
