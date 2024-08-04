@@ -12,7 +12,6 @@ use displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, tas
 pub mod themes;
 pub mod crypto;
 pub mod ui_action;
-pub mod data_channels;
 pub mod displays;
 pub mod update_tasks;
 

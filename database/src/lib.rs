@@ -3,12 +3,12 @@ use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
 use serde_json::Value;
-use std::{default, fmt::Debug, sync::RwLock};
+use std::{fmt::Debug, sync::RwLock};
 use schema::User;
 use log::info;
 use self::schema::Record;
-
 pub mod schema;
+pub mod live_data;
 
 #[derive(Clone, Debug, Default)]
 pub struct Database{

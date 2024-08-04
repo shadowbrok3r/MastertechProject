@@ -1,17 +1,17 @@
 use database::{schema::{prestashop_schema::{Prestashop, Address, Customer, CustomerMessage, CustomerThread, Employee, Order, PrestashopPayload}, CustomerData, CustomerId, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, TicketId, User, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
-use eframe::egui::{Align, Button, Color32, ComboBox, Direction, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
+use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
+use super::{task_modal::{display_task_page, ModalAction}, ModalState};
+// use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use crate::utilities::{DisplayModal, ModalTypes};
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{vec2, Grid, ScrollArea};
-use std::collections::{BTreeSet, HashMap};
+use eframe::egui::vec2;
+use std::collections::HashMap;
 use wasm_bindgen_futures::spawn_local;
 use surrealdb::sql::Thing;
 use serde::Serialize;
 use log::info;
-use super::{task_modal::{display_task_page, ModalAction}, ModalState};
 
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct CreateTaskModal{
@@ -329,7 +329,7 @@ impl Tur {
             ui.add_space(15.0);
             ui.set_width(ui.available_width()/3.0);
             ui.shrink_width_to_current();
-            
+
             TextEdit::singleline(&mut self.ticket_data.service_number)
                 .hint_text("Service #  ")
                 .char_limit(8)

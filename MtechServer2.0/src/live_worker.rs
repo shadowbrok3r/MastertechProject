@@ -5,11 +5,10 @@ use std::fmt::Debug;
 use gloo_worker::Registrable;
 use gloo_console::log;
 
+#[allow(dead_code)]
 fn main() {
     LiveWorker::registrar().register();
 }
-
-
 
 #[derive(Debug)]
 pub struct Message(pub u32);
@@ -48,7 +47,7 @@ impl gloo_worker::Worker for LiveWorker {
         &mut self,
         scope: &WorkerScope<Self>,
         msg: Self::Input,
-        id: HandlerId,
+        _id: HandlerId,
     ) {
         let msg = format!("{:?}", msg);
         log!(msg);

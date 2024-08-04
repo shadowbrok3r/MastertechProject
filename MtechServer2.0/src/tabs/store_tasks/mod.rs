@@ -1,7 +1,6 @@
 use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks}};
 use std::collections::BTreeMap;
 use eframe::egui::Ui;
-use log::info;
 
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {

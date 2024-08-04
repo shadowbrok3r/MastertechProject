@@ -4,6 +4,7 @@ use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, Fon
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
+#[allow(unused_imports)]
 use wasm_cookies::CookieOptions;
 
 use crate::app_state::{AppState, MainPages, MtechServer};
@@ -28,6 +29,7 @@ impl Login{
         match database{
             Ok(db) => {
                 let database = db.clone();
+                #[allow(unused_variables)]
                 if let (Some(ref cookie), Some(ref usr)) = (database.jwt, database.user){
                     #[cfg(target_arch="wasm32")]{
                         let duration = web_time::Duration::from_secs(345600);

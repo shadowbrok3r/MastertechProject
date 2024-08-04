@@ -96,7 +96,9 @@ openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "0.9"
 # libatasmart = "0.3.1"
 
-# [features]
+[features]
+default = []
+inline = []
 # default=["winit"]   # , "cpu_fix", "compat_mode"
 # winit = ["dep:egui-winit"]
 # compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
