@@ -214,8 +214,7 @@ impl <'a>Prestashop<'a> {
         name: &str, 
         id: &str
     ) 
-        -> anyhow::Result<T, anyhow::Error>
-            where T: for <'de>Deserialize<'de> + std::fmt::Debug
+        -> anyhow::Result<T, anyhow::Error> where T: for <'de>Deserialize<'de> + std::fmt::Debug
     {
         let url = format!("https://pclaptops.mojo11.com/api/{resource}/{id}?output_format=JSON");
         let response: Value = self.client 

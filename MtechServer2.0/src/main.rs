@@ -384,7 +384,10 @@ impl eframe::App for MtechServer {
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
             AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
             AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
-            AppState::Authenticated(MainPages::AccountSettings) => self.account_settings_page(ctx, self.context.app_state_tx.clone()),
+            AppState::Authenticated(MainPages::AccountSettings) => {
+                // if self.
+                self.account_settings_page(ctx, self.context.app_state_tx.clone());
+            },
             AppState::Authenticated(_) => self.main_page(ctx),
             AppState::CreateAccount => self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())
         }

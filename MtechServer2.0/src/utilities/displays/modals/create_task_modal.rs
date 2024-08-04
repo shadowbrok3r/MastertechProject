@@ -11,7 +11,7 @@ use wasm_bindgen_futures::spawn_local;
 use surrealdb::sql::Thing;
 use serde::Serialize;
 use log::info;
-use super::{task_modal::ModalAction, ModalState};
+use super::{task_modal::{display_task_page, ModalAction}, ModalState};
 
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct CreateTaskModal{
@@ -92,8 +92,10 @@ impl DisplayModal for CreateTaskModal {
                     .size(Size::remainder())
                     .horizontal( |mut strip| 
                 {
-                    strip.cell(|ui|{
-                        ui.horizontal(|ui|{
+                    strip.cell(|ui|
+                    {
+                        ui.horizontal(|ui|
+                        {
                             
                             let mut main_page = false;
                             let mut import_task_page = false;
@@ -103,7 +105,7 @@ impl DisplayModal for CreateTaskModal {
                                 _ => {main_page = true},
                             };
 
-                            ui.add_space(200.0);
+                            ui.add_space(320.0);
 
                             if ui.selectable_label(main_page, RichText::new("🖹").heading()).clicked(){
                                 response = Some(ModalAction::TicketInfoPage);
@@ -138,12 +140,12 @@ impl DisplayModal for CreateTaskModal {
                         {
                             s.empty();
                             s.cell(|ui| {
-                                ui.horizontal_centered(|ui| {
+                                ui.horizontal_centered(|ui|{
                                     ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
                                     match current_page_state{
-                                        ModalAction::TicketInfoPage => self.create_task(ui),
-                                        ModalAction::ImportTask => ui.vertical_centered(|ui| self.tur.set_store_users(self.store_users.clone()).tur_sheet(ui)).inner,
-                                        _ => self.create_task(ui)
+                                        ModalAction::TicketInfoPage => self.create_task(ui, avail_size),
+                                        ModalAction::ImportTask => self.tur.tur_sheet(ui),
+                                        _ => self.create_task(ui, avail_size)
                                     };
                                 });
                             });
@@ -160,111 +162,122 @@ impl DisplayModal for CreateTaskModal {
 }
 
 impl CreateTaskModal {
-    pub fn create_task(&mut self, ui: &mut Ui) {
-        ui.with_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), |ui| {
-            ui.style_mut().override_font_id = Some(FontId::proportional(15.0));
-
-            ui.add_space(50.0);
-            let combo_center_width = ui.available_width() / 2.98;
-            // self.tur_sheet(ui);
-            TextEdit::singleline(&mut self.task_name)
-                .hint_text("Task Name")
-                .margin(Margin::symmetric(6.0, 4.0))
-                .desired_width(200.0)
-                .ui(ui);
-
-            ui.add_space(10.0);
-
-            ui.horizontal_top(|ui| {
-                ui.add_space(combo_center_width);
-                if let Some(users) = &mut self.store_users{
-                    ui.style_mut().spacing.combo_width = 50.0;
-                    ComboBox::new("AssigneeComboBox", "")
-                        .selected_text(self.assignee.as_ref().unwrap_or(users.get(0).as_ref().unwrap()).everest_initials.clone())
-                        .show_ui(ui, |ui| 
-                    {
-                        for user in users.iter_mut(){
-                            let initials = user.everest_initials.clone();
-                            let x = ui.selectable_value(&mut self.assignee, Some(user.to_owned()), &initials.clone());
-                            if x.changed(){
-                                info!("x changed: {:?}", self.assignee);
-                            }
-                        }
+    pub fn create_task(&mut self, ui: &mut Ui, avail_size: Vec2) {
+        
+        StripBuilder::new(ui)
+            .size(Size::exact(100.0))
+            .size(Size::exact(115.0))
+            .size(Size::exact(60.0))
+            .size(Size::exact(100.0))
+            .vertical(|mut strip| 
+        {
+            strip.strip(|s|{
+                s
+                    .size(Size::exact(300.0))
+                    .size(Size::exact(12.0))
+                    .size(Size::exact(300.0))
+                    .horizontal(|mut s|
+                {
+                    s.cell(|ui|{
+                        TextEdit::singleline(&mut self.task_name)
+                            .hint_text("Task Name")
+                            .margin(Margin::symmetric(6.0, 4.0))
+                            .desired_width(200.0)
+                            .ui(ui);
                     });
-                }
-                ui.scope(|ui| {
-                    ui.style_mut().spacing.combo_width = 70.0;
-                    ComboBox::new("PriorityComboBox", "")
-                        .selected_text(RichText::new(format!("{}", &self.task_priority.as_str())))
-                        .show_ui(ui, |ui| 
-                    {
-                        for priority in Priority::VALUES{
-                            ui.selectable_value(&mut self.task_priority, priority.to_owned(), priority.as_str());
+                    s.cell(|ui| {
+                        ui.add_space(50.0);
+                        if let Some(users) = &mut self.store_users{
+                            ui.style_mut().spacing.combo_width = 50.0;
+                            ComboBox::new("AssigneeComboBox", "")
+                                .selected_text(self.assignee.as_ref().unwrap_or(users.get(0).as_ref().unwrap()).everest_initials.clone())
+                                .show_ui(ui, |ui| 
+                            {
+                                for user in users.iter_mut(){
+                                    let initials = user.everest_initials.clone();
+                                    let x = ui.selectable_value(&mut self.assignee, Some(user.to_owned()), &initials.clone());
+                                    if x.changed(){
+                                        info!("x changed: {:?}", self.assignee);
+                                    }
+                                }
+                            });
+                        }
+                        ui.scope(|ui| 
+                        {
+                            ui.style_mut().spacing.combo_width = 70.0;
+                            ComboBox::new("PriorityComboBox", "")
+                                .selected_text(RichText::new(format!("{}", &self.task_priority.as_str())))
+                                .show_ui(ui, |ui| 
+                            {
+                                for priority in Priority::VALUES{
+                                    ui.selectable_value(&mut self.task_priority, priority.to_owned(), priority.as_str());
+                                }
+                            });
+                        });
+
+                        DatePickerButton::new(&mut self.due_date)
+                            .calendar_week(false)
+                            .format("%m/%d/%y")
+                            .show_icon(true)
+                            .ui(ui);
+                    });
+                    s.cell(|ui| {
+                        TextEdit::multiline(&mut self.description)
+                            .hint_text("Task Description")
+                            .margin(Margin::symmetric(6.0, 4.0))
+                            .desired_rows(6)
+                            .code_editor()
+                            .desired_width(200.0)
+                            .ui(ui);
+
+                        ui.add_space(10.0);
+                        if Button::new("Submit")
+                            .min_size(Vec2::new(120.0, 30.0))
+                            .fill(Color32::from_rgb(30, 30, 35))
+                            .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
+                            .ui(ui)
+                            .clicked()
+                        {
+                            let time = NaiveTime::from_hms_milli_opt(0,0,0,0).unwrap();
+                            let date = NaiveDateTime::new(self.due_date, time);
+                            let y = date.and_utc().to_rfc3339();
+                            let usr = self.assignee
+                                .as_ref()
+                                .unwrap_or(
+                                    self.store_users.clone().unwrap_or(Vec::new())
+                                    .get(0)
+                                    .as_ref()
+                                    .unwrap()
+                            ).clone();
+
+                            let task_payload = TaskPayload{
+                                task_name: self.task_name.clone(),
+                                everest_initials: usr.everest_initials,
+                                task_description: self.description.clone(),
+                                assignee: usr.id,
+                                due_date: y,
+                                priority: self.task_priority.clone(),
+                                task_note: None,
+                                completed: false,
+                                status: Status::Todo,
+                                // dep: format!("{:?}", usr.store),
+                                ..Default::default()
+                            };
+
+                            spawn_local(async move{
+                                    let _: Vec<Record> = DATABASE
+                                    .create(TASK_TABLE)
+                                    .content(task_payload)
+                                    .await
+                                    .unwrap();
+                            });
                         }
                     });
                 });
-
-                DatePickerButton::new(&mut self.due_date)
-                    .calendar_week(false)
-                    .format("%m/%d/%y")
-                    .show_icon(true)
-                    .ui(ui);
             });
-            
-            ui.add_space(10.0);
+            strip.empty();
 
-            TextEdit::multiline(&mut self.description)
-                .hint_text("Task Description")
-                .margin(Margin::symmetric(6.0, 4.0))
-                .desired_rows(6)
-                .code_editor()
-                .desired_width(200.0)
-                .ui(ui);
-
-            ui.add_space(10.0);
-            if Button::new("Submit")
-                .min_size(Vec2::new(120.0, 30.0))
-                .fill(Color32::from_rgb(30, 30, 35))
-                .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
-                .ui(ui)
-                .clicked()
-            {
-                let time = NaiveTime::from_hms_milli_opt(0,0,0,0).unwrap();
-                let date = NaiveDateTime::new(self.due_date, time);
-                let y = date.and_utc().to_rfc3339();
-                let usr = self.assignee
-                    .as_ref()
-                    .unwrap_or(
-                        self.store_users.clone().unwrap_or(Vec::new())
-                        .get(0)
-                        .as_ref()
-                        .unwrap()
-                )
-                .clone();
-
-                let task_payload = TaskPayload{
-                    task_name: self.task_name.clone(),
-                    everest_initials: usr.everest_initials,
-                    task_description: self.description.clone(),
-                    assignee: usr.id,
-                    due_date: y,
-                    priority: self.task_priority.clone(),
-                    task_note: None,
-                    completed: false,
-                    status: Status::Todo,
-                    // dep: format!("{:?}", usr.store),
-                    ..Default::default()
-                };
-
-                spawn_local(async move{
-                        let _: Vec<Record> = DATABASE
-                        .create(TASK_TABLE)
-                        .content(task_payload)
-                        .await
-                        .unwrap();
-                });
-            }
-            ui.add_space(ui.available_width() / 3.0);
+            strip.empty();
         });
     }
 }
@@ -292,31 +305,22 @@ impl Tur {
     }
 
     pub fn tur_sheet(&mut self, ui: &mut Ui) {
-        let check = !self.ticket_data.service_number.is_empty();
-        let stroke = Stroke::new(1.0, Color32::from_rgb(191, 33, 101));
-        let txt_color = Color32::from_rgb(255, 204, 255);
-        let txt = RichText::new("Get PrestaShop Order").color(txt_color);
-        let button_size = Vec2::new(145.0, 25.0);
-        let button = Button::new(txt).stroke(stroke).min_size(button_size);
-        if ui.add_enabled(check, button).clicked() {
-
-            let service_num = self.ticket_data.service_number.clone();
-            self.presta_api();
-            self.ticket_data = TicketData::default();
-            self.task_data = TaskPayload::default();
-            self.customer_data = CustomerData::default();
-            // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
-            self.ticket_data.service_number = service_num;
-        }
-        ui.horizontal(|ui| ui.add_space(250.0));
-        Grid::new("ticket_info_grid")
-            .spacing(vec2(4.0, 7.0))
-            .min_col_width( 135.0+3.0)
-            .max_col_width( 135.0 + 8.0)
-            .num_columns(2)
-            .show(ui, |ui| 
-        {
-                                /*     ROW 1     */
+        ui.vertical_centered(|ui| {     
+            let check = !self.ticket_data.service_number.is_empty();
+            let stroke = Stroke::new(1.0, Color32::from_rgb(191, 33, 101));
+            let txt_color = Color32::from_rgb(255, 204, 255);
+            let txt = RichText::new("Get PrestaShop Order").color(txt_color);
+            let button_size = Vec2::new(145.0, 25.0);
+            let button = Button::new(txt).stroke(stroke).min_size(button_size);
+            if ui.add_enabled(check, button).clicked() {
+                let service_num = self.ticket_data.service_number.clone();
+                self.presta_api();
+                self.ticket_data = TicketData::default();
+                self.task_data = TaskPayload::default();
+                self.customer_data = CustomerData::default();
+                // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
+                self.ticket_data.service_number = service_num;
+            }
             TextEdit::singleline(&mut self.ticket_data.service_number)
                 .hint_text("Service #  ")
                 .char_limit(8)
@@ -324,192 +328,59 @@ impl Tur {
                 .margin(vec2(4.0, 4.0))
                 .min_size(vec2( 135.0+2.0,14.0))
                 .ui(ui);
-
-            TextEdit::singleline(&mut self.customer_data.name)
-                .hint_text("Customer Name  ")
-                .vertical_align(Align::Center)
-                .margin(vec2(4.0, 4.0))
-                .min_size(vec2( 135.0+2.0,14.0))
-                .ui(ui);
-
-            ui.end_row();
-
-                                /*     ROW 2     */
-            TextEdit::singleline(&mut self.customer_data.phone_number)
-                .hint_text("Phone Number 1")
-                .vertical_align(Align::Center)
-                .margin(vec2(4.0, 4.0))
-                .min_size(vec2( 135.0+2.0,14.0))
-                .ui(ui);
-
-            TextEdit::singleline(&mut self.customer_data.phone_number_2)
-                .hint_text("Phone Number 2")
-                .vertical_align(Align::Center)
-                .margin(vec2(4.0, 4.0))
-                .min_size(vec2( 135.0+2.0,14.0))
-                .ui(ui);
             
-            ui.end_row();
-
-                                /*     ROW 3     */
-            let mut inputs = BTreeSet::new();
-            if let Some(users) = &self.store_users{
-
-                for user in users.iter(){
-                    let parsed = user.email.split_once("@").unwrap_or(("","")).0;
-                    inputs.insert(parsed.to_string());
-                }
-                // let size = vec2(  135.0 + 2.0, 14.0 );
-                let _result = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
-                    .highlight_matches(true)
-                    .max_suggestions(3)
-                    .set_text_edit_properties(move |text_edit| 
-                {
-                    text_edit
-                        .hint_text("Assignee")
-                        // .min_size(size)
-                        .font(FontId::proportional(12.0))
-                        .frame(true)
-                        // .horizontal_align(egui::Align::Center)
-                })
-                .ui(ui);
-
-                let _result = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
-                    .highlight_matches(true)
-                    .max_suggestions(3)
-                    .set_text_edit_properties(move |text_edit| 
-                {
-                    text_edit
-                        .hint_text("Tech")
-                        // .min_size(size)
-                        .font(FontId::proportional(12.0))
-                        .frame(true)
-                        // .horizontal_align(egui::Align::Center)
-                })
-                .ui(ui);
-
-            } else {
-
-                TextEdit::singleline(&mut self.ticket_data.salesman)
-                    .hint_text("Assignee")
-                    .vertical_align(Align::Center)
-                    .margin(vec2(4.0, 4.0))
-                    // .min_size(vec2( 135.0+2.0,14.0))
-                    .ui(ui);
-                
-                TextEdit::singleline(&mut self.ticket_data.tech)
-                    .hint_text("Tech")
-                    .vertical_align(Align::Center)
-                    .margin(vec2(4.0, 4.0))
-                    // .min_size(vec2( 135.0+2.0,14.0))
-                    .ui(ui);
-            }
-
-            ui.end_row();
-        }); // grid
-
-        let width = ui.available_width() / 2.0;
-        let check = !self.ticket_data.service_number.is_empty()
-            && !self.customer_data.name.is_empty()
-            && !self.customer_data.phone_number.is_empty()
-            && !self.ticket_data.salesman.is_empty()
-            && !self.ticket_data.tech.is_empty();
-            
-        let button2 = Button::new(RichText::new("Submit TUR").color(txt_color)).min_size(Vec2::new(width, 20.0)).stroke(stroke);
-
-        if ui.add_enabled(check,button2).clicked() {  
-            // self.submit_tur();
-        }
-
-        let check = !self.ticket_data.service_number.is_empty()
-            && !self.customer_data.name.is_empty()
-            && !self.customer_data.phone_number.is_empty()
-            && !self.ticket_data.tech.is_empty();
-
-        let button3 = Button::new( RichText::new("Master-Tech.app")).min_size(Vec2::new(width, 20.0));
-
-        if ui.add_enabled(check, button3).clicked() {  
-        // self.submit_tur_mastertech(); 
-        }
-
-        ScrollArea::new([false, true])
-        .id_source("checkin_notes_scroll")
-        .show(ui, |ui|{
-            let _ = TextEdit::multiline(&mut self.ticket_data.checkin_notes)
-            .hint_text(RichText::new("Checkin Notes").weak())
-            .font(FontId::proportional(15.0))
-            .desired_rows(4).ui(ui);
-        });
-        ScrollArea::new([false, true])
-        .id_source("recomendations_scroll")
-        .show(ui, |ui|{
-            let _ = TextEdit::multiline(&mut self.task_data.task_description)
-            .hint_text(RichText::new("Recommendations").weak())
-            .font(FontId::proportional(15.0))
-            .desired_rows(4).ui(ui);
-        });
-
-        ScrollArea::new([false, true])
-        .id_source("data_scroll")
-        .show(ui, |ui|{
-            TextEdit::multiline(&mut format!("{:?}", self.data))
-            .ui(ui);
-        });
-
-
-        if let Ok(data) = self.prestashop_api_rx.try_recv(){
-            self.data = data.clone();
-            let customer = &mut self.customer_data;
-            let ticket = &mut self.ticket_data;
-            let _task = &mut self.task_data;
-            let task_notes = &mut self.task_notes;
-            
-            let service_details = data.order.associations.order_service;
-            let mut services: Vec<TicketId> = Vec::new();
-
-            let sales_rep = data.sales_rep.unwrap_or_default();
-            let split_rep = data.split_rep.unwrap_or_default();
-            let email = sales_rep.email.split_once("@").clone().unwrap_or(("!! Getting Tech !!", "")).0.to_string();
-            let email_split_rep = split_rep.email.split_once("@").clone().unwrap_or(("!! Getting Salesman !!", "")).0.to_string();
-
-            for msg in data.customer_messages{
-                task_notes.push(TaskNotePayload{
-                    everest_initials: msg.id_employee,
-                    note: msg.message,
-                    ..Default::default()
-                })
-            }
-
-            customer.id = data.customer.id;
-            customer.cust_code = data.customer.cust_code;
-            customer.email = data.customer.email;
-            customer.name = data.customer.name.clone();
-            customer.phone_number = data.customer.phone_number;
-            ticket.salesman = email_split_rep;
-            ticket.tech = email;
-            ticket.customer = customer.id.clone();
-
-            ticket.id = Some(TicketId(Thing::from((TICKET_TABLE.to_string(), ticket.service_number.clone()))));
-
-            if let Some(ticket_id) = &ticket.id {
-                services.push(ticket_id.clone());
-            }
-
-            if let Some(service) = service_details{
-                if service.len() == 1{
-                    let svc = service.get(0);
-                    if let Some(service) = svc {
-                        ticket.checkin_notes = service.check_in_notes.clone();
+                if let Ok(data) = self.prestashop_api_rx.try_recv(){
+                    self.data = data.clone();
+                    let customer = &mut self.customer_data;
+                    let ticket = &mut self.ticket_data;
+                    let _task = &mut self.task_data;
+                    let task_notes = &mut self.task_notes;
+                    
+                    let service_details = data.order.associations.order_service;
+                    let mut services: Vec<TicketId> = Vec::new();
+        
+                    let sales_rep = data.sales_rep.unwrap_or_default();
+                    let split_rep = data.split_rep.unwrap_or_default();
+                    let email = sales_rep.email.split_once("@").clone().unwrap_or(("!! Getting Tech !!", "")).0.to_string();
+                    let email_split_rep = split_rep.email.split_once("@").clone().unwrap_or(("!! Getting Salesman !!", "")).0.to_string();
+        
+                    for msg in data.customer_messages{
+                        task_notes.push(TaskNotePayload{
+                            everest_initials: msg.id_employee,
+                            note: msg.message,
+                            ..Default::default()
+                        })
                     }
-                }else{
-                    info!("Theres a couple.... {:?}", service);
+        
+                    customer.id = data.customer.id;
+                    customer.cust_code = data.customer.cust_code;
+                    customer.email = data.customer.email;
+                    customer.name = data.customer.name.clone();
+                    customer.phone_number = data.customer.phone_number;
+                    ticket.salesman = email_split_rep;
+                    ticket.tech = email;
+                    ticket.customer = customer.id.clone();
+        
+                    ticket.id = Some(TicketId(Thing::from((TICKET_TABLE.to_string(), ticket.service_number.clone()))));
+        
+                    if let Some(ticket_id) = &ticket.id {
+                        services.push(ticket_id.clone());
+                    }
+        
+                    if let Some(service) = service_details{
+                        if service.len() == 1{
+                            let svc = service.get(0);
+                            if let Some(service) = svc {
+                                ticket.checkin_notes = service.check_in_notes.clone();
+                            }
+                        }else{
+                            info!("Theres a couple.... {:?}", service);
+                        }
+                    }
                 }
-            }
 
-            // self.output_text += &serde_json::to_string_pretty(&ticket).unwrap_or("".to_string());
-            // self.output_text += &serde_json::to_string_pretty(&customer).unwrap_or("".to_string());
-            // self.output_text += &serde_json::to_string_pretty(&computer).unwrap_or("".to_string());
-        }
+            display_task_page(ui, &mut self.task_data, Vec2::new(500.0,400.0));
+        });
 
     }
 

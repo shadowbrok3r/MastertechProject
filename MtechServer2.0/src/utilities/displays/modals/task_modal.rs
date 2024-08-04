@@ -235,7 +235,7 @@ impl DisplayModal for TaskModal {
 }
 
 
-fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
+pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
     fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
         let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
@@ -247,185 +247,185 @@ fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
     ui.add_space(15.0);
 
     let ticket = task.service_ticket.as_ref();
-    if let Some(ticket) = ticket{
-            let customer = ticket.customer.as_ref();
-            StripBuilder::new(ui)
-                .size(Size::exact(100.0))
-                .size(Size::exact(115.0))
-                .size(Size::exact(60.0))
-                .size(Size::exact(100.0))
-                .vertical(|mut strip| 
-            {
-                strip.strip(|s|{
-                    s
-                        .size(Size::exact(300.0))
-                        .size(Size::exact(12.0))
-                        .size(Size::exact(300.0))
-                        .horizontal(|mut s|
-                    {
-                        s.cell(|ui|{
-                            ui.group(|ui| {
-                                // ui.colored_label(Color32::LIGHT_RED, "Personnel Information");
-                                Grid::new("group2").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
-                                .show(ui, |ui| {
-                                    ui.colored_label(Color32::LIGHT_RED, "Technician:");
-                                    ui.label(&ticket.tech);
-                                    ui.end_row();
+    if let Some(ticket) = ticket {
+        let customer = ticket.customer.as_ref();
+        StripBuilder::new(ui)
+            .size(Size::exact(100.0))
+            .size(Size::exact(115.0))
+            .size(Size::exact(60.0))
+            .size(Size::exact(100.0))
+            .vertical(|mut strip| 
+        {
+            strip.strip(|s|{
+                s
+                    .size(Size::exact(300.0))
+                    .size(Size::exact(12.0))
+                    .size(Size::exact(300.0))
+                    .horizontal(|mut s|
+                {
+                    s.cell(|ui|{
+                        ui.group(|ui| {
+                            // ui.colored_label(Color32::LIGHT_RED, "Personnel Information");
+                            Grid::new("group2").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                            .show(ui, |ui| {
+                                ui.colored_label(Color32::LIGHT_RED, "Technician:");
+                                ui.label(&ticket.tech);
+                                ui.end_row();
 
-                                    ui.colored_label(Color32::LIGHT_RED, "Salesman:");
-                                    ui.label(&ticket.salesman);
-                                    ui.end_row();
+                                ui.colored_label(Color32::LIGHT_RED, "Salesman:");
+                                ui.label(&ticket.salesman);
+                                ui.end_row();
 
-                                    ui.colored_label(Color32::LIGHT_RED, "Split Rep:");
-                                    ui.label(&ticket.sales_rep);
-                                    ui.end_row();
+                                ui.colored_label(Color32::LIGHT_RED, "Split Rep:");
+                                ui.label(&ticket.sales_rep);
+                                ui.end_row();
 
-                                    ui.colored_label(Color32::LIGHT_RED, "Checkin Rep:");
-                                    ui.label(&ticket.checkin_rep);
-                                });
+                                ui.colored_label(Color32::LIGHT_RED, "Checkin Rep:");
+                                ui.label(&ticket.checkin_rep);
                             });
-
                         });
-                        s.empty();
-                        s.cell(|ui| {
-                            ui.group(|ui| {
-                                // ui.colored_label(Color32::LIGHT_RED, "Ticket Information");
-                                Grid::new("group1").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
-                                .show(ui, |ui| {
-                                    ui.colored_label(Color32::LIGHT_RED, "SO#:");
-                                    ui.label(format!("{}", ticket.service_number));
-                                    ui.end_row();
-                                    let x = ticket.created_at.as_ref();
-                                    if let Some(x) = x{
-                                        let date = x.parse::<DateTime<Utc>>();
-                                        if let Ok(date) = date{
-                                            ui.colored_label(Color32::LIGHT_RED, "Tur Sent:");
-                                            ui.label(date.date_naive().to_string());
-                                            ui.end_row();
-                                        }
+
+                    });
+                    s.empty();
+                    s.cell(|ui| {
+                        ui.group(|ui| {
+                            // ui.colored_label(Color32::LIGHT_RED, "Ticket Information");
+                            Grid::new("group1").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                            .show(ui, |ui| {
+                                ui.colored_label(Color32::LIGHT_RED, "SO#:");
+                                ui.label(format!("{}", ticket.service_number));
+                                ui.end_row();
+                                let x = ticket.created_at.as_ref();
+                                if let Some(x) = x{
+                                    let date = x.parse::<DateTime<Utc>>();
+                                    if let Ok(date) = date{
+                                        ui.colored_label(Color32::LIGHT_RED, "Tur Sent:");
+                                        ui.label(date.date_naive().to_string());
+                                        ui.end_row();
                                     }
+                                }
 
-                                    // ui.colored_label(Color32::LIGHT_RED, "Store:");
-                                    // ui.label(&ticket.dep);
-                                    ui.end_row();
-                                    // ui.colored_label(Color32::LIGHT_RED, "");
-                                });
+                                // ui.colored_label(Color32::LIGHT_RED, "Store:");
+                                // ui.label(&ticket.dep);
+                                ui.end_row();
+                                // ui.colored_label(Color32::LIGHT_RED, "");
                             });
                         });
                     });
                 });
-                strip.strip(|s|{
-                    s
-                        .size(Size::exact(300.0))
-                        .size(Size::exact(12.0))
-                        .size(Size::exact(300.0))
-                        .horizontal(|mut s|
-                    {
-                        s.cell(|ui|{
-                            ui.group(|ui| {
-                                // ui.colored_label(Color32::LIGHT_RED, "Order Details");
-                                Grid::new("group3").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
-                                .show(ui, |ui| {
-                                    ui.colored_label(Color32::LIGHT_RED, "Terms:");
-                                    ui.label(&ticket.terms);
-                                    ui.end_row();
-
-                                    ui.colored_label(Color32::LIGHT_RED, "Total on Order:");
-                                    ui.label(&ticket.ticket_total);
-                                    ui.end_row();
-
-                                    ui.colored_label(Color32::LIGHT_RED, "Order Type:");
-                                    ui.label(&ticket.doc_alias);
-                                    ui.end_row();
-                                    ui.colored_label(Color32::LIGHT_RED, "");
-                                    ui.end_row();
-                                    ui.colored_label(Color32::LIGHT_RED, "");
-                                });
-                            });
-                        });
-                        s.empty();
-                        s.cell(|ui|{
-                            if let Some(customer) = &customer {
-                                ui.group(|ui| {
-                                    // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
-                                    Grid::new("customer_data").spacing(Vec2::new(0.0, 6.0)).max_col_width(150.0).min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
-                                    .show(ui, |ui| {
-                                        // ui.colored_label(Color32::LIGHT_RED, "Other Services:");
-                                        // ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), |ui| {
-                                        //     ui.label(&customer.services.as_ref().unwrap());
-                                        // });
-                                        // ui.end_row();
-
-                                        ui.colored_label(Color32::LIGHT_RED, "ID:");
-                                        ui.label(format!("{}", customer.id.as_ref().unwrap().0.id));
-                                        ui.end_row();
-
-                                        ui.colored_label(Color32::LIGHT_RED, "Name:");
-                                        ui.label(&customer.name);
-                                        ui.end_row();
-
-                                        ui.colored_label(Color32::LIGHT_RED, "Phone#:");
-                                        ui.label(&customer.phone_number);
-                                        ui.end_row();
-
-                                        ui.colored_label(Color32::LIGHT_RED, "Phone2:");
-                                        ui.label(&customer.phone_number_2);
-                                        ui.end_row();
-
-                                        ui.colored_label(Color32::LIGHT_RED, "Email:");
-                                        ui.label(&customer.email);
-                                        // ui.colored_label(Color32::LIGHT_RED, "SPO Links:");
-                                        // ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), |ui| {
-                                        //     ui.label(&customer.part_order_links);
-                                        // });
-                                        // ui.end_row();
-                                    });
-                                });
-                            }
-                        });
-                    });
-                });
-                strip.empty();
-                strip.strip(|s|{
-                    s
-                        .size(Size::exact(640.0))
-                        .horizontal(|mut s|
-                    {
-                        s.strip(|s|{
-                            s
-                                .size(Size::remainder())
-                                .size(Size::exact(5.0))
-                                .size(Size::remainder())
-                                .horizontal(|mut s|
-                            {
-                                s.cell(|ui|{
-                                    ui.vertical_centered_justified(|ui| {
-                                        ui.label(RichText::new("Checkin Notes:").font(FontId::proportional(15.0)));
-                                        TextEdit::multiline(&mut ticket.checkin_notes.to_string())
-                                            .margin(Margin::same(5.0))
-                                            .desired_rows(8)
-                                            .desired_width(ui.available_width())
-                                            .ui(ui);
-                                    });
-                                });
-                                s.empty();
-                                s.cell(|ui|{
-                                    ui.vertical_centered_justified(|ui| {
-                                        ui.label(RichText::new("Recommendations:").font(FontId::proportional(15.0)));
-                                        TextEdit::multiline(&mut task.task_description.to_string())
-                                            .margin(Margin::same(5.0))
-                                            .desired_rows(8)
-                                            .desired_width(ui.available_width())
-                                            .ui(ui);
-                                    });
-                                });
-                            });
-                        });
-                    });
-                });
-
             });
-        }
+            strip.strip(|s|{
+                s
+                    .size(Size::exact(300.0))
+                    .size(Size::exact(12.0))
+                    .size(Size::exact(300.0))
+                    .horizontal(|mut s|
+                {
+                    s.cell(|ui|{
+                        ui.group(|ui| {
+                            // ui.colored_label(Color32::LIGHT_RED, "Order Details");
+                            Grid::new("group3").min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                            .show(ui, |ui| {
+                                ui.colored_label(Color32::LIGHT_RED, "Terms:");
+                                ui.label(&ticket.terms);
+                                ui.end_row();
+
+                                ui.colored_label(Color32::LIGHT_RED, "Total on Order:");
+                                ui.label(&ticket.ticket_total);
+                                ui.end_row();
+
+                                ui.colored_label(Color32::LIGHT_RED, "Order Type:");
+                                ui.label(&ticket.doc_alias);
+                                ui.end_row();
+                                ui.colored_label(Color32::LIGHT_RED, "");
+                                ui.end_row();
+                                ui.colored_label(Color32::LIGHT_RED, "");
+                            });
+                        });
+                    });
+                    s.empty();
+                    s.cell(|ui|{
+                        if let Some(customer) = &customer {
+                            ui.group(|ui| {
+                                // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
+                                Grid::new("customer_data").spacing(Vec2::new(0.0, 6.0)).max_col_width(150.0).min_col_width(150.0).with_row_color(|num, style| return_colors(num, style))
+                                .show(ui, |ui| {
+                                    // ui.colored_label(Color32::LIGHT_RED, "Other Services:");
+                                    // ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), |ui| {
+                                    //     ui.label(&customer.services.as_ref().unwrap());
+                                    // });
+                                    // ui.end_row();
+
+                                    ui.colored_label(Color32::LIGHT_RED, "ID:");
+                                    ui.label(format!("{}", customer.id.as_ref().unwrap().0.id));
+                                    ui.end_row();
+
+                                    ui.colored_label(Color32::LIGHT_RED, "Name:");
+                                    ui.label(&customer.name);
+                                    ui.end_row();
+
+                                    ui.colored_label(Color32::LIGHT_RED, "Phone#:");
+                                    ui.label(&customer.phone_number);
+                                    ui.end_row();
+
+                                    ui.colored_label(Color32::LIGHT_RED, "Phone2:");
+                                    ui.label(&customer.phone_number_2);
+                                    ui.end_row();
+
+                                    ui.colored_label(Color32::LIGHT_RED, "Email:");
+                                    ui.label(&customer.email);
+                                    // ui.colored_label(Color32::LIGHT_RED, "SPO Links:");
+                                    // ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), |ui| {
+                                    //     ui.label(&customer.part_order_links);
+                                    // });
+                                    // ui.end_row();
+                                });
+                            });
+                        }
+                    });
+                });
+            });
+            strip.empty();
+            strip.strip(|s|{
+                s
+                    .size(Size::exact(640.0))
+                    .horizontal(|mut s|
+                {
+                    s.strip(|s|{
+                        s
+                            .size(Size::remainder())
+                            .size(Size::exact(5.0))
+                            .size(Size::remainder())
+                            .horizontal(|mut s|
+                        {
+                            s.cell(|ui|{
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.label(RichText::new("Checkin Notes:").font(FontId::proportional(15.0)));
+                                    TextEdit::multiline(&mut ticket.checkin_notes.to_string())
+                                        .margin(Margin::same(5.0))
+                                        .desired_rows(8)
+                                        .desired_width(ui.available_width())
+                                        .ui(ui);
+                                });
+                            });
+                            s.empty();
+                            s.cell(|ui|{
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.label(RichText::new("Recommendations:").font(FontId::proportional(15.0)));
+                                    TextEdit::multiline(&mut task.task_description.to_string())
+                                        .margin(Margin::same(5.0))
+                                        .desired_rows(8)
+                                        .desired_width(ui.available_width())
+                                        .ui(ui);
+                                });
+                            });
+                        });
+                    });
+                });
+            });
+
+        });
+    }
     
 }
 
