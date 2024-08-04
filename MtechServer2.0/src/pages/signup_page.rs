@@ -49,7 +49,7 @@ impl Signup{
                         if let Some(ref usr) = db.user{
                             #[cfg(target_arch="wasm32")]{
                                 let usr = serde_json::to_string(&usr).unwrap();
-                                let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure();
+                                let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::Strict).secure();
                                 wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                                 wasm_cookies::set("user", &usr, &cookie_opts);
                             }

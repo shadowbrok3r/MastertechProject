@@ -189,8 +189,8 @@ DEFINE TABLE user TYPE ANY SCHEMAFULL PERMISSIONS FOR select, create FULL, FOR u
 
 DEFINE FIELD email ON user TYPE string ASSERT string::is::email($value) PERMISSIONS FULL;
 DEFINE FIELD everest_initials ON user TYPE string PERMISSIONS FULL;
-DEFINE FIELD minio_access_key ON user TYPE option<string> DEFAULT NONE PERMISSIONS FOR select, create, update, delete WHERE FULL;
-DEFINE FIELD minio_secret_key ON user TYPE option<string> DEFAULT NONE PERMISSIONS FOR select, create, update, delete WHERE FULL;
+DEFINE FIELD minio_access_key ON user TYPE option<string> DEFAULT NONE PERMISSIONS FULL;
+DEFINE FIELD minio_secret_key ON user TYPE option<string> DEFAULT NONE PERMISSIONS FULL;
 DEFINE FIELD name ON user TYPE string PERMISSIONS FULL;
 DEFINE FIELD password ON user TYPE string PERMISSIONS FULL;
 DEFINE FIELD store ON user TYPE string PERMISSIONS FULL;

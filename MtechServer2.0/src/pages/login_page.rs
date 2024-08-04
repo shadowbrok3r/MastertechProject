@@ -32,7 +32,7 @@ impl Login{
                     #[cfg(target_arch="wasm32")]{
                         let duration = web_time::Duration::from_secs(345600);
                         let usr = serde_json::to_string(&usr)?;
-                        let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::None).secure().expires_after(duration);
+                        let cookie_opts = CookieOptions::default().with_same_site(wasm_cookies::SameSite::Strict).secure().expires_after(duration);
                         wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                         wasm_cookies::set("user", &usr, &cookie_opts);
                     }

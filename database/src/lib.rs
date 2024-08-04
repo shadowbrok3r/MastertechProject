@@ -1,4 +1,4 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Record as SurrealRec/*Scope*/}, Error, Surreal}; 
+use surrealdb::{engine::remote::ws::{Client as WsClient, Ws}, opt::auth::{Jwt, Record as SurrealRec/*Scope*/}, Error, Surreal}; 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
@@ -54,7 +54,7 @@ const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
 pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
 pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
-pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
+pub const DB_URL_DEV: &str = "localhost:8000"; // "surrealdb-dev.master-tech.app";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
 pub fn set_db_selection(selection: DatabaseSelection) {
@@ -73,7 +73,7 @@ pub fn get_db_url() -> String {
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
 
-        DATABASE.connect::<Wss>(&get_db_url()).await?;
+        DATABASE.connect::<Ws>(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt{
@@ -85,7 +85,7 @@ impl Database{
                     Ok(_) => {
                         info!("Auth ok");
                         if !username.is_empty() || !password.is_empty(){
-                            let query = "SELECT id, name, everest_initials, email, store, minio_access_key, minio_secret_key FROM user WHERE email == $email";
+                            let query = "SELECT * FROM user WHERE email == $email";
                             DATABASE.set("email", username).await?;
                             let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
                             info!("user: {user:#?}");
@@ -101,7 +101,7 @@ impl Database{
             },
             None => {
                 info!("connecting");
-                // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
+                // let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url).await?;
                 info!("signing in");
                 // database.use_ns(NS).use_db(DB).await?;
 
@@ -134,8 +134,8 @@ impl Database{
     
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
         let db_url = get_db_url();
-        // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
-        DATABASE.connect::<Wss>(&db_url).await?;
+        // let database: Surreal<WsClient> = Surreal::new::<Ws>(db_url).await?;
+        DATABASE.connect::<Ws>(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE.signup(

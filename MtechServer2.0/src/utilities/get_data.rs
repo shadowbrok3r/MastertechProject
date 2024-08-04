@@ -66,7 +66,7 @@ pub async fn get_associated_task_notes(tx: Sender<TaskNotePayload>, note_id: Id)
 pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_store_users");
     DATABASE.set("store", store).await?; // $auth.store
-    let data: Vec<User> = DATABASE.query("SELECT name, store, everest_initials, id, email FROM user WHERE store == $store").await?.take(0)?;
+    let data: Vec<User> = DATABASE.query("SELECT name, store, everest_initials, id, email, minio_access_key, minio_secret_key FROM user WHERE store == $store").await?.take(0)?;
     tx.try_send(data)?;
     Ok(())
 }
