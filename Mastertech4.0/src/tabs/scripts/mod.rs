@@ -1,15 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
-use eframe::egui::{Align, Button, Color32, Grid, Layout, RichText, Stroke, Ui};
-use futures::StreamExt;
-use log::info;
-use reqwest::Client;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use sha2::Digest;
-use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
 use crate::{app_state::MastertechContext, tabs::tur_sheet::get_ticket::SendRequest};
+use eframe::egui::{Align, Button, Color32, Grid, Layout, ProgressBar, RichText, Stroke, Ui, Widget};
+use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
+use displays::channel_manager::ChannelManager;
+use std::{collections::HashMap, sync::Arc};
+use crossbeam::channel::{Receiver, Sender};
 use database::schema::GetKeysResponse;
+use serde::{Deserialize, Serialize};
+use async_trait::async_trait;
+use futures::StreamExt;
 use rust_embed::Embed;
+use reqwest::Client;
+use sha2::Digest;
+use log::info;
 
 #[derive(Embed)]
 #[folder = "src/assets/superanti/"]
@@ -25,9 +27,13 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub trait ScriptAction {
     async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>>;
 }
+
+#[derive(Clone)]
 pub struct Scripts{
     pub service_number: Option<String>,
     pub client: Client,
+    pub progress: (Sender<(u64, u64)>, Receiver<(u64, u64)>),
+    pub messages: (Sender<String>, Receiver<String>),
     pub wrsa: String,
     pub sas: String,
     pub check_driver: String,
@@ -60,8 +66,10 @@ impl MastertechContext{
         ui.shrink_height_to_current();
         ui.vertical(|ui|{ui.add_space(6.0);});
         ui.horizontal(|ui|{ui.add_space(8.0);});
-
-        let scripts = Arc::new(Scripts::new(self.ticket_data.service_number.to_string()));
+        if self.ticket_data.service_number.len() > 0 {
+            self.scripts = Scripts::new(self.ticket_data.service_number.to_string());
+        }
+        let scripts = Arc::new(self.scripts.clone());
         let scripts_list  = scripts.get_scripts();
         // Collect keys and sort them
         let mut keys: Vec<&'static str> = scripts_list.keys().cloned().collect();
@@ -76,11 +84,11 @@ impl MastertechContext{
                 for key in keys.iter() {
                     if let Some(action) = scripts_list.get(*key) {
                         let button = Button::new(RichText::new(*key).small().size(12.0));
-                            // .min_size(Vec2::new(25.0, 6.0));
-        
-                        if ui.add(button).clicked(){
+                        if ui.add_enabled(true, button).clicked(){
                             info!("Clicked button: {}", *key);
-                            // let index_html = SasAsset::get("SuperAntiScheduledTask.xml").unwrap();
+                            if let Some(index_html) = SasAsset::get("SuperAntiScheduledTask.xml") {
+                                info!("Index_html: {:?}", index_html.metadata.sha256_hash());
+                            }
                             // let mut reader = Reader::from_file(index_html.data.as_ref()).unwrap();
 
                             // let mut count = 0;
@@ -114,7 +122,22 @@ impl MastertechContext{
                 }
             });
         });
-     }
+
+        while let Ok(p) = scripts.progress.1.try_recv(){
+            self.progress.0 += p.0 as f32;
+            self.progress.1 = p.1 as f32;
+            if self.progress.0 == self.progress.1 {
+                self.progress = (0.0, 0.0);
+                break;
+            }
+        }
+
+        ui.ctx().request_repaint();
+        ProgressBar::new(self.progress.0 / self.progress.1)
+            .show_percentage()
+            .fill(Color32::from_rgba_premultiplied(50, 10, 50, 65))
+            .ui(ui);
+    }
 }
 
 impl Default for Scripts{
@@ -122,6 +145,8 @@ impl Default for Scripts{
         Self{
             service_number: None,
             client: Client::new(),
+            progress: <(u64, u64)>::create_unbounded_channel(),
+            messages: String::create_unbounded_channel(),
             wrsa: "Install Webroot".to_string(),
             sas: "Install SAS".to_string(),
             check_driver: "Check Driver Issues".to_string(),
@@ -136,6 +161,8 @@ impl Scripts{
         Self{
             service_number: Some(service_number),
             client: Client::new(),
+            progress: <(u64, u64)>::create_unbounded_channel(),
+            messages: String::create_unbounded_channel(),
             wrsa: "Install Webroot".to_string(),
             sas: "Install SAS".to_string(),
             check_driver: "Check Driver Issues".to_string(),
@@ -184,6 +211,7 @@ impl Scripts{
                 file.write_all(&chunk).await?;
                 sha.update(&chunk);
                 downloaded_bytes += chunk.len() as u64;
+                self.progress.0.try_send((downloaded_bytes, total_length))?;
             }
 
             if downloaded_bytes == total_length {
@@ -214,8 +242,6 @@ impl Scripts{
     }
     
     pub async fn install_sas(&self) -> Result<(), Box<dyn std::error::Error>> {
-
-
         if let Some(service_number) = &self.service_number{
             let response = self.client.get(
                 format!("https://secure.superantispyware.com/SUPERAntiSpyware.exe")
@@ -241,6 +267,7 @@ impl Scripts{
                 file.write_all(&chunk).await?;
                 sha.update(&chunk);
                 downloaded_bytes += chunk.len() as u64;
+                self.progress.0.try_send((downloaded_bytes, total_length))?;
             }
 
             if downloaded_bytes == total_length {
@@ -264,10 +291,7 @@ impl Scripts{
                     info!("cmd_stdout: {:?}", cmd_stdout);
                 }
             }
-        }else{
-            info!("No service number found");
-        }
-
+        }else{ info!("No service number found"); }
         Ok(())
     }
     

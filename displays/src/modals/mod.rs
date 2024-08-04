@@ -213,6 +213,7 @@ pub struct ChatModalResponse<R> {
 pub struct ChatModalHandler{
     modal: Option<Modal>,
     should_open: bool,
+    #[allow(dead_code)]
     page_state: ModalAction
 }
 
@@ -220,6 +221,7 @@ pub struct ChatModalHandler{
 pub struct TaskModalHandler{
     modal: Option<Modal>,
     should_open: bool,
+    #[allow(dead_code)]
     page_state: ModalAction
 }
 
@@ -250,7 +252,7 @@ impl TaskModalHandler{
             self.should_open = false;
         }
         if let Some(modal) = &mut self.modal {
-            let ChatModalResponse { inner, open, page_state } = modal.ui_modal(ctx, content_ui);
+            let ChatModalResponse { inner, open, page_state: _ } = modal.ui_modal(ctx, content_ui);
             if !open {
                 self.modal = None;
             }
@@ -280,7 +282,7 @@ impl ChatModalHandler {
             self.should_open = false;
         }
         if let Some(modal) = &mut self.modal {
-            let ChatModalResponse { inner, open, page_state } = modal.ui_modal(ctx, content_ui);
+            let ChatModalResponse { inner, open, page_state: _ } = modal.ui_modal(ctx, content_ui);
             if !open {
                 self.modal = None;
             }

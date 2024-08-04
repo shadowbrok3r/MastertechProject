@@ -1,13 +1,11 @@
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
 use database::schema::{utilities::delete_task, TaskPayload};
-// use reqwest::{Client, header::{ACCEPT, CONTENT_TYPE}};
+#[allow(unused_imports)]
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
 use chrono::{DateTime, Utc};
 use std::sync::{Arc, Mutex};
-// use serde_json::Value;
 use serde::Serialize;
-// use bytes::Bytes;
 use tokio::spawn;
 use log::info;
 

@@ -4,7 +4,7 @@ use database::schema::{CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebD
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use get_ticket::{request_seb_info, SendRequest};
 use egui_extras::{*, DatePickerButton};
-use std::{collections::BTreeSet, thread::sleep, time::Duration};
+use std::collections::BTreeSet;
 use egui_file::FileDialog;
 use std::path::PathBuf; 
 use log::{debug, info};

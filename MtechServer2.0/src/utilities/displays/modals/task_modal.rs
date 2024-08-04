@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
-use crate::utilities::{displays::chats::ChatView, get_data::delete_task, DisplayModal, ModalTypes};
+use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes};
 use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
 use wasm_bindgen_futures::spawn_local;
-use database::schema::TaskPayload;
+use database::schema::{utilities::delete_task, TaskPayload};
 use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use serde_json::Value;

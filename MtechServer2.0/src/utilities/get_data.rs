@@ -1,10 +1,10 @@
 
 use async_trait::async_trait;
-use database::{schema::{ClientId, ComputerData, ConnectedClient, CustomerData, LiveTaskPayload, Notification, Record, Store, TaskId, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE}, DATABASE};
+use database::{schema::{ComputerData, CustomerData, LiveTaskPayload, Record, TaskId, TaskNotePayload, TaskPayload, TicketData, TicketPayload, TASK_NOTE_TABLE}, DATABASE};
 use crossbeam::channel::Sender;
 use log::{debug,info};
 use mtechserver::live_worker::LiveOutput;
-use surrealdb::{sql::{Id, Thing}, Action};
+use surrealdb::Action;
 use serde::{Deserialize, Serialize};
 use surrealdb::opt::RecordId;
 // use wasm_bindgen_futures::spawn_local;
@@ -12,14 +12,6 @@ use std::fmt::Debug;
 use crate::app_state::NewTicketChannel;
 
 use super::Task;
-
-pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> anyhow::Result<(), anyhow::Error> {
-    debug!("get_tasks");
-    let query = format!("SELECT * FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note");
-    let query_results: Vec<TaskPayload> = DATABASE.query(query).await?.take(0)?;
-    tx.try_send(query_results)?;
-    Ok(())
-}
 
 pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Action, LiveTaskPayload)) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_associated_ticket");
@@ -44,63 +36,6 @@ pub async fn get_customer_data(tx: Sender<LiveOutput>) -> anyhow::Result<(), any
     Ok(())
 }
 
-pub async fn get_notifications(tx: Sender<Vec<Notification>>, id: Thing) -> anyhow::Result<(), anyhow::Error> { // tx: Sender<CustomerData>
-    debug!("get_notifications");
-    DATABASE.set("id", id).await?;
-    let notifications: Vec<Notification> = DATABASE.query("SELECT * FROM notification WHERE user == $id").await?.take(0)?;
-    // info!("Notifications: {:?}", notifications.clone());
-    tx.try_send(notifications)?;
-    Ok(())
-}
-
-pub async fn get_associated_task_notes(tx: Sender<TaskNotePayload>, note_id: Id) -> anyhow::Result<(), anyhow::Error> {
-    debug!("get_associated_task_notes");
-    DATABASE.set("id", note_id).await?;
-    let note: Option<TaskNotePayload> = DATABASE.query(format!("SELECT * FROM task_note WHERE id == $id")).await?.take(0)?;
-    debug!("note: {:?}", note);
-    let new_note = note.unwrap_or_default();
-    tx.try_send(new_note)?;
-    Ok(())
-}
-
-pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> anyhow::Result<(), anyhow::Error> {
-    debug!("get_store_users");
-    DATABASE.set("store", store).await?; // $auth.store
-    let data: Vec<User> = DATABASE.query("SELECT name, store, everest_initials, id, email, minio_access_key, minio_secret_key FROM user WHERE store == $store").await?.take(0)?;
-    tx.try_send(data)?;
-    Ok(())
-}
-
-pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>, user_id: User) -> anyhow::Result<(), anyhow::Error> {
-    debug!("get_connected_clients");
-    DATABASE.set("id", user_id.id.0).await?;
-    let query: Vec<ConnectedClient> = DATABASE.query("SELECT * FROM connected_client WHERE assigned_user == $id").await?.take(0)?;
-    tx.try_send(query)?;
-    Ok(())
-}
-
-pub async fn disconnect_client(tx: Sender<Vec<ClientId>>, id: ClientId) -> anyhow::Result<(), anyhow::Error> {
-    DATABASE.set("id", id.0.id).await?;
-    let query: Vec<ClientId> = DATABASE.update("UPDATE connected_client SET connected = false WHERE id == $id").await?;
-    tx.try_send(query)?;
-
-    Ok(())
-}
-
-pub async fn modify_connected_client(tx: Sender<Vec<ConnectedClient>>, user_id: User) -> anyhow::Result<(), anyhow::Error> {
-    DATABASE.set("id", user_id.id.0).await?;
-    let query: Vec<ConnectedClient> = DATABASE.query("SELECT * FROM connected_client WHERE assigned_user == $id").await?.take(0)?;
-    tx.try_send(query)?;
-    Ok(())
-}
-
-pub async fn delete_task(id: Thing) -> anyhow::Result<(), anyhow::Error> {
-    let id = id.clone();
-    info!("deleting id: {id:?}");
-    DATABASE.set("id", id.id.clone()).await?;
-    let _y: Option<TaskPayload> = DATABASE.delete((TASK_TABLE, id.id)).await?;
-    Ok(())
-}
 
 
 #[async_trait]

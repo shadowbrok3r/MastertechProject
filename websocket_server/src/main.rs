@@ -9,12 +9,11 @@ use ezsockets::CloseFrame; // Represents WebSocket close frames
 use ezsockets::Error; // Represents WebSocket errors
 use ezsockets::Server;
 use uuid::Uuid; // Manages WebSocket server instances
-use std::collections::HashMap; use std::fs::File;
+use std::collections::HashMap;
 // Provides a hash map data structure
-use std::io::BufRead; // Trait for reading lines from standard input
 use std::net::SocketAddr; // Represents socket addresses
 use tracing::info; // For logging information
-use simplelog::{WriteLogger, Config, LevelFilter, TermLogger, TerminalMode, ColorChoice};
+use simplelog::{Config, LevelFilter, TermLogger, TerminalMode, ColorChoice};
 
 type SessionID = String;
 type RoomID = String;
@@ -162,8 +161,10 @@ impl ezsockets::ServerExt for ChatServer {
                         }
                     }
                 } else if let Some(room) = self.rooms.get(&room_id) {
+                    #[allow(unused_variables)]
                     let mut role = String::new();
                     // Determine the target session based on the sender's role
+                    #[allow(unused_assignments)]
                     let target_session = if room.master.as_ref().map_or(false, |s| s.id == from) {
                         role = "Master".to_string();
                         room.client.as_ref()
@@ -265,7 +266,7 @@ async fn main() {
     //     log_file
     // ).unwrap();
     
-    TermLogger::init(
+    let _ = TermLogger::init(
         LevelFilter::Info,
         Config::default(),
         TerminalMode::Mixed,

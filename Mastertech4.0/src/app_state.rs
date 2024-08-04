@@ -1,4 +1,4 @@
-use crate::{pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
+use crate::{pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, scripts::Scripts, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
 use database::{schema::{prestashop_schema::PrestashopPayload, ClientId, ComputerData, ConnectedClient, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData, User}, Database};
 use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
@@ -149,6 +149,8 @@ pub struct MastertechContext {
     pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
+    pub scripts: Scripts,
+    pub progress: (f32, f32)
 }
 
 impl MasterTechApp {
@@ -299,6 +301,8 @@ impl MasterTechApp {
             initial_tasks_tx,  initial_tasks_rx,
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
+            scripts: Scripts::default(),
+            progress: (0.0, 0.0),
         };
         let context = mastertech_context;
 

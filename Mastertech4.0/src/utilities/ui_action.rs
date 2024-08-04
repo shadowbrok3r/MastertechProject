@@ -1,5 +1,4 @@
 use crossbeam::channel::{self, Receiver, Sender};
-
 pub trait UICommandSender {
     fn send_ui(&self, command: UICommand);
 }

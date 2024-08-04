@@ -6,6 +6,7 @@ use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Dire
 use egui_extras::{Size, StripBuilder};
 use log::info;
 use wasm_bindgen_futures::spawn_local;
+#[allow(unused_imports)]
 use wasm_cookies::CookieOptions;
 
 #[derive(Serialize, Debug, Default, Clone)]
@@ -45,6 +46,7 @@ impl Signup{
             // #[cfg(target_arch="wasm32-unknown-unknown")]
             match database{
                 Ok(db) => {
+                    #[allow(unused_variables)]
                     if let Some(ref cookie) = db.jwt{
                         if let Some(ref usr) = db.user{
                             #[cfg(target_arch="wasm32")]{

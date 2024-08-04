@@ -1,16 +1,16 @@
-use anyhow::Error;
-use database::{schema::TaskPayload, DATABASE};
-use futures::StreamExt;
-use database::schema::*;
+use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, TaskNotePayload, TicketPayload, TaskPayload, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
-use log::{debug, info};
-use crossbeam::channel::Sender;
 use std::{collections::HashMap, fmt::Debug};
-use super::LiveUpdate;
+use crossbeam::channel::Sender;
+use futures::StreamExt;
+use log::{debug, info};
 
+use anyhow::Error;
 
-pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
+pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) 
+    -> anyhow::Result<(), anyhow::Error>
+{
     match action{
         Action::Create => {
             data.handle_live_create(existing_tasks, new_ticket)?;

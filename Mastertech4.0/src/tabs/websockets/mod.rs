@@ -10,7 +10,7 @@ use anyhow::{Result, Error};
 use surrealdb::sql::Thing;
 use bincode::serialize;
 use tracing::info;
-
+#[allow(unreachable_code)]
 pub mod websocket;
 
 impl MastertechContext{
@@ -526,6 +526,7 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) -> Result<()
         tx.send(serialize_system_info(&systeminfo))?;
         // if app.lock().await.finish { break; }
     }
+    #[allow(unreachable_code)]
     Ok(())
 }
 async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) -> Result<ChildStdin, Error>  { 

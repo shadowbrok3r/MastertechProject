@@ -1,5 +1,5 @@
 use database::STORAGE_URL;
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, Response, RichText, ScrollArea, Ui, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{iter, cell::RefCell, collections::{HashMap, HashSet}};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
