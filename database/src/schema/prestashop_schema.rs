@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use reqwest::{Client, header::{AUTHORIZATION, CONTENT_TYPE, ACCEPT}};
 use log::info;
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
-
+const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
+// const PRESTASHOP_API_URL_DEV: &str = "https://localhost:9001/api";
 
 pub struct Prestashop<'a>{
     client: Client,
@@ -45,7 +46,7 @@ impl <'a>Prestashop<'a> {
     ) -> Self { Self { client, display, filter, limit, schema } }
 
     pub fn query_args(&self, resource_name: &str, url_params: HashMap<&str, &str>) -> String {
-        let base_url = format!("https://pclaptops.mojo11.com/api/{}", resource_name);
+        let base_url = format!("{PRESTASHOP_API_URL}/{resource_name}");
         
         let mut query_params = vec![];
 
@@ -92,7 +93,7 @@ impl <'a>Prestashop<'a> {
     ) 
         -> anyhow::Result<T, anyhow::Error> where T: for <'de>Deserialize<'de> + std::fmt::Debug
     {
-        let url = format!("https://pclaptops.mojo11.com/api/{resource}/{id}?output_format=JSON");
+        let url = format!("{PRESTASHOP_API_URL}/{resource}/{id}?output_format=JSON");
         let response: Value = self.client 
             .get(url.clone())
             .header(CONTENT_TYPE, "application/json")

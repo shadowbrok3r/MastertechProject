@@ -83,7 +83,8 @@ impl MtechServer{
             });
 
             if let Some(usr) = &self.context.current_user{
-                ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_width() / 2.8);
+                // ui.vertical_centered(|ui| {
                     if ui.add(Button::new(format!("Mastertech Server {}", env!("CARGO_PKG_VERSION")))).clicked(){
                         self.state = AppState::Authenticated(MainPages::Tasks);
                         match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
@@ -91,7 +92,7 @@ impl MtechServer{
                             Err(e) => info!("Error: {e:?}"),
                         }
                     }
-                });
+                // });
 
                 ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                     ui.add_space(20.0);

@@ -61,20 +61,20 @@ impl MtechServer{
                     {
                         s
                             .cell_layout(Layout::centered_and_justified(Direction::TopDown))
-                            .sizes(Size::remainder(), 3)
+                            .size(Size::exact(150.0))
+                            .size(Size::remainder())
+                            .size(Size::exact(100.0))
                             .vertical(|mut s| 
                         {
+                            s.empty();
                             s.cell(|ui| 
                             {
                                 ui.group(|ui| 
                                 { 
                                     ui.vertical_centered(|ui| {
-
-                                    
                                         ui.add_space(100.0);
-
                                         ui.label(RichText::new("Modify Account").heading());
-                                        let font = FontId::proportional(18.0);
+                                        let font = FontId::proportional(15.0);
                                         ui.style_mut().override_font_id = Some(font);
         
                                         ui.add_space(20.0);
@@ -82,7 +82,6 @@ impl MtechServer{
                                         if let (Some(ref mut usr), Some(acc_mod)) = (self.context.current_user.clone(), self.account_mut()){
                                             let width = ui.available_width() / 3.0 + 10.0;
 
-                                                // ui.add_space(width);
                                                 TextEdit::singleline(&mut usr.name)
                                                     .hint_text("Name")
                                                     .desired_width(180.0)
@@ -94,22 +93,6 @@ impl MtechServer{
                                                     .hint_text("Email")
                                                     .desired_width(180.0)
                                                     .ui(ui);
-
-                                                // let mut email = usr.email.split_once("@").unwrap_or(("", "")).0;
-                                                // let text_edit = TextEdit::singleline(&mut email).desired_width(180.0);
-                                            
-                                                // let output = text_edit.show(ui);
-                                                // let chars = usr.email.chars().count() as f32;
-                                                // let painter = ui.painter_at(output.response.rect);
-                                                // let text_color = Color32::from_rgba_premultiplied(100, 100, 100, 100);
-                                                // let font = FontId::proportional(18.0);
-                                                // let galley = painter.layout(
-                                                //     String::from("@pclaptops.com"),
-                                                //     font,
-                                                //     text_color,
-                                                //     f32::INFINITY
-                                                // );
-                                                // painter.galley(Pos2::new(output.galley_pos.x + (chars as f32 * 11.75), output.galley_pos.y), galley, text_color);
 
                                             ui.add_space(5.0);
 
@@ -202,7 +185,6 @@ impl MtechServer{
                                     ui.add_space(100.0);
                                 });
                             });
-                            s.empty();
                             s.empty();
                         });
                     });
