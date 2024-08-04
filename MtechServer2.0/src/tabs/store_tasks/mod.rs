@@ -23,8 +23,8 @@ impl MtechServerContext{
             } else {
                 let mut map = BTreeMap::new();
                 users.iter().for_each(|u| {
-                    if u.store == current_user.store{
-                    let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(false); //.filter_by_my_store(users, current_user);
+                    if u.store == current_user.store {
+                        let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(false); //.filter_by_my_store(users, current_user);
                         map.entry(u.everest_initials.to_string()).or_insert(filtered);
                     }
                 });
