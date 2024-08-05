@@ -109,12 +109,17 @@ impl MtechServer{
                                     Err(e) => info!("Error: {e:?}"),
                                 }
                             }
+
                             if ui.add(Button::new("Downloads")).clicked(){
                                 self.state = AppState::Authenticated(MainPages::Downloads);
                                 match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads)){
                                     Ok(_) => info!("Switching to Downloads Page"),
                                     Err(e) => info!("Error: {e:?}"),
                                 }
+                            }
+
+                            if ui.add(Button::new("Refresh Data")).clicked(){
+                                self.context.first_run = true;
                             }
                             
                             if ui.add(Button::new("Logout")).clicked(){
