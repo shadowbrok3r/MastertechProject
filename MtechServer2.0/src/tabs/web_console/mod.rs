@@ -52,7 +52,6 @@ impl MtechServerContext {
             });
         }
         
-        
         self.client_display(ui);
     }
 }
