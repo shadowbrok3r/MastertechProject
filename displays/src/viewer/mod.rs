@@ -83,7 +83,7 @@ pub enum ServerToClientMessage {
     },
 }
 
-pub struct Client {
+pub struct RemoteViewer {
     outgoing_msg_tx: Sender<ClientToServerMessage>,
     incoming_msg_rx: Receiver<ServerToClientMessage>,
     font_definitions: FontDefinitions,
@@ -95,7 +95,7 @@ pub struct Client {
     frame_history: History<()>,
 }
 
-impl Client {
+impl RemoteViewer {
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
         let mut bandwidth_history = Arc::new(Mutex::new(History::new(0..200, 2.0)));
         let mut frame_size_history = Arc::new(Mutex::new(History::new(1..100, 0.5)));
