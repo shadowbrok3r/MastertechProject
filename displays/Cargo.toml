@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+parking_lot = "0.12"
+ewebsock = "0.6"
+zstd = "0.13"
+bincode = { workspace=true } 
+anyhow = { workspace=true }
 database = { workspace=true }
 eframe = { workspace=true }
 log = { workspace=true }

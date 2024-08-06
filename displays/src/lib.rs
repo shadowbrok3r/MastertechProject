@@ -5,3 +5,4 @@ pub mod ui_tools;
 pub mod modals;
 pub mod views;
 pub mod channel_manager;
+pub mod viewer;
