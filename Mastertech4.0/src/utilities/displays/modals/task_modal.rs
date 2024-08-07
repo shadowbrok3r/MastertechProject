@@ -1,9 +1,11 @@
 use eframe::egui::{scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid, Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget};
-use database::schema::{utilities::delete_task, TaskPayload};
+use database::schema::{utilities::delete_task, Store, TaskPayload};
+use reqwest::{header::{ACCEPT, CONTENT_TYPE}, Client};
 #[allow(unused_imports)]
 use rfd::{AsyncFileDialog, FileHandle};
 use egui_extras::{Size, StripBuilder};
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tokio::spawn;
@@ -80,27 +82,6 @@ impl ModalTypes for TaskModal{
         self.modal_state().title = Some(title);
         self
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct SpecialPartOrder {
-    customer_name: String,          //  "kathleen Hoffmon",
-    customer_phone_number: String,          //  "801-888-8888",
-    notes: String,          //  "These are some notes",
-    system_order_number: String,            //  "123456",
-    id_location: String,            //  "Riverdale",
-    request_type: String,           //  "Any",
-    shipping_method: String,            //  "2 - 2-3 Day Express",
-    part_manufacturer: Manufacturer,          //  "PC Laptops",
-    manufacturer_model_number: String,          //  "12345Test",
-    manufacturer_serial_number: String,             //  "123456789",
-    manufacturer_part_number: String,           //  "324657687",
-    part_color: String,             //  "N/A",
-    part_description: String,           //  "Test",
-    part_lcd_toggle: bool,            //  "0"
-    spo_status: SpoStatus,
-    #[serde(skip)]
-    files: Arc<Mutex<Option<Vec<FileHandle>>>>
 }
 
 impl DisplayModal for TaskModal {
@@ -632,6 +613,30 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2){
     
 }
 
+
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SpecialPartOrder {
+    customer_name: String,          //  "kathleen Hoffmon",
+    customer_phone_number: String,          //  "801-888-8888",
+    notes: String,          //  "These are some notes",
+    system_order_number: String,            //  "123456",
+    id_location: String,            //  "Riverdale",
+    request_type: String,           //  "Any",
+    shipping_method: String,            //  "2 - 2-3 Day Express",
+    part_manufacturer: Manufacturer,          //  "PC Laptops",
+    manufacturer_model_number: String,          //  "12345Test",
+    manufacturer_serial_number: String,             //  "123456789",
+    manufacturer_part_number: String,           //  "324657687",
+    part_color: String,             //  "N/A",
+    part_description: String,           //  "Test",
+    part_lcd_toggle: bool,            //  "0"
+    spo_status: SpoStatus,
+    #[serde(skip)]
+    files: Arc<Mutex<Option<Vec<FileHandle>>>>
+}
+
+
 impl Default for SpecialPartOrder {
     fn default() -> Self {
         Self {
@@ -639,7 +644,7 @@ impl Default for SpecialPartOrder {
             customer_phone_number: String::new(),
             notes: String::new(),
             system_order_number: String::new(),
-            id_location: "0".to_string(),
+            id_location: "Riverdale".to_string(),
             request_type: String::new(),
             shipping_method: "2 - 2-3 Day Express".to_string(),
             part_manufacturer: Manufacturer::Pclaptops,
@@ -689,7 +694,22 @@ impl SpoStatus{
 }
 
 impl SpecialPartOrder {
-    fn display_part_order_page(&mut self, ui: &mut Ui, avail_size: Vec2){
+    pub fn set_customer(&mut self, customer_name: String, customer_phone_number: String, system_order_number: String, store: Store) {
+        self.customer_name = customer_name;
+        self.customer_phone_number = customer_phone_number;
+        self.system_order_number = system_order_number;
+        self.id_location = match store {
+            Store::RIV => "Riverdale".to_string(),
+            Store::LTN => "Layton".to_string(),
+            Store::MUR => "Murray".to_string(),
+            Store::AF => "American Fork".to_string(),
+            Store::WJ => "West Jordan".to_string(),
+            Store::ORE => "Orem".to_string(),
+            Store::SAN => "Sandy".to_string(),
+        };
+    }
+
+    pub fn display_part_order_page(&mut self, ui: &mut Ui, avail_size: Vec2){
         StripBuilder::new(ui)
             .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))
             .size(Size::exact(50.0))
@@ -706,7 +726,13 @@ impl SpecialPartOrder {
                     .size(Size::exact(200.0))
                     .horizontal(|mut s| 
                 {
-                    s.empty();
+                    s.cell(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.colored_label(Color32::LIGHT_RED, format!("Service #: {}", &self.system_order_number));
+                            ui.colored_label(Color32::LIGHT_RED, format!("Customer Name: {}", &self.customer_name));
+                            ui.colored_label(Color32::LIGHT_RED, format!("Customer Phone #: {}", &self.customer_phone_number));
+                        });
+                    });
                     s.cell(|ui| 
                     {
                         ui.vertical_centered(|ui| {
@@ -735,6 +761,13 @@ impl SpecialPartOrder {
 
                             TextEdit::singleline(&mut self.manufacturer_model_number)
                                 .hint_text("MFG Model #".to_string())
+                                .margin(Margin::same(5.0))
+                                .ui(ui);
+
+                            ui.add_space(15.0);
+
+                            TextEdit::singleline(&mut self.manufacturer_serial_number)
+                                .hint_text("MFG S/N #".to_string())
                                 .margin(Margin::same(5.0))
                                 .ui(ui);
 
@@ -785,9 +818,15 @@ impl SpecialPartOrder {
                             ui.add_space(15.0);
 
                             ui.horizontal_top(|ui| { 
-                                if Button::new("Submit").min_size(Vec2::new(50.0, 20.0)).ui(ui).clicked() {
+                                let check = self.manufacturer_model_number.len() > 0
+                                || self.manufacturer_serial_number.len() > 0
+                                || self.manufacturer_part_number.len() > 0;
+                                
+                                let button = ui.add_enabled(check, Button::new("Submit").min_size(Vec2::new(50.0, 20.0)));
+                                
+                                if button.clicked() {
 
-                                    let _spo = SpecialPartOrder {
+                                    let spo = SpecialPartOrder {
                                         customer_name: self.customer_name.clone(),
                                         customer_phone_number: self.customer_phone_number.clone(),
                                         notes: self.notes.clone(),
@@ -807,41 +846,43 @@ impl SpecialPartOrder {
                                     };
 
                                     // let data_clone = Arc::clone(&self.files);
+                                    info!("SPO: {spo:?}");
+                                    spawn(async move {
+                                        // let data = data_clone.lock().unwrap();
+                                        // let mut bytes: Bytes = Bytes::new();
+                                        // let mut file_name = String::new();
 
-                                    // spawn(async move {
-                                    //     let data = data_clone.lock().unwrap();
-                                    //     let mut bytes: Bytes = Bytes::new();
-                                    //     let mut file_name = String::new();
-
-                                    //     if let Some(ref files) = *data{
-                                    //         for file_handle in files {
-                                    //             file_name = file_handle.file_name();
-                                    //             bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
-                                    //             info!("file_name: {:?}", file_name);
-                                    //         }
-                                    //     }
+                                        // if let Some(ref files) = *data{
+                                        //     for file_handle in files {
+                                        //         file_name = file_handle.file_name();
+                                        //         bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
+                                        //         info!("file_name: {:?}", file_name);
+                                        //     }
+                                        // }
 
 
 
-                                    //     let params: Value = serde_json::json!({
-                                    //         "user_email": "logan.lees@pclaptops.com", 
-                                    //         "user_password": "Poolparty1",
-                                    //         "format_data": "text",
-                                    //         "action": "create",
-                                    //         "application": "customer_request_order", 
-                                    //         "payload": spo,
-                                    //     });
+                                        let params: Value = serde_json::json!({
+                                            "user_email": "logan.lees@pclaptops.com", 
+                                            "user_password": "Poolparty1",
+                                            "format_data": "text",
+                                            "action": "create",
+                                            "application": "customer_request_order", 
+                                            "payload": spo,
+                                        });
 
-                                    //     let client = Client::new();
-                                    //     client.post("https://scaffold.pclaptops.com/api/index")
-                                    //         .header(CONTENT_TYPE, "application/json")
-                                    //         .header(ACCEPT, "application/json")
-                                    //         .json(&params)
-                                    //         .send()
-                                    //         .await
-                                    //         .unwrap();
+                                        let client = Client::new();
 
-                                    // });
+                                        let response = client.post("https://scaffold.pclaptops.com/api/index")
+                                            .header(CONTENT_TYPE, "application/json")
+                                            .header(ACCEPT, "application/json")
+                                            .json(&params)
+                                            .send()
+                                            .await
+                                            .unwrap();
+
+                                        info!("SPO response: {response:?}");
+                                    });
                                 }
                             });
                         });
@@ -852,3 +893,71 @@ impl SpecialPartOrder {
         });
     }
 }
+
+/*
+    {
+        "customer_fire": "0",
+        "dm_sm_approval": "0",
+        "id_user_approved": "Hassan Mehdi",
+        "date_warehouse_received": "4.00",
+        "date_warehouse_shipped_to_store": "3.00",
+        "warehouse_item_serial": "",
+        "warehouse_item_sku": "DCJACK/LENOVO",
+        "inline_photo": null,
+        "quote_item_cost": "0.00",
+        "quote_item_base_cost": "0.00",
+        "cost_to_customer": "0.00",
+        "cost_to_ship": "0.00",
+        "cost_to_company": "0.00",
+        "quote_vendor_link": "http://www.ebay.com/itm/AC-DC-IN-POWER-JACK-HARNESS-CONNECTOR-SOCKET-CABLE-for-LENOVO-20351-DC30100LF00-/122105448074?hash=item1c6e0d468a:g:lOIAAOSw9IpXw~4e",
+        "id_customer_request_order": "14498",
+        "id_status": "Store Received",
+        "id_user_requested": "Hassan Mehdi",
+        "id_user_manager": "Scaffold Bot",
+        "id_customer_comment_relation": "0",
+        "id_location": "Corporate",
+        "system_order_number": "52629084",
+        "deposit_system_order_number": "0000",
+        "customer_name": "Brent Losee",
+        "customer_phone_number": "(801)898-1991",
+        "ship_to_customer": "0",
+        "customer_shipping_address": "",
+        "request_type": "Any",
+        "shipping_method": "3 - Ground/Standard",
+        "request_notes": "[JUN-05-17 Hassan Mehdi] Please order",
+        "part_manufacturer": "Other",
+        "manufacturer_model_number": "Z70-80",
+        "manufacturer_serial_number": "0101",
+        "manufacturer_part_number": "",
+        "part_quantity": "1",
+        "part_color": "na",
+        "part_lcd_toggle": "0",
+        "part_lcd_type": "",
+        "part_lcd_number": "",
+        "part_lcd_version": "",
+        "part_description": "",
+        "item_sku": "",
+        "quote_eta": "",
+        "quote_notes": "",
+        "quote_part_description": "  ",
+        "quote_vendor": "",
+        "quote_vendor_part_number": "",
+        "quote_rci_price": "0.00",
+        "quote_item_price": "0.00",
+        "quote_shipping_price": "0.00",
+        "order_check_ordered_exped": "0",
+        "order_check_ordered_int": "0",
+        "date_order": "06-05-2017",
+        "date_order_warehouse_eta": "06-09-2017",
+        "order_vendor": "Ebay",
+        "order_number": "122105448074",
+        "order_po": "42040465",
+        "order_notes": "",
+        "warehouse_ship_to_customer": "0",
+        "warehouse_confirmed_customer_shipping_address": "0",
+        "id_user_modified": "Hassan Mehdi",
+        "id_user_owner": "Hassan Mehdi",
+        "date_modified": "2017-08-23 07:53:00",
+        "date_created": "2017-06-05 08:33:00"
+    }
+*/

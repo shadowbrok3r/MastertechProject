@@ -45,6 +45,7 @@ crossterm = "0.28"
 hex = "0.4.3"
 ring = "0.17.8"
 egui_tracing = "0.2.2"
+rust-s3 = "0.34"
 
 database = { workspace=true }
 displays = { workspace=true }

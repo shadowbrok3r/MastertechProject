@@ -1,4 +1,4 @@
-use crate::{pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, scripts::Scripts, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
+use crate::{pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, scripts::Scripts, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::SpecialPartOrder, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
 use database::{schema::{prestashop_schema::PrestashopPayload, ClientId, ComputerData, ConnectedClient, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData, User}, Database};
 use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
@@ -150,7 +150,8 @@ pub struct MastertechContext {
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
     pub scripts: Scripts,
-    pub progress: (f32, f32)
+    pub progress: (f32, f32),
+    pub special_part_order: SpecialPartOrder
 }
 
 impl MasterTechApp {
@@ -167,7 +168,7 @@ impl MasterTechApp {
         let [_a, b] = tree.main_surface_mut()
             .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(), "Logs".to_owned(), "Websockets".to_owned()]);
         let [_, _] = tree.main_surface_mut()
-            .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned()]);
+            .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned(), "Part Order".to_owned()]);
         let [_, _] = tree.main_surface_mut()
             .split_left(b,0.20,vec!["Scripts".to_owned()]);
 
@@ -303,6 +304,7 @@ impl MasterTechApp {
             github_issue_descript: String::new(),
             scripts: Scripts::default(),
             progress: (0.0, 0.0),
+            special_part_order: SpecialPartOrder::default()
         };
         let context = mastertech_context;
 
@@ -381,7 +383,7 @@ impl TabViewer for MastertechContext {
         match tab.as_str() {
             "TUR Sheet" => self.tur_sheet(ui),
             "Console" => self.output_console(ui),
-            // "Logs" => logger_ui().show(ui),
+            "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
@@ -390,6 +392,7 @@ impl TabViewer for MastertechContext {
             "Tasks" => self.mastertech_website(ui),
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
+            // "Logs" => logger_ui().show(ui),
             _ => {
                 let sysinfo_tab = &"System Information".to_string();
                 if ui.label(tab.as_str()).clicked(){

@@ -15,15 +15,16 @@ impl MasterTechApp {
                     // allow certain tabs to be toggled
                     for tab in &[
                         &"TUR Sheet".to_string(),
-                        &"Scripts".to_string(),
-                        &"Console".to_string(),
-                        &"System Information".to_string(),
+                        &"Console" .to_string(),
+                        &"Part Order".to_string(),
+                        &"Scripts" .to_string(),
                         &"File Browser 📂".to_string(),
+                        &"System Information".to_string(),
                         &"Minidump Analysis".to_string(),
-                        // &"Profiler".to_string(),
-                        &"QC".to_string(),
-                        &"Tasks".to_string(),
-                        &"Websockets".to_string()
+                        &"QC ☑️".to_string(),
+                        &"Tasks" .to_string(),
+                        &"Bug Tracker".to_string(),
+                        &"Websockets" .to_string(),
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)
