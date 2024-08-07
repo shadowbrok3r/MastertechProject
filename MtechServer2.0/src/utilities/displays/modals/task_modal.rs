@@ -690,6 +690,12 @@ impl SpoStatus{
 }
 
 impl SpecialPartOrder {
+    pub fn set_customer(&mut self, customer_name: String, customer_phone_number: String, system_order_number: String) {
+        self.customer_name = customer_name;
+        self.customer_phone_number = customer_phone_number;
+        self.system_order_number = system_order_number;
+    }
+    
     fn display_part_order_page(&mut self, ui: &mut Ui, avail_size: Vec2){
         StripBuilder::new(ui)
             .cell_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center))

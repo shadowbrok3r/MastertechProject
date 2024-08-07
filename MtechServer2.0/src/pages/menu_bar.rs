@@ -141,9 +141,7 @@ impl MtechServer{
                                             info!("Clearing storage: {clear:?}");
                                         }
                                     }
-                                } else {
-                                    info!("No window");
-                                }
+                                } else { info!("No window"); }
                                 let logout_msg = "Logged out".to_string();
                                 self.state = AppState::NoAuth(logout_msg.clone());
                                 match self.context.app_state_tx.try_send(AppState::NoAuth(logout_msg)){
