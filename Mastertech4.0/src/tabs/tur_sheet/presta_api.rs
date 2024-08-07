@@ -54,7 +54,7 @@ impl MastertechContext {
 
                 info!("order: {order:#?}");
 
-                let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0"){
+                let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0") { //|| order.id_employee_sales_rep.len() != 0{
                     let employee: Employee = api_call.request_subresources_by_id(
                         "employees", 
                         "employee", 
