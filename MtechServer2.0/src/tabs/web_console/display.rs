@@ -179,7 +179,7 @@ impl MtechServerContext{
                                             //     pixels_per_point,
                                             //     viewport_output: todo!(),
                                             // };
-                                            // latest_eterm_meshes = clipped_meshes;
+                                            latest_eterm_meshes = clipped_meshes;
                                             // FullOutput::default().append(newer)
                                             needs_repaint = true;
                                         }
