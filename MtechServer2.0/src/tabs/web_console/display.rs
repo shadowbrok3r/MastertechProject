@@ -251,8 +251,9 @@ impl MtechServerContext{
                                     Ok((mut ws_sender, ws_receiver)) => {
                                         client.connected = true;
                                         ws_sender.send(ewebsock::WsMessage::Text("Server Connected".to_string()));
-                                        self.ws_client = Some(WebSocketClient::new(ws_sender, ws_receiver, name.clone()));
-                                        self.current_client = name.clone();
+                                            let client = WebSocketClient::new(ws_sender, ws_receiver, name.clone(), self.file_system.clone());
+                                            self.ws_client = Some(client);
+                                            self.current_client = name.clone();
                                     }
                                     Err(error) => {
                                         client.connected = false;
