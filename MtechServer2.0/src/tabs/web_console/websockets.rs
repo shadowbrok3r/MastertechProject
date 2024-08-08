@@ -1,8 +1,8 @@
 
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
 use bincode::serialize;
-use database::{schema::{Cmd, ConnectedClient, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
-use eframe::egui::{epaint::Shadow, Align, Button, CollapsingHeader, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Vec2, Widget};
+use database::{schema::{Cmd, ConnectedClient, Record, User, CONNECTED_CLIENT_TABLE}, DATABASE};
+use eframe::egui::{epaint::Shadow, Align, Button, CollapsingHeader, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,13 @@ pub enum ClientConnection{
     Disconnect(String)
 }
 
+pub enum WsDisplayState {
+    LiveStats,
+    Explorer,
+    Shell,
+    ToolBox
+}
+
 pub struct WebSocketClient {
     // pub client: ConnectedClient,
     pub ws_sender: WsSender,
@@ -44,13 +51,14 @@ pub struct WebSocketClient {
     pub loading: bool,
     pub timeout_counter: Instant,
     pub file_system: FileSystem,
-    pub client_name: String
+    pub client_name: String,
+    pub state: WsDisplayState,
+    pub explorer: FileSystem
 }
 
 impl WebSocketClient{
-    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client_name: String) -> Self {
+    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client_name: String, file_system: FileSystem) -> Self {
         Self{
-            // client,
             ws_sender,
             ws_receiver,
             events: Default::default(),
@@ -65,8 +73,10 @@ impl WebSocketClient{
             temps: VecDeque::new(),
             loading: false, 
             timeout_counter: Instant::now(),
-            file_system: FileSystem::new(),
-            client_name
+            file_system,
+            client_name,
+            state: WsDisplayState::Shell,
+            explorer: FileSystem::new()
         }
     }
     
@@ -103,7 +113,7 @@ impl WebSocketClient{
                                 // info!("normalized_ram_usage: {normalized_ram_usage:?}\nLen: {:?}", self.cpu_percentage.len());
                             } else if let Some(cmd) = deserializer::<Cmd>(bin){
                                 if let Cmd::DirContents(paths) = cmd{
-                                    self.file_system.build_file_system(paths);
+                                    self.explorer.build_file_system(paths);
                                 }
 
                             } else{ 
@@ -157,6 +167,43 @@ impl WebSocketClient{
                 .horizontal(|mut s| 
             {
                 s.cell(|ui|{
+                    if Button::new("ToolBox").ui(ui).clicked(){
+                        self.state = WsDisplayState::ToolBox;
+                    }
+                });
+                
+                s.cell(|ui|{
+                    if Button::new("Explorer").ui(ui).clicked(){
+                        self.state = WsDisplayState::Explorer;
+                        match serialize(&Cmd::ReadDir("current".to_string())){
+                            Ok(bytes) => {
+                                self.ws_sender.send(WsMessage::Binary(bytes));
+                            },
+                            Err(e) => self.history.push(e.to_string()),
+                        }
+                    }
+                });
+
+                s.cell(|ui|{
+                    if Button::new("Live Data").ui(ui).clicked(){
+                        self.state = WsDisplayState::LiveStats;
+                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::LiveData)));
+                    }
+                });
+                s.cell(|ui|{
+                    if Button::new("Shell").ui(ui).clicked(){
+                        self.state = WsDisplayState::Shell;
+                    }
+                });
+            });
+        });
+
+        strip.strip(|strip| 
+        {
+            strip.sizes(Size::remainder(), 6)
+                .horizontal(|mut s| 
+            {
+                s.cell(|ui|{
                     if Button::new("Tuneup").ui(ui).clicked(){
                         // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
                         // self.history.push(format!("You\nCommand::Tuneup"));
@@ -170,41 +217,21 @@ impl WebSocketClient{
                     }
                 });
                 s.cell(|ui|{
-                    if Button::new("QC").ui(ui).clicked(){
-                        // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Qc)));
-                        // self.history.push(format!("You\nCommand::Qc"));
-                    }
-                });
-                s.cell(|ui|{
-                    if Button::new("Live Data").ui(ui).clicked(){
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::LiveData)));
-                        // self.history.push(format!("You\nCommand::LiveData"));
-                    }
-                });
-            });
-        });
-
-        strip.strip(|strip| 
-        {
-            strip.sizes(Size::remainder(), 4)
-                .horizontal(|mut s| 
-            {
-                s.cell(|ui|{
-                    if Button::new("SFC Scan").ui(ui).clicked(){
+                    if Button::new("SFC").ui(ui).clicked(){
                         // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
                         // self.history.push(format!("You\nCommand::SfcScan"));
                         self.input = "sfc /scannow".to_string();
                     }
                 });
                 s.cell(|ui|{
-                    if Button::new("Dism Scan").ui(ui).clicked(){
+                    if Button::new("Dism").ui(ui).clicked(){
                         // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
                         // self.history.push(format!("You\nCommand::DismScan"));
                         self.input = "dism /online /cleanup-image /scanhealth\ndism /online /cleanup-image /checkhealth\ndism /online /cleanup-image /restorehealth".to_string();
                     }
                 });
                 s.cell(|ui|{
-                    if Button::new("ChkDsk").ui(ui).clicked(){
+                    if Button::new("Chkdsk").ui(ui).clicked(){
                         // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
                         // self.history.push(format!("You\nCommand::ChkDsk"));
                         self.input = "chkdsk /f /x /r".to_string();
@@ -223,261 +250,278 @@ impl WebSocketClient{
 
         strip.cell(|ui | 
         {
-            let client_id = ui.make_persistent_id(format!("client_id {:?}", name.clone()));
-            let client_header = CollapsingHeader::new("Live Stats").id_source(client_id);
-            client_header.show_background(true).show_unindented(ui, |ui| 
-            {
-                ui.add_space(10.0);
-                ui.vertical_centered(|ui| {
-                    if let Some(sysinfo) = &self.sysinfo {
-                        let _normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
-
-                        // if self.cpu_percentage.len() < 30
-                            // || self.component_temps.len() < 30
-                            // || self.cpu_clock.len() < 30
-                            // || self.ram_usage.len() < 30 {
-
-                            // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                        // } else {
-                        //     self.cpu_percentage.pop_front();
-                        //     self.cpu_percentage.push_back(normalized_cpu_percentage);
-                        //     self.cpu_clock.pop_front();
-                        //     self.cpu_clock.push_back(sysinfo.cpu_clock);
-                        //     self.ram_usage.pop_front();
-                        //     self.ram_usage.push_back(normalized_ram_usage);
-                        //     // self.component_temps.pop_front();
-                        //     // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                        // }
-
-                        if self.cpu_percentage.len() > 50
-                            || self.cpu_clock.len() > 50
-                            || self.ram_usage.len() > 50 {
-                            // || self.component_temps.len() < 30 
-                            self.cpu_percentage.clear();
-                            self.cpu_clock.clear();
-                            self.ram_usage.clear();
-                        }
-
-
-                        let percentages = self.cpu_percentage.make_contiguous().to_owned();
-                        let clocks = self.cpu_clock.make_contiguous().to_owned();
-                        // let temps = self.component_temps.make_contiguous().to_owned();
-                        let ram = self.ram_usage.make_contiguous().to_owned();
-                
-                        // info!("\nsysinfo: CPU %: {percentages:?}, \nCPU Clock: {clocks:?}, \nRAM usage: {ram:?}");
-                        // let temps_plot = LinePlot::new(&[0.0], &temps.as_slice());
-                        let width = ui.available_width() / 3.0;
-                        let mut cpu_usage_plot = LinePlot::new(&[0.0], &percentages.as_slice(), width);
-                        let mut cpu_clock_plot = LinePlot::new(&[0.0], &clocks.as_slice(), width);
-                        let mut ram_usage_plot = LinePlot::new(&[0.0], &ram.as_slice(), width);
-                
-                        ui.horizontal(|ui| {
-
-                            // temps_plot.ui(ui, "System Temps", temps_plot.line("System Temps (°C)", Color32::from_rgb(255, 69, 0)));
-                            cpu_usage_plot.ui(ui, "CPU Usage", cpu_usage_plot.line("CPU(%)", Color32::from_rgb(170, 10, 150)));
-                            cpu_clock_plot.ui(ui, "CPU Clock", cpu_clock_plot.line("CPU (MHz)", Color32::from_rgb(21, 232, 165)));
-                            ram_usage_plot.ui(ui, "RAM Usage", ram_usage_plot.line("RAM (MB)", Color32::from_rgb(0, 191, 255)));
-                        });
-                    }
-                });
-                ui.add_space(10.0);
-            });
-            let paths_id = ui.make_persistent_id("Directories");
-            let file_explorer_container = CollapsingHeader::new("File Explorer").id_source(paths_id);
-
-            file_explorer_container.show_background(true).show_unindented(ui, |ui| {
-                self.file_system.display(ui);
-                let new_dir = self.file_system.enter_directory.clone();
-                if !new_dir.is_empty(){
-                    info!("New directory: {:?}", new_dir);
-                    match serialize(&Cmd::ReadDir(new_dir.clone())){
-                        Ok(bytes) => {
-                            self.ws_sender.send(WsMessage::Binary(bytes));
-                        },
-                        Err(e) => self.history.push(e.to_string()),
-                    }
-                }
-            });
-
-            let client_id = ui.make_persistent_id(format!("history {:?}", name.clone()));
-            let scroll = CollapsingHeader::new("Shell").id_source(client_id);
-
-            scroll.show_background(true).show_unindented(ui, |ui| 
-            {
-                ui.allocate_ui(Vec2::new(ui.available_width(), ui.available_height() - 20.0), |ui| {
-                    ScrollArea::vertical()
-                        .animated(true)
-                        .max_height(ui.available_height())
-                        .max_width(f32::INFINITY)
-                        .auto_shrink(false)
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| 
-                    {
-                        ui.set_width(ui.available_width());
-                        let max_msg_width = ui.available_width() / 2.5;
-                        let fixed_height = 50.0;
-                        let min_width = 200.0;
-            
-                        for item in self.history.iter(){
-                            let is_message_from_myself = if item.contains("You"){ true } else { false };
-            
-                            // Messages from the user are right-aligned.
-                            let layout = 
-                                if is_message_from_myself { Layout::top_down(Align::Max)} 
-                                else { Layout::top_down(Align::Min)};
-            
-                            let msg_color = if is_message_from_myself {
-                                ui.style().visuals.widgets.inactive.bg_fill
-                            } else {
-                                ui.style().visuals.widgets.active.weak_bg_fill
-                            };
-            
-                            ui.with_layout(layout, |ui| {
-                                ui.set_max_width(max_msg_width);
-            
-                                let rounding = 8.0;
-                                let margin = 8.0;
-                                
-                                // ui.set_min_width(min_width);
-                                let rnding = Rounding {
-                                    ne: if is_message_from_myself { 0.0 } else { rounding },
-                                    nw: if is_message_from_myself { rounding } else { 0.0 },
-                                    se: rounding,
-                                    sw: rounding,
-                                };
-            
-                                let response = Frame::none()
-                                    .rounding(rnding)
-                                    .inner_margin(margin)
-                                    .outer_margin(margin)
-                                    .fill(msg_color)
-                                    .show(ui, |ui| {
-                                        ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-                                        ui.set_min_width(min_width / 2.5);
-                                        // Use a vertical layout to stack the name and message content
-                                        ui.with_layout(Layout::top_down(Align::Min), |ui| 
-                                        {
-            
-                                            let mut shadow = Shadow::default();
-                                            shadow.blur = 3.0;
-                                            shadow.spread = 3.0;
-                                            shadow.color = Color32::from_rgb(40,36,40);
-                                            
-                                            let mut b_panel_marg = Margin::default();
-                                            b_panel_marg.top = 3.0;
-            
-                                            let color = Color32::from_rgb(10,10,12);
-            
-                                            let note_frame = Frame::none().fill(color)
-                                                .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-                                                .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
-            
-                                            let (from, txt) = if item.contains("You"){
-                                                let text: (&str, &str) = item.split_once("\n").unwrap_or(("", ""));
-                                                let cmd = text.1;
-                                                (
-                                                    RichText::new("Command Sent:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                                    RichText::new(cmd).strong().monospace()
-                                                )
-                                            }else {
-                                                (
-                                                    RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                                    RichText::new(item).strong().monospace()
-                                                )
-                                            };
-                                            
-            
-                                            if is_message_from_myself {
-                                                ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                                    Direction::RightToLeft,
-                                                    Align::Min,
-                                                ), |ui| {
-                                                    Button::new(from)
-                                                        .fill(Color32::TRANSPARENT)
-                                                        .min_size(Vec2::new(30.0, 20.0))
-                                                        .sense(Sense::hover())
-                                                        .ui(ui);
-                                                    
-                                                });
-                                            } else {
-                                                ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                                    Direction::LeftToRight,
-                                                    Align::Min,
-                                                ), |ui| {
-                                                    Button::new(from)
-                                                        .fill(Color32::TRANSPARENT)
-                                                        .min_size(Vec2::new(30.0, 20.0))
-                                                        .sense(Sense::hover())
-                                                        .ui(ui);
-                                                });
-                                            }
-                                            note_frame.show(ui, |ui| {
-                                                ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                                    Direction::TopDown,
-                                                    Align::Center,
-                                                ), |ui| {
-                                                    ui.set_width(ui.available_width());
-                                                    ui.label(txt);
-                                                });
-                                            });
-                                    });
-                                })
-                                .response;
-            
-                                let points = if !is_message_from_myself {
-                                    let top = response.rect.left_top() + Vec2::splat(margin);
-                                    let arrow_rect =
-                                        Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
-            
-                                    vec![
-                                        arrow_rect.left_top(),
-                                        arrow_rect.right_top(),
-                                        arrow_rect.right_bottom(),
-                                    ]
-                                } else {
-                                    let top = response.rect.right_top() + Vec2::new(-margin, margin);
-                                    let arrow_rect =
-                                        Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
-            
-                                    vec![
-                                        arrow_rect.left_top(),
-                                        arrow_rect.right_top(),
-                                        arrow_rect.left_bottom(),
-                                    ]
-                                };
-            
-                                ui.painter()
-                                    .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
-            
-                            });
-                        };
-                    });
-                });
-
-                ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
-                    let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").ui(ui);
-                    let key_press = ui.input(|i| i.key_pressed(Key::Enter));
-                    if text_edit.lost_focus() && key_press {
-                        self.loading = true;
-                        text_edit.request_focus();
-                        self.history.push(format!("You\n{}", self.input.clone()));
-                        if self.input == "readFS" {
-                            match serialize(&Cmd::ReadDir("/".to_string())){
-                                Ok(bytes) => {
-                                    self.ws_sender.send(WsMessage::Binary(bytes));
-                                },
-                                Err(e) => self.history.push(e.to_string()),
-                            }
-                        } else {
-                            self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
-                        }
-                    }
-                });
-            });
+            match self.state {
+                WsDisplayState::LiveStats => self.show_live_stats(ui, name.clone()),
+                WsDisplayState::Explorer => self.show_explorer(ui),
+                WsDisplayState::ToolBox => self.show_tool_box(ui),
+                WsDisplayState::Shell => self.show_shell(ui, name.clone()),
+            }
         });
-        // strip.empty();
     }
 
+    fn show_live_stats(&mut self, ui: &mut Ui, name: String) {
+        let client_id = ui.make_persistent_id(format!("client_id {:?}", name.clone()));
+        let client_header = CollapsingHeader::new("Live Stats").id_source(client_id);
+
+        client_header.show_background(true).show_unindented(ui, |ui| 
+        {
+            ui.add_space(10.0);
+            ui.vertical_centered(|ui| {
+                if let Some(sysinfo) = &self.sysinfo {
+                    let _normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
+
+                    // if self.cpu_percentage.len() < 30
+                        // || self.component_temps.len() < 30
+                        // || self.cpu_clock.len() < 30
+                        // || self.ram_usage.len() < 30 {
+
+                        // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
+                    // } else {
+                    //     self.cpu_percentage.pop_front();
+                    //     self.cpu_percentage.push_back(normalized_cpu_percentage);
+                    //     self.cpu_clock.pop_front();
+                    //     self.cpu_clock.push_back(sysinfo.cpu_clock);
+                    //     self.ram_usage.pop_front();
+                    //     self.ram_usage.push_back(normalized_ram_usage);
+                    //     // self.component_temps.pop_front();
+                    //     // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
+                    // }
+
+                    if self.cpu_percentage.len() > 50
+                        || self.cpu_clock.len() > 50
+                        || self.ram_usage.len() > 50 {
+                        // || self.component_temps.len() < 30 
+                        self.cpu_percentage.clear();
+                        self.cpu_clock.clear();
+                        self.ram_usage.clear();
+                    }
+
+
+                    let percentages = self.cpu_percentage.make_contiguous().to_owned();
+                    let clocks = self.cpu_clock.make_contiguous().to_owned();
+                    // let temps = self.component_temps.make_contiguous().to_owned();
+                    let ram = self.ram_usage.make_contiguous().to_owned();
+            
+                    // info!("\nsysinfo: CPU %: {percentages:?}, \nCPU Clock: {clocks:?}, \nRAM usage: {ram:?}");
+                    // let temps_plot = LinePlot::new(&[0.0], &temps.as_slice());
+                    let width = ui.available_width() / 3.0;
+                    let mut cpu_usage_plot = LinePlot::new(&[0.0], &percentages.as_slice(), width);
+                    let mut cpu_clock_plot = LinePlot::new(&[0.0], &clocks.as_slice(), width);
+                    let mut ram_usage_plot = LinePlot::new(&[0.0], &ram.as_slice(), width);
+            
+                    ui.horizontal(|ui| {
+
+                        // temps_plot.ui(ui, "System Temps", temps_plot.line("System Temps (°C)", Color32::from_rgb(255, 69, 0)));
+                        cpu_usage_plot.ui(ui, "CPU Usage", cpu_usage_plot.line("CPU(%)", Color32::from_rgb(170, 10, 150)));
+                        cpu_clock_plot.ui(ui, "CPU Clock", cpu_clock_plot.line("CPU (MHz)", Color32::from_rgb(21, 232, 165)));
+                        ram_usage_plot.ui(ui, "RAM Usage", ram_usage_plot.line("RAM (MB)", Color32::from_rgb(0, 191, 255)));
+                    });
+                }
+            });
+            ui.add_space(10.0);
+        });
+    }
+
+    fn show_explorer(&mut self, ui: &mut Ui) {
+        ui.group(|ui| {
+            self.explorer.display(ui);
+            let new_dir = self.explorer.enter_directory.clone();
+            if !new_dir.is_empty(){
+                info!("New directory: {:?}", new_dir);
+                match serialize(&Cmd::ReadDir(new_dir.clone())){
+                    Ok(bytes) => {
+                        self.ws_sender.send(WsMessage::Binary(bytes));
+                    },
+                    Err(e) => self.history.push(e.to_string()),
+                }
+            }
+        });
+    }
+
+    fn show_tool_box(&mut self, ui: &mut Ui) {
+        ui.group(|ui| {
+            self.file_system.display(ui);
+            let new_dir = self.file_system.enter_directory.clone();
+            if !new_dir.is_empty(){
+                info!("New directory: {:?}", new_dir);
+                match serialize(&Cmd::ReadDir(new_dir.clone())){
+                    Ok(bytes) => {
+                        self.ws_sender.send(WsMessage::Binary(bytes));
+                    },
+                    Err(e) => self.history.push(e.to_string()),
+                }
+            }
+        });
+    }
+
+    fn show_shell(&mut self, ui: &mut Ui, name: String) {
+        let client_id = ui.make_persistent_id(format!("history {:?}", name.clone()));
+        let scroll = CollapsingHeader::new("Shell").id_source(client_id);
+
+        scroll.show_background(true).show_unindented(ui, |ui| 
+        {
+            ui.allocate_ui(Vec2::new(ui.available_width(), ui.available_height() - 20.0), |ui| {
+                ScrollArea::vertical()
+                    .animated(true)
+                    .max_height(ui.available_height())
+                    .max_width(f32::INFINITY)
+                    .auto_shrink(false)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| 
+                {
+                    ui.set_width(ui.available_width());
+                    let max_msg_width = ui.available_width() / 2.5;
+                    let fixed_height = 50.0;
+                    let min_width = 200.0;
+        
+                    for item in self.history.iter(){
+                        let is_message_from_myself = if item.contains("You"){ true } else { false };
+        
+                        // Messages from the user are right-aligned.
+                        let layout = 
+                            if is_message_from_myself { Layout::top_down(Align::Max)} 
+                            else { Layout::top_down(Align::Min)};
+        
+                        let msg_color = if is_message_from_myself {
+                            ui.style().visuals.widgets.inactive.bg_fill
+                        } else {
+                            ui.style().visuals.widgets.active.weak_bg_fill
+                        };
+        
+                        ui.with_layout(layout, |ui| {
+                            ui.set_max_width(max_msg_width);
+        
+                            let rounding = 8.0;
+                            let margin = 8.0;
+                            
+                            // ui.set_min_width(min_width);
+                            let rnding = Rounding {
+                                ne: if is_message_from_myself { 0.0 } else { rounding },
+                                nw: if is_message_from_myself { rounding } else { 0.0 },
+                                se: rounding,
+                                sw: rounding,
+                            };
+        
+                            let response = Frame::none()
+                                .rounding(rnding)
+                                .inner_margin(margin)
+                                .outer_margin(margin)
+                                .fill(msg_color)
+                                .show(ui, |ui| {
+                                    ui.set_min_height(fixed_height);  // Set the fixed height for the message box
+                                    ui.set_min_width(min_width / 2.5);
+                                    // Use a vertical layout to stack the name and message content
+                                    ui.with_layout(Layout::top_down(Align::Min), |ui| 
+                                    {
+        
+                                        let mut shadow = Shadow::default();
+                                        shadow.blur = 3.0;
+                                        shadow.spread = 3.0;
+                                        shadow.color = Color32::from_rgb(40,36,40);
+                                        
+                                        let mut b_panel_marg = Margin::default();
+                                        b_panel_marg.top = 3.0;
+        
+                                        let color = Color32::from_rgb(10,10,12);
+        
+                                        let note_frame = Frame::none().fill(color)
+                                            .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+                                            .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
+        
+                                        let (from, txt) = if item.contains("You"){
+                                            let text: (&str, &str) = item.split_once("\n").unwrap_or(("", ""));
+                                            let cmd = text.1;
+                                            (
+                                                RichText::new("Command Sent:").strong().monospace().color(Color32::LIGHT_BLUE),
+                                                RichText::new(cmd).strong().monospace()
+                                            )
+                                        }else {
+                                            (
+                                                RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_BLUE),
+                                                RichText::new(item).strong().monospace()
+                                            )
+                                        };
+                                        
+        
+                                        if is_message_from_myself {
+                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                Direction::RightToLeft,
+                                                Align::Min,
+                                            ), |ui| {
+                                                Button::new(from)
+                                                    .fill(Color32::TRANSPARENT)
+                                                    .min_size(Vec2::new(30.0, 20.0))
+                                                    .sense(Sense::hover())
+                                                    .ui(ui);
+                                                
+                                            });
+                                        } else {
+                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                Direction::LeftToRight,
+                                                Align::Min,
+                                            ), |ui| {
+                                                Button::new(from)
+                                                    .fill(Color32::TRANSPARENT)
+                                                    .min_size(Vec2::new(30.0, 20.0))
+                                                    .sense(Sense::hover())
+                                                    .ui(ui);
+                                            });
+                                        }
+                                        note_frame.show(ui, |ui| {
+                                            ui.with_layout(Layout::from_main_dir_and_cross_align(
+                                                Direction::TopDown,
+                                                Align::Center,
+                                            ), |ui| {
+                                                ui.set_width(ui.available_width());
+                                                ui.label(txt);
+                                            });
+                                        });
+                                });
+                            })
+                            .response;
+        
+                            let points = if !is_message_from_myself {
+                                let top = response.rect.left_top() + Vec2::splat(margin);
+                                let arrow_rect =
+                                    Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
+        
+                                vec![
+                                    arrow_rect.left_top(),
+                                    arrow_rect.right_top(),
+                                    arrow_rect.right_bottom(),
+                                ]
+                            } else {
+                                let top = response.rect.right_top() + Vec2::new(-margin, margin);
+                                let arrow_rect =
+                                    Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
+        
+                                vec![
+                                    arrow_rect.left_top(),
+                                    arrow_rect.right_top(),
+                                    arrow_rect.left_bottom(),
+                                ]
+                            };
+        
+                            ui.painter()
+                                .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
+        
+                        });
+                    };
+                });
+            });
+
+            ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
+                let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").ui(ui);
+                let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+                if text_edit.lost_focus() && key_press {
+                    self.loading = true;
+                    text_edit.request_focus();
+                    self.history.push(format!("You\n{}", self.input.clone()));
+                    self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
+                }
+            });
+        });
+    }
 }
 
 

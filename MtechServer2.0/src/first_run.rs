@@ -27,6 +27,7 @@ impl MtechServer {
                 self.state = d.0;
                 if let Some(ref usr) = d.1{
                     self.context.current_user = Some(usr.clone());
+                    self.context.file_system.set_user(usr.clone());
                     let bridge_op = &self.context.bridge;
                     // let live_bridge = &self.context.live_bridge;
                     // info!("live bridge?");
@@ -151,6 +152,7 @@ impl MtechServer {
                     self.state = d.0;
                     if let Some(ref usr) = d.1{
                         self.context.current_user = Some(usr.clone());
+                        self.context.file_system.set_user(usr.clone());
                         let user = usr.clone();
                         spawn_local(async move {
                             info!("5");
