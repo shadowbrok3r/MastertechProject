@@ -18,7 +18,6 @@ target
 Cargo.lock
 Mastertech4.0/target
 Mastertech4.0/dist
-Mastertech4.0/
 Mastertech4.0/.env
 Mastertech4.0/Cargo.lock
 Mastertech4.0/output.log
