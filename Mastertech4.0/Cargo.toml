@@ -48,6 +48,7 @@ ring = "0.17.8"
 egui_tracing = "0.2.2"
 rust-s3 = "0.34"
 
+
 database = { workspace=true }
 surrealdb-alpha = { workspace=true }
 # surrealdb = { workspace=true }
@@ -118,11 +119,16 @@ strip = false
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "2"
 embed-resource = "2.4"
+winres = "0.1"
+# embed-manifest = "1.4.0"
 
 [package.metadata]
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
 resources = ["src/assets/**/*png", "src/assets/**/*ico"]
 
 [package.metadata.winres]
+ProductName = "Mastertech" 
 OriginalFilename = "Mastertech.EXE"
 LegalCopyright = "Copyright © 2024"
+ProductVersion = "4.2.1"
+FileDescription = "Mastertech"

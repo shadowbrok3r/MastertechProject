@@ -1,11 +1,12 @@
-use crossbeam::channel::Sender;
-use database::{Database, DATABASE};
 use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, Vec2, Widget};
-use egui_extras::{Size, StripBuilder};
-use log::info;
 use wasm_bindgen_futures::spawn_local;
+use egui_extras::{Size, StripBuilder};
+use database::{Database, DATABASE};
 #[allow(unused_imports)]
 use wasm_cookies::CookieOptions;
+use crossbeam::channel::Sender;
+use anyhow::{Result, Error};
+use log::info;
 
 use crate::app_state::{AppState, MainPages, MtechServer};
 
@@ -24,7 +25,7 @@ impl Default for Login{
 }
 
 impl Login{
-    pub async fn login(email: String, pass: String, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) -> anyhow::Result<(), anyhow::Error>{
+    pub async fn login(email: String, pass: String, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, appstate_tx: Sender<AppState>) -> Result<(), Error>{
         let database = Database::new(email, pass, None).await;
         match database{
             Ok(db) => {
@@ -44,15 +45,10 @@ impl Login{
                     let _ = DATABASE.invalidate().await;
                     appstate_tx.try_send(AppState::NoAuth("No cookie or user was found".to_string()))?;
                 }
-                appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
                 db_tx.try_send(Ok(db))?;
+                appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
             },
-            Err(e) => {
-                let check = e.to_string().contains("Already connected");
-                info!("{e:?} // Already connected? {:?}", check);
-                if check { appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; }
-                else { appstate_tx.try_send(AppState::NoAuth(e.to_string()))?; }
-            },
+            Err(e) => appstate_tx.try_send(AppState::NoAuth(e.to_string()))?,
         }
         Ok(())
     }
@@ -174,11 +170,11 @@ impl MtechServer{
                                         let pass = login.password.clone();
                                         let email = format!("{user}@pclaptops.com");
                                         spawn_local(async move {
-                                                let res = Login::login(email, pass, db_tx.clone(), appstate_tx.clone()).await;
-                                                match res {
-                                                    Ok(_) => appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap(), 
-                                                    Err(e) => appstate_tx.try_send(AppState::NoAuth(e.to_string())).unwrap()
-                                                }
+                                            let res = Login::login(email, pass, db_tx.clone(), appstate_tx.clone()).await;
+                                            match res {
+                                                Ok(_) => appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap(), 
+                                                Err(e) => appstate_tx.try_send(AppState::NoAuth(e.to_string())).unwrap()
+                                            }
                                         });
                                     }
                                 }
