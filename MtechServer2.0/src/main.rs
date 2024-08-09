@@ -188,19 +188,26 @@ impl eframe::App for MtechServer {
         
         match &self.state{ // Always checking authentication 
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
-            AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
             AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
-            AppState::Authenticated(MainPages::AccountSettings) => {
-                // if self.
-                self.account_settings_page(ctx, self.context.app_state_tx.clone());
-            },
+            AppState::Authenticated(MainPages::AccountSettings) => self.account_settings_page(ctx, self.context.app_state_tx.clone()),
             AppState::Authenticated(_) => self.main_page(ctx),
-            AppState::CreateAccount => self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())
+            AppState::CreateAccount => self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
+            AppState::NoAuth(reason) => {
+                if reason.to_string().contains("Already connected") {
+                    info!("Already connected");
+                    self.context.first_run = true;
+                    self.state = AppState::Authenticated(MainPages::Tasks);
+                } else {
+                    self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())
+                }
+            },
         }
     }
 
     fn persist_egui_memory(&self) -> bool { true }
+
     fn save(&mut self, _storage: &mut dyn eframe::Storage) { }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) { 
         if let Some(window) = web_sys::window(){
             if let Ok(storage) = window.local_storage(){

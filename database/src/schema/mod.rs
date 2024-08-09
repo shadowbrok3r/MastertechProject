@@ -410,11 +410,8 @@ pub enum Node {
 
 // impl Node {
 //     pub fn as_folder_mut(&mut self) -> Option<&mut HashMap<String, Node>> {
-//         if let Node::Folder(ref mut map) = self {
-//             Some(map)
-//         } else {
-//             None
-//         }
+//         if let Node::Folder(ref mut map) = self {Some(map) } 
+//         else { None }
 //     }
 // }
 

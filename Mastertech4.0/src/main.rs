@@ -83,20 +83,17 @@ impl eframe::App for MasterTechApp {
                     // match x.poll_unpin(cx)
                     #[cfg(target_os="windows")]
                     {
-                        let mut cps = self.context.current_antivirus.clone();
-                        // let sysinfo = self.context.computer_data;
-                        // let installed_antivirus = sysinfo.get_antivirus()
+                        let cps = &mut self.context.current_antivirus.clone();
                         let installed_antivirus = ComputerData::get_antivirus()
                         .map_err(|e| 
-                            cps += format!("Error checking antivirus: {e}\n").as_str()
+                            *cps += format!("Error checking antivirus: {e}\n").as_str()
                         ).unwrap_or(Vec::new());
-            
             
                         for (name, is_installed) in installed_antivirus {
                             match is_installed {
                                 Some(true) => {
-                                    cps += "\n";
-                                    cps += &format!("{name}");
+                                    *cps += "\n";
+                                    *cps += &format!("{name}");
                                 },
                                 _ => {},
                             }
@@ -188,17 +185,10 @@ impl eframe::App for MasterTechApp {
 
             #[cfg(target_os="windows")] {
                 let cps = &mut self.context.current_antivirus;
-                let mut cps_v = Vec::new();
-                let installed_antivirus = ComputerData::get_antivirus()
-                .map_err(|e| 
-                    *cps += format!("Error checking antivirus: {e}\n").as_str()
-                ).unwrap_or_default();
-    
-    
-                for (name, _is_installed) in installed_antivirus {
-                    cps_v.push(name);
-                }
-                ticket.current_antivirus = Some(cps_v);
+                    let installed_antivirus = ComputerData::get_antivirus()
+                    .map_err(|e| *cps += format!("Error checking antivirus: {e}\n").as_str()).unwrap_or(Vec::new());
+                    let x: Vec<String> = installed_antivirus.iter().map(|cps| if let Some(true)=cps.1 { cps.0.clone() } else { "Not installed".to_string()}).collect::<Vec<String>>();
+                    ticket.current_antivirus = Some(x);  
             }
 
             let sales_rep = data.sales_rep.unwrap_or_default();
@@ -252,9 +242,7 @@ impl eframe::App for MasterTechApp {
             self.context.output_text += &serde_json::to_string_pretty(&computer).unwrap_or("".to_string());
         }
 
-        if let Ok(_connected_clients) = self.context.connected_clients_rx.try_recv(){
-            //     info!("Connected clients: {:#?}", connected_clients.clone());
-        }
+        // if let Ok(_connected_clients) = self.context.connected_clients_rx.try_recv(){}
 
         if let Ok(users) = self.context.store_users_rx.try_recv(){
             self.context.store_users = Some(users);
@@ -316,7 +304,6 @@ impl eframe::App for MasterTechApp {
                 }
             },
             app_state::AppState::NoAuth(_reason) => self.main_page(ctx),
-                // self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
             app_state::AppState::Login => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
             _ => {}
         }
