@@ -1,21 +1,19 @@
-#[allow(unused_imports)] 
-use crate::app_state::{AppState, MtechServer};
-use crate::utilities::get_data::get_customer_data;
 use database::{live_data::{handle_live_create, handle_live_delete, handle_live_update, listen_data, listen_task_notes, listen_tasks}, schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks}};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
-use log::debug;
-use mtechserver::live_worker::LiveInput;
-#[allow(unused_imports)] 
-use mtechserver::webworker::Input;
-// use anyhow::{Error, Result};
-#[allow(unused_imports)] 
-use database::STORAGE_URL;
-#[allow(unused_imports)] 
-use log::info;
-use surrealdb::Action;
+use crate::utilities::get_data::get_customer_data;
+use crate::app_state::{AppState, MtechServer};
 use wasm_bindgen_futures::spawn_local;
+use database::STORAGE_URL;
+use surrealdb::Action;
+use log::debug;
+use log::info;
+use mtechserver::webworker::Input;
+
 #[cfg(target_arch="wasm32")]
-use crate::app_state::check_authentication;
+use {
+    crate::app_state::check_authentication,
+    mtechserver::live_worker::LiveInput,
+};
 
 impl MtechServer {
     pub fn first_run(&mut self) {
@@ -130,12 +128,12 @@ impl MtechServer {
                 info!("get_custs: {get_custs:?}");
             });
 
-            let live_bridge = &self.context.live_bridge;
-            info!("live bridge?");
-            if let Some(live_bridge) = live_bridge{
-                info!("Have live bridge");
-                live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
-            }
+            // let live_bridge = &self.context.live_bridge;
+            // info!("live bridge?");
+            // if let Some(live_bridge) = live_bridge{
+            //     info!("Have live bridge");
+            //     live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
+            // }
 
             let toast = &mut self.context.toasts;
             let auth_toast = Toast{
@@ -151,14 +149,56 @@ impl MtechServer {
                 Ok(d) => {
                     self.state = d.0;
                     if let Some(ref usr) = d.1{
+                        let bridge_op = &self.context.bridge;
+
+                        if let (
+                            Some(access_key), 
+                            Some(secret_key), 
+                            Some(bridge)
+                        ) = (
+                            usr.minio_access_key.clone(), 
+                            usr.minio_secret_key.clone(), 
+                            bridge_op
+                        ) {
+                            self.context.file_system.access_key = access_key.clone();
+                            self.context.file_system.secret_key = secret_key.clone();
+                            bridge.send(Input {
+                                url: STORAGE_URL.to_string(),
+                                access_key,
+                                secret_key,
+                            });
+                        }
                         self.context.current_user = Some(usr.clone());
                         self.context.file_system.set_user(usr.clone());
                         let user = usr.clone();
                         spawn_local(async move {
-                            info!("5");
-                            let _ = get_tasks(initial_tasks_tx).await;
-                            let _ = get_store_users(store_users_tx, user.store).await;
-                            let _ = listen_task_notes(notes_tx).await.unwrap();
+                            let listen_task_notes = listen_task_notes(notes_tx).await;
+                            info!("listen_task_notes: {listen_task_notes:?}");
+                        });
+            
+                        spawn_local(async move {
+                            let listen_tasks = listen_tasks(live_tasks_tx).await;
+                            info!("listen_tasks: {listen_tasks:?}");
+                        });
+            
+                        spawn_local(async move {
+                            let listen_data = listen_data(live_clients_tx).await;
+                            info!("listen_data: {listen_data:?}");
+                        });
+                        
+                        // spawn_local(async move { let listen_data = listen_notifications(notification_tx.clone()).await; info!("listen_notifications: {listen_notifications:?}"); });
+            
+                        spawn_local(async move {
+                            let get_tasks = get_tasks(initial_tasks_tx).await;
+                            let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
+                            let get_connected_clients = get_connected_clients(tx, user.clone()).await;
+                            let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
+                            let get_custs = get_customer_data(live_output).await;
+                            info!("get_notifications: {get_notifications:?}");
+                            info!("get_connected_clients: {get_connected_clients:?}");
+                            info!("get_tasks: {get_tasks:?}");
+                            info!("get_store_users: {get_store_users:?}");
+                            info!("get_custs: {get_custs:?}");
                         });
                         let toast = &mut self.context.toasts;
                         let auth_toast = Toast{

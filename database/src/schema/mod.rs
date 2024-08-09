@@ -390,13 +390,33 @@ pub enum Cmd{
     ChkDsk,
     Mbr2Gpt,
     ReadDir(String),
-    DirContents(Vec<String>),
+    DirContents(Node),
+    // DirContents((String, Vec<String>)),
+    UpDirectory(String),
     ChangeDirectory(String),
     Execute(String),
+    InteractiveInput(String),
+    QuitInteractive,
     CopyTools(String),
     Quit,
     None
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Node {
+    File((String, String)),
+    Folder(String, HashMap<String, Node>),
+}
+
+// impl Node {
+//     pub fn as_folder_mut(&mut self) -> Option<&mut HashMap<String, Node>> {
+//         if let Node::Folder(ref mut map) = self {
+//             Some(map)
+//         } else {
+//             None
+//         }
+//     }
+// }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default)]
 pub enum Store{

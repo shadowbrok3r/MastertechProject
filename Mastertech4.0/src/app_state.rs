@@ -159,7 +159,7 @@ impl MasterTechApp {
         setup_custom_fonts(&cc.egui_ctx);
 
         let mut tree = DockState::new(
-            vec!["TUR Sheet".to_owned(), "Tasks".to_owned(), "Minidump Analysis".to_owned()]
+            vec!["TUR Sheet".to_owned(), "Tasks".to_owned(), "Part Order".to_owned(), "Minidump Analysis".to_owned()]
         );
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
@@ -168,7 +168,7 @@ impl MasterTechApp {
         let [_a, b] = tree.main_surface_mut()
             .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(), "Logs".to_owned(), "Websockets".to_owned()]);
         let [_, _] = tree.main_surface_mut()
-            .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned(), "Part Order".to_owned()]);
+            .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned()]);
         let [_, _] = tree.main_surface_mut()
             .split_left(b,0.20,vec!["Scripts".to_owned()]);
 

@@ -6,6 +6,7 @@ description = "Mastertech"
 build = "build.rs"
 
 [dependencies]
+displays = { path="../displays", features = ["tokio"]}
 reqwest = { version = "0.12", features = ["json", "stream", "cookies"] }
 sysinfo = "0.31"
 console-subscriber = "0.4.0"
@@ -48,7 +49,6 @@ egui_tracing = "0.2.2"
 rust-s3 = "0.34"
 
 database = { workspace=true }
-displays = { workspace=true }
 surrealdb-alpha = { workspace=true }
 # surrealdb = { workspace=true }
 tokio = { workspace=true }

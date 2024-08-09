@@ -2,8 +2,6 @@ use eframe::egui::Ui;
 use eframe::egui::{CentralPanel, Color32, Frame, Margin, Rounding, Stroke, TopBottomPanel, Vec2};
 use crate::app_state::MtechServerContext;
 
-pub mod storage_api;
-
 impl MtechServerContext {
     pub fn toolbox(&mut self, ui: &mut Ui){
         ui.ctx().request_repaint();
