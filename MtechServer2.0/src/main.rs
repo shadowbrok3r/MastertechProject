@@ -1,14 +1,11 @@
-use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::{get_associated_ticket, get_customer_data}, handle_live_data::{handle_live_create, handle_live_data, handle_live_delete, handle_live_notes, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert, update_or_insert_layout /*, update_or_insert_notes */}, ModalType, TaskUiActions};
+use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::get_associated_ticket, handle_live_data::{handle_live_data, handle_live_notes, update_or_insert, update_or_insert_layout /*, update_or_insert_notes */}, ModalType, TaskUiActions};
 use displays::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
-use mtechserver::{live_worker::LiveInput, webworker::Input};
 use app_state::{AppState, MainPages, MtechServer};
 use wasm_bindgen_futures::spawn_local;
 use eframe::egui::FontFamily;
-use database::{schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks}, STORAGE_URL};
-use log::{debug, info};
-use surrealdb::Action;
 use std::sync::Arc;
+use log::info;
 
 #[cfg(target_arch="wasm32")]
 use app_state::check_authentication;
@@ -28,7 +25,10 @@ impl eframe::App for MtechServer {
         // let alt_style = set_alternative_style(); ctx.set_style(alt_style);
 
         let data_update = self.context.data_update.as_mut().unwrap();
-        if let Some(items) = data_update.take() { self.context.file_system.build_file_system(items); }
+        if let Some(items) = data_update.take() { 
+            info!("Files: {items:?}");
+            self.context.file_system.build_file_system(items); 
+        }
         
         let live_data_update = self.context.live_data_update.as_mut().unwrap();
         if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
@@ -188,19 +188,26 @@ impl eframe::App for MtechServer {
         
         match &self.state{ // Always checking authentication 
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
-            AppState::NoAuth(_reason) => self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
             AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
-            AppState::Authenticated(MainPages::AccountSettings) => {
-                // if self.
-                self.account_settings_page(ctx, self.context.app_state_tx.clone());
-            },
+            AppState::Authenticated(MainPages::AccountSettings) => self.account_settings_page(ctx, self.context.app_state_tx.clone()),
             AppState::Authenticated(_) => self.main_page(ctx),
-            AppState::CreateAccount => self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())
+            AppState::CreateAccount => self.signup_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone()),
+            AppState::NoAuth(reason) => {
+                if reason.to_string().contains("Already connected") {
+                    info!("Already connected");
+                    self.context.first_run = true;
+                    self.state = AppState::Authenticated(MainPages::Tasks);
+                } else {
+                    self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())
+                }
+            },
         }
     }
 
     fn persist_egui_memory(&self) -> bool { true }
+
     fn save(&mut self, _storage: &mut dyn eframe::Storage) { }
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) { 
         if let Some(window) = web_sys::window(){
             if let Ok(storage) = window.local_storage(){

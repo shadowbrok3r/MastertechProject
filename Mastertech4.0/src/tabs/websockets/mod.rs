@@ -1,8 +1,9 @@
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::{read_folder, FileBrowser}};
 use database::{schema::{utilities::{deserialize_command, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
+use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem};
 use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::{ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
+use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
 use crossbeam::channel::{Receiver, Sender};
@@ -64,17 +65,16 @@ impl MastertechContext{
 
                 let tx = self.connected_clients_tx.clone();
                 spawn(async move {
-
                     let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
                         .query("CREATE connected_client CONTENT $content")
                         .bind(("content", connected_client.clone()))
-                        .await
-                        .unwrap().take(0);
+                        .await?.take(0);
 
                     match res{
-                        Ok(data) => tx.try_send(data.clone()).unwrap(),
+                        Ok(data) => tx.try_send(data.clone())?,
                         Err(e) => info!("Error Creating Client: {e:?}"),
                     }
+                    Ok::<(), Error>(())
                 });
 
                 if let Some(url) = &self.url{
@@ -120,6 +120,7 @@ pub struct WebConsoleFrontend {
     pub rx: Receiver<Vec<u8>>,
     pub command_tx: Sender<Vec<u8>>,
     pub command_rx: Receiver<Vec<u8>>,
+    pub interactive_input: (Sender<String>, Receiver<String>),
 
     pub events: Vec<WsEvent>,
     pub input: String,
@@ -129,13 +130,15 @@ pub struct WebConsoleFrontend {
     pub history: Vec<String>,
     pub connected: bool,
     pub timeout_counter: Instant,
-    pub process: Arc<Mutex<Option<ChildStdin>>>
+    pub process: Arc<Mutex<Option<ChildStdin>>>,
+    pub explorer: FileSystem
 }
 
 impl WebConsoleFrontend {
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver) -> Self {
         let (tx, rx) = crossbeam::channel::unbounded::<Vec<u8>>();
         let (command_tx, command_rx) = crossbeam::channel::unbounded::<Vec<u8>>();
+        let interactive_input = String::create_unbounded_channel();
         
         Self {
             ws_sender, ws_receiver,
@@ -150,15 +153,15 @@ impl WebConsoleFrontend {
             connected: false,
             timeout_counter: Instant::now(),
             process: Arc::new(Mutex::new(None)),
+            explorer: FileSystem::new(),
+            interactive_input
         }
     }
 
     pub fn handle_events(&mut self) -> bool{
         let mut connected = false;
 
-        while let Some(event) = self.ws_receiver.try_recv() {
-            self.events.push(event);
-        }
+        while let Some(event) = self.ws_receiver.try_recv() { self.events.push(event); }
         
         if let Ok(sysinfo) = &mut self.rx.try_recv(){
             self.ws_sender.send(WsMessage::Binary(std::mem::take(sysinfo)));
@@ -168,11 +171,7 @@ impl WebConsoleFrontend {
             self.ws_sender.send(WsMessage::Binary(std::mem::take(cmd_output)));
         }
 
-        if self.timeout_counter.elapsed().as_secs() > 10 {
-            info!("Its been over 10 seconds since last ping");
-        }
-
-
+        if self.timeout_counter.elapsed().as_secs() > 10 { info!("Its been over 10 seconds since last ping"); }
 
         for event in &self.events{
             match event{
@@ -258,43 +257,98 @@ impl WebConsoleFrontend {
                                 Cmd::ReadDir(path) => {
                                     info!("READING DIR");
                                     let current_path = env::current_dir().unwrap_or_default();
+                                    info!("Current_path: {current_path:?}");
                                     let contents = if path == "current" {
                                         let paths = read_folder(&current_path, 2, false);
                                         info!("Current paths: {:?}", paths.clone());
-                                        paths
+                                        let node = self.explorer.build_virtual_file_system(current_path, paths);
+                                        node // paths
                                     } else {
                                         let p: PathBuf = Path::new(path.as_str()).to_path_buf();
                                         if p.is_dir() {
                                             let paths = read_folder(&p, 2, false);
                                             info!("Paths: {:?}", paths.clone());
-                                            paths
+                                            let node = self.explorer.build_virtual_file_system(current_path, paths);
+                                            node // paths
                                         } else {
                                             let paths = read_folder(&current_path, 2, false);
                                             info!("Paths: {:?}", paths.clone());
-                                            paths
+                                            let node = self.explorer.build_virtual_file_system(current_path, paths);
+                                            node // paths
                                         }
                                     };
+                                    // let mut strings = Vec::new();
+                                    // for x in contents { strings.push(x.to_string_lossy().to_string()); }
+                                    let payload = serialize(
+                                        &Cmd::DirContents(contents) // (current_path.to_string_lossy().to_string(), strings)
+                                    );
 
-                                    let mut strings = Vec::new();
-                                    for x in contents {
-                                        strings.push(x.to_string_lossy().to_string());
-                                    }
-                                    let payload = serialize(&Cmd::DirContents(strings));
-                                    let _x = serialize(&FileBrowser::new());
                                     match payload {
-                                        Ok(bytes) => {
-                                            self.ws_sender.send(WsMessage::Binary(bytes));
-                                            
-                                        },
+                                        Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
                                         Err(e) => info!("Error serializing paths: {e:?}"),
                                     }
-                                }
-                                Cmd::Quit => {
-                                    self.connected = false;
-                                }
-                                _ => {
-                                    // self.history.push(format!("Raw Binary: {:?}", bin));
                                 },
+                                Cmd::UpDirectory(new_path) => {
+                                    let mut p: PathBuf = Path::new(&new_path).to_path_buf();
+                                    if p.pop() {
+                                        let paths = read_folder(&p, 2, false);
+                                        info!("Paths: {:?}", paths.clone());
+                                        if paths.len() > 0 {
+                                            let node = self.explorer.build_virtual_file_system(p, paths);
+                                            info!("Node: {:?}", node);
+                        
+                                            let payload = serialize(
+                                                &Cmd::DirContents(node)
+                                            );
+                            
+                                            match payload {
+                                                Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                                                Err(e) => info!("Error serializing paths: {e:?}"),
+                                            }
+                                        }
+                                    } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
+                                },
+                                Cmd::ChangeDirectory(new_path) => {
+                                    let p: PathBuf = Path::new(&new_path).to_path_buf();
+                                    if p.is_dir() {
+                                        let paths = read_folder(&p, 2, false);
+                                        info!("Paths: {:?}", paths.clone());
+                                        if paths.len() > 0 {
+                                            let node = self.explorer.build_virtual_file_system(p, paths);
+                                            info!("Node: {:?}", node);
+                        
+                                            let payload = serialize(
+                                                &Cmd::DirContents(node)
+                                            );
+                            
+                                            match payload {
+                                                Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                                                Err(e) => info!("Error serializing paths: {e:?}"),
+                                            }
+                                        }
+                                    } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
+                                },
+                                Cmd::Execute(path) => {
+                                    let tx = self.tx.clone();
+                                    let p = path.clone();
+                                    let interactive_rx = self.interactive_input.1.clone();
+                                    info!("executing: {path:?}");
+                                    spawn(async move {
+                                        let x = handle_windows_cmd_interactive(p, tx, interactive_rx).await;
+                                        info!("x: {x:?}");
+                                    });
+                                },
+                                Cmd::InteractiveInput(cmd) => {
+                                    let tx = self.interactive_input.0.clone();
+                                    std::thread::spawn(move || {
+                                        tx.send(cmd).unwrap();
+                                    });
+                                },
+                                Cmd::QuitInteractive => {
+                                    let _ = self.interactive_input.0.try_send("quit".to_string());
+                                },
+                                Cmd::Quit => { self.connected = false; }
+                                _ => {},
                             }
                         },
                         WsMessage::Text(txt) => {
@@ -315,7 +369,6 @@ impl WebConsoleFrontend {
                             self.timeout_counter = Instant::now();
                         },
                         _ => ()
-                        
                     }
                 },
                 WsEvent::Opened => {
@@ -433,11 +486,9 @@ impl WebConsoleFrontend {
                                         RichText::new(cmd).strong().monospace()
                                     )
                                 }else {
-                                    let text: (&str, &str) = item.split_once(":").unwrap_or(("Raw Binary", ""));
-                                    let cmd = text.1;
                                     (
                                         RichText::new("Raw Binary Payload").strong().monospace().color(Color32::LIGHT_BLUE),
-                                        RichText::new(cmd).strong().monospace()
+                                        RichText::new(item).strong().monospace()
                                     )
                                 };
                                 
@@ -514,8 +565,6 @@ impl WebConsoleFrontend {
 
       connected
     }
-
-    
 }
 
 async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) -> Result<(), Error>{
@@ -529,6 +578,7 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) -> Result<()
     #[allow(unreachable_code)]
     Ok(())
 }
+
 async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) -> Result<ChildStdin, Error>  { 
     // #[cfg(target_os="windows")]{ return handle_windows_cmd(string_payload, tx.clone()).await?; }
     if cfg!(target_os="windows") { Ok(handle_windows_cmd(string_payload, tx.clone()).await?) }
@@ -602,6 +652,60 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Res
     }
 
     Ok(stdin)
+}
+
+async fn handle_windows_cmd_interactive(command_payload: String, tx: Sender<Vec<u8>>, rx: Receiver<String>) ->  Result<(), Error> {
+        let mut process: Child = Command::new("cmd")
+        .arg("/C")
+        .arg(&command_payload)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // Create a Tokio stream for stdout / stderr
+    let stdout = process.stdout.take().expect("Failed to get stdout");
+    let stderr = process.stderr.take().expect("Failed to get stderr");
+    let mut stdin: ChildStdin = process.stdin.take().expect("Failed to open stdin");
+
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+
+    // Ensure the child process is spawned in the runtime so it can
+    // make progress on its own while we await for any output.
+    tokio::spawn(async move {
+        let status = process.wait().await.expect("child process encountered an error");
+        info!("child status was: {}", status);
+    });
+
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        while let Some(line) = stderr_reader.next_line().await? {
+            tx_clone.send(line.into_bytes()).ok();
+        }
+        Ok::<(), Error>(())
+    });
+
+    let tx_clone = tx.clone();
+    tokio::spawn(async move {
+        while let Some(line) = stdout_reader.next_line().await? {
+            tx_clone.try_send(line.into_bytes()).ok();
+        }
+        Ok::<(), Error>(())
+    });
+    
+    tokio::spawn(async move {
+        while let Ok(input) = rx.recv() {
+            if input != "quit".to_string() {
+                if let Err(e) = stdin.write_all(input.as_bytes()).await {
+                    info!("Failed to write to stdin: {}", e);
+                    break;
+                }
+            } else { break; }
+        }
+    });
+
+    Ok(())
 }
 
 async fn process_command(text: String, tx: Sender<Vec<u8>>, process: Arc<Mutex<Option<ChildStdin>>>) {

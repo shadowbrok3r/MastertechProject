@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
+use eframe::{egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget}, App, Storage};
 use crate::app_state::{AppState, MainPages, MtechServer};
 use database::{schema::{Store, USER_TABLE}, set_db_selection, DatabaseSelection, DATABASE};
 use surrealdb::{opt::RecordId, sql::Id};
@@ -121,6 +121,7 @@ impl MtechServer{
                                                 });
                                                 if db.response.clicked(){
                                                     if acc_mod.database == DatabaseSelection::Stable {
+                                                        // self.save(Storage:)
                                                         set_db_selection(DatabaseSelection::Stable);
                                                     } else {
                                                         set_db_selection(DatabaseSelection::Beta);

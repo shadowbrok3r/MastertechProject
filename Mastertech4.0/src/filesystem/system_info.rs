@@ -38,7 +38,7 @@ impl ComputerInfo for ComputerData{
     async fn get_computer_data(&mut self) -> anyhow::Result<Self, anyhow::Error>{
         info!("Getting sysinfo");
         let sys = System::new_all();
-        info!("Pulling Disks");
+        info!("Pulling Drive information");
         let mut disks = Disks::new_with_refreshed_list();
         let client = Client::new();
 
@@ -59,7 +59,7 @@ impl ComputerInfo for ComputerData{
         let seb_data: Result<LocalSebData, anyhow::Error> = request_seb_info(client, None)
             .await
             .or_else(|err|{
-                info!("Error: {:?}", err.to_string());
+                info!("Error Pulling SEB info: {:?}", err.to_string());
                 Err(err)
             }).and_then(|data|{
                 info!("Pulled SEB Data successfully: {data:#?}");
@@ -69,15 +69,19 @@ impl ComputerInfo for ComputerData{
         #[cfg(target_os = "windows")]
         {
             info!("pulling GPU");
-            let gpu =  String::from_utf8(
-                tokio::process::Command::new("cmd")
-                    .args(["/C", "wmic path win32_VideoController get name"])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output()
-                    .await?
-                    .stdout
-            );
-            let clone_gpu_name = gpu.clone().unwrap_or("no gpu detected".to_string());
+            let process = tokio::process::Command::new("cmd")
+                .args(["/C", "wmic path win32_VideoController get name"])
+                .creation_flags(CREATE_NO_WINDOW).output().await;
+
+            info!("Process: {process:?}");
+
+            let x = process.unwrap().stdout;
+            info!("x: {x:?}");
+
+            let gpu =  String::from_utf8(x).unwrap_or(String::new());
+            info!("GPU: {gpu:?}");
+            
+            let clone_gpu_name = gpu.clone();
             let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
             if parse_gpu_name[0].is_empty(){
                 self.gpu = parse_gpu_name.clone()[1].trim().to_string();
@@ -86,6 +90,7 @@ impl ComputerInfo for ComputerData{
 
         #[cfg(target_os = "linux")]
         {
+            info!("Pulling linux gpu");
             let re = Regex::new(r"\[(.*)\]").unwrap();
             let gpu = String::from_utf8(
                 tokio::process::Command::new("sh")
@@ -102,9 +107,10 @@ impl ComputerInfo for ComputerData{
             }
         }
 
-        if let Ok(seb) = seb_data{
-            self.seb_info = Some(seb);
+        if let Ok(seb_info) = seb_data {
+            self.seb_info = Some(seb_info);
         }
+
         info!("Pulling CPU");
         self.cpu = sys.cpus()[0].brand().trim().to_string();
         info!("Pulling RAM");
@@ -118,15 +124,6 @@ impl ComputerInfo for ComputerData{
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
 
         self.id = Some(ComputerId(Thing::from((COMPUTER_TABLE,  id.clone().as_str()))));
-
-        // match tx.try_send(self.to_owned()) {
-        //     Ok(_) => {
-        //         info!("Sent sysinfo");
-        //         drop(tx)
-        //     },
-        //     Err(e) => info!("Couldnt send sysinfo: {e:?}")
-        // }
-
         Ok(self.to_owned())
     }
 

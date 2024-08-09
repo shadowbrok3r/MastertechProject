@@ -70,6 +70,15 @@ pub fn get_db_url() -> String {
         DatabaseSelection::Beta => DB_URL_DEV.to_string(), 
     }
 }
+/*
+    Trait epi::Storage
+
+    pub trait Storage {
+        fn get_string(&self, key: &str) -> Option<String>;
+        fn set_string(&mut self, key: &str, value: String);
+        fn flush(&mut self);
+    }
+*/
 
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
