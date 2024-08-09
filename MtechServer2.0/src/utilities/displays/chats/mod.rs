@@ -223,6 +223,7 @@ impl ChatView {
                                                 .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
 
                                             if btn.clicked(){
+                                                // item.
                                                 let mut item = item.clone();
                                                 spawn_local(async move {
                                                     match item.delete_note().await{

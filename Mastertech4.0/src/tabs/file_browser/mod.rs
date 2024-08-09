@@ -145,7 +145,7 @@ impl FileBrowser{
     
     pub fn show(&mut self, ui: &mut Ui ) {     
         let mut total_size = 0;
-        self.handle_keyboard_events(ui);
+        
         ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
         ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
         ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
@@ -158,6 +158,65 @@ impl FileBrowser{
         ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
         ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
 
+        self.handle_keyboard_events(ui);
+        self.top_panel(ui);
+        self.bottom_panel(ui);
+        self.central_panel(ui);
+
+        while let Ok(progress) = self.progress_rx.try_recv() {self.progress += progress as f64; }
+
+        while let Ok(meta) = self.metadata_rx.try_recv(){
+            total_size += meta;
+            self.source_dir_size = total_size;
+        }
+        
+        self.toasts.show(ui.ctx());
+        if let Ok(Some(cmd)) = self.command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
+    }
+    
+    pub fn central_panel(&mut self, ui: &mut Ui) {
+        CentralPanel::default().show_inside(ui, 
+            |ui| 
+        {
+            ui.shrink_width_to_current();ui.shrink_height_to_current();
+            ui.add_space(ui.spacing().item_spacing.y * 1.5);
+
+            if self.first_refresh_contents{
+                self.refresh_contents();
+                self.get_drives();
+                self.first_refresh_contents = false;
+            }
+            
+            ScrollArea::new([false, true])
+            .id_source("file_browser_scroll")
+            .max_width(f32::INFINITY)
+            .auto_shrink([false, false])
+            .show_rows(ui,
+            ui.text_style_height(&TextStyle::Body),
+            self.dir_contents.borrow().get(&self.path).map_or(0, |files| files.len()),
+            |ui, range| match self.dir_contents.borrow().get(&self.path) //borrow().get(&self.path) 
+            {
+                Some(files) => {
+                    ui.with_layout(ui.layout().with_main_justify(true), |ui| {
+                        ui.vertical(|ui| {
+                            for path in files[range].iter(){
+                                self.display_path(ui, path);
+                            }
+                        });
+                    });
+                }
+                None => {
+                    // There was an error fetching the directory contents
+                    // Send a command to fetch them in the background
+                    let command = Command::ReadDirectory(self.path.clone());
+                    self.command_tx.send(Some(command)).unwrap();
+                    ui.label("Loading...");
+                },
+            });
+        }); // .response.context_menu(|ui| FileBrowser::filebrowser_ctx_menu(ui));
+    }
+
+    pub fn top_panel(&mut self, ui: &mut Ui) {
         TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 let response = ui.add_sized(
@@ -216,7 +275,9 @@ impl FileBrowser{
             });
             ui.add_space(ui.spacing().item_spacing.y);
         });
+    }
 
+    pub fn bottom_panel(&mut self, ui: &mut Ui) {
         TopBottomPanel::bottom("file_browser_bottom").show_inside(ui, |ui| {    
             if self.progress as u64 == self.source_dir_size && self.animated_progress{
                 self.progress = 0.0;
@@ -311,58 +372,7 @@ impl FileBrowser{
                 .animate(self.animated_progress)
                 .ui(ui);
         });
-
-        CentralPanel::default().show_inside(ui, |ui| 
-        {
-            ui.shrink_width_to_current();ui.shrink_height_to_current();
-            ui.add_space(ui.spacing().item_spacing.y * 1.5);
-
-            if self.first_refresh_contents{
-                self.refresh_contents();
-                self.get_drives();
-                self.first_refresh_contents = false;
-            }
-            
-            ScrollArea::new([false, true])
-            .id_source("file_browser_scroll")
-            .max_width(f32::INFINITY)
-            .auto_shrink([false, false])
-            .show_rows(ui,
-            ui.text_style_height(&TextStyle::Body),
-            self.dir_contents.borrow().get(&self.path).map_or(0, |files| files.len()),
-            |ui, range| match self.dir_contents.borrow().get(&self.path) //borrow().get(&self.path) 
-            {
-                Some(files) => {
-                    ui.with_layout(ui.layout().with_main_justify(true), |ui| {
-                        ui.vertical(|ui| {
-                            for path in files[range].iter(){
-                                self.display_path(ui, path);
-                            }
-                        });
-                    });
-                }
-                None => {
-                    // There was an error fetching the directory contents
-                    // Send a command to fetch them in the background
-                    let command = Command::ReadDirectory(self.path.clone());
-                    self.command_tx.send(Some(command)).unwrap();
-                    ui.label("Loading...");
-                },
-            });
-        }); // .response.context_menu(|ui| FileBrowser::filebrowser_ctx_menu(ui));
-
-        while let Ok(progress) = self.progress_rx.try_recv() {self.progress += progress as f64; }
-
-        
-        while let Ok(meta) = self.metadata_rx.try_recv(){
-            total_size += meta;
-            self.source_dir_size = total_size;
-        }
-        
-        self.toasts.show(ui.ctx());
-        if let Ok(Some(cmd)) = self.command_rx.try_recv(){ block_on(async{self.run_command(cmd).await;});}
     }
-    
     /** 
         Handles displaying of subcontents of given directory by calling list_subfolders
         and makes only directories collapsible so we can see its subcontents 
@@ -677,7 +687,7 @@ impl FileBrowser{
 }
 
 // #[cfg(windows)]
-fn is_drive_root(path: &PathBuf) -> bool {
+pub fn is_drive_root(path: &PathBuf) -> bool {
   path
     .to_str()
     .filter(|path| &path[1..] == ":\\")
@@ -685,7 +695,7 @@ fn is_drive_root(path: &PathBuf) -> bool {
     .map_or(false, |ch| ch.is_ascii_uppercase())
 }
 
-fn get_file_name(path: &PathBuf) -> &str {
+pub fn get_file_name(path: &PathBuf) -> &str {
     // #[cfg(windows)]
     if path.is_dir() && is_drive_root(path) {
       return path.to_str().unwrap_or_default();

@@ -4,9 +4,6 @@ version = "2.0.3"
 edition = "2021"
 
 [dependencies]
-wasm-bindgen = "0.2"
-web-time = "1.1"
-wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1"
 gloo-worker = "0.5"
 gloo-net = { version = "0.6", features = ["http"]}
@@ -15,18 +12,22 @@ wasm-cookies = { version= "0.2" }
 ewebsock = "0.6"
 egui_plot = "0.28"
 rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] } # default-features = false
-# rust-s3 = {version = "0.23.0-beta2", features = ["wasm"], default-features = false}
 async-openai-wasm = { version = "0.23" }
-derive_more = {version = "0.99", features = ["from"]}
+derive_more = {version = "1", features = ["from"]}
 rpc-router = "0.1"
 schemars = "0.8"
-mime_guess = "2"
 reqwest = { version = "0.12", features = ["stream", "json"] }
 gloo-console = "0.3.0"
+displays = { path="../displays", features = ["wasm"]}
 
-displays = { workspace=true }
+# [target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = { workspace=true }
+web-time = { workspace=true }
+wasm-bindgen = { workspace=true }
+
 database = { workspace=true }
 surrealdb-alpha = { workspace=true }
+mime_guess = { workspace=true }
 # surrealdb = { workspace=true }
 once_cell = { workspace=true }
 async-trait = { workspace=true }
@@ -50,8 +51,6 @@ uuid = { workspace=true }
 bincode = { workspace=true }
 rfd = { workspace=true }
 regex = { workspace=true }
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-futures = "0.4"
 
 [[bin]]
 name = "dummy_worker"
