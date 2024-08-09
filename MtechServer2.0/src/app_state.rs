@@ -1,6 +1,6 @@
 use crate::{pages::account_settings_page::AccountMod, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler}};
 use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
-use displays::ui_tools::toasts::Toasts;
+use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
@@ -16,7 +16,7 @@ use serde::Serialize;
 use anyhow::Error;
 use log::info;
 use crate::{
-    pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, toolbox::storage_api::FileSystem, web_console::websockets::WebSocketClient}, 
+    pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::WebSocketClient}, 
     utilities::{
         displays::{
             chats::ChatView, modals::{create_task_modal::CreateTaskModal, ModalHandler}, tasks::task_layout::TaskLayout

@@ -140,75 +140,75 @@ impl MtechServerContext{
                                         client.connected = true;
                                         self.current_client = name.clone();
 
-                                        let mut viewer = RemoteViewer::new(ws_sender, ws_receiver);
+                                        // let mut viewer = RemoteViewer::new(ws_sender, ws_receiver);
 
-                                        let mut last_sent_input = None;
-                                        let mut sent_input = ui.ctx().input_mut(|i| i.raw.clone());
-                                        let mut latest_eterm_meshes = Default::default();
-                                        let mut last_repaint = std::time::Instant::now();
-                                        let mut needs_repaint = true;
+                                        // let mut last_sent_input = None;
+                                        // let mut sent_input = ui.ctx().input_mut(|i| i.raw.clone());
+                                        // let mut latest_eterm_meshes = Default::default();
+                                        // let mut last_repaint = std::time::Instant::now();
+                                        // let mut needs_repaint = true;
 
-                                        sent_input.time = None;
+                                        // sent_input.time = None;
 
-                                        if let Some(screen_rect) = &mut sent_input.screen_rect {
-                                            screen_rect.min.y += TOP_BAR_HEIGHT;
-                                            screen_rect.max.y = screen_rect.max.y.max(screen_rect.min.y);
-                                        }
+                                        // if let Some(screen_rect) = &mut sent_input.screen_rect {
+                                        //     screen_rect.min.y += TOP_BAR_HEIGHT;
+                                        //     screen_rect.max.y = screen_rect.max.y.max(screen_rect.min.y);
+                                        // }
 
-                                        if last_sent_input.as_ref() != Some(&sent_input) {
-                                            viewer.send_input(sent_input.clone());
-                                            last_sent_input = Some(sent_input);
-                                            needs_repaint = true;
-                                        }
+                                        // if last_sent_input.as_ref() != Some(&sent_input) {
+                                        //     viewer.send_input(sent_input.clone());
+                                        //     last_sent_input = Some(sent_input);
+                                        //     needs_repaint = true;
+                                        // }
 
-                                        let pixels_per_point = ui.ctx().pixels_per_point();
+                                        // let pixels_per_point = ui.ctx().pixels_per_point();
 
-                                        if let Some(frame) = viewer.update(pixels_per_point) {
-                                            // We got something new from the server!
-                                            let EguiFrame {
-                                                frame_index: _,
-                                                output,
-                                                clipped_meshes,
-                                                pixels_per_point
-                                            } = frame;
+                                        // if let Some(frame) = viewer.update(pixels_per_point) {
+                                        //     // We got something new from the server!
+                                        //     let EguiFrame {
+                                        //         frame_index: _,
+                                        //         output,
+                                        //         clipped_meshes,
+                                        //         pixels_per_point
+                                        //     } = frame;
 
-                                            // let full_out = FullOutput {
-                                            //     platform_output: output,
-                                            //     textures_delta: todo!(),
-                                            //     shapes: clipped_meshes,
-                                            //     pixels_per_point,
-                                            //     viewport_output: todo!(),
-                                            // };
-                                            latest_eterm_meshes = clipped_meshes;
-                                            // FullOutput::default().append(newer)
-                                            needs_repaint = true;
-                                        }
+                                        //     // let full_out = FullOutput {
+                                        //     //     platform_output: output,
+                                        //     //     textures_delta: todo!(),
+                                        //     //     shapes: clipped_meshes,
+                                        //     //     pixels_per_point,
+                                        //     //     viewport_output: todo!(),
+                                        //     // };
+                                        //     latest_eterm_meshes = clipped_meshes;
+                                        //     // FullOutput::default().append(newer)
+                                        //     needs_repaint = true;
+                                        // }
 
-                                        if needs_repaint || last_repaint.elapsed() > MIN_REPAINT_INTERVAL {
-                                            needs_repaint = false;
-                                            last_repaint = std::time::Instant::now();
+                                        // if needs_repaint || last_repaint.elapsed() > MIN_REPAINT_INTERVAL {
+                                        //     needs_repaint = false;
+                                        //     last_repaint = std::time::Instant::now();
                                             
-                                            // THIS IS WRONG, I NEED TO DO SOMETHING WITH FRAME TO DISPLAY THE GUI
-                                            // 
-                                            let ctx = ui.ctx().clone();
+                                        //     // THIS IS WRONG, I NEED TO DO SOMETHING WITH FRAME TO DISPLAY THE GUI
+                                        //     // 
+                                        //     let ctx = ui.ctx().clone();
                                             
 
-                                            // ctx.begin_frame(sent_input.clone());
-                                            // todo!(
-                                            //     r#"
-                                            //         I need to begin frame here, take raw input, but it needs to 
-                                            //         be RECEIVED input, which ill need to get through ws_receiver
-                                            //     "#
-                                            // );
-                                            // Window::new("Hello world!")
-                                            //     .default_pos(pos2(100.0, 0.0))
-                                            //     .show(&ctx, |ui| 
-                                            // {
-                                            //     ui.label("Hello, World!");
-                                            // });
-                                        }
+                                        //     // ctx.begin_frame(sent_input.clone());
+                                        //     // todo!(
+                                        //     //     r#"
+                                        //     //         I need to begin frame here, take raw input, but it needs to 
+                                        //     //         be RECEIVED input, which ill need to get through ws_receiver
+                                        //     //     "#
+                                        //     // );
+                                        //     // Window::new("Hello world!")
+                                        //     //     .default_pos(pos2(100.0, 0.0))
+                                        //     //     .show(&ctx, |ui| 
+                                        //     // {
+                                        //     //     ui.label("Hello, World!");
+                                        //     // });
+                                        // }
                             
-                                        ui.ctx().request_repaint();
+                                        // ui.ctx().request_repaint();
                                     }
                                     Err(error) => {
                                         client.connected = false;

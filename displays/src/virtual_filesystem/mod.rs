@@ -1,0 +1,565 @@
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
+use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, iter};
+use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
+use crossbeam::channel::{Receiver, Sender};
+use database::{schema::{Node, User}, STORAGE_URL};
+use futures::{StreamExt, Future};
+use anyhow::{Result, Error};
+use mime_guess::from_path;
+use web_time::Duration;
+use rfd::FileHandle;
+use bytes::Bytes;
+use regex::Regex;
+use log::info;
+
+#[cfg(feature="wasm")]
+use wasm_bindgen_futures::spawn_local;
+
+#[cfg(feature="tokio")]
+use {
+    tokio::spawn,
+    std::path::PathBuf
+};
+
+pub const ONE_HOUR: Duration = Duration::from_secs(3600);
+
+#[derive(Debug, Clone)]
+pub struct FileSystem {
+    pub root: Node,
+    pub bytes_rx: Receiver<(Vec<u8>, u64)>,
+    bytes_tx: Sender<(Vec<u8>, u64)>,
+    selected_items: RefCell<HashSet<String>>,
+    directory_paths: HashSet<String>,
+    paths: Vec<String>,
+    total_size: f64,
+    progress: f64,
+    pub enter_directory: String,
+    pub execute_file: String,
+    pub open_folder: bool,
+    pub secret_key: String,
+    pub access_key: String,
+    pub user: User
+}
+
+impl FileSystem {
+    pub fn new() -> Self {
+        let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
+        Self {
+            bytes_tx,
+            bytes_rx,
+            root: Node::Folder(String::new(), HashMap::new()),
+            selected_items: RefCell::new(HashSet::new()),
+            progress: 0.0,
+            total_size: 0.0,
+            paths: Vec::new(),
+            directory_paths: HashSet::new(),
+            enter_directory: String::new(),
+            execute_file: String::new(),
+            open_folder: false,
+            secret_key: String::new(),
+            access_key: String::new(),
+            user: User::default()
+        }
+    }
+
+    pub fn set_user(&mut self, user: User) -> &mut Self {
+        self.user = user;
+        self
+    }
+
+    pub fn build_file_system(&mut self, paths: Vec<String>) -> &mut Self {
+        self.paths = paths.clone();
+        for path in paths {
+            let parts: Vec<&str> = if path.contains('\\') { path.split('\\').collect() } else { path.split('/').collect() };
+            let mut current_path = String::new();
+            let mut current = &mut self.root;
+
+            for (i, part) in parts.iter().enumerate() {
+                // let part = part.to_string();
+                if Self::is_file(&part) { // part.contains('.'){ // i == parts.len() - 1 { // It's a file
+                    // if let Some(folder) = current.as_folder_mut() {
+                    //     folder.insert(part.to_string(), Node::File((path.clone(), part.to_string())));
+                    // }
+                    if let Node::Folder(ref mut full_path, ref mut folder) = current {
+                        let file_full_path = if full_path.contains('\\') { format!("{}\\{}", full_path, part) } else { format!("{}/{}", full_path, part) };
+                        folder.insert(part.to_string(), Node::File((file_full_path, part.to_string().clone())));
+                    }
+                } else { // It's a folder
+                    if !current_path.is_empty() {
+                        current_path += if current_path.contains('\\') { "\\" } else { "/" };
+                    }
+                    current_path += part;
+    
+                    if let Node::Folder(_, ref mut folder) = current {
+                        current = folder.entry(part.to_string()).or_insert_with(|| Node::Folder(current_path.clone(), HashMap::new()));
+                    }
+                    // current = current.entry(part.to_string())
+                    //     .or_insert_with(|| Node::Folder(HashMap::new()));
+
+                    // if !current_path.is_empty() {
+                    //     if current_path.contains('\\') { current_path.push('\\') } else { current_path.push('/') };
+                    // }
+                    // current_path.push_str(&part);
+                    // self.directory_paths.insert(current_path.clone());
+                }
+            }
+        }
+
+        self 
+    }
+
+    #[cfg(feature="tokio")]
+    pub fn build_virtual_file_system(&mut self, base_path: PathBuf, paths: Vec<PathBuf>) -> Node {
+        let mut root = Node::Folder(base_path.display().to_string(), HashMap::new());
+        for path in paths {
+            let mut current = &mut root;
+            let mut current_path = base_path.clone();
+    
+            for part in path.iter().skip(current_path.components().count()) {
+                let part_str = part.to_str().unwrap(); // safely assuming valid Unicode data
+                current_path.push(part);
+    
+                if current_path.is_dir() {
+                    if let Node::Folder(_, ref mut folder) = current {
+                        let folder_path = current_path.display().to_string();
+                        current = folder.entry(part_str.to_string()).or_insert_with(|| Node::Folder(folder_path, HashMap::new()));
+                    }
+                } else if current_path.is_file() {
+                    if let Node::Folder(ref full_path, ref mut folder) = current {
+                        let file_full_path = format!("{}/{}", full_path, part_str);
+                        folder.insert(part_str.to_string(), Node::File((file_full_path, part_str.to_string())));
+                    }
+                }
+            }
+        }
+
+        root 
+    }
+
+    fn is_file(name: &str) -> bool {
+        let file_pattern = Regex::new(r"^.*\.[a-zA-Z]{1,4}$").unwrap();
+        file_pattern.is_match(name)
+    }
+
+    pub fn display(&mut self, ui: &mut Ui){
+        let size = ui.available_size_before_wrap();
+        ScrollArea::vertical().max_width(size.x)
+            .max_height(size.y)
+            .auto_shrink(false)
+            .show(ui, |ui| 
+        {
+            let x = self.root.clone();
+            ui.with_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), |ui| {
+                self.display_path(ui, &x, "".to_string());
+            }).inner
+        }).inner;
+    }
+
+    fn display_path(&mut self, ui: &mut Ui, node: &Node, current_path: String){
+        ui.vertical(|ui| 
+        {
+            let mut count = 0;
+            if let Node::Folder(_, children) = node {
+                // Collect entries into a vector for sorting
+                let mut entries: Vec<(&String, &Node)> = children.iter().collect();
+                entries.sort_by(|a, b| {
+                    let a_is_dir = matches!(a.1, Node::Folder(_, _));
+                    let b_is_dir = matches!(b.1, Node::Folder(_, _));
+                    match a_is_dir == b_is_dir {
+                        true => a.0.cmp(b.0), // Sort alphabetically if both are files or both are directories
+                        false => b_is_dir.cmp(&a_is_dir), // Directories first
+                    }
+                });
+
+                for (label, node) in entries {
+                    
+                    let is_selected = self.selected_items.borrow().contains(label);
+                    let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+                    if let Node::Folder(full_path, _) = node {
+                        count+=1;
+                        let id = ui.make_persistent_id(format!("{label}-{:?}", count));
+
+                        let collapsing_head = CollapsingState::load_with_default_open(
+                            ui.ctx(), 
+                            id, 
+                            self.open_folder
+                        );
+
+                        // if collapsing_head.is_open(){
+                        //     let path = self.path_lookup(&label.clone());
+                        //     if let Some(path) = path{
+                        //         info!("label open: {label:?} // {path:?}");
+                        //     }
+                        //     // if let Some(path) = path { self.enter_directory = path.clone(); }
+                        // }
+
+                        collapsing_head.show_header(ui, |ui| 
+                        {
+                            
+                            let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗀   {}", label)));
+
+                            if selectable_label.clicked() { // If the item was already selected, deselect it
+                                if modifiers.ctrl { self.selected_items.borrow_mut().insert(label.clone());} 
+
+                                if self.selected_items.borrow().contains(label) {
+                                    // If the item was already selected, deselect it
+                                    self.selected_items.borrow_mut().remove(label);
+                                } else { // If the control key is not down, clear previous selection and select the current item
+                                    self.selected_items.borrow_mut().clear();
+                                    self.selected_items.borrow_mut().insert(label.clone());
+                                }
+
+                            }
+
+                            if selectable_label.double_clicked(){
+                                self.enter_directory = full_path.clone();
+                                self.open_folder = true;
+                                info!("label double clicked: {label:?} // {:?}", self.directory_paths);
+                                info!("self.find_directory_full_path(label): {:?}", self.find_directory_full_path(&full_path));
+                                let path = self.path_lookup(&label.clone());
+                                if let Some(path) = path { self.enter_directory = path.clone(); }
+                            }
+
+                            if selectable_label.secondary_clicked(){
+                                ui.memory_mut(|mem| mem.open_popup(
+                                    format!("sub_menu-{:?}", label).into())
+                                );
+                            }
+
+                            popup_below_widget(
+                                ui, 
+                                format!("sub_menu-{:?}", label).into(), 
+                                &selectable_label, 
+                                CloseOnClickOutside, 
+                                |ui| 
+                            {
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.set_width(200.0);
+
+                                    if ui.button("Download").clicked(){
+                                        let path = self.path_lookup(&label.clone());
+                                        if let Some(path) = path {
+                                            info!("Path: {:?}", path.clone());
+                                            self.download_selection(path, label.clone());
+                                        }
+                                    }
+
+                                    if ui.button("Upload").clicked(){
+                                        if let Some(dir) = self.find_directory_full_path(&label){
+                                            info!("Dir: {:?}", dir.clone());
+                                            self.upload(dir);
+                                        }
+                                    }
+                                }).inner;
+                            });
+                        }).body(|ui| 
+                            self.display_path(ui, &node, current_path.clone())
+                        );
+
+                    } else if let Node::File((full_path, label)) = node{
+                        let file_selected = self.selected_items.borrow().contains(full_path);
+                        let selectable_label = ui.selectable_label(file_selected, RichText::new(format!("🗋   {}", label)));
+
+                        if selectable_label.clicked() {
+
+                            if modifiers.ctrl { self.selected_items.borrow_mut().insert(full_path.clone()); } 
+
+                            if self.selected_items.borrow().contains(full_path) {
+                                // If the item was already selected, deselect it
+                                self.selected_items.borrow_mut().remove(full_path);
+                            } else { 
+                                // If the control key is not down, clear previous selection and select the current item
+                                self.selected_items.borrow_mut().clear();
+                                self.selected_items.borrow_mut().insert(full_path.clone());
+                            }
+                        }
+
+                        if selectable_label.secondary_clicked(){
+                            ui.memory_mut(|mem| mem.open_popup(
+                                format!("sub_menu-{:?}", label).into())
+                            );
+                        }
+
+                        if selectable_label.double_clicked(){
+                            self.execute_file = full_path.clone();
+                        }
+
+                        popup_below_widget(
+                            ui, 
+                            format!("sub_menu-{:?}", full_path).into(), 
+                            &selectable_label, 
+                            CloseOnClickOutside, 
+                            |ui| 
+                        {
+                            ui.vertical_centered_justified(|ui| {
+                                ui.set_width(200.0);
+                                if ui.button("Download").clicked(){
+                                    self.download_selection(full_path.clone(), label.clone());
+                                }
+                            }).inner
+                        });
+                    };
+                }
+            }
+        });
+    }
+
+    pub fn show_progress(&mut self, ui: &mut Ui) {
+        while let Ok(x) = self.bytes_rx.try_recv() {
+            self.total_size = x.1 as f64;
+            for y in x.0 {
+                self.progress += y as f64;
+            }
+        }
+        ProgressBar::new(self.progress as f32/ self.total_size as f32).show_percentage().fill(Color32::from_rgba_premultiplied(50, 10, 50, 65)).ui(ui);
+    }
+
+    fn path_lookup(&self, file_name: &str) -> Option<String> {
+        // info!("Self.paths: {:?}", self.paths);
+        self.paths.iter()
+            .find(|path| path.ends_with(format!("/{file_name}").as_str()) || path.ends_with(format!("\\{file_name}").as_str()))
+            .cloned() // returns a clone of the matching path, if found
+    }
+    
+    pub fn find_directory_full_path(&self, label: &str) -> Option<String> {
+        info!("self.direc_paths: {:?} // {:?}", self.directory_paths, &format!("\\\\{label}"));
+        self.directory_paths.iter().find(|path| path.ends_with(&format!("\\\\{label}"))).cloned()
+    }
+
+    pub fn upload(&self, path: String) {
+        let task = rfd::AsyncFileDialog::new().pick_files();
+        let secret_key = self.secret_key.clone();
+        let access_key = self.access_key.clone();
+        let name = self.user.name.clone();
+
+        if cfg!(feature="wasm"){
+            spawn_local(async move {
+                let result = Self::perform_upload(
+                    &name,
+                    &access_key,
+                    &secret_key,
+                    &path,
+                    task
+                ).await;
+
+                info!("Result: {result:?}");
+            });
+        } else {
+            #[cfg(feature="tokio")]
+            spawn(async move {
+                let result = Self::perform_upload(
+                    &name,
+                    &access_key,
+                    &secret_key,
+                    &path,
+                    task
+                ).await;
+
+                info!("Result: {result:?}");
+            });
+        }
+    }
+
+    fn download_selection(&self, path: String, filename: String) {
+        let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
+        let tx = self.bytes_tx.clone();
+        let secret_key = self.secret_key.clone();
+        let access_key = self.access_key.clone();
+        let name = self.user.name.clone();
+
+        if cfg!(feature="wasm"){
+            spawn_local(async move {
+                let result = Self::perform_download(
+                    &name,
+                    &access_key,
+                    &secret_key,
+                    tx,
+                    &path,
+                    &filename,
+                    task
+                ).await;
+
+                info!("Result: {result:?}");
+            });
+        } else {
+            #[cfg(feature="tokio")]
+            spawn(async move {
+                let result = Self::perform_download(
+                    &name,
+                    &access_key,
+                    &secret_key,
+                    tx.clone(),
+                    &path,
+                    &filename,
+                    task
+                ).await;
+
+                info!("Result: {result:?}");
+            });
+        }
+    }
+
+    fn delete_selection(&self, path: String, filename: String) {
+        // let tx = self.bytes_tx.clone();
+        // let secret_key = self.secret_key.clone();
+        // let access_key = self.access_key.clone();
+        // spawn_local(async move {
+        //     let name = self.user.name;
+        //     let region = "us-west";
+        //     let bucket = Bucket::new(
+        //         STORAGE_URL.to_string().parse::<Url>().unwrap(), 
+        //         rusty_s3::UrlStyle::Path, name, region
+        //     )
+        //     .expect("Url has a valid scheme and host");
+
+        //     let credentials = Credentials::new(access_key, secret_key);
+            
+        //     let mut action = GetObject::new(&bucket, Some(&credentials), &path);
+        //     action
+        //         .query_mut()
+        //         .insert("response-cache-control", "no-cache, no-store");
+
+        //     let signed_url = action.sign(ONE_HOUR);
+
+        //     let client = Client::new();
+        // });
+    }
+
+    async fn perform_upload(
+        name: &String, 
+        access_key: &String, 
+        secret_key: &String, 
+        path: &String,
+        task: impl Future<Output = Option<Vec<FileHandle>>>
+    ) -> Result<(), Error> {
+
+        let name = name.clone();
+        let region = "us-west";
+        let client = Client::new();
+        let credentials = Credentials::new(access_key, secret_key);
+        let mut bytes: Bytes = Bytes::new();
+        let files = task.await.unwrap();
+        let mut file_name = String::new();
+
+        let bucket = Bucket::new(
+            STORAGE_URL.to_string().parse::<Url>()?, 
+            rusty_s3::UrlStyle::Path, name, region
+        )?;
+
+        for file_handle in files {
+            file_name = format!("{path}/{}", file_handle.file_name());
+            bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
+        }
+
+        let action = CreateMultipartUpload::new(&bucket, Some(&credentials), &file_name);
+        let url = action.sign(ONE_HOUR);
+        let resp = client.post(url).send().await?.error_for_status()?;
+        let body = resp.text().await?;
+        let multipart = CreateMultipartUpload::parse_response(&body)?;
+    
+        info!(
+            "multipart upload created - upload id: {}",
+            multipart.upload_id()
+        );
+    
+        let part_upload = UploadPart::new(
+            &bucket,
+            Some(&credentials),
+            &file_name,
+            1,
+            multipart.upload_id(),
+        );
+
+        let url = part_upload.sign(ONE_HOUR);
+        // let x = Bytes::from(bytes.as_slice()).clone();
+
+        let resp = client
+            .put(url)
+            .body(bytes)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let etag = resp
+            .headers()
+            .get(ETAG)
+            .expect("every UploadPart request returns an Etag");
+    
+        info!("etag: {}", etag.to_str()?);
+    
+        let action = CompleteMultipartUpload::new(
+            &bucket,
+            Some(&credentials),
+            &file_name,
+            multipart.upload_id(),
+            iter::once(etag.to_str()?),
+        );
+        let url = action.sign(ONE_HOUR);
+    
+        let resp = client
+            .post(url)
+            .body(action.body())
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let body = resp.text().await?;
+
+        info!("it worked! {body}");
+        Ok(())
+    }
+    
+    async fn perform_download(
+        name: &String, 
+        access_key: &String, 
+        secret_key: &String, 
+        tx: Sender<(Vec<u8>, u64)>,
+        path: &String,
+        filename: &String,
+        task: impl Future<Output = Option<FileHandle>>
+    ) -> Result<(), Error> {
+        let name = name.clone();
+        let region = "us-west";
+        let bucket = Bucket::new(
+            STORAGE_URL.to_string().parse::<Url>()?, 
+            rusty_s3::UrlStyle::Path, name, region
+        )?;
+
+        let credentials = Credentials::new(access_key, secret_key);
+        let mut action = GetObject::new(&bucket, Some(&credentials), &path);
+        action.query_mut().insert("response-cache-control", "no-cache, no-store");
+        let signed_url = action.sign(ONE_HOUR);
+
+        let client = Client::new();
+        let mime = from_path(filename).first_or_octet_stream();
+        let resp = client.get(signed_url).header(CONTENT_TYPE, mime.essence_str()).send().await?;
+        let content_length = resp.content_length().unwrap();
+        let mut downloaded_bytes: u64 = 0;
+        // let bytes = resp.await.unwrap();
+        let mut byte_stream = resp.bytes_stream();
+        info!("Content length: {content_length}");
+        let file = task.await;
+        let mut _bytes = Bytes::new();
+        let mut byte_vec = Vec::new();
+
+        while let Some(item) = byte_stream.next().await{
+            let chunk = item?.clone();
+            // _bytes = _bytes + chunk.clone();
+            byte_vec.push(chunk.to_vec());
+            let _ = tx.try_send((chunk.to_vec(), content_length));
+            downloaded_bytes += chunk.len() as u64;
+        }
+
+        if downloaded_bytes == content_length {
+            info!("Downloaded: {downloaded_bytes}");
+            let x = byte_vec.concat();
+            if let Some(ref file) = file {
+                file.write(x.as_slice()).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+
