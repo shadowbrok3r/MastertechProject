@@ -77,7 +77,7 @@ pub struct MtechServerContext{
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
     ///Gets data from the first run of the main loop
     pub first_run: bool,
-    pub clients: HashMap<String, ConnectedClient>,
+    pub clients: Vec<ConnectedClient>,
     /// All contained task data from database
     pub live_tasks: Option<LiveTaskPayload>,
     pub tasks: Vec<TaskPayload>,
@@ -173,8 +173,9 @@ pub struct MtechServerContext{
     pub url: String,
     pub error: String,
     #[serde(skip)]
-    pub ws_client: Option<WebSocketClient>,
-    pub current_client: String,
+    pub ws_clients: HashMap<String, WebSocketClient>,
+    pub undock_client: HashMap<String, bool>,
+    pub wants_to_undock: bool,
     #[serde(skip)]
     pub text_to_send: String,
 
@@ -258,8 +259,6 @@ impl MtechServer{
                 ctx.request_repaint();
             }).spawn("./live_worker.js");
 
-        
-
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
         let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
@@ -280,7 +279,7 @@ impl MtechServer{
         let context = MtechServerContext{
             current_user: None,
             first_run: true,
-            clients: HashMap::new(),
+            clients: Vec::new(),
 
             task_map: BTreeMap::new(),
             live_tasks: None,
@@ -326,8 +325,9 @@ impl MtechServer{
             last_tick: Instant::now(),
             // url: format!("{}websocket?room_id=0&role=master", dotenv::var("WS_URL").unwrap()),
             url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_string(),
-            ws_client: None,
-            current_client: String::new(),
+            ws_clients: HashMap::new(),
+            undock_client: HashMap::new(),
+            wants_to_undock: false,
             error: Default::default(),
             // client_layout: None,
             text_to_send: Default::default(),

@@ -49,19 +49,19 @@ pub fn handle_live_notes(
 }
 
 
-pub fn handle_live_create<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+pub fn handle_live_create<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut Vec<T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     debug!("Data was Created: {:?}", new_data);
 
     Ok(())
 }
 
-pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut Vec<T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     debug!("Data was Updated: {:?}", new_data);
 
     Ok(())
 }
 
-pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut Vec<T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     debug!("Data was Deleted: {:?}", new_data);
 
     Ok(())

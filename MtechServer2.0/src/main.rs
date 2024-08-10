@@ -163,7 +163,6 @@ impl eframe::App for MtechServer {
             }
         }
 
-
         if let Ok(payload) = self.context.notes_rx.try_recv(){
             info!("New note");
             self.context.new_note = true;
@@ -180,7 +179,29 @@ impl eframe::App for MtechServer {
                 }
             }
         }
+        
+        // if self.context.wants_to_undock {
+        //     let clients = self.context.clients.iter().map(|s| s.connection_string.clone()).collect::<Vec<String>>();
+        //     for client in clients.iter() {
+        //         if let Some(undock) = self.context.undock_client.get(client) {
+        //             let size_x = if ui.available_width() > 50.0 { ui.available_width() - 50.0 } else { ui.available_width() };
+        //             let size_y = if ui.available_height() > 50.0 { ui.available_height() - 50.0 } else { ui.available_height() };
 
+        //             if *undock {
+        //                 Window::new(CLIENT).max_size(Vec2::new(size_x, size_y))
+        //                     .frame(column_frame)
+        //                     .show(ui.ctx(), |ui| 
+        //                 {
+        //                     ui.vertical_centered_justified(|ui| {
+        //                         if let Some(ws_client) = self.ws_clients.get_mut(*&connection_string) {
+        //                             ws_client.show(ui);
+        //                         }
+        //                     });
+        //                 });
+        //             }
+        //         }
+        //     }
+        // }
         self.receive();
         self.menu_bar(ctx);
         self.context.handle_modals(ctx);
