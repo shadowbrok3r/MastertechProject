@@ -1,5 +1,5 @@
-use eframe::egui::{pos2, Align, Button, Color32, Frame, FullOutput, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, Ui, Vec2, Widget, Window};
-use displays::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, viewer::{EguiFrame, RemoteViewer}};
+use eframe::egui::{Align, Button, Color32, Frame, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, Ui, Vec2, Widget};
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use crate::app_state::MtechServerContext;
 use egui_extras::{Size, StripBuilder};
 use std::borrow::BorrowMut;
@@ -9,10 +9,10 @@ use super::websockets::{ClientHandler, WebSocketClient};
 
 /// We reserve this much space for eterm to show some stats.
 /// The rest is used for the view of the remove server.
-const TOP_BAR_HEIGHT: f32 = 24.0;
+// const TOP_BAR_HEIGHT: f32 = 24.0;
 
 /// Repaint every so often to check connection status etc.
-const MIN_REPAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+// const MIN_REPAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl MtechServerContext{
     pub fn client_display(&mut self, ui: &mut Ui){
@@ -77,7 +77,7 @@ impl MtechServerContext{
                                 {
                                     if let Some(ws_client) = &mut self.ws_client{
                                         if client.connected && name.clone() == self.current_client {
-                                            ws_client.show(strip, name.clone());
+                                            ws_client.show(strip);
                                         }
                                     }
                                 });
@@ -136,7 +136,7 @@ impl MtechServerContext{
                                 let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", name.clone());
 
                                 match ewebsock::connect(&url, Default::default()) {
-                                    Ok((ws_sender, ws_receiver)) => {
+                                    Ok((_ws_sender, _ws_receiver)) => {
                                         client.connected = true;
                                         self.current_client = name.clone();
 

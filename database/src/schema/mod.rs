@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub mod prestashop_schema;
 pub mod deserializer;
 pub mod utilities;
+pub mod buckets;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";

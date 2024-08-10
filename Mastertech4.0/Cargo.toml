@@ -6,7 +6,7 @@ description = "Mastertech"
 build = "build.rs"
 
 [dependencies]
-displays = { path="../displays", features = ["tokio"]}
+displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
 sysinfo = "0.31"
 console-subscriber = "0.4.0"
@@ -40,7 +40,7 @@ minidump-processor = { version = "0.22", features = ["http"] }
 minidump-unwind = "0.22"
 linked-hash-map = "0.5"
 ewebsock = { version = "0.6", features = [ "tls" ] }
-ratatui = {version = "0.27.0", features = ["crossterm"]}
+ratatui = { version = "0.27.0", features = ["crossterm"] }
 tui-input = "0.9.0"
 crossterm = "0.28"
 hex = "0.4.3"
@@ -64,7 +64,7 @@ eframe = { workspace=true }
 ratframe = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
-egui_ratatui = { workspace=true }
+# egui_ratatui = { workspace=true }
 fuzzy-matcher = { workspace=true }
 uuid = { workspace=true }
 bincode = { workspace=true }

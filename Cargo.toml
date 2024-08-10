@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [ "Mastertech4.0", "MtechServer2.0", "database" , "displays", "websocket_server"]
+members = [ "MtechServer2.0", "database" , "displays", ]
 # members=[ "frontend", "database" ] #  , "websocket_server"
 # exclude = ["websocket_server"]
 # package.exclude = ["websocket_server"]
@@ -28,7 +28,7 @@ ratframe = "1"
 mime_guess = "2"
 crossbeam = "0.8"
 futures = "0.3"
-egui_ratatui = "0.0.10" # Note: Version is slightly different but `egui_ratatui` is common
+# egui_ratatui = "0.0.10" # Note: Version is slightly different but `egui_ratatui` is common
 fuzzy-matcher = "0.3"
 uuid = { version = "1.10", features = ["v4"] } # Note: Version is slightly different but `uuid` is common
 bincode = "1.3"

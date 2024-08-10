@@ -44,10 +44,13 @@ impl MtechServer {
                     ) {
                         self.context.file_system.access_key = access_key.clone();
                         self.context.file_system.secret_key = secret_key.clone();
+                        let name = usr.email.clone();
+                        let parsed = name.split_once('@').unwrap().0.to_string().clone();
                         bridge.send(Input {
                             url: STORAGE_URL.to_string(),
                             access_key,
                             secret_key,
+                            name: parsed
                         });
                     }
                 }
@@ -91,10 +94,13 @@ impl MtechServer {
             ) {
                 self.context.file_system.access_key = access_key.clone();
                 self.context.file_system.secret_key = secret_key.clone();
+                let name = usr.email.clone();
+                let parsed = name.split_once('@').unwrap().0.to_string().clone();
                 bridge.send(Input {
                     url: STORAGE_URL.to_string(),
                     access_key,
                     secret_key,
+                    name: parsed
                 });
             }
 
@@ -162,10 +168,13 @@ impl MtechServer {
                         ) {
                             self.context.file_system.access_key = access_key.clone();
                             self.context.file_system.secret_key = secret_key.clone();
+                            let name = usr.email.clone();
+                            let parsed = name.split_once('@').unwrap().0.to_string().clone();
                             bridge.send(Input {
                                 url: STORAGE_URL.to_string(),
                                 access_key,
                                 secret_key,
+                                name: parsed
                             });
                         }
                         self.context.current_user = Some(usr.clone());

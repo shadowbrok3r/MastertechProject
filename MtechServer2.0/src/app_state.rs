@@ -8,7 +8,7 @@ use crossbeam::channel::{self, Receiver, Sender};
 use mtechserver::{webworker::WebWorker, live_worker::{LiveOutput, LiveWorker}};
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use egui_ratatui::RataguiBackend;
+// use egui_ratatui::RataguiBackend;
 use gloo_worker::Spawnable;
 use surrealdb::Action;
 use ratatui::Terminal;
@@ -160,8 +160,8 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub github_issue: GithubIssue,
     /// Terminal setup for console tab
-    #[serde(skip)]
-    pub terminal: Terminal<RataguiBackend>,
+    // #[serde(skip)]
+    // pub terminal: Terminal<RataguiBackend>,
     /// example chart for console tab
     #[serde(skip)]
     pub chart_app: App,
@@ -231,14 +231,14 @@ impl MtechServer{
             }
         }
         
-        let backend = RataguiBackend::new_with_fonts(
-            10,
-            10,
-            "Regular".into(),
-            "Bold".into(),
-            "Oblique".into(),
-            "BoldOblique".into(),
-        );
+        // let backend = RataguiBackend::new_with_fonts(
+        //     10,
+        //     10,
+        //     "Regular".into(),
+        //     "Bold".into(),
+        //     "Oblique".into(),
+        //     "BoldOblique".into(),
+        // );
 
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
@@ -320,7 +320,7 @@ impl MtechServer{
             file_system: FileSystem::new(),
             github_issue: GithubIssue::new(),
             // TERMINAL STUFF
-            terminal: Terminal::new(backend).unwrap(),
+            // terminal: Terminal::new(backend).unwrap(),
             tick_rate: Duration::from_millis(30),
             chart_app: App::new(),
             last_tick: Instant::now(),

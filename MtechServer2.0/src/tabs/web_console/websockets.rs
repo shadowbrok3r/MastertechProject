@@ -1,5 +1,5 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, CollapsingHeader, Color32, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::{schema::{Cmd, ConnectedClient, Node, Record, User, CONNECTED_CLIENT_TABLE}, DATABASE};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use database::{schema::{Cmd, ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use displays::virtual_filesystem::FileSystem;
@@ -146,7 +146,7 @@ impl WebSocketClient{
         self.events.clear();
     }
     
-    pub fn show(&mut self, mut strip: Strip, name: String) {
+    pub fn show(&mut self, mut strip: Strip) {
         self.handle_events();
 
         strip.strip(|strip| 
@@ -163,19 +163,22 @@ impl WebSocketClient{
                 s.cell(|ui|{
                     if Button::new(RichText::new("Explorer").color(Color32::LIGHT_RED)).ui(ui).clicked(){
                         self.state = WsDisplayState::Explorer;
-                        if self.current_path.is_empty() {
-                            match serialize(&Cmd::ReadDir("current".to_string())){
-                                Ok(bytes) => {
-                                    self.ws_sender.send(WsMessage::Binary(bytes));
-                                },
-                                Err(e) => self.history.push(e.to_string()),
-                            }
-                        } else {
-                            match serialize(&Cmd::ChangeDirectory(self.current_path.clone())){
-                                Ok(bytes) => {
-                                    self.ws_sender.send(WsMessage::Binary(bytes));
-                                },
-                                Err(e) => self.history.push(e.to_string()),
+                        // if we are already in an interactive mode, then we dont want to quit that session,
+                        if !self.interactive {
+                            if self.current_path.is_empty() {
+                                match serialize(&Cmd::ReadDir("current".to_string())){
+                                    Ok(bytes) => {
+                                        self.ws_sender.send(WsMessage::Binary(bytes));
+                                    },
+                                    Err(e) => self.history.push(e.to_string()),
+                                }
+                            } else {
+                                match serialize(&Cmd::ChangeDirectory(self.current_path.clone())){
+                                    Ok(bytes) => {
+                                        self.ws_sender.send(WsMessage::Binary(bytes));
+                                    },
+                                    Err(e) => self.history.push(e.to_string()),
+                                }
                             }
                         }
                     }
@@ -256,15 +259,15 @@ impl WebSocketClient{
         strip.cell(|ui | 
         {
             match self.state {
-                WsDisplayState::LiveStats => self.show_live_stats(ui, name.clone()),
+                WsDisplayState::LiveStats => self.show_live_stats(ui),
                 WsDisplayState::Explorer => self.show_explorer(ui),
                 WsDisplayState::ToolBox => self.show_tool_box(ui),
-                WsDisplayState::Shell => self.show_shell(ui, name.clone()),
+                WsDisplayState::Shell => self.show_shell(ui),
             }
         });
     }
 
-    fn show_live_stats(&mut self, ui: &mut Ui, name: String) {
+    fn show_live_stats(&mut self, ui: &mut Ui) {
         ui.vertical_centered(|ui| {
             if let Some(sysinfo) = &self.sysinfo {
                 let _normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
@@ -408,7 +411,7 @@ impl WebSocketClient{
         });
     }
 
-    fn show_shell(&mut self, ui: &mut Ui, name: String) {
+    fn show_shell(&mut self, ui: &mut Ui) {
         ui.allocate_ui(Vec2::new(ui.available_width(), ui.available_height() - 20.0), |ui| {
             ScrollArea::vertical()
                 .animated(true)
@@ -458,7 +461,7 @@ impl WebSocketClient{
                             .fill(msg_color)
                             .show(ui, |ui| {
                                 ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-                                ui.set_min_width(min_width / 2.5);
+                                ui.set_min_width(ui.available_size_before_wrap().x - 15.0);
                                 // Use a vertical layout to stack the name and message content
                                 ui.with_layout(Layout::top_down(Align::Min), |ui| 
                                 {

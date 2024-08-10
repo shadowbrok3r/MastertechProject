@@ -1,7 +1,7 @@
 use eframe::egui::{Ui, CentralPanel, Color32, Frame, Margin, Rounding, Stroke, TopBottomPanel, Vec2};
-use crate::app_state::MtechServerContext;
+use crate::app_state::MastertechContext;
 
-impl MtechServerContext {
+impl MastertechContext {
     pub fn toolbox(&mut self, ui: &mut Ui){
         ui.ctx().request_repaint();
 
@@ -31,7 +31,7 @@ impl MtechServerContext {
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui |
                 {
-                    self.file_system.show_progress(ui);
+                    self.toolbox.show_progress(ui);
                 })
             });
 
@@ -39,8 +39,7 @@ impl MtechServerContext {
         CentralPanel::default().frame(panel_frame)
             .show_inside(ui, |ui| 
         {
-            self.file_system.display(ui);
+            self.toolbox.display(ui);
         });
     }
 }
-

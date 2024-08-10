@@ -15,6 +15,7 @@ pub mod github;
 pub mod websockets;
 pub mod logger;
 pub mod part_order;
+pub mod toolbox;
 
 
 impl MastertechContext {
