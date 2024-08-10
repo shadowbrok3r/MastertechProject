@@ -255,10 +255,9 @@ impl MtechServer {
         }
 
         if let Ok(connected_clients) = self.context.connected_clients_rx.try_recv(){
-            for client in connected_clients.iter(){
-                if self.context.clients.get(&client.connection_string).is_none() {
-                    self.context.clients.insert(client.connection_string.clone(), client.clone());
-                }
+            self.context.clients = connected_clients.clone();
+            for client in connected_clients {
+                self.context.undock_client.insert(client.connection_string, false);
             }
         }
 

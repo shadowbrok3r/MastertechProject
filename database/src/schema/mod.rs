@@ -272,6 +272,8 @@ pub struct ConnectedClient{ // <'a>
     pub connection_string: String,
     pub command_history: Option<Vec<String>>,
     pub connected: bool,
+    pub friendly_name: Option<String>,
+    pub customer: Option<CustomerId>
 }
 
 

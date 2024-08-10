@@ -5,7 +5,7 @@ use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use displays::virtual_filesystem::FileSystem;
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
-use egui_extras::{Size, Strip};
+use egui_extras::{Size, Strip, StripBuilder};
 use surrealdb::Response;
 use bincode::serialize;
 use web_time::Instant;
@@ -32,7 +32,7 @@ pub enum WsDisplayState {
 }
 
 pub struct WebSocketClient {
-    // pub client: ConnectedClient,
+    pub client: ConnectedClient,
     pub ws_sender: WsSender,
     pub ws_receiver: WsReceiver,
     pub events: Vec<WsEvent>,
@@ -49,7 +49,6 @@ pub struct WebSocketClient {
     pub loading: bool,
     pub timeout_counter: Instant,
     pub file_system: FileSystem,
-    pub client_name: String,
     pub state: WsDisplayState,
     pub explorer: FileSystem,
     pub path_edit: String,
@@ -58,8 +57,9 @@ pub struct WebSocketClient {
 }
 
 impl WebSocketClient{
-    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client_name: String, file_system: FileSystem) -> Self {
+    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client: ConnectedClient, file_system: FileSystem) -> Self {
         Self{
+            client,
             ws_sender,
             ws_receiver,
             events: Default::default(),
@@ -75,7 +75,6 @@ impl WebSocketClient{
             loading: false, 
             timeout_counter: Instant::now(),
             file_system,
-            client_name,
             state: WsDisplayState::Shell,
             explorer: FileSystem::new(),
             path_edit: String::new(),
@@ -146,124 +145,131 @@ impl WebSocketClient{
         self.events.clear();
     }
     
-    pub fn show(&mut self, mut strip: Strip) {
-        self.handle_events();
+    pub fn show(&mut self, ui: &mut Ui) {
+        let height = ui.available_height() - 100.0;
+        let strip_count = if let WsDisplayState::Shell = self.state { 2 } else { 1 };
+        StripBuilder::new(ui)
+            .sizes(Size::exact(25.0), strip_count)
+            .size(Size::remainder().at_most(height))
+            .vertical(|mut strip| 
+        {
+            self.handle_events();
 
-        strip.strip(|strip| 
-        {
-            let count = if self.interactive { 5 } else { 4 };
-            strip.sizes(Size::remainder(), count)
-                .horizontal(|mut s| 
+            strip.strip(|strip| 
             {
-                s.cell(|ui|{
-                    if Button::new(RichText::new("ToolBox").color(Color32::LIGHT_RED)).ui(ui).clicked(){
-                        self.state = WsDisplayState::ToolBox;
-                    }
-                });
-                s.cell(|ui|{
-                    if Button::new(RichText::new("Explorer").color(Color32::LIGHT_RED)).ui(ui).clicked(){
-                        self.state = WsDisplayState::Explorer;
-                        // if we are already in an interactive mode, then we dont want to quit that session,
-                        if !self.interactive {
-                            if self.current_path.is_empty() {
-                                match serialize(&Cmd::ReadDir("current".to_string())){
-                                    Ok(bytes) => {
-                                        self.ws_sender.send(WsMessage::Binary(bytes));
-                                    },
-                                    Err(e) => self.history.push(e.to_string()),
-                                }
-                            } else {
-                                match serialize(&Cmd::ChangeDirectory(self.current_path.clone())){
-                                    Ok(bytes) => {
-                                        self.ws_sender.send(WsMessage::Binary(bytes));
-                                    },
-                                    Err(e) => self.history.push(e.to_string()),
-                                }
-                            }
-                        }
-                    }
-                });
-                s.cell(|ui|{
-                    if Button::new(RichText::new("Charts").color(Color32::LIGHT_RED)).ui(ui).clicked(){
-                        self.state = WsDisplayState::LiveStats;
-                        self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::LiveData)));
-                    }
-                });
-                s.cell(|ui|{
-                    if Button::new(RichText::new("Shell").color(Color32::LIGHT_RED)).ui(ui).clicked(){
-                        self.state = WsDisplayState::Shell;
-                    }
-                });
-                if self.interactive && count == 5 {
-                    s.cell(|ui|{
-                        if Button::new(RichText::new("Quit").color(Color32::RED)).ui(ui).clicked(){
-                            self.interactive = false;
-                            self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
-                        }
-                    });
-                }
-            });
-        });
-        
-        strip.strip(|strip| 
-        {
-            if let WsDisplayState::Shell = self.state {
-                strip.sizes(Size::remainder(), 6)
+                let count = if self.interactive { 5 } else { 4 };
+                strip.sizes(Size::remainder(), count)
                     .horizontal(|mut s| 
                 {
                     s.cell(|ui|{
-                        if Button::new("Tuneup").ui(ui).clicked(){
-                            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
-                            // self.history.push(format!("You\nCommand::Tuneup"));
+                        if Button::new(RichText::new("ToolBox").color(Color32::LIGHT_RED)).ui(ui).clicked(){
+                            self.state = WsDisplayState::ToolBox;
                         }
                     });
                     s.cell(|ui|{
-                        if Button::new("CPS").ui(ui).clicked(){
-                            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
-                            // self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
-                            self.input = "SELECT * FROM Win32_OperatingSystem".to_string();
+                        if Button::new(RichText::new("Explorer").color(Color32::LIGHT_RED)).ui(ui).clicked(){
+                            self.state = WsDisplayState::Explorer;
+                            // if we are already in an interactive mode, then we dont want to quit that session,
+                            if !self.interactive {
+                                if self.current_path.is_empty() {
+                                    match serialize(&Cmd::ReadDir("current".to_string())){
+                                        Ok(bytes) => {
+                                            self.ws_sender.send(WsMessage::Binary(bytes));
+                                        },
+                                        Err(e) => self.history.push(e.to_string()),
+                                    }
+                                } else {
+                                    match serialize(&Cmd::ChangeDirectory(self.current_path.clone())){
+                                        Ok(bytes) => {
+                                            self.ws_sender.send(WsMessage::Binary(bytes));
+                                        },
+                                        Err(e) => self.history.push(e.to_string()),
+                                    }
+                                }
+                            }
                         }
                     });
                     s.cell(|ui|{
-                        if Button::new("SFC").ui(ui).clicked(){
-                            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
-                            // self.history.push(format!("You\nCommand::SfcScan"));
-                            self.input = "sfc /scannow".to_string();
+                        if Button::new(RichText::new("Charts").color(Color32::LIGHT_RED)).ui(ui).clicked(){
+                            self.state = WsDisplayState::LiveStats;
+                            self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::LiveData)));
                         }
                     });
                     s.cell(|ui|{
-                        if Button::new("Dism").ui(ui).clicked(){
-                            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
-                            // self.history.push(format!("You\nCommand::DismScan"));
-                            self.input = "dism /online /cleanup-image /scanhealth\ndism /online /cleanup-image /checkhealth\ndism /online /cleanup-image /restorehealth".to_string();
+                        if Button::new(RichText::new("Shell").color(Color32::LIGHT_RED)).ui(ui).clicked(){
+                            self.state = WsDisplayState::Shell;
                         }
                     });
-                    s.cell(|ui|{
-                        if Button::new("Chkdsk").ui(ui).clicked(){
-                            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
-                            // self.history.push(format!("You\nCommand::ChkDsk"));
-                            self.input = "chkdsk /f /x /r".to_string();
-                            
-                        }
-                    });
-                    s.cell(|ui|{
-                        if Button::new("Mbr2Gpt").ui(ui).clicked(){
-                            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
-                            // self.history.push(format!("You\nCommand::Mbr2Gpt"));
-                            self.input = "mbr2gpt /Convert /AllowFullOS /disk:0".to_string();
-                        }
-                    });
+                    if self.interactive && count == 5 {
+                        s.cell(|ui|{
+                            if Button::new(RichText::new("Quit").color(Color32::RED)).ui(ui).clicked(){
+                                self.interactive = false;
+                                self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
+                            }
+                        });
+                    }
                 });
-            }
-        });
-        strip.cell(|ui | 
-        {
-            match self.state {
-                WsDisplayState::LiveStats => self.show_live_stats(ui),
-                WsDisplayState::Explorer => self.show_explorer(ui),
-                WsDisplayState::ToolBox => self.show_tool_box(ui),
-                WsDisplayState::Shell => self.show_shell(ui),
-            }
+            });
+            strip.strip(|strip| 
+            {
+                if let WsDisplayState::Shell = self.state {
+                    strip.sizes(Size::remainder(), 6)
+                        .horizontal(|mut s| 
+                    {
+                        s.cell(|ui|{
+                            if Button::new("Tuneup").ui(ui).clicked(){
+                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
+                                // self.history.push(format!("You\nCommand::Tuneup"));
+                            }
+                        });
+                        s.cell(|ui|{
+                            if Button::new("CPS").ui(ui).clicked(){
+                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
+                                // self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
+                                self.input = "SELECT * FROM Win32_OperatingSystem".to_string();
+                            }
+                        });
+                        s.cell(|ui|{
+                            if Button::new("SFC").ui(ui).clicked(){
+                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
+                                // self.history.push(format!("You\nCommand::SfcScan"));
+                                self.input = "sfc /scannow".to_string();
+                            }
+                        });
+                        s.cell(|ui|{
+                            if Button::new("Dism").ui(ui).clicked(){
+                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
+                                // self.history.push(format!("You\nCommand::DismScan"));
+                                self.input = "dism /online /cleanup-image /scanhealth\ndism /online /cleanup-image /checkhealth\ndism /online /cleanup-image /restorehealth".to_string();
+                            }
+                        });
+                        s.cell(|ui|{
+                            if Button::new("Chkdsk").ui(ui).clicked(){
+                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
+                                // self.history.push(format!("You\nCommand::ChkDsk"));
+                                self.input = "chkdsk /f /x /r".to_string();
+                                
+                            }
+                        });
+                        s.cell(|ui|{
+                            if Button::new("Mbr2Gpt").ui(ui).clicked(){
+                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
+                                // self.history.push(format!("You\nCommand::Mbr2Gpt"));
+                                self.input = "mbr2gpt /Convert /AllowFullOS /disk:0".to_string();
+                            }
+                        });
+                    });
+                }
+            });
+            strip.cell(|ui | 
+            {
+                match self.state {
+                    WsDisplayState::LiveStats => self.show_live_stats(ui),
+                    WsDisplayState::Explorer => self.show_explorer(ui),
+                    WsDisplayState::ToolBox => self.show_tool_box(ui),
+                    WsDisplayState::Shell => self.show_shell(ui),
+                }
+            });
         });
     }
 
@@ -422,9 +428,9 @@ impl WebSocketClient{
                 .show(ui, |ui| 
             {
                 ui.set_width(ui.available_width());
-                let max_msg_width = ui.available_width() / 2.1;
+                let max_msg_width = ui.available_width() / 1.5;
                 let fixed_height = 50.0;
-                let min_width = 200.0;
+                // let min_width = 200.0;
     
                 for item in self.history.iter(){
                     let is_message_from_myself = if item.contains("You"){ true } else { false };

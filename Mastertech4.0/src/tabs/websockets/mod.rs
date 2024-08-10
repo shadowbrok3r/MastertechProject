@@ -14,20 +14,22 @@ use tracing::info;
 #[allow(unreachable_code)]
 pub mod websocket;
 
+/*
+        if let Some(frontend) = &mut self.frontend {
+            self.terminal
+                .draw(|frame| {
+                    let _area = frame.size();
+                    // render_chart1(frame, area, &app);
+                    frontend.ui(ui);
+                })
+            .expect("epic fail");
+        }
+        ui.add( self.terminal.backend_mut());
+        self.terminal.show_cursor().unwrap();
+*/
+
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
-        // if let Some(frontend) = &mut self.frontend {
-        //     self.terminal
-        //         .draw(|frame| {
-        //             let _area = frame.size();
-        //             // render_chart1(frame, area, &app);
-        //             frontend.ui(ui);
-        //         })
-        //     .expect("epic fail");
-        // }
-        // ui.add( self.terminal.backend_mut());
-        // self.terminal.show_cursor().unwrap();
-
         let _db_tx = self.db_tx.clone();
 
         if self.current_user.is_none(){
@@ -37,10 +39,25 @@ impl MastertechContext{
         ui.vertical_centered(|ui| {
             if ui.button("Connect").clicked()
             {
-                let client_hash = generate_client_id(self.computer_data.hostname.clone(), self.computer_data.cpu.trim().to_string());
-                let url_string = format!("{}:{}", self.computer_data.hostname.clone(), client_hash.split_at(9).0);
-                self.url = Some(format!("wss://sock.master-tech.app/websocket?room_id={}&role=client",  url_string.clone()));
-                let computer_id = &self.computer_data.id.clone().unwrap_or( // i need to first check if a computer exists with a customer id or something..
+                let client_hash = generate_client_id(
+                    self.computer_data.hostname.clone(), 
+                    self.computer_data.cpu.trim().to_string()
+                );
+
+                let url_string = format!(
+                    "{}:{}", 
+                    self.computer_data.hostname.clone(), 
+                    client_hash.split_at(9).0
+                );
+
+                self.url = Some(
+                    format!(
+                        "wss://sock.master-tech.app/websocket?room_id={}&role=client",  
+                        url_string.clone()
+                    )
+                );
+
+                let computer_id = &self.computer_data.id.clone().unwrap_or(
                     ComputerId(
                         Thing::from(
                             (COMPUTER_TABLE,  url_string.clone().as_str())
@@ -95,8 +112,8 @@ impl MastertechContext{
                         }
                     };
                 }
-
             }
+
             if !self.error.is_empty() {
                 TopBottomPanel::top("error").show_inside(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -104,6 +121,7 @@ impl MastertechContext{
                     });
                 });
             }
+            
             if let Some(frontend) = &mut self.frontend {
                 let connected = frontend.initialize_websocket(ui);
                 if !connected{ } // if let Some(db) =  { spawn(async move { }); }
@@ -173,7 +191,7 @@ impl WebConsoleFrontend {
 
         if self.timeout_counter.elapsed().as_secs() > 10 { info!("Its been over 10 seconds since last ping"); }
 
-        for event in &self.events{
+        for event in self.events.clone() {
             match event{
                 WsEvent::Message(msg) => {
                     connected = true;
@@ -181,175 +199,8 @@ impl WebConsoleFrontend {
                         WsMessage::Binary(bin) => {
                             self.history.push(format!("{:?}", deserialize_command(&bin.clone())));
                             let cmd = deserialize_command(&bin.clone());
-                            info!("297Cmd: {bin:?}");
-                            match cmd{
-                                Cmd::LiveData => {
-                                    let tx = self.tx.clone();
-                                    self.history.push(format!("Cmd: {:?}", cmd));
-                                    let connected = self.connected.clone();
-                                    spawn(async move { 
-                                        match live_computer_stats(tx.clone(), connected).await{
-                                            Ok(_) => drop(tx),
-                                            Err(e) => info!("Error with live data {e:?}"),
-                                        }
-                                    });
-                                },
-                                Cmd::Tuneup => {
-                                    self.history.push(format!("Cmd: {:?}", cmd));
-                                    let _tx = self.tx.clone();
-                                    info!("Cmd: {cmd:?}");
-                                    
-                                    // spawn(async move {
-                                    //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
-                                    // });
-                                },
-                                Cmd::Cps => {
-                                    self.history.push(format!("Cmd: {:?}", cmd));
-                                    let tx = self.tx.clone();
-                                    info!("Cmd: {cmd:?}");
-                                    spawn(async move {
-                                        handle_command_payload("SELECT * FROM Win32_OperatingSystem".to_string(), tx.clone()).await.unwrap();
-                                    });
-                                },
-                                Cmd::Qc => {
-                                    self.history.push(format!("Cmd: {:?}", cmd));
-                                    let tx = self.tx.clone();
-                                    info!("Cmd: {cmd:?}");
-                                    spawn(async move {
-                                        handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
-                                    });
-                                },
-                                Cmd::SfcScan => {
-                                    self.history.push(format!("Cmd: {:?}", cmd));
-                                    let tx = self.tx.clone();
-                                    info!("Cmd: {cmd:?}");
-                                    
-                                    spawn(async move {
-                                        handle_command_payload("sfc /scannow".to_string(), tx.clone()).await.unwrap();
-                                    });
-                                },
-                                Cmd::DismScan => {
-                                    self.history.push(format!("Cmd: {:?}", cmd));
-                                    let tx = self.tx.clone();
-                                    info!("Cmd: {cmd:?}");
-
-                                    spawn(async move {
-                                        handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
-                                    });
-                                },
-                                Cmd::ChkDsk => {
-                                    self.history.push(format!("Cmd: {:?}", cmd));
-                                    let _tx = self.tx.clone();
-                                    info!("Cmd: {cmd:?}");
-                                    
-                                    // spawn(async move {
-                                    //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
-                                    // });
-                                },
-                                Cmd::Mbr2Gpt => {
-                                    self.history.push(format!("Cmd: {:?}", cmd));
-                                    let _tx = self.tx.clone();
-                                    info!("Cmd: {cmd:?}");
-                                    // spawn(async move {
-                                    //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
-                                    // });
-                                },
-                                Cmd::ReadDir(path) => {
-                                    info!("READING DIR");
-                                    let current_path = env::current_dir().unwrap_or_default();
-                                    info!("Current_path: {current_path:?}");
-                                    let contents = if path == "current" {
-                                        let paths = read_folder(&current_path, 2, false);
-                                        info!("Current paths: {:?}", paths.clone());
-                                        let node = self.explorer.build_virtual_file_system(current_path, paths);
-                                        node // paths
-                                    } else {
-                                        let p: PathBuf = Path::new(path.as_str()).to_path_buf();
-                                        if p.is_dir() {
-                                            let paths = read_folder(&p, 2, false);
-                                            info!("Paths: {:?}", paths.clone());
-                                            let node = self.explorer.build_virtual_file_system(current_path, paths);
-                                            node // paths
-                                        } else {
-                                            let paths = read_folder(&current_path, 2, false);
-                                            info!("Paths: {:?}", paths.clone());
-                                            let node = self.explorer.build_virtual_file_system(current_path, paths);
-                                            node // paths
-                                        }
-                                    };
-                                    // let mut strings = Vec::new();
-                                    // for x in contents { strings.push(x.to_string_lossy().to_string()); }
-                                    let payload = serialize(
-                                        &Cmd::DirContents(contents) // (current_path.to_string_lossy().to_string(), strings)
-                                    );
-
-                                    match payload {
-                                        Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                                        Err(e) => info!("Error serializing paths: {e:?}"),
-                                    }
-                                },
-                                Cmd::UpDirectory(new_path) => {
-                                    let mut p: PathBuf = Path::new(&new_path).to_path_buf();
-                                    if p.pop() {
-                                        let paths = read_folder(&p, 2, false);
-                                        info!("Paths: {:?}", paths.clone());
-                                        if paths.len() > 0 {
-                                            let node = self.explorer.build_virtual_file_system(p, paths);
-                                            info!("Node: {:?}", node);
-                        
-                                            let payload = serialize(
-                                                &Cmd::DirContents(node)
-                                            );
-                            
-                                            match payload {
-                                                Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                                                Err(e) => info!("Error serializing paths: {e:?}"),
-                                            }
-                                        }
-                                    } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
-                                },
-                                Cmd::ChangeDirectory(new_path) => {
-                                    let p: PathBuf = Path::new(&new_path).to_path_buf();
-                                    if p.is_dir() {
-                                        let paths = read_folder(&p, 2, false);
-                                        info!("Paths: {:?}", paths.clone());
-                                        if paths.len() > 0 {
-                                            let node = self.explorer.build_virtual_file_system(p, paths);
-                                            info!("Node: {:?}", node);
-                        
-                                            let payload = serialize(
-                                                &Cmd::DirContents(node)
-                                            );
-                            
-                                            match payload {
-                                                Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                                                Err(e) => info!("Error serializing paths: {e:?}"),
-                                            }
-                                        }
-                                    } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
-                                },
-                                Cmd::Execute(path) => {
-                                    let tx = self.tx.clone();
-                                    let p = path.clone();
-                                    let interactive_rx = self.interactive_input.1.clone();
-                                    info!("executing: {path:?}");
-                                    spawn(async move {
-                                        let x = handle_windows_cmd_interactive(p, tx, interactive_rx).await;
-                                        info!("x: {x:?}");
-                                    });
-                                },
-                                Cmd::InteractiveInput(cmd) => {
-                                    let tx = self.interactive_input.0.clone();
-                                    std::thread::spawn(move || {
-                                        tx.send(cmd).unwrap();
-                                    });
-                                },
-                                Cmd::QuitInteractive => {
-                                    let _ = self.interactive_input.0.try_send("quit".to_string());
-                                },
-                                Cmd::Quit => { self.connected = false; }
-                                _ => {},
-                            }
+                            info!("Binary Message: {bin:?}");
+                            self.handle_command(cmd);
                         },
                         WsMessage::Text(txt) => {
                             self.history.push(format!("Raw Command: {}", txt.clone()));
@@ -360,23 +211,16 @@ impl WebConsoleFrontend {
                                 process_command(text.clone(), tx.clone(), process).await;
                             });
                         },
-                        WsMessage::Ping(_x) => {
-                            // info!("Got a Ping: {x:?}");
-                            self.timeout_counter = Instant::now();
-                        },
-                        WsMessage::Pong(_x) => {
-                            // info!("Got a Pong: {x:?}");
-                            self.timeout_counter = Instant::now();
-                        },
                         _ => ()
                     }
                 },
                 WsEvent::Opened => {
                     connected = true;
+                    self.history.push("Connection Opened".to_string())
                 },
                 WsEvent::Closed => {
                     connected = false;
-
+                    self.history.push("Connection Closed".to_string())
                 },
                 WsEvent::Error(e) => {
                     connected = false;
@@ -386,6 +230,177 @@ impl WebConsoleFrontend {
         }
         self.events.clear();
         connected
+    }
+
+    fn handle_command(&mut self, cmd: Cmd) {
+        match cmd{
+            Cmd::LiveData => {
+                let tx = self.tx.clone();
+                self.history.push(format!("Cmd: {:?}", cmd));
+                let connected = self.connected.clone();
+                spawn(async move { 
+                    match live_computer_stats(tx.clone(), connected).await{
+                        Ok(_) => drop(tx),
+                        Err(e) => info!("Error with live data {e:?}"),
+                    }
+                });
+            },
+            Cmd::Tuneup => {
+                self.history.push(format!("Cmd: {:?}", cmd));
+                let _tx = self.tx.clone();
+                info!("Cmd: {cmd:?}");
+                
+                // spawn(async move {
+                //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                // });
+            },
+            Cmd::Cps => {
+                self.history.push(format!("Cmd: {:?}", cmd));
+                let tx = self.tx.clone();
+                info!("Cmd: {cmd:?}");
+                spawn(async move {
+                    handle_command_payload("SELECT * FROM Win32_OperatingSystem".to_string(), tx.clone()).await.unwrap();
+                });
+            },
+            Cmd::Qc => {
+                self.history.push(format!("Cmd: {:?}", cmd));
+                let tx = self.tx.clone();
+                info!("Cmd: {cmd:?}");
+                spawn(async move {
+                    handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                });
+            },
+            Cmd::SfcScan => {
+                self.history.push(format!("Cmd: {:?}", cmd));
+                let tx = self.tx.clone();
+                info!("Cmd: {cmd:?}");
+                
+                spawn(async move {
+                    handle_command_payload("sfc /scannow".to_string(), tx.clone()).await.unwrap();
+                });
+            },
+            Cmd::DismScan => {
+                self.history.push(format!("Cmd: {:?}", cmd));
+                let tx = self.tx.clone();
+                info!("Cmd: {cmd:?}");
+
+                spawn(async move {
+                    handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                });
+            },
+            Cmd::ChkDsk => {
+                self.history.push(format!("Cmd: {:?}", cmd));
+                let _tx = self.tx.clone();
+                info!("Cmd: {cmd:?}");
+                
+                // spawn(async move {
+                //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                // });
+            },
+            Cmd::Mbr2Gpt => {
+                self.history.push(format!("Cmd: {:?}", cmd));
+                let _tx = self.tx.clone();
+                info!("Cmd: {cmd:?}");
+                // spawn(async move {
+                //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
+                // });
+            },
+            Cmd::ReadDir(path) => {
+                info!("READING DIR");
+                let current_path = env::current_dir().unwrap_or_default();
+                info!("Current_path: {current_path:?}");
+                let contents = if path == "current" {
+                    let paths = read_folder(&current_path, 2, false);
+                    info!("Current paths: {:?}", paths.clone());
+                    let node = self.explorer.build_virtual_file_system(current_path, paths);
+                    node // paths
+                } else {
+                    let p: PathBuf = Path::new(path.as_str()).to_path_buf();
+                    if p.is_dir() {
+                        let paths = read_folder(&p, 2, false);
+                        info!("Paths: {:?}", paths.clone());
+                        let node = self.explorer.build_virtual_file_system(current_path, paths);
+                        node // paths
+                    } else {
+                        let paths = read_folder(&current_path, 2, false);
+                        info!("Paths: {:?}", paths.clone());
+                        let node = self.explorer.build_virtual_file_system(current_path, paths);
+                        node // paths
+                    }
+                };
+                // let mut strings = Vec::new();
+                // for x in contents { strings.push(x.to_string_lossy().to_string()); }
+                let payload = serialize(
+                    &Cmd::DirContents(contents) // (current_path.to_string_lossy().to_string(), strings)
+                );
+
+                match payload {
+                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                    Err(e) => info!("Error serializing paths: {e:?}"),
+                }
+            },
+            Cmd::UpDirectory(new_path) => {
+                let mut p: PathBuf = Path::new(&new_path).to_path_buf();
+                if p.pop() {
+                    let paths = read_folder(&p, 2, false);
+                    info!("Paths: {:?}", paths.clone());
+                    if paths.len() > 0 {
+                        let node = self.explorer.build_virtual_file_system(p, paths);
+                        info!("Node: {:?}", node);
+    
+                        let payload = serialize(
+                            &Cmd::DirContents(node)
+                        );
+        
+                        match payload {
+                            Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                            Err(e) => info!("Error serializing paths: {e:?}"),
+                        }
+                    }
+                } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
+            },
+            Cmd::ChangeDirectory(new_path) => {
+                let p: PathBuf = Path::new(&new_path).to_path_buf();
+                if p.is_dir() {
+                    let paths = read_folder(&p, 2, false);
+                    info!("Paths: {:?}", paths.clone());
+                    if paths.len() > 0 {
+                        let node = self.explorer.build_virtual_file_system(p, paths);
+                        info!("Node: {:?}", node);
+    
+                        let payload = serialize(
+                            &Cmd::DirContents(node)
+                        );
+        
+                        match payload {
+                            Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                            Err(e) => info!("Error serializing paths: {e:?}"),
+                        }
+                    }
+                } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
+            },
+            Cmd::Execute(path) => {
+                let tx = self.tx.clone();
+                let p = path.clone();
+                let interactive_rx = self.interactive_input.1.clone();
+                info!("executing: {path:?}");
+                spawn(async move {
+                    let x = handle_windows_cmd_interactive(p, tx, interactive_rx).await;
+                    info!("x: {x:?}");
+                });
+            },
+            Cmd::InteractiveInput(cmd) => {
+                let tx = self.interactive_input.0.clone();
+                std::thread::spawn(move || {
+                    tx.send(cmd).unwrap();
+                });
+            },
+            Cmd::QuitInteractive => {
+                let _ = self.interactive_input.0.try_send("quit".to_string());
+            },
+            Cmd::Quit => { self.connected = false; }
+            _ => {},
+        }
     }
 
     pub fn initialize_websocket(&mut self, ui: &mut Ui) -> bool {
@@ -402,7 +417,7 @@ impl WebConsoleFrontend {
             .show(ui, |ui| 
         {
             ui.set_width(ui.available_width());
-            let max_msg_width = ui.available_width() / 2.5;
+            let max_msg_width = ui.available_width() - 15.0;
             let fixed_height = 50.0;
             let min_width = 200.0;
 
@@ -654,8 +669,13 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Res
     Ok(stdin)
 }
 
-async fn handle_windows_cmd_interactive(command_payload: String, tx: Sender<Vec<u8>>, rx: Receiver<String>) ->  Result<(), Error> {
-        let mut process: Child = Command::new("cmd")
+async fn handle_windows_cmd_interactive(
+    command_payload: String, 
+    tx: Sender<Vec<u8>>, 
+    rx: Receiver<String>
+) ->  Result<(), Error> {
+
+    let mut process: Child = Command::new("cmd")
         .arg("/C")
         .arg(&command_payload)
         .stdin(Stdio::piped())
