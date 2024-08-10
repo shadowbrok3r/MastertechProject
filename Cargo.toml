@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
-members = [ "MtechServer2.0", "database" , "displays", ]
-# members=[ "frontend", "database" ] #  , "websocket_server"
+members = [ "MtechServer2.0", "database" , "displays", "websocket_server", "Mastertech4.0"]
 # exclude = ["websocket_server"]
 # package.exclude = ["websocket_server"]
 

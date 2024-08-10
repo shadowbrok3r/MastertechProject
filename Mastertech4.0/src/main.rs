@@ -138,7 +138,7 @@ impl eframe::App for MasterTechApp {
 
                             let minio_tx = self.context.minio_files.0.clone();
                             let name = usr.name.clone();
-                            let parsed = name.split_once('@').unwrap().0.to_string().clone();
+                            let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
 
                             spawn(async move {
 
