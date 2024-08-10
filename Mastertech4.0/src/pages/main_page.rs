@@ -24,7 +24,8 @@ impl MasterTechApp {
                         &"QC ☑️".to_string(),
                         &"Tasks" .to_string(),
                         &"Bug Tracker".to_string(),
-                        &"Websockets" .to_string(),
+                        &"Websockets".to_string(),
+                        &"ToolBox".to_string(),
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)

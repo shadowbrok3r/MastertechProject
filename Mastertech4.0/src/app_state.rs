@@ -1,16 +1,36 @@
-use crate::{pages::login_page::Login, tabs::{file_browser::FileBrowser, minidump::MiniDumpApp, scripts::Scripts, tur_sheet::{get_ticket::SendRequest, scaffold::{self, HardwareTest}}, websockets::{websocket::TerminalFrontend, WebConsoleFrontend}}, utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::SpecialPartOrder, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, tasks::task_layout::TaskLayout}, DisplayModal, ModalType, TaskUiActions}};
 use database::{schema::{prestashop_schema::PrestashopPayload, ClientId, ComputerData, ConnectedClient, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData, User}, Database};
 use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
+use displays::{channel_manager::ChannelManager, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use crossbeam::channel::{Receiver, Sender};
-use displays::ui_tools::toasts::Toasts;
-use egui_ratatui::RataguiBackend;
+// use egui_ratatui::RataguiBackend;
 use chrono::{DateTime, Utc};
 use egui_file::FileDialog;
 use serde_json::Value;
 use anyhow::Error;
 use log::info;
+
+use crate::{
+    pages::login_page::Login, 
+    tabs::{
+        file_browser::FileBrowser, 
+        minidump::MiniDumpApp, scripts::Scripts, 
+        tur_sheet::{get_ticket::SendRequest, 
+            scaffold::{self, HardwareTest}}, 
+        websockets::{websocket::TerminalFrontend, WebConsoleFrontend}
+    }, 
+    utilities::{
+        displays::{
+            chats::ChatView, 
+            modals::{create_task_modal::CreateTaskModal, task_modal::SpecialPartOrder, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, 
+            tasks::task_layout::TaskLayout
+        }, 
+        DisplayModal, 
+        ModalType, 
+        TaskUiActions
+    }
+};
 
 pub struct MasterTechApp {
     pub context: MastertechContext,
@@ -151,7 +171,9 @@ pub struct MastertechContext {
     pub bytes_rx: Receiver<(u64, u64)>,
     pub scripts: Scripts,
     pub progress: (f32, f32),
-    pub special_part_order: SpecialPartOrder
+    pub special_part_order: SpecialPartOrder,
+    pub toolbox: FileSystem,
+    pub minio_files: (Sender<Vec<String>>, Receiver<Vec<String>>)
 }
 
 impl MasterTechApp {
@@ -170,7 +192,7 @@ impl MasterTechApp {
         let [_, _] = tree.main_surface_mut()
             .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned()]);
         let [_, _] = tree.main_surface_mut()
-            .split_left(b,0.20,vec!["Scripts".to_owned()]);
+            .split_left(b,0.20,vec!["Scripts".to_owned(), "ToolBox".to_owned()]);
 
         let mut open_tabs = HashSet::new();
         for node in tree[SurfaceIndex::main()].iter() {
@@ -179,14 +201,14 @@ impl MasterTechApp {
             }
         }
 
-        let _backend = RataguiBackend::new_with_fonts(
-            10,
-            10,
-            "Regular".into(),
-            "Bold".into(),
-            "Oblique".into(),
-            "BoldOblique".into(),
-        );
+        // let _backend = RataguiBackend::new_with_fonts(
+        //     10,
+        //     10,
+        //     "Regular".into(),
+        //     "Bold".into(),
+        //     "Oblique".into(),
+        //     "BoldOblique".into(),
+        // );
 
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
@@ -201,6 +223,7 @@ impl MasterTechApp {
         let (store_users_tx,store_users_rx) = crossbeam::channel::unbounded::<Vec<User>>();
         let (initial_tasks_tx, initial_tasks_rx) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
+        let minio_files = <Vec<String>>::create_unbounded_channel();
 
         let mastertech_context = MastertechContext {
             current_user: None,
@@ -298,13 +321,16 @@ impl MasterTechApp {
             bytes_tx, bytes_rx,
             db_tx, db_rx,
             cps_keys_tx, cps_keys_rx,
+            
             store_users_tx, store_users_rx,
             initial_tasks_tx,  initial_tasks_rx,
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
             scripts: Scripts::default(),
             progress: (0.0, 0.0),
-            special_part_order: SpecialPartOrder::default()
+            special_part_order: SpecialPartOrder::default(),
+            toolbox: FileSystem::new(),
+            minio_files
         };
         let context = mastertech_context;
 
@@ -385,6 +411,7 @@ impl TabViewer for MastertechContext {
             "Console" => self.output_console(ui),
             "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
+            "ToolBox" => self.toolbox(ui),
             "File Browser 📂" => self.file_browse(ui),
             "System Information" => self.system_information(ui),
             "Minidump Analysis" => self.mini_dump(ui),

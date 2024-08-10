@@ -1,4 +1,4 @@
-use rusty_s3::{actions::ListObjectsV2, Bucket, Credentials, S3Action};
+use rusty_s3::{actions::ListObjectsV2, Bucket, Credentials, S3Action, UrlStyle::Path};
 use gloo_worker::{HandlerId, WorkerScope};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,7 @@ pub struct Input {
     pub url: String,
     pub access_key: String,
     pub secret_key: String,
+    pub name: String
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,7 +50,7 @@ impl gloo_worker::Worker for WebWorker {
         info!("received {msg:?}");
         let scope = scope.clone();
         spawn_local(async move {
-            let result = list_buckets(msg.url, msg.access_key, msg.secret_key).await;
+            let result = list_buckets(msg.url, msg.access_key, msg.secret_key, msg.name).await;
             match result {
                 Ok(buckets) => scope.respond(id, Output { buckets }),
                 Err(err) => info!("Error: {:?}", err),
@@ -59,10 +60,15 @@ impl gloo_worker::Worker for WebWorker {
 }
 
 
-async fn list_buckets(url: String, access_key: String, secret_key: String) -> Result<Vec<String>, Error> {
-    let name = "logan";
-    let region = "us-west";
-    let bucket = Bucket::new(url.parse::<Url>().unwrap(), rusty_s3::UrlStyle::Path, name, region).expect("Url has a valid scheme and host");
+pub async fn list_buckets(url: String, access_key: String, secret_key: String, name: String) -> Result<Vec<String>, Error> {
+    const ONE_HOUR: Duration = Duration::from_secs(3600);
+
+    let bucket = Bucket::new(
+        url.parse::<Url>().unwrap(), 
+        Path, 
+        name.to_lowercase(), 
+        "us-west"
+    ).expect("Couldnt get buckets");
     
     let credentials = Credentials::new(access_key, secret_key);
     
@@ -70,8 +76,10 @@ async fn list_buckets(url: String, access_key: String, secret_key: String) -> Re
     let signed_url = action.sign(ONE_HOUR);
     
     let client = Client::new();
+
     let resp = client.get(signed_url).send().await?.error_for_status()?;
     let text = resp.text().await?;
+
     let parsed = ListObjectsV2::parse_response(&text).unwrap();
     info!("response: {parsed:?}");
 

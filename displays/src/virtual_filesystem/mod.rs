@@ -1,5 +1,6 @@
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
+use surrealdb::sql::Uuid;
 use std::{cell::RefCell, collections::{HashMap, HashSet}, iter};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use crossbeam::channel::{Receiver, Sender};
@@ -77,10 +78,7 @@ impl FileSystem {
 
             for (i, part) in parts.iter().enumerate() {
                 // let part = part.to_string();
-                if Self::is_file(&part) { // part.contains('.'){ // i == parts.len() - 1 { // It's a file
-                    // if let Some(folder) = current.as_folder_mut() {
-                    //     folder.insert(part.to_string(), Node::File((path.clone(), part.to_string())));
-                    // }
+                if Self::is_file(&part) { // part.contains('.'){ // i == parts.len() - 1 { der.insert(part.to_string(), Node::File((path.clone(), part.to_string())));
                     if let Node::Folder(ref mut full_path, ref mut folder) = current {
                         let file_full_path = if full_path.contains('\\') { format!("{}\\{}", full_path, part) } else { format!("{}/{}", full_path, part) };
                         folder.insert(part.to_string(), Node::File((file_full_path, part.to_string().clone())));
@@ -94,14 +92,6 @@ impl FileSystem {
                     if let Node::Folder(_, ref mut folder) = current {
                         current = folder.entry(part.to_string()).or_insert_with(|| Node::Folder(current_path.clone(), HashMap::new()));
                     }
-                    // current = current.entry(part.to_string())
-                    //     .or_insert_with(|| Node::Folder(HashMap::new()));
-
-                    // if !current_path.is_empty() {
-                    //     if current_path.contains('\\') { current_path.push('\\') } else { current_path.push('/') };
-                    // }
-                    // current_path.push_str(&part);
-                    // self.directory_paths.insert(current_path.clone());
                 }
             }
         }
@@ -174,8 +164,9 @@ impl FileSystem {
 
                 for (label, node) in entries {
                     
-                    let is_selected = self.selected_items.borrow().contains(label);
+                    
                     let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
+
                     if let Node::Folder(full_path, _) = node {
                         count+=1;
                         let id = ui.make_persistent_id(format!("{label}-{:?}", count));
@@ -186,30 +177,23 @@ impl FileSystem {
                             self.open_folder
                         );
 
-                        // if collapsing_head.is_open(){
-                        //     let path = self.path_lookup(&label.clone());
-                        //     if let Some(path) = path{
-                        //         info!("label open: {label:?} // {path:?}");
-                        //     }
-                        //     // if let Some(path) = path { self.enter_directory = path.clone(); }
-                        // }
-
-                        collapsing_head.show_header(ui, |ui| 
+                        let res = collapsing_head.show_header(ui, |ui| 
                         {
-                            
+                            let is_selected = self.selected_items.borrow().contains(label);
                             let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗀   {}", label)));
 
                             if selectable_label.clicked() { // If the item was already selected, deselect it
-                                if modifiers.ctrl { self.selected_items.borrow_mut().insert(label.clone());} 
-
                                 if self.selected_items.borrow().contains(label) {
                                     // If the item was already selected, deselect it
                                     self.selected_items.borrow_mut().remove(label);
+                                } 
+
+                                if modifiers.ctrl { 
+                                    self.selected_items.borrow_mut().insert(label.clone());
                                 } else { // If the control key is not down, clear previous selection and select the current item
                                     self.selected_items.borrow_mut().clear();
                                     self.selected_items.borrow_mut().insert(label.clone());
                                 }
-
                             }
 
                             if selectable_label.double_clicked(){
@@ -223,13 +207,13 @@ impl FileSystem {
 
                             if selectable_label.secondary_clicked(){
                                 ui.memory_mut(|mem| mem.open_popup(
-                                    format!("sub_menu-{:?}", label).into())
-                                );
+                                    ui.make_persistent_id(format!("sub_menu-{:?}", full_path))
+                                ));
                             }
 
                             popup_below_widget(
                                 ui, 
-                                format!("sub_menu-{:?}", label).into(), 
+                                ui.make_persistent_id(format!("sub_menu-{:?}", full_path)), 
                                 &selectable_label, 
                                 CloseOnClickOutside, 
                                 |ui| 
@@ -241,14 +225,40 @@ impl FileSystem {
                                         let path = self.path_lookup(&label.clone());
                                         if let Some(path) = path {
                                             info!("Path: {:?}", path.clone());
-                                            self.download_selection(path, label.clone());
+                                            if cfg!(target_os="windows") || cfg!(target_os="linux"){
+                                                #[cfg(target_os="windows")]
+                                                self.download_selection_tokio(path, label.clone());
+                                            } else {
+                                                self.download_selection(path, label.clone());
+                                            }
                                         }
                                     }
+
+                                    ui.add_space(5.0);
 
                                     if ui.button("Upload").clicked(){
                                         if let Some(dir) = self.find_directory_full_path(&label){
                                             info!("Dir: {:?}", dir.clone());
-                                            self.upload(dir);
+                                            if cfg!(target_os="windows") || cfg!(target_os="linux"){
+                                                #[cfg(target_os="windows")]
+                                                self.upload_tokio(dir);
+                                            } else {
+                                                self.upload(dir);
+                                            }
+                                        }
+                                    }
+
+                                    ui.add_space(5.0);
+
+                                    if ui.button("Upload Folder").clicked(){
+                                        if let Some(dir) = self.find_directory_full_path(&label){
+                                            info!("Dir: {:?}", dir.clone());
+                                            if cfg!(target_os="windows") || cfg!(target_os="linux"){
+                                                #[cfg(target_os="windows")]
+                                                self.upload_folder_tokio(dir);
+                                            } else {
+                                                self.upload_folder(dir);
+                                            }
                                         }
                                     }
                                 }).inner;
@@ -257,19 +267,66 @@ impl FileSystem {
                             self.display_path(ui, &node, current_path.clone())
                         );
 
+                        if res.0.secondary_clicked(){
+                            ui.memory_mut(|mem| mem.open_popup(
+                                ui.make_persistent_id(format!("upload_file_menu"))
+                            ));
+                        }
+
+
+                        popup_below_widget(
+                            ui, 
+                            ui.make_persistent_id(format!("upload_file_menu")), 
+                            &res.0, 
+                            CloseOnClickOutside, 
+                            |ui| 
+                        {
+                            ui.vertical_centered_justified(|ui| {
+                                ui.set_width(200.0);
+
+                                if ui.button("Upload").clicked(){
+                                    if let Some(dir) = self.find_directory_full_path(&label){
+                                        info!("Dir: {:?}", dir.clone());
+                                        if cfg!(target_os="windows") || cfg!(target_os="linux"){
+                                            #[cfg(target_os="windows")]
+                                            self.upload_tokio(dir);
+                                        } else {
+                                            self.upload(dir);
+                                        }
+                                    }
+                                }
+
+                                ui.add_space(5.0);
+
+                                if ui.button("Upload Folder").clicked(){
+                                    if let Some(dir) = self.find_directory_full_path(&label){
+                                        info!("Dir: {:?}", dir.clone());
+                                        if cfg!(target_os="windows") || cfg!(target_os="linux"){
+                                            #[cfg(target_os="windows")]
+                                            self.upload_folder_tokio(dir);
+                                        } else {
+                                            self.upload_folder(dir);
+                                        }
+                                    }
+                                }
+                            }).inner;
+                        });
+
                     } else if let Node::File((full_path, label)) = node{
+
+                        // let id = ui.make_persistent_id(format!("sub_menu-{:?}", full_path));
                         let file_selected = self.selected_items.borrow().contains(full_path);
                         let selectable_label = ui.selectable_label(file_selected, RichText::new(format!("🗋   {}", label)));
 
                         if selectable_label.clicked() {
-
-                            if modifiers.ctrl { self.selected_items.borrow_mut().insert(full_path.clone()); } 
-
                             if self.selected_items.borrow().contains(full_path) {
                                 // If the item was already selected, deselect it
                                 self.selected_items.borrow_mut().remove(full_path);
-                            } else { 
-                                // If the control key is not down, clear previous selection and select the current item
+                            } 
+
+                            if modifiers.ctrl { 
+                                self.selected_items.borrow_mut().insert(full_path.clone());
+                            } else { // If the control key is not down, clear previous selection and select the current item
                                 self.selected_items.borrow_mut().clear();
                                 self.selected_items.borrow_mut().insert(full_path.clone());
                             }
@@ -277,8 +334,8 @@ impl FileSystem {
 
                         if selectable_label.secondary_clicked(){
                             ui.memory_mut(|mem| mem.open_popup(
-                                format!("sub_menu-{:?}", label).into())
-                            );
+                                ui.make_persistent_id(format!("sub_menu-{:?}", full_path))
+                            ));
                         }
 
                         if selectable_label.double_clicked(){
@@ -287,7 +344,7 @@ impl FileSystem {
 
                         popup_below_widget(
                             ui, 
-                            format!("sub_menu-{:?}", full_path).into(), 
+                            ui.make_persistent_id(format!("sub_menu-{:?}", full_path)), 
                             &selectable_label, 
                             CloseOnClickOutside, 
                             |ui| 
@@ -327,104 +384,154 @@ impl FileSystem {
         self.directory_paths.iter().find(|path| path.ends_with(&format!("\\\\{label}"))).cloned()
     }
 
+    #[cfg(feature="wasm")]
     pub fn upload(&self, path: String) {
         let task = rfd::AsyncFileDialog::new().pick_files();
         let secret_key = self.secret_key.clone();
         let access_key = self.access_key.clone();
-        let name = self.user.name.clone();
+        let name = self.user.email.clone();
+        let parsed = name.split_once('@').unwrap().0.to_string().clone();
 
-        if cfg!(feature="wasm"){
-            spawn_local(async move {
-                let result = Self::perform_upload(
-                    &name,
-                    &access_key,
-                    &secret_key,
-                    &path,
-                    task
-                ).await;
+        spawn_local(async move {
+            let result = Self::perform_upload(
+                &parsed.clone(),
+                &access_key.clone(),
+                &secret_key.clone(),
+                &path.clone(),
+                task
+            ).await;
 
-                info!("Result: {result:?}");
-            });
-        } else {
-            #[cfg(feature="tokio")]
-            spawn(async move {
-                let result = Self::perform_upload(
-                    &name,
-                    &access_key,
-                    &secret_key,
-                    &path,
-                    task
-                ).await;
-
-                info!("Result: {result:?}");
-            });
-        }
+            info!("Result: {result:?}");
+        });
     }
 
+    #[cfg(feature="tokio")]
+    pub fn upload_folder_tokio(&self, path: String) {
+        let task = rfd::AsyncFileDialog::new().pick_folders();
+        let secret_key = self.secret_key.clone();
+        let access_key = self.access_key.clone();
+        let name = self.user.email.clone();
+        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        // spawn(async move {
+        //     let result = Self::perform_upload(
+        //         &name.clone(),
+        //         &access_key.clone(),
+        //         &secret_key.clone(),
+        //         &path.clone(),
+        //         task
+        //     ).await;
+
+        //     info!("Result: {result:?}");
+        // });
+    }
+
+    #[cfg(feature="wasm")]
+    pub fn upload_folder(&self, path: String) {
+        // let task = rfd::AsyncFileDialog::new().pick_folder();
+        let secret_key = self.secret_key.clone();
+        let access_key = self.access_key.clone();
+        let name = self.user.email.clone();
+        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        // spawn(async move {
+        //     let result = Self::perform_upload(
+        //         &name.clone(),
+        //         &access_key.clone(),
+        //         &secret_key.clone(),
+        //         &path.clone(),
+        //         task
+        //     ).await;
+
+        //     info!("Result: {result:?}");
+        // });
+    }
+
+    #[cfg(feature="tokio")]
+    pub fn upload_tokio(&self, path: String) {
+        let task = rfd::AsyncFileDialog::new().pick_files();
+        let secret_key = self.secret_key.clone();
+        let access_key = self.access_key.clone();
+        let name = self.user.email.clone();
+        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        spawn(async move {
+            let result = Self::perform_upload(
+                &parsed.clone(),
+                &access_key.clone(),
+                &secret_key.clone(),
+                &path.clone(),
+                task
+            ).await;
+
+            info!("Result: {result:?}");
+        });
+    }
+    
+    #[cfg(feature="wasm")]
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
         let secret_key = self.secret_key.clone();
         let access_key = self.access_key.clone();
-        let name = self.user.name.clone();
+        let name = self.user.email.to_lowercase().clone();
+        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        spawn_local(async move {
+            let result = Self::perform_download(
+                &parsed.clone(),
+                &access_key,
+                &secret_key,
+                tx.clone(),
+                &path,
+                &filename,
+                task
+            ).await;
 
-        if cfg!(feature="wasm"){
-            spawn_local(async move {
-                let result = Self::perform_download(
-                    &name,
-                    &access_key,
-                    &secret_key,
-                    tx,
-                    &path,
-                    &filename,
-                    task
-                ).await;
-
-                info!("Result: {result:?}");
-            });
-        } else {
-            #[cfg(feature="tokio")]
-            spawn(async move {
-                let result = Self::perform_download(
-                    &name,
-                    &access_key,
-                    &secret_key,
-                    tx.clone(),
-                    &path,
-                    &filename,
-                    task
-                ).await;
-
-                info!("Result: {result:?}");
-            });
-        }
+            info!("Result: {result:?}");
+        });
     }
 
-    fn delete_selection(&self, path: String, filename: String) {
+    #[cfg(feature="tokio")]
+    fn download_selection_tokio(&self, path: String, filename: String) {
+        let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
+        let tx = self.bytes_tx.clone();
+        let secret_key = self.secret_key.clone();
+        let access_key = self.access_key.clone();
+        let name = self.user.email.to_lowercase().clone();
+        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        spawn(async move {
+            let result = Self::perform_download(
+                &parsed.clone(),
+                &access_key,
+                &secret_key,
+                tx.clone(),
+                &path,
+                &filename,
+                task
+            ).await;
+
+            info!("Result: {result:?}");
+        });
+    }
+
+    // fn delete_selection(&self, path: String, filename: String) {
         // let tx = self.bytes_tx.clone();
         // let secret_key = self.secret_key.clone();
         // let access_key = self.access_key.clone();
         // spawn_local(async move {
-        //     let name = self.user.name;
+        //     let name = self.user.email;
         //     let region = "us-west";
         //     let bucket = Bucket::new(
         //         STORAGE_URL.to_string().parse::<Url>().unwrap(), 
         //         rusty_s3::UrlStyle::Path, name, region
         //     )
         //     .expect("Url has a valid scheme and host");
-
-        //     let credentials = Credentials::new(access_key, secret_key);
-            
+        //     let credentials = Credentials::new(access_key, secret_key);  
         //     let mut action = GetObject::new(&bucket, Some(&credentials), &path);
         //     action
         //         .query_mut()
         //         .insert("response-cache-control", "no-cache, no-store");
-
         //     let signed_url = action.sign(ONE_HOUR);
-
         //     let client = Client::new();
         // });
-    }
+    // }
 
     async fn perform_upload(
         name: &String, 

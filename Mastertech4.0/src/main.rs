@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
-use database::{schema::{ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}, Database, DATABASE};
+use database::{schema::{buckets::list_buckets, ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}, Database, DATABASE, STORAGE_URL};
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use displays::ui_tools::{toasts::{Toast, ToastKind, ToastOptions}, carl_dark::{Aesthetix, CarlDark}};
 use std::{fs::File, sync::{Arc, Condvar, Mutex}};
@@ -123,7 +123,39 @@ impl eframe::App for MasterTechApp {
                 Ok(db) => {
                     self.context.current_user = db.user.clone();
                     let initial_tasks_tx = self.context.initial_tasks_tx.clone();
-                    if let Some(usr) = db.user{
+                    if let Some(usr) = db.user {
+
+                        self.context.toolbox.set_user(usr.clone());
+
+                        if let (
+                            Some(access_key), Some(secret_key)
+                        ) = (
+                            usr.minio_access_key.clone(), usr.minio_secret_key.clone()
+                        ) {
+
+                            self.context.toolbox.access_key = access_key.clone();
+                            self.context.toolbox.secret_key = secret_key.clone();
+
+                            let minio_tx = self.context.minio_files.0.clone();
+                            let name = usr.name.clone();
+                            let parsed = name.split_once('@').unwrap().0.to_string().clone();
+
+                            spawn(async move {
+
+                                let list_bucket_res = list_buckets(
+                                    STORAGE_URL.to_string(), 
+                                    access_key, 
+                                    secret_key, 
+                                    parsed
+                                ).await;
+
+                                match list_bucket_res{
+                                    Ok(files) => minio_tx.try_send(files).unwrap(),
+                                    Err(e) => info!("Error getting minio files: {e:?}"),
+                                }
+
+                            });
+                        }
                         get_store_users(self.context.store_users_tx.clone(), usr.store);
                         get_tasks(initial_tasks_tx);
                     }
@@ -293,6 +325,10 @@ impl eframe::App for MasterTechApp {
                 toast.add(error_toast);
             }
             self.context.keys = keys;
+        }
+
+        if let Ok(files) = self.context.minio_files.1.try_recv() {
+            self.context.toolbox.build_file_system(files);
         }
 
         match &self.state{

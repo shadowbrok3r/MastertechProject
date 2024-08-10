@@ -45,7 +45,7 @@ ratframe = { workspace=true }
 ratatui = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
-egui_ratatui = { workspace=true }
+# egui_ratatui = { workspace=true }
 fuzzy-matcher = { workspace=true }
 uuid = { workspace=true }
 bincode = { workspace=true }
