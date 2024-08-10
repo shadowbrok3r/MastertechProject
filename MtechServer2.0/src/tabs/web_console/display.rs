@@ -79,12 +79,8 @@ impl MtechServerContext{
         } else { &false };
         
         if *undock {
-            let size_x = if ui.available_width() > 50.0 { ui.available_width() - 50.0 } else { ui.available_width() };
-            let size_y = if ui.available_height() > 50.0 { ui.available_height() - 50.0 } else { ui.available_height() };
-            
             Window::new(connection_string)
-            .min_size(Vec2::new(400., 300.))
-                .max_size(Vec2::new(size_x, size_y))
+                .min_size(Vec2::new(400., 300.))
                 .frame(column_frame)
                 .show(ui.ctx(), |ui| {
                     ui.set_min_size(Vec2::new(400., 300.));
