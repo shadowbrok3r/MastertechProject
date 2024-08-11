@@ -147,7 +147,7 @@ impl WebSocketClient{
     
     pub fn show(&mut self, ui: &mut Ui) {
         let height = ui.available_height() - 100.0;
-        let strip_count = if let WsDisplayState::Shell = self.state { 2 } else { 1 };
+        let strip_count = if let WsDisplayState::Shell = self.state { 3 } else { 2 };
         StripBuilder::new(ui)
             .sizes(Size::exact(25.0), strip_count)
             .size(Size::remainder().at_most(height))
@@ -349,18 +349,16 @@ impl WebSocketClient{
                         Err(e) => self.history.push(e.to_string()),
                     }
                 }
-            });
-            ui.horizontal(|ui| {
-                let response = ui.button("🏠").on_hover_text("Home");
-                if response.clicked(){
+                let home_res = ui.button("🏠").on_hover_text("Home");
+                if home_res.clicked(){
                     match serialize(&Cmd::ReadDir("current".to_string())){
                         Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
                         Err(e) => self.history.push(e.to_string()),
                     }
                 }
 
-                let response = ui.button("⬆").on_hover_text("Parent Folder");
-                if response.clicked() {
+                let parent_res = ui.button("⬆").on_hover_text("Parent Folder");
+                if parent_res.clicked() {
                     let cwd = &self.explorer.root;
                     if let Node::Folder(full_path, _) = cwd{
                         match serialize(&Cmd::ReadDir(full_path.clone())){
@@ -418,7 +416,12 @@ impl WebSocketClient{
     }
 
     fn show_shell(&mut self, ui: &mut Ui) {
-        ui.allocate_ui(Vec2::new(ui.available_width(), ui.available_height() - 20.0), |ui| {
+        let avail_size = ui.available_size();
+        ui.set_max_height(avail_size.y - 30.0);
+        ui.set_max_width(avail_size.x - 30.0);
+        // let w = avail_size.x - 10.0;
+        // let h = avail_size.y - 10.0;
+        ui.with_layout(Layout::top_down_justified(Align::Center), |ui| {
             ScrollArea::vertical()
                 .animated(true)
                 .max_height(ui.available_height())
@@ -567,7 +570,7 @@ impl WebSocketClient{
                 };
             });
         });
-
+        ui.add_space(ui.available_height() - 15.0);
         ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
             let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").ui(ui);
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
