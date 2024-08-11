@@ -145,16 +145,18 @@ impl WebSocketClient{
         self.events.clear();
     }
     
-    pub fn show(&mut self, ui: &mut Ui) {
-        let height = ui.available_height() - 100.0;
+    pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)
+        let height = ui.available_height() / 1.2;
         let strip_count = if let WsDisplayState::Shell = self.state { 3 } else { 2 };
         StripBuilder::new(ui)
+            // .size(Size::exact(30.0))
             .sizes(Size::exact(25.0), strip_count)
             .size(Size::remainder().at_most(height))
             .vertical(|mut strip| 
         {
             self.handle_events();
 
+            // strip.cell(|ui| add_contents(ui));
             strip.strip(|strip| 
             {
                 let count = if self.interactive { 5 } else { 4 };
@@ -417,14 +419,9 @@ impl WebSocketClient{
 
     fn show_shell(&mut self, ui: &mut Ui) {
         let avail_size = ui.available_size();
-        ui.set_max_height(avail_size.y - 30.0);
-        ui.set_max_width(avail_size.x - 30.0);
-        // let w = avail_size.x - 10.0;
-        // let h = avail_size.y - 10.0;
-        ui.with_layout(Layout::top_down_justified(Align::Center), |ui| {
+        ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
             ScrollArea::vertical()
                 .animated(true)
-                .max_height(ui.available_height())
                 .max_width(f32::INFINITY)
                 .auto_shrink(false)
                 .stick_to_bottom(true)
@@ -569,25 +566,26 @@ impl WebSocketClient{
                     });
                 };
             });
+            ui.add_space(avail_size.y);
+            ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
+                let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").ui(ui);
+                let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+                if text_edit.lost_focus() && key_press && !self.interactive{
+                    self.loading = true;
+                    text_edit.request_focus();
+                    self.history.push(format!("You\n{}", self.input.clone()));
+                    self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
+                } else if text_edit.lost_focus() && key_press && self.interactive { 
+                    text_edit.request_focus();
+                    self.history.push(format!("You\n{}", self.input.clone()));
+                    match serialize(&Cmd::InteractiveInput(std::mem::take(&mut self.input))){
+                        Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                        Err(e) => self.history.push(e.to_string()),
+                    } 
+                }
+            });
         });
-        ui.add_space(ui.available_height() - 15.0);
-        ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
-            let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").ui(ui);
-            let key_press = ui.input(|i| i.key_pressed(Key::Enter));
-            if text_edit.lost_focus() && key_press && !self.interactive{
-                self.loading = true;
-                text_edit.request_focus();
-                self.history.push(format!("You\n{}", self.input.clone()));
-                self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
-            } else if text_edit.lost_focus() && key_press && self.interactive { 
-                text_edit.request_focus();
-                self.history.push(format!("You\n{}", self.input.clone()));
-                match serialize(&Cmd::InteractiveInput(std::mem::take(&mut self.input))){
-                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                    Err(e) => self.history.push(e.to_string()),
-                } 
-            }
-        });
+
     }
 }
 

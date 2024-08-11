@@ -5,9 +5,21 @@ edition = "2021"
 description = "Mastertech"
 build = "build.rs"
 
+[features]
+default = [ "gui", "inline", "term" ]
+gui = [ "dep:eframe" ]
+term = ["dep:tui-input", "dep:tui-textarea", "dep:ratatui"]
+inline = []
+# default=["winit"]   # , "cpu_fix", "compat_mode"
+# winit = ["dep:egui-winit"]
+# compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"] cpu_fix = []
+
 [dependencies]
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
+ratatui = { version = "0.28.0", features = ["crossterm"], optional = true }
+tui-input = { version = "0.10.0", features = ["crossterm"], optional = true}
+tui-textarea = { version = "0.6.1", optional = true}
 sysinfo = "0.31"
 console-subscriber = "0.4.0"
 futures-util = "0.3"
@@ -40,15 +52,14 @@ minidump-processor = { version = "0.22", features = ["http"] }
 minidump-unwind = "0.22"
 linked-hash-map = "0.5"
 ewebsock = { version = "0.6", features = [ "tls" ] }
-ratatui = { version = "0.27.0", features = ["crossterm"] }
-tui-input = "0.9.0"
-crossterm = "0.28"
 hex = "0.4.3"
 ring = "0.17.8"
 egui_tracing = "0.2.2"
 rust-s3 = "0.34"
 
 
+# eframe = { version="0.28", features=["persistence", "serde", "default_fonts"] } 
+eframe = { workspace=true, optional = true }
 database = { workspace=true }
 surrealdb-alpha = { workspace=true }
 # surrealdb = { workspace=true }
@@ -60,7 +71,6 @@ bytes = { workspace=true }
 egui_extras = { workspace=true }
 egui_dock = { workspace=true }
 anyhow = { workspace=true }
-eframe = { workspace=true }
 ratframe = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
@@ -74,6 +84,7 @@ chrono = { workspace=true }
 simplelog = { workspace=true }
 async-trait = { workspace=true }
 once_cell = { workspace=true }
+
 # egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
 # egui-winit = { ver1.0.86 "0.27.2", optional = true, default-features = false }
 # softbuffer = {version = "0.4.2", optional = true}
@@ -97,14 +108,6 @@ harness = false
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "0.9"
 # libatasmart = "0.3.1"
-
-[features]
-default = []
-inline = []
-# default=["winit"]   # , "cpu_fix", "compat_mode"
-# winit = ["dep:egui-winit"]
-# compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"]
-# cpu_fix = []
 
 [profile.release]
 strip = "debuginfo"

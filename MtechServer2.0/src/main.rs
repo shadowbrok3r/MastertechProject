@@ -1,6 +1,6 @@
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::get_associated_ticket, handle_live_data::{handle_live_data, handle_live_notes, update_or_insert, update_or_insert_layout /*, update_or_insert_notes */}, ModalType, TaskUiActions};
 use displays::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
-use eframe::egui::{Color32, FontId, Stroke, Style, Vec2, Context};
+use eframe::egui::{Color32, Context, FontId, Frame, Margin, Rounding, Stroke, Style, Vec2, Window};
 use app_state::{AppState, MainPages, MtechServer};
 use wasm_bindgen_futures::spawn_local;
 use eframe::egui::FontFamily;
@@ -180,28 +180,34 @@ impl eframe::App for MtechServer {
             }
         }
         
-        // if self.context.wants_to_undock {
-        //     let clients = self.context.clients.iter().map(|s| s.connection_string.clone()).collect::<Vec<String>>();
-        //     for client in clients.iter() {
-        //         if let Some(undock) = self.context.undock_client.get(client) {
-        //             let size_x = if ui.available_width() > 50.0 { ui.available_width() - 50.0 } else { ui.available_width() };
-        //             let size_y = if ui.available_height() > 50.0 { ui.available_height() - 50.0 } else { ui.available_height() };
+        if self.context.wants_to_undock {
+            for client in self.context.clients.clone() {
+                let undock = if let Some(undock) = self.context.undock_client.get(&client.connection_string){
+                    undock
+                } else { &false };
 
-        //             if *undock {
-        //                 Window::new(CLIENT).max_size(Vec2::new(size_x, size_y))
-        //                     .frame(column_frame)
-        //                     .show(ui.ctx(), |ui| 
-        //                 {
-        //                     ui.vertical_centered_justified(|ui| {
-        //                         if let Some(ws_client) = self.ws_clients.get_mut(*&connection_string) {
-        //                             ws_client.show(ui);
-        //                         }
-        //                     });
-        //                 });
-        //             }
-        //         }
-        //     }
-        // }
+                if *undock {
+                    let color = if client.connected{ Color32::LIGHT_BLUE } else { Color32::LIGHT_RED };
+        
+                    let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 14))
+                        .inner_margin(Margin::same(4.0)).outer_margin(Margin::symmetric(5.0, 3.0))
+                        .rounding(Rounding::same(10.0)).stroke(Stroke::new(1.0, color));
+
+                    Window::new(&client.connection_string).frame(column_frame)
+                        .max_size(Vec2::new(600., 600.))
+                        .show(ctx, |ui| 
+                    {
+                        ui.vertical_centered_justified(|ui| {
+                            ui.horizontal(|ui| self.context.headers(ui, client.clone()));
+                            if let Some(ws_client) = self.context.ws_clients.get_mut(&client.connection_string) {
+                                ws_client.show(ui);
+                            }
+                        });
+                    });
+                }
+            }
+        }
+
         self.receive();
         self.menu_bar(ctx);
         self.context.handle_modals(ctx);
@@ -316,8 +322,8 @@ fn set_style() -> Arc<Style>{
     custom_style.visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
     custom_style.visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
     custom_style.visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-    custom_style.visuals.widgets.open.bg_fill =  Color32::LIGHT_BLUE;
-    custom_style.visuals.widgets.open.weak_bg_fill =  Color32::LIGHT_BLUE;
+    // custom_style.visuals.widgets.open.bg_fill =  Color32::LIGHT_BLUE;
+    // custom_style.visuals.widgets.open.weak_bg_fill =  Color32::LIGHT_BLUE;
     custom_style.visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(28,28,28);
     custom_style.visuals.widgets.active.bg_fill =  Color32::LIGHT_GREEN;
     custom_style.visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(15,15,19);

@@ -14,20 +14,6 @@ use tracing::info;
 #[allow(unreachable_code)]
 pub mod websocket;
 
-/*
-        if let Some(frontend) = &mut self.frontend {
-            self.terminal
-                .draw(|frame| {
-                    let _area = frame.size();
-                    // render_chart1(frame, area, &app);
-                    frontend.ui(ui);
-                })
-            .expect("epic fail");
-        }
-        ui.add( self.terminal.backend_mut());
-        self.terminal.show_cursor().unwrap();
-*/
-
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
         let _db_tx = self.db_tx.clone();

@@ -246,6 +246,7 @@ impl MtechServer {
         }
 
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
+            info!("new_client: {action:?} // {new_client:?}");
             match action{
                 Action::Create => handle_live_create(&mut self.context.clients, new_client.clone()).unwrap_or(()),
                 Action::Update => handle_live_update(&mut self.context.clients, new_client.clone()).unwrap_or(()),

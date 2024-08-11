@@ -222,30 +222,28 @@ impl FileSystem {
                                     ui.set_width(200.0);
 
                                     if ui.button("Download").clicked(){
-                                        let path = self.path_lookup(&label.clone());
-                                        if let Some(path) = path {
-                                            info!("Path: {:?}", path.clone());
-                                            if cfg!(target_os="windows") || cfg!(target_os="linux"){
-                                                #[cfg(target_os="windows")]
-                                                self.download_selection_tokio(path, label.clone());
-                                            } else {
-                                                self.download_selection(path, label.clone());
-                                            }
+
+                                        info!("Path: {:?}", full_path.clone());
+                                        if cfg!(target_os="windows") || cfg!(target_os="linux"){
+                                            #[cfg(target_os="windows")]
+                                            self.download_selection_tokio(full_path.to_string(), label.clone());
+                                        } else {
+                                            self.download_selection(full_path.to_string(), label.clone());
                                         }
                                     }
 
                                     ui.add_space(5.0);
 
                                     if ui.button("Upload").clicked(){
-                                        if let Some(dir) = self.find_directory_full_path(&label){
-                                            info!("Dir: {:?}", dir.clone());
+                                        // if let Some(dir) = self.find_directory_full_path(&full_path){
+                                            info!("Dir: {:?}", full_path.clone());
                                             if cfg!(target_os="windows") || cfg!(target_os="linux"){
                                                 #[cfg(target_os="windows")]
-                                                self.upload_tokio(dir);
+                                                self.upload_tokio(full_path.to_string());
                                             } else {
-                                                self.upload(dir);
+                                                self.upload(full_path.to_string());
                                             }
-                                        }
+                                        // }
                                     }
 
                                     ui.add_space(5.0);
