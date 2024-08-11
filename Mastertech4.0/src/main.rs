@@ -14,6 +14,12 @@ use pages::login_page::HASH;
 use surrealdb::sql::Thing;
 use tokio::spawn;
 
+#[cfg(feature="term")]
+use terminal_mode::run_terminal_mode;
+
+#[cfg(feature="term")]
+mod terminal_mode;
+
 pub mod app_state;
 pub mod tabs;
 pub mod pages;
@@ -368,7 +374,6 @@ impl eframe::App for MasterTechApp {
     }
 }
 
-// #[cfg(not(feature = "compat_mode"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
     // console_subscriber::init();
@@ -383,16 +388,39 @@ async fn main() -> eframe::Result<()> {
         log_file
     ).unwrap();
 
-    eframe::run_native(
-        format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
-        eframe::NativeOptions {
-            viewport: ViewportBuilder::default().with_inner_size([945.0, 750.0])
-                .with_drag_and_drop(true).with_icon(load_icon()),
-            ..Default::default()
-        },
-        Box::new(|cc| Ok(Box::new(MasterTechApp::new(cc)))),
-    )
+    // #[cfg(feature = "gui")]
+    // let eframe_app = eframe::run_native(
+    //     format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
+    //     eframe::NativeOptions {
+    //         viewport: ViewportBuilder::default().with_inner_size([945.0, 750.0])
+    //             .with_drag_and_drop(true).with_icon(load_icon()),
+    //         ..Default::default()
+    //     },
+    //     Box::new(|cc| Ok(Box::new(MasterTechApp::new(cc)))),
+    // );
+
+    // if let Err(e) = eframe_app {
+    //     info!("Error running eframe_native: {e:?} \nswitching to secondary application");
+        #[cfg(feature="term")] {
+            let res = run_terminal_mode();
+            if let Err(e) = res {
+                info!("Error running terminal app: {e:?}");
+            }   
+        }
+    // }
+
+    Ok(())
 }
+
+// #[cfg(feature = "term")]
+// #[tokio::main]
+// async fn main() -> eframe::Result<()> {
+//     let res = run_terminal_mode();
+//     if let Err(e) = res {
+//         info!("Error running terminal app: {e:?}");
+//     }   
+//     Ok(())
+// }
 
 
 fn set_style() -> Arc<Style>{

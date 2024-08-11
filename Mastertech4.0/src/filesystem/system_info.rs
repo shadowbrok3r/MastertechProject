@@ -82,9 +82,11 @@ impl ComputerInfo for ComputerData{
             info!("GPU: {gpu:?}");
             
             let clone_gpu_name = gpu.clone();
-            let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
-            if parse_gpu_name[0].is_empty(){
-                self.gpu = parse_gpu_name.clone()[1].trim().to_string();
+            if !clone_gpu_name.is_empty() {
+                let parse_gpu_name: Vec<&str> = clone_gpu_name.split("Name").collect();
+                if parse_gpu_name[0].is_empty(){
+                    self.gpu = parse_gpu_name.clone()[1].trim().to_string();
+                }
             }
         }
 
@@ -116,7 +118,7 @@ impl ComputerInfo for ComputerData{
         info!("Pulling RAM");
         self.ram = (sys.total_memory() / ( 1024 * 1024 * 1024 ) + 1).to_formatted_string(&Locale::en).trim().to_string();
         info!("Pulling OS");
-        self.operating_system = System::long_os_version().unwrap_or_default(); //sys.long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
+        self.operating_system = System::long_os_version().unwrap_or_default();
         info!("Pulling Hostname");
         self.hostname = System::host_name().unwrap_or_default();
 

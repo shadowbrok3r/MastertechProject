@@ -14,95 +14,6 @@ use super::websockets::{ClientHandler, WebSocketClient};
 // const MIN_REPAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl MtechServerContext{
-    pub fn client_display(&mut self, ui: &mut Ui){
-        ui.style_mut().visuals.window_rounding = Rounding::same(10.);
-        let column_width = Size::exact(ui.available_width());
-
-        ScrollArea::vertical()
-            .show_viewport(ui, |ui, _|
-        {
-            let size = ui.available_size_before_wrap().y;
-            for client in self.clients.clone(){
-                StripBuilder::new(ui)
-                    .cell_layout(Layout::top_down_justified(Align::Center))
-                    .size(Size::exact(30.0))
-                    .size(Size::exact(5.0))
-                    .size(Size::initial(20.0)
-                        .with_range(
-                            Rangef::new(20.0, size)
-                        )
-                    ).vertical(|mut strip| 
-                {
-                    strip.strip(|strip| 
-                    {
-                        strip
-                            .size(column_width)
-                            .horizontal( |mut strip| {
-                                strip.cell(|ui| self.headers(ui, client.clone()) );
-                        });
-                    });
-
-                    strip.empty();
-
-                    strip.strip(|strip| 
-                    {
-                        strip.size(column_width)
-                            .horizontal( |mut strip| 
-                        {
-                            let connection_string = &*client.connection_string;
-                            let color = if client.connected{ Color32::LIGHT_BLUE } else { Color32::LIGHT_RED };
-                            strip.strip(|s | 
-                            {
-                                s.size(Size::remainder())
-                                    .vertical(|mut s| 
-                                {
-                                    s.cell(|ui| 
-                                    {
-                                        self.columns(ui, color, connection_string);
-                                    });
-                                });
-                            });
-                        });
-                    });
-                    
-                });
-            }
-        });
-    }
-
-    pub fn columns(&mut self, ui: &mut Ui, color: Color32, connection_string: &str) {
-        let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 14))
-            .inner_margin(Margin::same(4.0)).outer_margin(Margin::symmetric(5.0, 3.0))
-            .rounding(Rounding::same(10.0)).stroke(Stroke::new(1.0, color));
-        let undock = if let Some(undock) = self.undock_client.get(*&connection_string){
-            undock
-        } else { &false };
-        
-        if *undock {
-            Window::new(connection_string)
-                .min_size(Vec2::new(400., 300.))
-                .frame(column_frame)
-                .show(ui.ctx(), |ui| {
-                    ui.set_min_size(Vec2::new(400., 300.));
-                    ui.vertical_centered_justified(|ui| {
-                        if let Some(ws_client) = self.ws_clients.get_mut(*&connection_string) {
-                            ws_client.show(ui);
-                        }
-                    });
-                });
-        } else {
-            CollapsingHeader::new(connection_string).show_unindented(ui, |ui| {
-                column_frame.show(ui, |ui| {
-                    ui.set_min_size(Vec2::new(400., 300.));
-                    ui.vertical_centered_justified(|ui| {
-                        if let Some(ws_client) = self.ws_clients.get_mut(*&connection_string) {
-                            ws_client.show(ui);
-                        }
-                    });
-                });
-            });
-        }
-    }
 
     pub fn headers(&mut self, ui: &mut Ui, client: ConnectedClient) {
         let header_frame = Frame::default()
@@ -151,9 +62,96 @@ impl MtechServerContext{
 
                     if undock.clicked() {
                         if let Some(docked) = self.undock_client.get_mut(&cloned_client.connection_string) {
-                            if *docked { *docked = false; } else { *docked = true; };
+                            if *docked { *docked = false; self.wants_to_undock = false; } 
+                            else { *docked = true; self.wants_to_undock = true; };
                         }
                     }
+                });
+
+                let cloned_client = client.clone();
+                ui.with_layout(Layout::left_to_right(Align::Center), 
+                |ui| {
+                    ui.add_space(ui.available_width() / 2.8);
+                    let txt = if let Some(friendly_name) = cloned_client.clone().friendly_name{
+                        friendly_name
+                    } else { cloned_client.clone().connection_string };
+                    if ui.button(RichText::new(txt.to_owned()).size(14.0)).clicked() {
+
+                    };
+                });
+                
+                let mut cli_clone = cloned_client.clone();
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
+                {
+                    
+                    let button = Button::new(
+                        RichText::new("⮫")
+                            .color(Color32::LIGHT_RED)
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .min_size(Vec2::new(30.0, ui.available_height()))
+                        .ui(ui);
+
+                    if button.clicked(){
+                        let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", cli_clone.connection_string.clone());
+                        
+                        match ewebsock::connect(&url, Default::default()) {
+                            Ok((mut ws_sender, ws_receiver)) => {
+                                cli_clone.connected = true;
+
+                                ws_sender.send(ewebsock::WsMessage::Text("Server Connected".to_string()));
+
+                                let ws_client = WebSocketClient::new(
+                                    ws_sender, 
+                                    ws_receiver, 
+                                    cli_clone.clone(), 
+                                    self.file_system.clone()
+                                );
+                                self.ws_clients.entry(cli_clone.connection_string.clone()).or_insert(ws_client);
+                            }
+                            Err(error) => {
+                                cli_clone.connected = false;
+                                info!("Failed to connect to {:?}: {}", &url, error);
+                                let toast = &mut self.toasts;
+        
+                                let error_toast = Toast{
+                                    kind: ToastKind::Error,
+                                    text: format!("{error:?}").into(),
+                                    options: ToastOptions::default()
+                                        .show_progress(true)
+                                        .duration_in_seconds(6.0)
+                                };
+                                toast.add(error_toast);
+                            }
+                        };
+                    }
+
+                    ui.add_space(10.0);
+
+                    let export = Button::new(
+                        RichText::new("Export")
+                            .size(10.0)
+                            .color(Color32::LIGHT_RED)
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .min_size(Vec2::new(30.0, ui.available_height()))
+                        .ui(ui);
+
+                    if export.clicked() {
+                        if let Some(ws_client) = self.ws_clients.get(&cli_clone.connection_string) {
+                            client.export_logs(ws_client.history.clone());
+                        }
+                    }
+
+                    ui.add_space(45.0);
+                });
+            });
+        });
+    }
+}
+
+
+/*
                     // let viewer_button = Button::new(
                     //     RichText::new("Viewer")
                     //         .color(Color32::LIGHT_RED)
@@ -240,87 +238,4 @@ impl MtechServerContext{
                     //         }
                     //     };
                     // }
-
-                });
-
-                let cloned_client = client.clone();
-                ui.with_layout(Layout::left_to_right(Align::Center), 
-                |ui| {
-                    ui.add_space(ui.available_width() / 2.5);
-                    let txt = if let Some(friendly_name) = cloned_client.clone().friendly_name{
-                        friendly_name
-                    } else { cloned_client.clone().connection_string };
-                    if ui.button(RichText::new(txt.to_owned()).size(14.0)).clicked() {
-
-                    };
-                });
-                
-                let mut cli_clone = cloned_client.clone();
-                ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
-                {
-                    
-                    let button = Button::new(
-                        RichText::new("⮫")
-                            .color(Color32::LIGHT_RED)
-                        )
-                        .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30.0, ui.available_height()))
-                        .ui(ui);
-
-                    if button.clicked(){
-                        let url = format!("wss://sock.master-tech.app/websocket?role=master&room_id={}", cli_clone.connection_string.clone());
-                        
-                        match ewebsock::connect(&url, Default::default()) {
-                            Ok((mut ws_sender, ws_receiver)) => {
-                                cli_clone.connected = true;
-
-                                ws_sender.send(ewebsock::WsMessage::Text("Server Connected".to_string()));
-
-                                let ws_client = WebSocketClient::new(
-                                    ws_sender, 
-                                    ws_receiver, 
-                                    cli_clone.clone(), 
-                                    self.file_system.clone()
-                                );
-                                self.ws_clients.entry(cli_clone.connection_string.clone()).or_insert(ws_client);
-                            }
-                            Err(error) => {
-                                cli_clone.connected = false;
-                                info!("Failed to connect to {:?}: {}", &url, error);
-                                let toast = &mut self.toasts;
-        
-                                let error_toast = Toast{
-                                    kind: ToastKind::Error,
-                                    text: format!("{error:?}").into(),
-                                    options: ToastOptions::default()
-                                        .show_progress(true)
-                                        .duration_in_seconds(6.0)
-                                };
-                                toast.add(error_toast);
-                            }
-                        };
-                    }
-
-                    ui.add_space(10.0);
-
-                    let export = Button::new(
-                        RichText::new("Export")
-                            .size(10.0)
-                            .color(Color32::LIGHT_RED)
-                        )
-                        .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30.0, ui.available_height()))
-                        .ui(ui);
-
-                    if export.clicked() {
-                        if let Some(ws_client) = self.ws_clients.get(&cli_clone.connection_string) {
-                            client.export_logs(ws_client.history.clone());
-                        }
-                    }
-
-                    ui.add_space(45.0);
-                });
-            });
-        });
-    }
-}
+*/
