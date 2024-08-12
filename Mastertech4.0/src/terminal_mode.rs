@@ -1,3 +1,4 @@
+use {ratatui::crossterm::event::KeyEvent};
 #[cfg(feature="term")]
 use {
     ratatui::{
@@ -5,6 +6,8 @@ use {
         layout::{Constraint, Direction, Layout},
         style::{Color, Style},
         widgets::{Block, Borders, Paragraph},
+        buffer::Buffer, crossterm::event::KeyModifiers, layout::{Position, Rect, Size}, style::Stylize, text::{Line, Span}, widgets::{BorderType, Widget}, 
+        Frame,
         Terminal,
         crossterm::{
             event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton, MouseEvent, MouseEventKind},
@@ -12,9 +15,11 @@ use {
             terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
         }
     },
-    tui_textarea::{Input, Key, TextArea}
+    tui_textarea::{Input, Key, TextArea},
+    database::schema::{CustomerData, TicketData}, 
+    std::{io, ops::ControlFlow, rc::Rc, time::Duration}
 };
-use {database::schema::{CustomerData, TicketData}, ratatui::{buffer::Buffer, crossterm::event::KeyModifiers, layout::{Position, Rect, Size}, style::Stylize, text::{Line, Span}, widgets::{BorderType, Widget}, Frame}, std::{io, ops::ControlFlow, rc::Rc, time::Duration}};
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -43,16 +48,13 @@ enum InputMode {
     Editing,
 }
 
-/// App holds the state of the application
 struct App {
-    
     pub ticket_data: TicketData,
-
     pub customer_data: CustomerData,
-    /// Current input mode
+    pub form: Form,
+    pub submissions: Option<Vec<String>>,
     input_mode: InputMode,
-    // History of recorded messages
-    // messages: Vec<String>,
+    should_quit: bool,
 }
 
 impl App {
@@ -60,69 +62,12 @@ impl App {
         Self {
             ticket_data: TicketData::default(),
             customer_data: CustomerData::default(),
+            form: Form::from(vec![ "Service #", "Customer Name", "Phone Number 1", "Phone Number 2", "Assignee", "Tech" ]),
+            submissions: None,
             input_mode: InputMode::Normal,
-            // messages: Vec::new(),
+            should_quit: false,
         }
     }
-
-    // fn move_cursor_left(&mut self) {
-    //     let cursor_moved_left = self.character_index.saturating_sub(1);
-    //     self.character_index = self.clamp_cursor(cursor_moved_left);
-    // }
-
-    // fn move_cursor_right(&mut self) {
-    //     let cursor_moved_right = self.character_index.saturating_add(1);
-    //     self.character_index = self.clamp_cursor(cursor_moved_right);
-    // }
-
-    // fn enter_char(&mut self, new_char: char) {
-    //     let index = self.byte_index();
-    //     self.input.insert(index, new_char);
-    //     self.move_cursor_right();
-    // }
-
-    // /// Returns the byte index based on the character position.
-    // ///
-    // /// Since each character in a string can be contain multiple bytes, it's necessary to calculate
-    // /// the byte index based on the index of the character.
-    // fn byte_index(&self) -> usize {
-    //     self.input
-    //         .char_indices()
-    //         .map(|(i, _)| i)
-    //         .nth(self.character_index)
-    //         .unwrap_or(self.input.len())
-    // }
-
-    // fn delete_char(&mut self) {
-    //     let is_not_cursor_leftmost = self.character_index != 0;
-    //     if is_not_cursor_leftmost {
-    //         // Method "remove" is not used on the saved text for deleting the selected char.
-    //         // Reason: Using remove on String works on bytes instead of the chars.
-    //         // Using remove would require special care because of char boundaries.
-
-    //         let current_index = self.character_index;
-    //         let from_left_to_current_index = current_index - 1;
-
-    //         // Getting all characters before the selected character.
-    //         let before_char_to_delete = self.input.chars().take(from_left_to_current_index);
-    //         // Getting all characters after selected character.
-    //         let after_char_to_delete = self.input.chars().skip(current_index);
-
-    //         // Put all characters together except the selected one.
-    //         // By leaving the selected one out, it is forgotten and therefore deleted.
-    //         self.input = before_char_to_delete.chain(after_char_to_delete).collect();
-    //         self.move_cursor_left();
-    //     }
-    // }
-
-    // fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
-    //     new_cursor_pos.clamp(0, self.input.chars().count())
-    // }
-
-    // fn reset_cursor(&mut self) {
-    //     self.character_index = 0;
-    // }
-
     // fn submit_message(&mut self) {
     //     self.messages.push(self.input.clone());
     //     self.input.clear();
@@ -130,6 +75,33 @@ impl App {
     // }
 }
 
+fn handle_input(app: &mut App) -> io::Result<()> {
+    if event::poll(Duration::from_millis(250))? {
+        if let Event::Key(key) = event::read()? {
+            match app.form.selected() {
+                FormSelection::NoSelection => match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => app.should_quit = true,
+                    KeyCode::Char('s') => {
+                        let fields = app.form.submit();
+                        if fields.iter().any(|f| !f.is_valid()) {
+                        } else {
+                            // Field impls Into<String>
+                            app.submissions = Some(fields.into_iter().map(Into::into).collect());
+
+                            app.form.deselect();
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+
+            app.form.input(key);
+        }
+    }
+
+    Ok(())
+}
 
 pub fn run_terminal_mode() -> anyhow::Result<(), anyhow::Error> {
     // Setup terminal
@@ -199,59 +171,69 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
     let mut focused_index = 0;  // Track which text field is focused
 
     loop {
-        terminal.draw(|f| ui(f, button_states, &app, text_areas.clone(), checkin_notes.clone(), recommendations.clone()))?;
-
-        if !event::poll(Duration::from_millis(100))? {
-            continue;
+        terminal.draw(|f| render_fields(f, &app))?; // ui(f, button_states, &app, text_areas.clone(), checkin_notes.clone(), recommendations.clone())
+        handle_input(&mut app)?;
+        if app.should_quit {
+            break;
         }
-        match event::read()? {
-            Event::Key(key) => {
-                if key.kind != event::KeyEventKind::Press {
-                    continue;
-                }
-                if handle_key_event(
-                    key, &mut app,  
-                    &mut button_states, 
-                    &mut selected_button,
-                ).is_break() {
-                    break;
-                }
-                if key.modifiers.contains(KeyModifiers::CONTROL) {
-                    if let KeyCode::Enter = key.code {
-                        button_states[0] = State::Active;
-                    }
-                }
-                match key.code{
-                    KeyCode::Tab => {
-                        log::info!("index: {:?}", focused_index);
-                        if focused_index < text_areas.len() - 1 {
-                            focused_index += 1;
-                        }
-                    }
-                    KeyCode::BackTab => {
-                        log::info!("index: {:?}", focused_index);
-                        if focused_index > 0 {
-                            focused_index -= 1;
-                        }
-                    },
-                    _ => {}
-                }
-                // Only pass input to the focused text area
-                if focused_index < text_areas.len() {
-                    text_areas[focused_index].input_without_shortcuts(key);
-                } else if focused_index == text_areas.len() {
-                    checkin_notes.input_without_shortcuts(key);
-                } else if focused_index == text_areas.len() + 1 {
-                    recommendations.input_without_shortcuts(key);
-                }
-            }
-            Event::Mouse(mouse) => {
-                handle_mouse_event(mouse, &mut button_states, &mut selected_button);
-            },
-            _ => {}
-        }
+        // if !event::poll(Duration::from_millis(100))? {
+        //     continue;
+        // }
+        // match event::read()? {
+        //     Event::Key(key) => {
+        //         if key.kind != event::KeyEventKind::Press {
+        //             continue;
+        //         }
+        //         if handle_key_event(
+        //             key, &mut app,  
+        //             &mut button_states, 
+        //             &mut selected_button,
+        //         ).is_break() {
+        //             break;
+        //         }
+        //         if key.modifiers.contains(KeyModifiers::CONTROL) {
+        //             if let KeyCode::Enter = key.code {
+        //                 button_states[0] = State::Active;
+        //             }
+        //         }
+        //         match key.code{
+        //             KeyCode::Tab => {
+        //                 log::info!("index: {:?}", focused_index);
+        //                 if focused_index < text_areas.len() - 1 {
+        //                     focused_index += 1;
+        //                 }
+        //             }
+        //             KeyCode::BackTab => {
+        //                 log::info!("index: {:?}", focused_index);
+        //                 if focused_index > 0 {
+        //                     focused_index -= 1;
+        //                 }
+        //             },
+        //             _ => {}
+        //         }
+        //         // Only pass input to the focused text area
+        //         if focused_index < text_areas.len() {
+        //             text_areas[focused_index].input_without_shortcuts(key);
+        //         } else if focused_index == text_areas.len() {
+        //             checkin_notes.input_without_shortcuts(key);
+        //         } else if focused_index == text_areas.len() + 1 {
+        //             recommendations.input_without_shortcuts(key);
+        //         }
+        //     }
+        //     Event::Mouse(mouse) => {
+        //         handle_mouse_event(mouse, &mut button_states, &mut selected_button);
+        //     },
+        //     _ => {}
+        // }
     }
     Ok(())
+}
+
+fn render_fields(frame: &mut Frame, app: &App) {
+    match &app.submissions {
+        Some(fields) => frame.render_widget(Paragraph::new(fields.join("\n")), frame.area()),
+        None => frame.render_widget(app.form.widget(), frame.area()),
+    }
 }
 
 fn ui(
@@ -550,7 +532,6 @@ impl Button<'_> {
     }
 }
 
-
 pub enum FieldStatus {
     Valid,
     Invalid,
@@ -625,29 +606,31 @@ pub(crate) struct FieldBuffer {
     val: String,
 }
 
-impl From<Vec<(&str, &str)>> for Form {
-    fn from(value: Vec<(&str, &str)>) -> Self {
-        Self {
-            fields: value
-                .into_iter()
-                .map(|(d_name, d_val)| FieldBuffer {
-                    name: d_name.to_string(),
-                    val: d_val.to_string(),
-                })
-                .collect(),
-            ..Default::default()
-        }
-    }
-}
+// impl From<Vec<(&str, &str)>> for Form {
+//     fn from(value: Vec<(&str, &str)>) -> Self {
+//         Self {
+//             fields: value
+//                 .into_iter()
+//                 .map(|(d_name, d_val)| FieldBuffer {
+//                     name: d_name.to_string(),
+//                     val: d_val.to_string(),
+//                 })
+//                 .collect(),
+//             ..Default::default()
+//         }
+//     }
+// }
 
-impl From<Vec<&str>> for Form {
+impl <'a> From<Vec<&str>> for Form <'a>{
     fn from(value: Vec<&str>) -> Self {
         Self {
             fields: value
                 .into_iter()
-                .map(|d_name| FieldBuffer {
-                    name: d_name.to_string(),
-                    val: String::new(),
+                .map(|d_name| {
+                    let mut field = TextArea::default();
+                    field.set_cursor_line_style(Style::default());
+                    field.set_block(Block::default().borders(Borders::ALL).title(d_name));
+                    field.clone()
                 })
                 .collect(),
             ..Default::default()
@@ -655,14 +638,14 @@ impl From<Vec<&str>> for Form {
     }
 }
 
-impl From<Vec<FieldBuffer>> for Form {
-    fn from(value: Vec<FieldBuffer>) -> Self {
-        Self {
-            fields: value,
-            ..Default::default()
-        }
-    }
-}
+// impl <'a>From<Vec<FieldBuffer>> for Form {
+//     fn from(value: Vec<FieldBuffer>) -> Self {
+//         Self {
+//             fields: value,
+//             ..Default::default()
+//         }
+//     }
+// }
 
 /// A widget to display data in a collection of fields, and allow editing of a currently selected
 /// field.
@@ -684,9 +667,9 @@ impl From<Vec<FieldBuffer>> for Form {
 /// form.append_selection('a');
 /// assert!(form.status()[0].is_valid());
 /// ```
-pub struct Form {
+pub struct Form <'a>{
     selected: FormSelection,
-    pub fields: Vec<FieldBuffer>,
+    pub fields: Vec<TextArea<'a>>,
     pub submitted: bool,
     validation_fn: Box<dyn Fn(&str) -> bool + 'static>,
     pub default_field_style: Style,
@@ -695,7 +678,7 @@ pub struct Form {
     pub active_field_style: Style,
 }
 
-impl Default for Form {
+impl <'a>Default for Form <'a>{
     fn default() -> Self {
         Self {
             selected: FormSelection::NoSelection,
@@ -710,7 +693,7 @@ impl Default for Form {
     }
 }
 
-impl Form {
+impl <'a> Form <'a>{
     /// Create a new [`Form`] from a slice of field titles and a validator function.
     /// `validation_fn` is used to mark fields as either valid or invalid when `.status()` is called.
     pub fn new(fields: &[&str], validation_fn: impl Fn(&str) -> bool + 'static) -> Self {
@@ -774,55 +757,30 @@ impl Form {
     }
 
     /// Handle default input for the form.
-    pub fn input(&mut self, key: KeyCode) {
+    pub fn input(&mut self, key: KeyEvent) {
         if let FormSelection::Active(i) = self.selected {
-            match key {
-                KeyCode::Enter => self.next_field(),
-                KeyCode::Esc => self.select(FormSelection::Hovered(i)),
-                KeyCode::Backspace => self.pop_field(i),
-                KeyCode::Char(ch) => self.append_field(ch, i),
-                _ => {}
-            }
+            // match key {
+            //     KeyCode::Enter => self.next_field(),
+            //     KeyCode::Esc => self.select(FormSelection::Hovered(i)),
+            //     KeyCode::Backspace => self.pop_field(i),
+            //     KeyCode::Char(ch) => self.append_field(ch, i),
+            //     _ => {}
+            // }
+            match ke
         } else {
-            match key {
-                KeyCode::Esc => self.select(FormSelection::NoSelection),
-                KeyCode::Char('j') => self.next_field(),
-                KeyCode::Char('k') => self.prev_field(),
-                KeyCode::Enter => {
-                    if let FormSelection::Hovered(i) = self.selected {
-                        self.selected = FormSelection::Active(i)
-                    } else {
-                        self.selected = FormSelection::Active(0)
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    fn pop_field(&mut self, field: usize) {
-        self.fields[field].val.pop();
-    }
-
-    fn append_field(&mut self, ch: char, field: usize) {
-        self.fields[field].val.push(ch)
-    }
-
-    /// Append a char to the active field (if one is)
-    pub fn append_selection(&mut self, ch: char) {
-        match self.selected() {
-            FormSelection::NoSelection => {}
-            FormSelection::Hovered(_) => {}
-            FormSelection::Active(i) => self.append_field(ch, *i),
-        }
-    }
-
-    /// Remove a char frome the active field (if one is)
-    pub fn pop_selection(&mut self) {
-        match self.selected() {
-            FormSelection::NoSelection => {}
-            FormSelection::Hovered(_) => {}
-            FormSelection::Active(i) => self.pop_field(*i),
+            // match key {
+            //     KeyCode::Esc => self.select(FormSelection::NoSelection),
+            //     KeyCode::Char('j') => self.next_field(),
+            //     KeyCode::Char('k') => self.prev_field(),
+            //     KeyCode::Enter => {
+            //         if let FormSelection::Hovered(i) = self.selected {
+            //             self.selected = FormSelection::Active(i)
+            //         } else {
+            //             self.selected = FormSelection::Active(0)
+            //         }
+            //     }
+            //     _ => {}
+            // }
         }
     }
 
@@ -885,7 +843,7 @@ impl Form {
     }
 }
 
-pub struct Renderer<'a>(&'a Form);
+pub struct Renderer<'a>(&'a Form<'a>);
 
 impl<'a> Renderer<'a> {
     pub fn new(form: &'a Form) -> Self {
