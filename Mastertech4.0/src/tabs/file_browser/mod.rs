@@ -413,7 +413,9 @@ impl FileBrowser{
                     {
                         let is_selected = self.selected_items.borrow().contains(path);
                         let selectable_label = ui.selectable_label(is_selected, RichText::new(&label));
-                    
+                        if selectable_label.clicked(){
+                            info!("label:path {:?} // {:?}", &label, &path);
+                        }
                         if selectable_label.secondary_clicked() && !self.folder_metadata.borrow().contains_key(path){
                             match command_sender5.send(Some(Command::ReadMetadata(path.clone()))) {
                                 Ok(_) => drop(command_sender5),

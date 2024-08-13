@@ -1,5 +1,5 @@
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::{read_folder, FileBrowser}};
-use database::{schema::{utilities::{deserialize_command, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{utilities::{check_id_existence, deserialize_command, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
 use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem};
 use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
@@ -62,19 +62,35 @@ impl MastertechContext{
                     ..Default::default()
                 };
 
-                info!("Client: {:?}", connected_client);
+                
 
                 let tx = self.connected_clients_tx.clone();
                 spawn(async move {
-                    let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                        .query("CREATE connected_client CONTENT $content")
-                        .bind(("content", connected_client.clone()))
-                        .await?.take(0);
+                    if let Some(id) = check_id_existence(CONNECTED_CLIENT_TABLE, connected_client.clone()).await? {
+                        info!("Client: {id:?} already exists");
+                        
+                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                            .query("UPDATE $id SET connected = true")
+                            .bind(("id", id.clone()))
+                            .await?.take(0);
 
-                    match res{
-                        Ok(data) => tx.try_send(data.clone())?,
-                        Err(e) => info!("Error Creating Client: {e:?}"),
+                        match res{
+                            Ok(data) => tx.try_send(data.clone())?,
+                            Err(e) => info!("Error Updating Client: {e:?}"),
+                        }
+                    } else {
+                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                            .query("CREATE connected_client CONTENT $content")
+                            .bind(("content", connected_client.clone()))
+                            .await?.take(0);
+
+                        match res{
+                            Ok(data) => tx.try_send(data.clone())?,
+                            Err(e) => info!("Error Creating Client: {e:?}"),
+                        }
                     }
+
+
                     Ok::<(), Error>(())
                 });
 
@@ -173,7 +189,7 @@ impl WebConsoleFrontend {
             self.ws_sender.send(WsMessage::Binary(std::mem::take(cmd_output)));
         }
 
-        if self.timeout_counter.elapsed().as_secs() > 10 { info!("Its been over 10 seconds since last ping"); }
+        // if self.timeout_counter.elapsed().as_secs() > 10 { info!("Its been over 10 seconds since last ping"); }
 
         for event in self.events.clone() {
             match event{

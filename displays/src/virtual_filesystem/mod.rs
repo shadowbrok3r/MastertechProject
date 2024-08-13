@@ -367,6 +367,10 @@ impl FileSystem {
                 self.progress += y as f64;
             }
         }
+        if self.progress == self.total_size {
+            self.progress = 0.0;
+            self.total_size = 0.0;
+        }
         ProgressBar::new(self.progress as f32/ self.total_size as f32).show_percentage().fill(Color32::from_rgba_premultiplied(50, 10, 50, 65)).ui(ui);
     }
 
