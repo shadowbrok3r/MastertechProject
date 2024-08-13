@@ -124,16 +124,6 @@ impl WebSocketClient{
                             info!("Text data: {txt:#?}");
                             self.history.push(txt.clone());
                         },
-                        WsMessage::Ping(_bytes) => {
-                            self.loading = false;
-                            info!("Ping");
-                            self.timeout_counter = Instant::now();
-                            
-                        },
-                        WsMessage::Pong(_bytes) => {
-                            info!("Pong");
-                            self.timeout_counter = Instant::now();
-                        },
                         _ => {}
                     }
                 },
@@ -315,6 +305,7 @@ impl WebSocketClient{
                 // info!("\nsysinfo: CPU %: {percentages:?}, \nCPU Clock: {clocks:?}, \nRAM usage: {ram:?}");
                 // let temps_plot = LinePlot::new(&[0.0], &temps.as_slice());
                 let width = ui.available_width() - 50.0;
+                // self.timeout_counter.elapsed().as_secs()
                 let mut cpu_usage_plot = LinePlot::new(&[0.0], &percentages.as_slice(), width);
                 let mut cpu_clock_plot = LinePlot::new(&[0.0], &clocks.as_slice(), width);
                 let mut ram_usage_plot = LinePlot::new(&[0.0], &ram.as_slice(), width);

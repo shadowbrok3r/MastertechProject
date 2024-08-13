@@ -46,6 +46,7 @@ impl<'a> LinePlot<'a> {
     }
 
     pub fn line(&self, name: &str, color: Color32) -> Line {
+        // PlotPoints::new([f32, f32])
         Line::new(PlotPoints::from_ys_f32(self.y_values))
             .color(color)
             .style(LineStyle::Solid)
@@ -65,7 +66,6 @@ impl<'a> LinePlot<'a> {
                 self.time = 0.0;
             }
         };
-
 
         let mut plot = Plot::new(plot_name)
             .legend(Legend::default().position(Corner::RightTop).text_style(TextStyle::Small))
