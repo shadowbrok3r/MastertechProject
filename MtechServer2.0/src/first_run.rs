@@ -141,7 +141,6 @@ impl MtechServer {
             //     info!("Have live bridge");
             //     live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
             // }
-
             let toast = &mut self.context.toasts;
             let auth_toast = Toast{
                 kind: ToastKind::Success,

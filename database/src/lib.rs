@@ -83,7 +83,7 @@ pub fn get_db_url() -> String {
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
 
-        DATABASE.connect::<Wss>(&get_db_url()).await?;
+        DATABASE.connect::<Wss>(DB_URL_DEV).await?; //(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt{
@@ -143,9 +143,9 @@ impl Database{
 
     
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
-        let db_url = get_db_url();
+        // let db_url = get_db_url();
         // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
-        DATABASE.connect::<Wss>(&db_url).await?;
+        DATABASE.connect::<Wss>(DB_URL_DEV).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE.signup(

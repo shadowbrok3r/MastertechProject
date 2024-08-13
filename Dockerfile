@@ -1,4 +1,5 @@
-FROM --platform=$BUILDPLATFORM rust:latest 
+FROM rust:1.80  
+# --platform=$BUILDPLATFORM 
 # rustlang/rust:nightly
 WORKDIR /
 RUN rustup target add wasm32-unknown-unknown
@@ -13,13 +14,17 @@ COPY MtechServer2.0 MtechServer2.0
 # COPY websocket_server websocket_server
 COPY displays displays
 COPY database database
-RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.20.2/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
+RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.20.3/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 # COPY Trunk.toml Trunk.toml
 COPY Cargo.toml Cargo.toml
+COPY .cargo .cargo
+COPY rust-toolchain.toml rust-toolchain.toml
 RUN mv trunk MtechServer2.0/trunk
+
 # COPY .cargo /.cargo
 # COPY index.html index.html 
 # COPY rust-toolchain.toml rust-toolchain.toml 
+RUN rustup show
 WORKDIR /MtechServer2.0
 ENTRYPOINT [ "/MtechServer2.0/trunk" ]
 CMD [ "serve", "--release", "--skip-version-check"]
