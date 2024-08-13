@@ -1,5 +1,6 @@
 use database::{live_data::{handle_live_create, handle_live_delete, handle_live_update, listen_data, listen_task_notes, listen_tasks}, schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks}};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use eframe::egui::{Color32, RichText};
 use crate::utilities::get_data::get_customer_data;
 use crate::app_state::{AppState, MtechServer};
 use wasm_bindgen_futures::spawn_local;
@@ -247,6 +248,24 @@ impl MtechServer {
 
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
             info!("new_client: {action:?} // {new_client:?}");
+            
+            let toast = &mut self.context.toasts;
+
+            let txt = if new_client.connected { 
+                RichText::new(
+                    format!("Client has connected: {:?}", &new_client.connection_string)
+                ).color(Color32::LIGHT_GREEN) 
+            } else {                 
+                RichText::new(
+                    format!("Client has disconnected: {:?}", &new_client.connection_string)
+                ).color(Color32::LIGHT_RED)  };
+                
+            let toast_opts = ToastOptions::default().show_progress(true).duration_in_seconds(5.0);
+
+            let client_connected_toast = Toast{ kind: ToastKind::Success, text: txt.into(), options: toast_opts };
+
+            toast.add(client_connected_toast);
+
             match action{
                 Action::Create => handle_live_create(&mut self.context.clients, new_client.clone()).unwrap_or(()),
                 Action::Update => handle_live_update(&mut self.context.clients, new_client.clone()).unwrap_or(()),

@@ -596,13 +596,14 @@ impl ClientHandler for ConnectedClient {
         let id = self.id.clone().unwrap().0;
         spawn_local(async move {
             DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("history", history.clone()).await.unwrap();
-            let query = "UPDATE $id SET command_history = $history";
+            DATABASE.set("history", Some(history.clone())).await.unwrap();
+            let query = "UPDATE $id SET command_history += $history";
             let update_history: Result<Response, surrealdb::Error> = DATABASE
                 .query(query)
                 .await;
 
-            info!("History: {update_history:#?}");
+            info!("History Response: {update_history:?}");
+            info!("History: {:#?}", history.clone());
         });
      }
 

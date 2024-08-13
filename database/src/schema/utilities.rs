@@ -68,9 +68,25 @@ pub async fn query_id<'a, T>(table: &'a str, id: T)
     -> Result<Option<Record>, Error>
         where T: Serialize + Debug + Clone
 {
-    let query = format!("SELECT * FROM {table} WHERE id == ${table}");
-    DATABASE.set(table, id).await.unwrap();
-    let record: Option<Record> = DATABASE.query(query.clone()).await?.take(0).unwrap();
+    let query = format!("SELECT * FROM $table WHERE id == $id");
+    DATABASE.set("id", id).await?;
+    DATABASE.set("table", table).await?;
+    let record: Option<Record> = DATABASE.query(query.clone()).await?.take(0)?;
+    info!("Query: {:?}  // {}", record, query);
+    Ok(record)
+}
+
+pub async fn check_id_existence<'a, T>(table: &'a str, id: T) 
+    -> Result<Option<bool>, Error>
+        where T: Serialize + Debug + Clone
+{
+    let query = format!(r#"
+        LET $query = (SELECT $id FROM $table);
+        IF $query != NULL || NONE {{ true }} ELSE {{ false }};
+    "#);
+    DATABASE.set("id", id).await?;
+    DATABASE.set("table", table).await?;
+    let record: Option<bool> = DATABASE.query(query.clone()).await?.take(1)?;
     info!("Query: {:?}  // {}", record, query);
     Ok(record)
 }

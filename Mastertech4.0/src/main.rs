@@ -130,9 +130,6 @@ impl eframe::App for MasterTechApp {
                     self.context.current_user = db.user.clone();
                     let initial_tasks_tx = self.context.initial_tasks_tx.clone();
                     if let Some(usr) = db.user {
-
-                        self.context.toolbox.set_user(usr.clone());
-
                         if let (
                             Some(access_key), Some(secret_key)
                         ) = (
@@ -141,9 +138,9 @@ impl eframe::App for MasterTechApp {
 
                             self.context.toolbox.access_key = access_key.clone();
                             self.context.toolbox.secret_key = secret_key.clone();
-
+                            self.context.toolbox.set_user(usr.clone());
                             let minio_tx = self.context.minio_files.0.clone();
-                            let name = usr.name.clone();
+                            let name = usr.email.clone();
                             let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
 
                             spawn(async move {

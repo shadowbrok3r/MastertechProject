@@ -1,6 +1,6 @@
 use rusty_s3::{actions::ListObjectsV2, Bucket, Credentials, S3Action, UrlStyle::Path};
 use web_time::Duration;
-use reqwest::{Client, Url};
+use reqwest::{header::ACCEPT_ENCODING, Client, Url};
 use anyhow::{Error, Result};
 use log::info;
 
@@ -22,11 +22,17 @@ pub async fn list_buckets(url: String, access_key: String, secret_key: String, n
     
     let client = Client::new();
 
-    let resp = client.get(signed_url).send().await?.error_for_status()?;
+    let resp = client
+        .get(signed_url)
+        .header(ACCEPT_ENCODING, "br")
+        .send()
+        .await?
+        .error_for_status()?;
+    info!("response: {resp:?}");
     let text = resp.text().await?;
 
-    let parsed = ListObjectsV2::parse_response(&text).unwrap();
-    info!("response: {parsed:?}");
+    let parsed = ListObjectsV2::parse_response(&text)?;
+    
 
     let mut vec = Vec::new();
 
