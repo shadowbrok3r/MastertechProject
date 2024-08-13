@@ -108,7 +108,7 @@ impl MastertechContext{
             ");
             if self.send_specs == true{
                 self.output_text.clear();
-                self.output_text += "pulling system information. Please wait a moment..\n";
+                self.output_text += "pulling SysInfo. Please wait a moment..\n";
                 let system_name = &self.computer_data.hostname;
                 let os = &self.computer_data.operating_system;
                 let cpu_name = &self.computer_data.cpu;

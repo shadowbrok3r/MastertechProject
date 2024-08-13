@@ -19,7 +19,7 @@ impl MasterTechApp {
                         &"Part Order".to_string(),
                         &"Scripts" .to_string(),
                         &"File Browser 📂".to_string(),
-                        &"System Information".to_string(),
+                        &"SysInfo".to_string(),
                         &"Minidump Analysis".to_string(),
                         &"QC ☑️".to_string(),
                         &"Tasks" .to_string(),

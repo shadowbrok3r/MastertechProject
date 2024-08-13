@@ -16,7 +16,7 @@ pub mod websockets;
 pub mod logger;
 pub mod part_order;
 pub mod toolbox;
-
+pub mod resource_mon;
 
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
