@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::*;
 use std::error::Error;
 
-const TOKEN: &str = "Bearer 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";
+const TOKEN: &str = "Bearer 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";
 
 pub async fn create_new_issue(title: String, body: String, client: reqwest::Client)  
     -> anyhow::Result<String, anyhow::Error> 
@@ -21,7 +21,7 @@ pub async fn create_new_issue(title: String, body: String, client: reqwest::Clie
     });
 
     let res = client
-        .post("https://api.github.com/repos/shadowbrok3r/Mastertech4.0/issues")
+        .post("https://api.github.com/repos/shadowbrok3r/MastertechProject/issues")
         .header(AUTHORIZATION, TOKEN)
         .header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "Mastertech")

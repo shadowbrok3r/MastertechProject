@@ -11,8 +11,6 @@ use anyhow::{Result, Error};
 use surrealdb::sql::Thing;
 use bincode::serialize;
 use tracing::info;
-#[allow(unreachable_code)]
-pub mod websocket;
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {

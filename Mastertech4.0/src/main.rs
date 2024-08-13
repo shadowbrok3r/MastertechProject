@@ -388,26 +388,26 @@ async fn main() -> eframe::Result<()> {
         log_file
     ).unwrap();
 
-    // #[cfg(feature = "gui")]
-    // let eframe_app = eframe::run_native(
-    //     format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
-    //     eframe::NativeOptions {
-    //         viewport: ViewportBuilder::default().with_inner_size([945.0, 750.0])
-    //             .with_drag_and_drop(true).with_icon(load_icon()),
-    //         ..Default::default()
-    //     },
-    //     Box::new(|cc| Ok(Box::new(MasterTechApp::new(cc)))),
-    // );
+    #[cfg(feature = "gui")]
+    let eframe_app = eframe::run_native(
+        format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
+        eframe::NativeOptions {
+            viewport: ViewportBuilder::default().with_inner_size([945.0, 750.0])
+                .with_drag_and_drop(true).with_icon(load_icon()),
+            ..Default::default()
+        },
+        Box::new(|cc| Ok(Box::new(MasterTechApp::new(cc)))),
+    );
 
-    // if let Err(e) = eframe_app {
-    //     info!("Error running eframe_native: {e:?} \nswitching to secondary application");
+    if let Err(e) = eframe_app {
+        info!("Error running eframe_native: {e:?} \nswitching to secondary application");
         #[cfg(feature="term")] {
             let res = run_terminal_mode();
             if let Err(e) = res {
                 info!("Error running terminal app: {e:?}");
             }   
         }
-    // }
+    }
 
     Ok(())
 }

@@ -7,13 +7,13 @@ use reqwest::{header::{ACCEPT, CONTENT_TYPE, USER_AGENT}, Client};
 use serde_json::Value;
 use tokio::{fs::File, io::AsyncWriteExt};
 
-const TOKEN: &str = "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";
+const TOKEN: &str = "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";
 const _CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
     let mut downloaded_bytes: u64 = 0;
     
-    let response: Value = client.get("https://api.github.com/repos/shadowbrok3r/Mastertech4.0/releases/latest") 
+    let response: Value = client.get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases/latest") 
         .header(ACCEPT, "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header(USER_AGENT, "shadowbrok3r")

@@ -82,7 +82,7 @@ impl GithubIssue {
 
 pub async fn create_new_issue(title: String, body: String, client: Client) -> anyhow::Result<String, anyhow::Error> {
     let params = serde_json::json!({ "title": title, "body": body, "assignees": ["shadowbrok3r"], "labels": ["bug"] });
-    let res = client.post("https://api.github.com/repos/shadowbrok3r/MtechServer2.0/issues")
+    let res = client.post("https://api.github.com/repos/shadowbrok3r/MastertechProject/issues")
         .bearer_auth(TOKEN).header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "MtechServer")
         .header("X-GitHub-Api-Version", "2022-11-28")

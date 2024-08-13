@@ -18,7 +18,7 @@ use crate::{
         minidump::MiniDumpApp, scripts::Scripts, 
         tur_sheet::{get_ticket::SendRequest, 
             scaffold::{self, HardwareTest}}, 
-        websockets::{websocket::TerminalFrontend, WebConsoleFrontend}
+        websockets::WebConsoleFrontend
     }, 
     utilities::{
         displays::{
@@ -71,7 +71,7 @@ pub struct MastertechContext {
     pub frontend: Option<WebConsoleFrontend>,
     pub minidump_app: MiniDumpApp,
     pub file_browser: Arc<Mutex<FileBrowser>>,
-    pub terminal_frontend: Option<TerminalFrontend>,
+    // pub terminal_frontend: Option<TerminalFrontend>,
     // pub terminal: Terminal<RataguiBackend>,
 
     pub keys: GetKeysResponse,
@@ -228,7 +228,7 @@ impl MasterTechApp {
         let mastertech_context = MastertechContext {
             current_user: None,
             // terminal: Terminal::new(backend).unwrap(),
-            terminal_frontend: None,
+            // terminal_frontend: None,
 
             url: None,
             error: Default::default(),
