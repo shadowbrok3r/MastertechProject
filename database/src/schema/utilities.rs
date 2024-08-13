@@ -76,20 +76,20 @@ pub async fn query_id<'a, T>(table: &'a str, id: T)
     Ok(record)
 }
 
-pub async fn check_id_existence<'a, T>(table: &'a str, id: T) 
-    -> Result<Option<bool>, Error>
-        where T: Serialize + Debug + Clone
-{
-    let query = format!(r#"
-        LET $query = (SELECT $id FROM $table);
-        IF $query != NULL || NONE {{ true }} ELSE {{ false }};
-    "#);
-    DATABASE.set("id", id).await?;
-    DATABASE.set("table", table).await?;
-    let record: Option<bool> = DATABASE.query(query.clone()).await?.take(1)?;
-    info!("Query: {:?}  // {}", record, query);
-    Ok(record)
-}
+// pub async fn check_id_existence<'a, T>(table: &'a str, id: T) 
+//     -> Result<Option<bool>, Error>
+//         where T: Serialize + Debug + Clone
+// {
+//     let query = format!(r#"
+//         LET $query = (SELECT $id FROM $table);
+//         IF $query != NULL || NONE {{ true }} ELSE {{ false }};
+//     "#);
+//     DATABASE.set("id", id).await?;
+//     DATABASE.set("table", table).await?;
+//     let record: Option<bool> = DATABASE.query(query.clone()).await?.take(1)?;
+//     info!("Query: {:?}  // {}", record, query);
+//     Ok(record)
+// }
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
     bincode::serialize(system_info).expect("Failed to serialize SystemInformation")

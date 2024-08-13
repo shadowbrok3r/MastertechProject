@@ -41,7 +41,7 @@ egui_extras = { workspace=true }
 egui_dock = { workspace=true }
 anyhow = { workspace=true }
 eframe = { workspace=true }
-ratframe = { workspace=true }
+# ratframe = { workspace=true }
 ratatui = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }

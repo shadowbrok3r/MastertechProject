@@ -1,0 +1,3 @@
+[toolchain]
+channel = "stable"  # You can change this to "nightly" or any specific version if needed.
+targets = ["wasm32-unknown-unknown"]

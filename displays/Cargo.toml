@@ -25,7 +25,7 @@ eframe = { workspace=true }
 log = { workspace=true }
 serde = { workspace=true }
 fuzzy-matcher = { workspace=true }
-surrealdb = { workspace=true }
+surrealdb-alpha = { workspace=true }
 egui_extras = { workspace=true }
 chrono = { workspace=true }
 serde_json = { workspace=true }
