@@ -190,7 +190,7 @@ impl MasterTechApp {
         let [_a, b] = tree.main_surface_mut()
             .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(), "Logs".to_owned(), "Websockets".to_owned()]);
         let [_, _] = tree.main_surface_mut()
-            .split_left(b, 0.45, vec!["System Information".to_owned(),"Bug Tracker".to_owned()]);
+            .split_left(b, 0.45, vec!["SysInfo".to_owned(),"Bug Tracker".to_owned()]);
         let [_, _] = tree.main_surface_mut()
             .split_left(b,0.20,vec!["Scripts".to_owned(), "ToolBox".to_owned()]);
 
@@ -413,7 +413,7 @@ impl TabViewer for MastertechContext {
             "Scripts" => self.scripts(ui),
             "ToolBox" => self.toolbox(ui),
             "File Browser 📂" => self.file_browse(ui),
-            "System Information" => self.system_information(ui),
+            "SysInfo" => self.system_information(ui),
             "Minidump Analysis" => self.mini_dump(ui),
             "QC ☑️" => self.quality_check(ui),
             "Tasks" => self.mastertech_website(ui),
@@ -421,7 +421,7 @@ impl TabViewer for MastertechContext {
             "Websockets" => self.websockets(ui),
             // "Logs" => logger_ui().show(ui),
             _ => {
-                let sysinfo_tab = &"System Information".to_string();
+                let sysinfo_tab = &"SysInfo".to_string();
                 if ui.label(tab.as_str()).clicked(){
                     if tab.as_str() == sysinfo_tab{
                         self.specs_first_run = true;

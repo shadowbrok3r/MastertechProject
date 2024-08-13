@@ -140,5 +140,7 @@ impl MastertechContext{
                 });
             });
         });
+
+        // self.resource_monitor(ui);
     }
 }

@@ -223,6 +223,7 @@ impl eframe::App for MtechServer {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
                     self.context.first_run = true;
+                    self.first_run();
                     self.state = AppState::Authenticated(MainPages::Tasks);
                 } else {
                     self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())

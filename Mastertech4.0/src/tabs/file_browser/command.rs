@@ -3,7 +3,7 @@ use std::{env, path::PathBuf};
 use crossbeam::channel;
 use fs_extra::dir::get_size;
 use log::debug;
-use tokio::fs;
+use tokio::{fs, spawn};
 use tracing::info;
 
 use crate::tabs::file_browser::{io::MetaData, read_folder};
@@ -63,6 +63,10 @@ impl FileBrowser{
 
             Command::Copy(source, destination, progress_tx) => {
                 info!("Source: {source:?}");
+                
+                // spawn(async move {
+                //     run_robocopy(source.get(0).unwrap(), &destination, log_output).await;
+                // });
                 std::thread::spawn(move ||{
                     for entry in source{
                         CopyBuilder::new(entry, destination.clone())
@@ -160,3 +164,48 @@ impl FileBrowser{
     }
 
 }
+
+// async fn run_robocopy(source: &PathBuf, destination: &PathBuf, log_output: Arc<Mutex<String>>) {
+//     let mut command = Command::new("robocopy")
+//         .arg(source)
+//         .arg(destination)
+//         .arg("*.*")
+//         .arg("/S")
+//         .arg("/E")
+//         .arg("/COPY:DAT")
+//         .arg("/DCOPY:DAT")
+//         .arg("/R:0")
+//         .arg("/W:30")
+//         .arg("/ZB")
+//         .arg(format!("/MT:{}", System::new().physical_core_count().unwrap()))
+//         .stdout(Stdio::piped())
+//         .stderr(Stdio::piped())
+//         .spawn()
+//         .expect("Failed to execute robocopy command");
+
+//     let stdout = command.stdout.take().expect("Failed to open stdout");
+//     let stderr = command.stderr.take().expect("Failed to open stderr");
+
+//     let log_output_clone = Arc::clone(&log_output);
+//     let stdout_task = tokio::spawn(async move {
+//         let mut reader = BufReader::new(stdout).lines();
+//         while let Some(line) = reader.next_line().await.unwrap_or(None) {
+//             let mut log_output = log_output_clone.lock().await;
+//             log_output.push_str(&line);
+//             log_output.push('\n');
+//         }
+//     });
+
+//     let log_output_clone = Arc::clone(&log_output);
+//     let stderr_task = tokio::spawn(async move {
+//         let mut reader = BufReader::new(stderr).lines();
+//         while let Some(line) = reader.next_line().await.unwrap_or(None) {
+//             let mut log_output = log_output_clone.lock().await;
+//             log_output.push_str(&line);
+//             log_output.push('\n');
+//         }
+//     });
+
+//     stdout_task.await.unwrap();
+//     stderr_task.await.unwrap();
+// }
