@@ -6,7 +6,7 @@ use wasm_bindgen_futures::spawn_local;
 use crate::app_state::MtechServer;
 use crossbeam::channel::Sender;
 
-const TOKEN: &str = "Bearer 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";
+const TOKEN: &str = "Bearer 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";
 
 impl MtechServer{
     pub fn downloads_page(&mut self, ctx: &Context){
@@ -38,7 +38,7 @@ impl MtechServer{
 pub async fn run(_tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
     // let mut downloaded_bytes: u64 = 0;
     
-    let response: Value = Request::get("https://api.github.com/repos/shadowbrok3r/Mastertech4.0/releases/latest") 
+    let response: Value = Request::get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases/latest") 
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", "shadowbrok3r")

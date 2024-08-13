@@ -6,7 +6,7 @@ description = "Mastertech"
 build = "build.rs"
 
 [features]
-default = [ "gui", "inline", "term" ]
+default = [ "gui", "inline" ] # "term"
 gui = [ "dep:eframe" ]
 term = ["dep:tui-input", "dep:tui-textarea", "dep:ratatui"]
 inline = []
