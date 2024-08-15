@@ -1,4 +1,4 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Record as SurrealRec/*Scope*/}, Error, Surreal}; 
+use surrealdb::{engine::remote::ws::{Client as WsClient, Ws as Wss}, opt::auth::{Jwt, Record as SurrealRec}, Error, Surreal}; 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
@@ -83,14 +83,13 @@ pub fn get_db_url() -> String {
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
 
-        DATABASE.connect::<Wss>(DB_URL_DEV).await?; //(&get_db_url()).await?;
+        DATABASE.connect::<Wss>(DB_URL_LOCAL).await?; //(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt{
             Some(jwt) => {
                 info!("We already have a jwt, attempting token auth");
                 let auth = DATABASE.authenticate(jwt.clone()).await;
-                // Self::handle_auth(auth, jwt, username, password).await
                 match auth{
                     Ok(_) => {
                         info!("Auth ok");
@@ -111,16 +110,14 @@ impl Database{
             },
             None => {
                 info!("connecting");
-                // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
-                info!("signing in");
-                // database.use_ns(NS).use_db(DB).await?;
+                info!("signing in: {:?}", username.clone());
 
                 // Select a specific namespace / database
                 let jwt = DATABASE.signin(
                     SurrealRec { 
                         namespace: NS, 
                         database: DB, 
-                        access: USER_SCOPE, // access: "user"
+                        access: USER_SCOPE,
                         params: 
                             Auth{
                                 email: username.clone(), 
@@ -128,15 +125,15 @@ impl Database{
                             }
                     }
                 ).await?;
-                
-                let query = "SELECT id, name, everest_initials, email, store, minio_access_key, minio_secret_key FROM user WHERE email == $email";
+                info!("JWT {jwt:?}");
+                let query = "SELECT * FROM user WHERE email == $email";
                 DATABASE.set("email", username.clone().to_lowercase()).await?;
-                let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
-                info!("querying {:?}", user.clone());
-                    
-                let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
-
-                Ok(Self {jwt: Some(jwt), user: Some(usr) })
+                info!("About to query usr");
+                let mut user_res = DATABASE.query(query).await;
+                info!("user: {user_res:?}");
+                let user = user_res.unwrap().take(0)?;
+                info!("user: {user:?}");
+                Ok(Self {jwt: Some(jwt), user })
             },
         }
     }
@@ -144,8 +141,7 @@ impl Database{
     
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
         // let db_url = get_db_url();
-        // let database: Surreal<WsClient> = Surreal::new::<Wss>(db_url).await?;
-        DATABASE.connect::<Wss>(DB_URL_DEV).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Wss>(DB_URL_LOCAL).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE.signup(
@@ -156,18 +152,13 @@ impl Database{
         ).await?;
 
         info!("signup: {:?}", signup);
-        let query = "SELECT  id, name, everest_initials, email, store, minio_access_key, minio_secret_key FROM user WHERE email == $email";
-
+        let query = "SELECT * FROM user WHERE email == $email";
         DATABASE.set("email", email).await?;
-
-        let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
-            
-        let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
-
-        Ok(Self { jwt: Some(jwt), user: Some(usr) })
+        let user: Option<User> = DATABASE.query(query).await?.take(0)?;
+        Ok(Self { jwt: Some(jwt), user })
     }
 
-    pub async fn insert<T: Serialize>(&self, table: &str, record: T) -> Result<Vec<Record>, Error> {
+    pub async fn insert<T: Serialize + 'static>(&self, table: &str, record: T) -> Result<Vec<Record>, Error> {
         let created: Vec<Record> = DATABASE
             .create(table)
             .content(record)

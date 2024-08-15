@@ -66,7 +66,7 @@ impl MastertechContext{
 
                 let tx = self.connected_clients_tx.clone();
                 spawn(async move {
-                    if let Some(id) = check_id_existence(CONNECTED_CLIENT_TABLE, connected_client.clone()).await? {
+                    if let Some(id) = check_id_existence(CONNECTED_CLIENT_TABLE.to_string(), connected_client.clone()).await? {
                         info!("Client: {id:?} already exists");
                         
                         let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE

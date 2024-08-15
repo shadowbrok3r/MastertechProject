@@ -64,9 +64,9 @@ pub async fn query_user_from_email(email: String) -> Result<User, Error>{
     Ok(user.unwrap())
 }
 
-pub async fn query_id<'a, T>(table: &'a str, id: T) 
+pub async fn query_id<T>(table: String, id: T) 
     -> Result<Option<Record>, Error>
-        where T: Serialize + Debug + Clone
+        where T: Serialize + Debug + Clone + 'static
 {
     let query = format!("SELECT * FROM $table WHERE id == $id");
     DATABASE.set("id", id).await?;
@@ -76,20 +76,20 @@ pub async fn query_id<'a, T>(table: &'a str, id: T)
     Ok(record)
 }
 
-// pub async fn check_id_existence<'a, T>(table: &'a str, id: T) 
-//     -> Result<Option<bool>, Error>
-//         where T: Serialize + Debug + Clone
-// {
-//     let query = format!(r#"
-//         LET $query = (SELECT $id FROM $table);
-//         IF $query != NULL || NONE {{ true }} ELSE {{ false }};
-//     "#);
-//     DATABASE.set("id", id).await?;
-//     DATABASE.set("table", table).await?;
-//     let record: Option<bool> = DATABASE.query(query.clone()).await?.take(1)?;
-//     info!("Query: {:?}  // {}", record, query);
-//     Ok(record)
-// }
+pub async fn check_id_existence<T>(table: String, id: T) 
+    -> Result<Option<bool>, Error>
+        where T: Serialize + Debug + Clone + 'static
+{
+    let query = format!(r#"
+        LET $query = (SELECT $id FROM $table);
+        IF $query != NULL || NONE {{ true }} ELSE {{ false }};
+    "#);
+    DATABASE.set("id", id).await?;
+    DATABASE.set("table", table).await?;
+    let record: Option<bool> = DATABASE.query(query.clone()).await?.take(1)?;
+    info!("Query: {:?}  // {}", record, query);
+    Ok(record)
+}
 
 pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
     bincode::serialize(system_info).expect("Failed to serialize SystemInformation")

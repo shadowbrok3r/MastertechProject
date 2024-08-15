@@ -1,9 +1,7 @@
-# cargo-features = ["per-package-target"]
 [package]
 name = "database"
 version = "0.1.0"
 edition = "2021"
-# forced-target = "wasm32-unknown-unknown"
 
 [dependencies]
 reqwest = { version = "0.12", features = ["json"] }
@@ -11,7 +9,6 @@ lazy_static = "1"
 rusty-s3 = "0.5"
 web-time = { workspace=true }
 surrealdb-alpha = { workspace=true }
-# surrealdb = { workspace=true }
 serde_json = { workspace=true }
 dotenv = { workspace=true }
 serde = { workspace=true }

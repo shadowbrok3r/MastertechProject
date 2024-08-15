@@ -56,11 +56,11 @@ pub async fn send_payload(
     task_data.everest_initials = queried_salesman.everest_initials;
     task_data.assignee = queried_salesman.id;
 
-    if let Some(cust) = query_id(CUSTOMER_TABLE, customer_id).await?{
+    if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await?{
         let update_cust_record: Option<Record> = DATABASE.update(cust.id).content(customer_data.clone()).await?;
         info!("Customer updated: {update_cust_record:?}");
 
-        if let Some(computer_record) = query_id(COMPUTER_TABLE, computer_id).await?{
+        if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await?{
                 if send_specs{
             let create_computer_record: Option<Record> = DATABASE.update(computer_record.id).content(computer_data).await?;
             info!("create_computer_record: {create_computer_record:?}");
@@ -69,7 +69,7 @@ pub async fn send_payload(
             let create_computer_record: Vec<Record> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;
             info!("create_computer_record: {create_computer_record:?}");
         }
-        if let Some(ticket) = query_id(TICKET_TABLE, ticket_id).await?{
+        if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await?{
             let service_ticket_record: Option<Record> = DATABASE.update(ticket.id).content(ticket_data).await?;
             info!("service_ticket_record: {service_ticket_record:?}");
         }else{
@@ -98,7 +98,7 @@ pub async fn send_payload(
         info!("Task Notes: {:?}", task_notes);
         let mut note_ids = Vec::new();
         
-        for note in task_notes.iter_mut() {
+        for mut note in task_notes {
             note.task_id = task_id.clone();
             let create_task_note_record: Vec<Record> = DATABASE.create(TASK_NOTE_TABLE).content(note).await?;
             info!("create_task_note_record: {:?}", create_task_note_record);
