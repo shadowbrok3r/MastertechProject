@@ -50,6 +50,7 @@ fn decrypt_data(data: &[u8], key: &[u8]) -> Vec<u8> {
 pub fn save_encrypted_user_data(user_data: &Login, password: &[u8]) 
     -> anyhow::Result<(), anyhow::Error> 
 {
+    info!("User data: {user_data:?}");
     let salt = generate_salt();
     let key = generate_key(password, &salt);
     let serialized_data = bincode::serialize(user_data)?;
@@ -79,9 +80,9 @@ pub fn load_encrypted_user_data(password: &[u8]) -> Option<Login> {
             let encrypted_data = &data[SALT_LEN..];
             let key = generate_key(password, salt);
             let decrypted_data = decrypt_data(encrypted_data, &key);
-            info!("decrypted_data: {:?}", decrypted_data);
             // let login: Login = serde_json::from_slice(&decrypted_data).unwrap();
             let login: Login = bincode::deserialize(&decrypted_data).unwrap();
+            info!("decrypted_data: {:?}", login);
             Some(login)
         },
         Err(e) => {
