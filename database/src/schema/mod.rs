@@ -30,13 +30,13 @@ pub struct Record {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClientId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ComputerId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CustomerId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TicketId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -45,10 +45,10 @@ pub struct UserId(pub RecordId);
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TaskId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TaskNoteId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SebId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -236,7 +236,7 @@ pub struct HardwareTests{
     pub ram_test: String
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct TaskNotePayload{
     pub id: Option<TaskNoteId>,
     pub task_id: Option<TaskId>,
@@ -264,7 +264,7 @@ pub struct ModifyTask{
     pub task_description: Option<String>, 
 }
 
-#[derive(Serialize, Debug, Clone, Deserialize, Default)]
+#[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq)]
 pub struct ConnectedClient{ // <'a>
     pub id: Option<ClientId>,
     pub assigned_user: Option<UserId>,

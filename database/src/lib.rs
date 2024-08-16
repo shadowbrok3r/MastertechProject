@@ -1,4 +1,4 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Ws as Wss}, opt::auth::{Jwt, Record as SurrealRec}, Error, Surreal}; 
+use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Record as SurrealRec}, Error, Surreal}; 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
@@ -83,7 +83,7 @@ pub fn get_db_url() -> String {
 impl Database{
     pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
 
-        DATABASE.connect::<Wss>(DB_URL_LOCAL).await?; //(&get_db_url()).await?;
+        DATABASE.connect::<Wss>(DB_URL_DEV).await?; //(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt{
@@ -126,12 +126,9 @@ impl Database{
                     }
                 ).await?;
                 info!("JWT {jwt:?}");
-                let query = "SELECT * FROM user WHERE email == $email";
                 DATABASE.set("email", username.clone().to_lowercase()).await?;
                 info!("About to query usr");
-                let mut user_res = DATABASE.query(query).await;
-                info!("user: {user_res:?}");
-                let user = user_res.unwrap().take(0)?;
+                let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE email == $email").await.unwrap().take(0)?;
                 info!("user: {user:?}");
                 Ok(Self {jwt: Some(jwt), user })
             },
@@ -141,7 +138,7 @@ impl Database{
     
     pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
         // let db_url = get_db_url();
-        DATABASE.connect::<Wss>(DB_URL_LOCAL).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Wss>(DB_URL_DEV).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE.signup(
