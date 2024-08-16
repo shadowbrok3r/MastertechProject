@@ -10,7 +10,7 @@ use log::debug;
 use log::info;
 use mtechserver::webworker::Input;
 
-#[cfg(target_arch="wasm32")]
+// #[cfg(target_arch="wasm32")]
 use {
     crate::app_state::check_authentication,
     mtechserver::live_worker::LiveInput,
@@ -19,7 +19,7 @@ use {
 impl MtechServer {
     pub fn first_run(&mut self) {
         self.context.first_run = false;
-        #[cfg(target_arch="wasm32")]
+        // #[cfg(target_arch="wasm32")]
         match check_authentication(self.context.db_tx.clone()){
             Ok(d) => {
                 info!("1");
@@ -248,22 +248,31 @@ impl MtechServer {
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
             info!("new_client: {action:?} // {new_client:?}");
             
-            let toast = &mut self.context.toasts;
+            if let (Some(usr), Some(current_user)) = (&new_client.assigned_user, &self.context.current_user){
+                if usr == &current_user.id{
+                    let toast = &mut self.context.toasts;
+                    let txt = match action {
+                        Action::Create => RichText::new(
+                            format!("Client has connected: {}", &new_client.connection_string)
+                            ).color(Color32::LIGHT_GREEN),
+                        // Action::Update => RichText::new(
+                        //     format!("Client update: {:#?}", &new_client.clone())
+                        // ).color(Color32::LIGHT_BLUE),
+                        Action::Delete => RichText::new(
+                            format!("Client has disconnected: {}", &new_client.connection_string)
+                        ).color(Color32::LIGHT_RED),
+                        _ => RichText::new(
+                            format!("Client has connected: {}", &new_client.connection_string)
+                            ).color(Color32::LIGHT_GREEN),
+                    };
+                    let toast_opts = ToastOptions::default().show_progress(true).duration_in_seconds(5.0);
+        
+                    let client_connected_toast = Toast{ kind: ToastKind::Success, text: txt.into(), options: toast_opts };
+        
+                    toast.add(client_connected_toast);
+                }
+            }
 
-            let txt = if new_client.connected { 
-                RichText::new(
-                    format!("Client has connected: {:?}", &new_client.connection_string)
-                ).color(Color32::LIGHT_GREEN) 
-            } else {                 
-                RichText::new(
-                    format!("Client has disconnected: {:?}", &new_client.connection_string)
-                ).color(Color32::LIGHT_RED)  };
-                
-            let toast_opts = ToastOptions::default().show_progress(true).duration_in_seconds(5.0);
-
-            let client_connected_toast = Toast{ kind: ToastKind::Success, text: txt.into(), options: toast_opts };
-
-            toast.add(client_connected_toast);
 
             match action{
                 Action::Create => handle_live_create(&mut self.context.clients, new_client.clone()).unwrap_or(()),

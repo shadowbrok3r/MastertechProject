@@ -8,7 +8,6 @@ use crossbeam::channel::{self, Receiver, Sender};
 use mtechserver::{webworker::WebWorker, live_worker::{LiveOutput, LiveWorker}};
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-// use egui_ratatui::RataguiBackend;
 use gloo_worker::Spawnable;
 use surrealdb::Action;
 use ratatui::Terminal;
@@ -24,10 +23,6 @@ use crate::{
         DisplayModal, ModalType,TaskUiActions
     }
 };
-
-
-// pub const SECRET_KEY: &str = "lUVgT6KPAR7uPZriAC1QPqSTB9aW12oAmgegk6gO";
-// pub const ACCESS_KEY: &str = "DMAZwz4511ezKqEiF2vy";
 
 #[derive(Serialize)]
 pub struct MtechServer{
@@ -424,7 +419,7 @@ impl MtechServerContext{
     }
 }
 
-#[cfg(target_arch="wasm32")]
+// #[cfg(target_arch="wasm32")]
 pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(AppState, Option<User>), Error>{
     let cookie = wasm_cookies::get("jwt");
     let user_cookie = wasm_cookies::get("user");
