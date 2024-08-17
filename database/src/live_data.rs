@@ -56,15 +56,68 @@ pub fn handle_live_notes(
 }
 
 
+macro_rules! update_fields {
+    ($vec:expr, $updated:expr, $($field:ident),+) => {
+        if let Some(existing) = $vec.iter_mut().find(|foo| foo.id == $updated.id) {
+            $(
+                if existing.$field != $updated.$field {
+                    existing.$field = $updated.$field.clone();
+                }
+            )+
+        }
+    };
+}
+
+// extern crate proc_macro;
+// use proc_macro::TokenStream;
+// use quote::quote;
+// use syn::{parse_macro_input, DeriveInput};
+
+// #[proc_macro_derive(UpdateFields)]
+// pub fn update_fields_derive(input: TokenStream) -> TokenStream {
+//     let input = parse_macro_input!(input as DeriveInput);
+//     let name = input.ident;
+    
+//     let fields = if let syn::Data::Struct(data) = input.data {
+//         data.fields.iter().map(|f| {
+//             let ident = &f.ident;
+//             quote! {
+//                 if self.#ident != other.#ident {
+//                     self.#ident = other.#ident.clone();
+//                 }
+//             }
+//         })
+//     } else {
+//         unimplemented!();
+//     };
+    
+//     let expanded = quote! {
+//         impl #name {
+//             pub fn update_fields(&mut self, other: &Self) {
+//                 #(#fields)*
+//             }
+//         }
+//     };
+    
+//     TokenStream::from(expanded)
+// }
+
+
 pub fn handle_live_create<T: Serialize + for<'a> Deserialize<'a> + Debug>(existing_data: &mut Vec<T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     debug!("Data was Created: {:?}", new_data);
     existing_data.push(new_data);
     Ok(())
 }
 
-pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut Vec<T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
+pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug + PartialEq>(existing_data: &mut Vec<T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     debug!("Data was Updated: {:?}", new_data);
-
+    let index = existing_data.iter().position(|x| *x == new_data);
+    if let Some(idx) = index {
+        if let Some(dat) = existing_data.get_mut(idx) {
+            info!("Replacing existing_data@{idx} with -> {:?}", dat);
+            *dat = new_data;
+        }
+    }
     Ok(())
 }
 
