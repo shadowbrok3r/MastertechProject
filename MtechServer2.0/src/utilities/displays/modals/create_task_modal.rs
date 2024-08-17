@@ -1,13 +1,14 @@
-use database::{schema::{prestashop_schema::{Prestashop, Address, Customer, CustomerMessage, CustomerThread, Employee, Order, PrestashopPayload}, CustomerData, CustomerId, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, TicketId, User, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
+use database::{schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop, PrestashopPayload}, CustomerData, CustomerId, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, TicketId, User, UserId, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
+use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use super::{task_modal::{display_task_page, ModalAction}, ModalState};
 // use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use crate::utilities::{DisplayModal, ModalTypes};
+use crate::utilities::{get_data::get_user_from_email, DisplayModal, ModalTypes};
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::vec2;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use wasm_bindgen_futures::spawn_local;
 use surrealdb::sql::Thing;
 use serde::Serialize;
@@ -26,7 +27,7 @@ pub struct CreateTaskModal{
     pub task_priority: Priority,
     pub due_date: NaiveDate,
     pub description: String,
-    pub assignee: Option<User>,
+    pub assignee: String,
     #[serde(skip)]
     pub tur: Tur,
     #[serde(skip)]
@@ -173,7 +174,7 @@ impl CreateTaskModal {
             strip.cell(|ui|  self.tur.tur_sheet(ui));
 
             strip.strip(|s|{
-                s.size(Size::exact(35.0))
+                s.size(Size::exact(70.0))
                     .size(Size::exact(35.0))
                     .size(Size::exact(150.0))
                     .vertical(|mut s|
@@ -184,25 +185,32 @@ impl CreateTaskModal {
                             .margin(Margin::symmetric(6.0, 4.0))
                             .desired_width(200.0)
                             .ui(ui);
+
+                        let mut inputs = BTreeSet::new();
+                        
+                        if let Some(users) = &mut self.store_users{
+                            for user in users.iter(){
+                                let parsed = user.email.split_once("@").unwrap_or(("","")).0;
+                                inputs.insert(parsed.to_string());
+                            }
+                            let _result = AutoCompleteTextEdit::new(&mut self.assignee, inputs.clone())
+                                .highlight_matches(true)
+                                .max_suggestions(3)
+                                .set_text_edit_properties(move |text_edit| 
+                            {
+                                text_edit
+                                    .hint_text("Assignee")
+                                    .desired_width(200.0)
+                                    .font(FontId::proportional(12.0))
+                                    .frame(true)
+                            }).ui(ui);
+                        }
                     });
+                    
                     s.cell(|ui| {
                         ui.horizontal_top(|ui| {
-                            ui.add_space(60.0);
-                            if let Some(users) = &mut self.store_users{
-                                ui.style_mut().spacing.combo_width = 50.0;
-                                ComboBox::new("AssigneeComboBox", "")
-                                    .selected_text(self.assignee.as_ref().unwrap_or(users.get(0).as_ref().unwrap()).everest_initials.clone())
-                                    .show_ui(ui, |ui| 
-                                {
-                                    for user in users.iter_mut(){
-                                        let initials = user.everest_initials.clone();
-                                        let x = ui.selectable_value(&mut self.assignee, Some(user.to_owned()), &initials.clone());
-                                        if x.changed(){
-                                            info!("x changed: {:?}", self.assignee);
-                                        }
-                                    }
-                                });
-                            }
+                            ui.add_space(80.0);
+
                             ui.scope(|ui| 
                             {
                                 ui.style_mut().spacing.combo_width = 70.0;
@@ -245,36 +253,42 @@ impl CreateTaskModal {
                                 let time = NaiveTime::from_hms_milli_opt(0,0,0,0).unwrap();
                                 let date = NaiveDateTime::new(self.due_date, time);
                                 let y = date.and_utc().to_rfc3339();
-                                let usr = self.assignee
-                                    .as_ref()
-                                    .unwrap_or(
-                                        self.store_users.clone().unwrap_or(Vec::new())
-                                        .get(0)
-                                        .as_ref()
-                                        .unwrap()
-                                ).clone();
+                                let so = self.tur.ticket_data.service_number.clone();
+                                let service_number = if !so.is_empty() {
+                                    Some(so)
+                                } else { None };
 
-                                let task_payload = TaskPayload{
+                                let mut task_payload = TaskPayload{
                                     task_name: self.task_name.clone(),
-                                    everest_initials: usr.everest_initials,
                                     task_description: self.description.clone(),
-                                    assignee: usr.id,
                                     due_date: y,
                                     priority: self.task_priority.clone(),
                                     task_note: None,
                                     completed: false,
                                     status: Status::Todo,
-                                    // dep: format!("{:?}", usr.store),
+                                    service_number,
                                     ..Default::default()
                                 };
 
+                                let assignee = self.assignee.clone();
+
                                 spawn_local(async move{
-                                        let _: Vec<Record> = DATABASE
-                                        .create(TASK_TABLE)
-                                        .content(task_payload)
-                                        .await
-                                        .unwrap();
-                                });
+                                    let email = format!("{assignee}@pclaptops.com");
+                                    match get_user_from_email(email).await {
+                                        Ok(user) => {
+                                            if let Some(usr) = user {
+                                                task_payload.assignee = usr.id;
+                                                task_payload.everest_initials = usr.everest_initials;
+                                            }
+                                            let _: Vec<Record> = DATABASE
+                                                .create(TASK_TABLE)
+                                                .content(task_payload)
+                                                .await
+                                                .unwrap();
+                                        },
+                                        Err(e) => info!("Error getting user: {e:?}"),
+                                    }
+                                }); 
                             }
                         });
                     });

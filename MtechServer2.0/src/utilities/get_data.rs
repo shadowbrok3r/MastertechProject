@@ -1,6 +1,7 @@
 
+use anyhow::{Error, Result};
 use async_trait::async_trait;
-use database::{schema::{ComputerData, CustomerData, LiveTaskPayload, Record, TaskId, TaskNotePayload, TaskPayload, TicketData, TicketPayload, TASK_NOTE_TABLE}, DATABASE};
+use database::{schema::{ComputerData, CustomerData, LiveTaskPayload, Record, TaskId, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE}, DATABASE};
 use crossbeam::channel::Sender;
 use log::{debug,info};
 use mtechserver::live_worker::LiveOutput;
@@ -13,7 +14,7 @@ use crate::app_state::NewTicketChannel;
 
 use super::Task;
 
-pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Action, LiveTaskPayload)) -> anyhow::Result<(), anyhow::Error> {
+pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Action, LiveTaskPayload)) -> Result<(), Error> {
     debug!("get_associated_ticket");
     let service_num = new_task.1.clone().service_number.unwrap_or_default();
     DATABASE.set("service_num", service_num).await?;
@@ -25,7 +26,7 @@ pub async fn get_associated_ticket(tx: Sender<NewTicketChannel>, new_task: (Acti
     Ok(())
 }
 
-pub async fn get_customer_data(tx: Sender<LiveOutput>) -> anyhow::Result<(), anyhow::Error> { // tx: Sender<CustomerData>
+pub async fn get_customer_data(tx: Sender<LiveOutput>) -> Result<(), Error> { // tx: Sender<CustomerData>
     debug!("get_customers");
     let customers: Vec<CustomerData> = DATABASE.query("SELECT * FROM customer").await?.take(0)?;
     DATABASE.set("id", "value").await?;
@@ -36,16 +37,24 @@ pub async fn get_customer_data(tx: Sender<LiveOutput>) -> anyhow::Result<(), any
     Ok(())
 }
 
+pub async fn get_user_from_email(email: String) -> Result<Option<User>, Error> {
+    
+    DATABASE.set("email", email).await?;
+    let user_record: Option<User> = DATABASE.query("SELECT * FROM user WHERE email == $email")
+        .await?
+        .take(0)?;
 
+    Ok(user_record)
+}
 
 #[async_trait]
 pub trait TaskNoteMod {
-    async fn delete_note(&mut self) -> anyhow::Result<(), anyhow::Error>;
+    async fn delete_note(&mut self) -> Result<(), Error>;
 }
 
 #[async_trait]
 impl TaskNoteMod for TaskNotePayload {
-    async fn delete_note(&mut self) -> anyhow::Result<(), anyhow::Error> {
+    async fn delete_note(&mut self) -> Result<(), Error> {
         let id = self.id.clone();
         if let Some(id) = id {
             info!("deleting id: {:?}", id.clone());
@@ -57,7 +66,7 @@ impl TaskNoteMod for TaskNotePayload {
     }
 }
 
-pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Result<(), anyhow::Error>{
+pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> Result<(), Error>{
     let id = task_id.clone();
     let task_note = TaskNotePayload { task_id: Some(id), note: new_msg, ..Default::default() };
 
@@ -74,7 +83,7 @@ pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> anyhow::Resu
  
 #[async_trait]
 impl Task for TaskPayload{
-    async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error> 
+    async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> Result<Option<T>, Error> 
     {
         let id: RecordId = self.id.clone().unwrap().0;
             let query = format!(
@@ -89,7 +98,7 @@ impl Task for TaskPayload{
         Ok(get_data)
     }
 
-    async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error> 
+    async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> Result<Option<T>, Error> 
     {
         let id: RecordId = self.id.clone().unwrap().0;
             let query = format!(
@@ -105,7 +114,7 @@ impl Task for TaskPayload{
         
     }
     
-    async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error> 
+    async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> Result<Option<T>, Error> 
     {
         let id: RecordId = self.id.clone().unwrap().0;
             let query = format!(
@@ -120,7 +129,7 @@ impl Task for TaskPayload{
         Ok(get_data)
     }
 
-    async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> anyhow::Result<Option<T>, anyhow::Error> 
+    async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self) -> Result<Option<T>, Error> 
     {
         let id: RecordId = self.id.clone().unwrap().0;
             
@@ -131,7 +140,7 @@ impl Task for TaskPayload{
                 .take(0).unwrap();
         Ok(get_data)
     }
-    // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>)//-> anyhow::Result<(), anyhow::Error> 
+    // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>)//-> Result<(), Error> 
     //     where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static 
     // {
     //     let id: RecordId = self.service_ticket.clone().unwrap().clone().0;
