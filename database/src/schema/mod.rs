@@ -72,8 +72,8 @@ impl Default for UserId {
 }
 
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct TaskPayload{
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct TaskPayload {
     pub id: Option<TaskId>,
     pub task_name: String,
     pub service_ticket: Option<TicketPayload>,
@@ -83,12 +83,12 @@ pub struct TaskPayload{
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
-    pub task_note: Option<Vec<TaskNotePayload>>, // TaskNoteId
+    pub task_note: Option<Vec<TaskNotePayload>>,
     pub completed: bool,
     pub status: Status,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct LiveTaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
@@ -105,7 +105,7 @@ pub struct LiveTaskPayload{
     pub status: Status,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct TicketPayload{
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
@@ -127,7 +127,7 @@ pub struct TicketPayload{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct TicketData{ // Live Ticket Payload
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
@@ -148,7 +148,7 @@ pub struct TicketData{ // Live Ticket Payload
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
     pub cust_code: String,
@@ -162,7 +162,7 @@ pub struct CustomerData{
     pub num_inv: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct ComputerData{
     pub id: Option<ComputerId>,
     pub customer: Option<CustomerId>,
@@ -180,7 +180,7 @@ impl ComputerData{
     pub fn add_disk(&mut self, disk: DriveData){ self.drives.push(disk); }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 #[allow(non_snake_case)]
 #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 #[serde(rename = "xml")]
@@ -197,7 +197,7 @@ pub struct LocalSebData {
     pub ExtendedSeb: Option<ExtendedSeb>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 pub struct ExtendedSeb {
     pub email: String,
     pub phone: String,
@@ -221,7 +221,7 @@ pub struct ExtendedSeb {
     pub date_created: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DriveData{
     pub drive_letter: String,
     pub drive_type: String,
@@ -229,7 +229,7 @@ pub struct DriveData{
     pub space_left: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct HardwareTests{
     pub hdd_test: String,
     pub ssd_test: String,
@@ -277,7 +277,7 @@ pub struct ConnectedClient{ // <'a>
 }
 
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Notification{
     /// receiver of notification
     pub user: UserId,
@@ -289,7 +289,7 @@ pub struct Notification{
     pub status: String
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum NotificationType {
     NewMessage,
     SpoStatusChange,
