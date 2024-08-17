@@ -1,7 +1,7 @@
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::{read_folder, FileBrowser}};
 use database::{schema::{utilities::{check_id_existence, deserialize_command, query_id, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
 use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem};
-use eframe::{egui::{Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
+use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
@@ -23,95 +23,7 @@ impl MastertechContext{
         ui.vertical_centered(|ui| {
             if ui.button("Connect").clicked()
             {
-                let client_hash = generate_client_id(
-                    self.computer_data.hostname.clone(), 
-                    self.computer_data.cpu.trim().to_string()
-                );
-
-                let url_string = format!(
-                    "{}:{}", 
-                    self.computer_data.hostname.clone(), 
-                    client_hash.split_at(9).0
-                );
-
-                self.url = Some(
-                    format!(
-                        "wss://sock.master-tech.app/websocket?room_id={}&role=client",  
-                        url_string.clone()
-                    )
-                );
-
-                let computer_id = &self.computer_data.id.clone().unwrap_or(
-                    ComputerId(
-                        Thing::from(
-                            (COMPUTER_TABLE,  url_string.clone().as_str())
-                        )
-                    )
-                );
-                
-                self.client_uuid = Some(
-                    ClientId(
-                        Thing::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.0.id.clone()))
-                    )
-                );
-
-                let connected_client = ConnectedClient {
-                    id: self.client_uuid.clone(),
-                    client_hash,
-                    connected: true,
-                    ..Default::default()
-                };
-
-                let tx = self.connected_clients_tx.clone();
-                let uuid = self.client_uuid.clone();
-                spawn(async move {
-                    if let Some(uuid) = uuid {
-                        if let Some(id) = query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.0.id.clone()).await? {
-                            info!("Client: {id:?} already exists");
-                            
-                            let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                                .query("UPDATE $id SET connected = true")
-                                .bind(("id", id.clone()))
-                                .await?.take(0);
-
-                            match res{
-                                Ok(data) => tx.try_send(data.clone())?,
-                                Err(e) => info!("Error Updating Client: {e:?}"),
-                            }
-                        } else {
-                            let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                                .query("CREATE connected_client CONTENT $content")
-                                .bind(("content", connected_client.clone()))
-                                .await?.take(0);
-
-                            match res{
-                                Ok(data) => tx.try_send(data.clone())?,
-                                Err(e) => info!("Error Creating Client: {e:?}"),
-                            }
-                        }
-                    }
-
-                    Ok::<(), Error>(())
-                });
-
-                if let Some(url) = &self.url{
-
-                    info!("self.url: {}", url.clone());
-                    let ctx = ui.ctx().clone();
-                    let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
-
-                    match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
-                        Ok((mut ws_sender, ws_receiver)) => {
-                            ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
-                            self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
-                            self.error.clear();
-                        }
-                        Err(error) => {
-                            log::error!("Failed to connect to {:?}: {}", &self.url, error);
-                            self.error = error;
-                        }
-                    };
-                }
+                self.connect(ui.ctx().clone());
             }
 
             if !self.error.is_empty() {
@@ -127,6 +39,98 @@ impl MastertechContext{
                 if !connected{ } // if let Some(db) =  { spawn(async move { }); }
             }
         });
+    }
+
+    pub fn connect(&mut self, ctx: Context) {
+        let client_hash = generate_client_id(
+            self.computer_data.hostname.clone(), 
+            self.computer_data.cpu.trim().to_string()
+        );
+
+        let url_string = format!(
+            "{}:{}", 
+            self.computer_data.hostname.clone(), 
+            client_hash.split_at(9).0
+        );
+
+        self.url = Some(
+            format!(
+                "wss://sock.master-tech.app/websocket?room_id={}&role=client",  
+                url_string.clone()
+            )
+        );
+
+        let computer_id = &self.computer_data.id.clone().unwrap_or(
+            ComputerId(
+                Thing::from(
+                    (COMPUTER_TABLE,  url_string.clone().as_str())
+                )
+            )
+        );
+        
+        self.client_uuid = Some(
+            ClientId(
+                Thing::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.0.id.clone()))
+            )
+        );
+
+        let connected_client = ConnectedClient {
+            id: self.client_uuid.clone(),
+            client_hash,
+            connected: true,
+            ..Default::default()
+        };
+
+        let tx = self.connected_clients_tx.clone();
+        let uuid = self.client_uuid.clone();
+        spawn(async move {
+            if let Some(uuid) = uuid {
+                if let Some(id) = query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.0.id.clone()).await? {
+                    info!("Client: {id:?} already exists");
+                    
+                    let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                        .query("UPDATE $id SET connected = true")
+                        .bind(("id", id.clone()))
+                        .await?.take(0);
+
+                    match res{
+                        Ok(data) => tx.try_send(data.clone())?,
+                        Err(e) => info!("Error Updating Client: {e:?}"),
+                    }
+                } else {
+                    let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                        .query("CREATE connected_client CONTENT $content")
+                        .bind(("content", connected_client.clone()))
+                        .await?.take(0);
+
+                    match res{
+                        Ok(data) => tx.try_send(data.clone())?,
+                        Err(e) => info!("Error Creating Client: {e:?}"),
+                    }
+                }
+            }
+
+            Ok::<(), Error>(())
+        });
+
+        if let Some(url) = &self.url{
+
+            info!("self.url: {}", url.clone());
+            let ctx = ctx.clone();
+            let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
+
+            match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
+                Ok((mut ws_sender, ws_receiver)) => {
+                    ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
+                    self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
+                    self.error.clear();
+                }
+                Err(error) => {
+                    log::error!("Failed to connect to {:?}: {}", &self.url, error);
+                    self.error = error;
+                }
+            };
+        }
     }
 }
 

@@ -161,6 +161,7 @@ impl eframe::App for MasterTechApp {
                         }
                         get_store_users(self.context.store_users_tx.clone(), usr.store);
                         get_tasks(initial_tasks_tx);
+                        self.context.connect(ctx.clone());
                     }
                 },
                 Err(e) => {

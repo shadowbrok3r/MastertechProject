@@ -401,6 +401,7 @@ pub enum Cmd{
     InteractiveInput(String),
     QuitInteractive,
     CopyTools(String),
+    ReadEvents,
     Quit,
     None
 }
