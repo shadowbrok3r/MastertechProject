@@ -1,5 +1,6 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::{schema::{Cmd, ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
+use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use displays::virtual_filesystem::FileSystem;
@@ -414,11 +415,13 @@ impl WebSocketClient{
             ScrollArea::vertical()
                 .animated(true)
                 .max_width(f32::INFINITY)
-                .auto_shrink(false)
+                .max_height(f32::INFINITY)
+                .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| 
             {
                 ui.set_width(ui.available_width());
+                ui.set_height(ui.available_height());
                 let max_msg_width = ui.available_width() / 1.5;
                 let fixed_height = 50.0;
                 // let min_width = 200.0;
