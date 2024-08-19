@@ -27,33 +27,6 @@ impl MtechServer {
                 if let Some(ref usr) = d.1{
                     self.context.current_user = Some(usr.clone());
                     self.context.file_system.set_user(usr.clone());
-                    let bridge_op = &self.context.bridge;
-                    // let live_bridge = &self.context.live_bridge;
-                    // info!("live bridge?");
-                    // if let Some(live_bridge) = live_bridge{
-                    //     info!("Have live bridge");
-                    //     live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
-                    // }
-                    if let (
-                        Some(access_key), 
-                        Some(secret_key), 
-                        Some(bridge)
-                    ) = (
-                        usr.minio_access_key.clone(), 
-                        usr.minio_secret_key.clone(), 
-                        bridge_op
-                    ) {
-                        self.context.file_system.access_key = access_key.clone();
-                        self.context.file_system.secret_key = secret_key.clone();
-                        let name = usr.email.clone();
-                        let parsed = name.split_once('@').unwrap().0.to_string().clone();
-                        bridge.send(Input {
-                            url: STORAGE_URL.to_string(),
-                            access_key,
-                            secret_key,
-                            name: parsed
-                        });
-                    }
                 }
             },
             Err(e) => {
@@ -74,8 +47,8 @@ impl MtechServer {
         let store_users_tx = self.context.store_users_tx.clone();
         let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
-        let notification_tx = self.context.notification_tx.clone();
-        let live_output = self.context.live_output_tx.clone();
+        // let notification_tx = self.context.notification_tx.clone();
+        // let live_output = self.context.live_output_tx.clone();
 
         if let Some(usr) = self.context.current_user.as_ref(){
             info!("Getting Initial data");
@@ -126,13 +99,13 @@ impl MtechServer {
                 let get_tasks = get_tasks(initial_tasks_tx).await;
                 let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                 let get_connected_clients = get_connected_clients(tx, user.clone()).await;
-                let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
-                let get_custs = get_customer_data(live_output).await;
-                info!("get_notifications: {get_notifications:?}");
+                // let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
+                // let get_custs = get_customer_data(live_output).await;
+                // info!("get_notifications: {get_notifications:?}");
                 info!("get_connected_clients: {get_connected_clients:?}");
                 info!("get_tasks: {get_tasks:?}");
                 info!("get_store_users: {get_store_users:?}");
-                info!("get_custs: {get_custs:?}");
+                // info!("get_custs: {get_custs:?}");
             });
 
             // let live_bridge = &self.context.live_bridge;
@@ -150,80 +123,7 @@ impl MtechServer {
             toast.add(auth_toast);
         }else{
             info!("4");
-            #[cfg(target_arch="wasm32")]
-            match check_authentication(self.context.db_tx.clone()){
-                Ok(d) => {
-                    self.state = d.0;
-                    if let Some(ref usr) = d.1{
-                        let bridge_op = &self.context.bridge;
-
-                        if let (
-                            Some(access_key), 
-                            Some(secret_key), 
-                            Some(bridge)
-                        ) = (
-                            usr.minio_access_key.clone(), 
-                            usr.minio_secret_key.clone(), 
-                            bridge_op
-                        ) {
-                            self.context.file_system.access_key = access_key.clone();
-                            self.context.file_system.secret_key = secret_key.clone();
-                            let name = usr.email.clone();
-                            let parsed = name.split_once('@').unwrap().0.to_string().clone();
-                            bridge.send(Input {
-                                url: STORAGE_URL.to_string(),
-                                access_key,
-                                secret_key,
-                                name: parsed
-                            });
-                        }
-                        self.context.current_user = Some(usr.clone());
-                        self.context.file_system.set_user(usr.clone());
-                        let user = usr.clone();
-                        spawn_local(async move {
-                            let listen_task_notes = listen_task_notes(notes_tx).await;
-                            info!("listen_task_notes: {listen_task_notes:?}");
-                        });
-            
-                        spawn_local(async move {
-                            let listen_tasks = listen_tasks(live_tasks_tx).await;
-                            info!("listen_tasks: {listen_tasks:?}");
-                        });
-            
-                        spawn_local(async move {
-                            let listen_data = listen_data(live_clients_tx).await;
-                            info!("listen_data: {listen_data:?}");
-                        });
-                        
-                        // spawn_local(async move { let listen_data = listen_notifications(notification_tx.clone()).await; info!("listen_notifications: {listen_notifications:?}"); });
-            
-                        spawn_local(async move {
-                            let get_tasks = get_tasks(initial_tasks_tx).await;
-                            let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
-                            let get_connected_clients = get_connected_clients(tx, user.clone()).await;
-                            let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
-                            let get_custs = get_customer_data(live_output).await;
-                            info!("get_notifications: {get_notifications:?}");
-                            info!("get_connected_clients: {get_connected_clients:?}");
-                            info!("get_tasks: {get_tasks:?}");
-                            info!("get_store_users: {get_store_users:?}");
-                            info!("get_custs: {get_custs:?}");
-                        });
-                        let toast = &mut self.context.toasts;
-                        let auth_toast = Toast{
-                            kind: ToastKind::Success,
-                            text: format!("Welcome, {}", usr.name).into(),
-                            options: ToastOptions::default().show_progress(true).duration_in_seconds(6.0)
-                        };
-                        toast.add(auth_toast);
-                    }
-                },
-                Err(e) => {
-                    info!("Error with auth: {e:?}");
-                    self.state = AppState::NoAuth(e.to_string());
-                    self.context.current_user = None;
-                },
-            };
+            self.state = AppState::NoAuth("No user detected".to_string());
         }
     }
 
@@ -236,14 +136,14 @@ impl MtechServer {
             self.context.store_users = Some(users);
         }
 
-        if let Ok(notifications) = self.context.notification_rx.try_recv(){
-            self.context.notifications = notifications;
-        }
+        // if let Ok(notifications) = self.context.notification_rx.try_recv(){
+        //     self.context.notifications = notifications;
+        // }
 
-        if let Ok(live_output) = self.context.live_output_rx.try_recv() {
-            info!("Customers: {live_output:?}");
-            self.context.data_output = live_output;
-        }
+        // if let Ok(live_output) = self.context.live_output_rx.try_recv() {
+        //     info!("Customers: {live_output:?}");
+        //     self.context.data_output = live_output;
+        // }
 
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv(){
             info!("new_client: {action:?} // {new_client:?}");

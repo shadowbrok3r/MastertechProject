@@ -68,11 +68,10 @@ pub async fn query_id<T>(table: String, id: T)
     -> Result<Option<Record>, Error>
         where T: Serialize + Debug + Clone + 'static
 {
-    let query = format!("SELECT * FROM $table WHERE id == $id");
     DATABASE.set("id", id).await?;
     DATABASE.set("table", table).await?;
-    let record: Option<Record> = DATABASE.query(query.clone()).await?.take(0)?;
-    info!("Query: {:?}  // {}", record, query);
+    let record: Option<Record> = DATABASE.query("SELECT * FROM $table WHERE id == $id").await?.take(0)?;
+    info!("Record: {:?}", record);
     Ok(record)
 }
 

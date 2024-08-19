@@ -139,9 +139,9 @@ impl WebSocketClient{
     pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)
         let height = ui.available_height() / 1.2;
         let strip_count = if let WsDisplayState::Shell = self.state { 3 } else { 2 };
+        let size = if strip_count == 2 { Size::remainder().at_most(height) } else { Size::exact(25.0) };
         StripBuilder::new(ui)
-            // .size(Size::exact(30.0))
-            .sizes(Size::exact(25.0), strip_count)
+            .sizes(size, strip_count)
             .size(Size::remainder().at_most(height))
             .vertical(|mut strip| 
         {
@@ -411,6 +411,7 @@ impl WebSocketClient{
 
     fn show_shell(&mut self, ui: &mut Ui) {
         let avail_size = ui.available_size();
+        info!("avail_size: {:?}", avail_size);
         ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
             ScrollArea::vertical()
                 .animated(true)

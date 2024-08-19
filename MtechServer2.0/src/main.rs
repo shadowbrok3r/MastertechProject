@@ -30,8 +30,8 @@ impl eframe::App for MtechServer {
             self.context.file_system.build_file_system(items); 
         }
         
-        let live_data_update = self.context.live_data_update.as_mut().unwrap();
-        if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
+        // let live_data_update = self.context.live_data_update.as_mut().unwrap();
+        // if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
 
         // do some setting up in the initial frame of our update loop for 
         // 1. Getting database connection
@@ -222,8 +222,12 @@ impl eframe::App for MtechServer {
             AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
-                    self.context.first_run = true;
-                    self.first_run();
+                    if self.context.current_user.is_some() {
+                        self.load_data();
+                    } else { 
+                        self.context.first_run = true;
+                        self.first_run() 
+                    }
                     self.state = AppState::Authenticated(MainPages::Tasks);
                 } else {
                     self.login_page(ctx, self.context.db_tx.clone(), self.context.app_state_tx.clone())

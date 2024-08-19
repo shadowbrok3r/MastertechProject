@@ -423,23 +423,14 @@ impl MtechServerContext{
 pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(AppState, Option<User>), Error>{
     let cookie = wasm_cookies::get("jwt");
     let user_cookie = wasm_cookies::get("user");
-    // info!("USER: {:?}", user_cookie);
     let mut state = AppState::default();
     let mut current_user: Option<User> = None;
-
     if let (Some(cookie), Some(usr)) = (cookie, user_cookie){
         current_user = Some(serde_json::from_str(usr?.as_str())?);
         let _user = current_user.clone();
         let db_tx = db_tx.clone();
-        // let usr = usr
         spawn_local(async move {
             let database = Database::new("".to_string(), "".to_string(), Some(cookie.unwrap())).await;
-            // let query = "SELECT * FROM user";
-            // if let Some(user) = user{
-            //     let _ = DATABASE.set("email", user.email).await;
-            //     let user: Vec<Value> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-            //     info!("user: {user:#?}");
-            // }
             match db_tx.try_send(database){
                 Ok(_) => {
                     info!("Sent DB");
@@ -450,7 +441,6 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> R
         });
         state = AppState::Authenticated(MainPages::Tasks);
     }
-
     info!("State // user   {:?} // {:?}", state, current_user);
     Ok((state, current_user))
 }
