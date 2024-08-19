@@ -34,6 +34,7 @@ mime_guess = { workspace=true }
 futures = { workspace=true }
 bytes = { workspace=true }
 regex = { workspace=true }
+structdiff = { workspace=true }
 rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] }
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]

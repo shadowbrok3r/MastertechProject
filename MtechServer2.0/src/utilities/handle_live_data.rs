@@ -7,6 +7,7 @@ use surrealdb::{method::Stream, Action, Notification};
 use log::{debug, info};
 use crossbeam::channel::Sender;
 use std::{collections::HashMap, fmt::Debug};
+use structdiff::StructDiff;
 use super::LiveUpdate;
 
 
@@ -104,6 +105,39 @@ impl LiveUpdate for LiveTaskPayload {
     }
 }
 
+// pub fn update_or_insert_notes(
+//     new_note: TaskNotePayload,
+//     task: &mut TaskPayload
+// ) -> anyhow::Result<(), anyhow::Error> {
+//     if let Some(ref task_id) = new_note.task_id {
+//         if let Some(existing_task_id) = &task.id {
+//             if existing_task_id == task_id {
+//                 // Check if the note ID already exists
+//                 let notes = &mut task.task_note;
+//                 if !notes.is_empty() {
+//                     let x = new_note.note.is_empty() ;
+//                     let y = new_note.created_at.is_empty();
+//                     let z = new_note.everest_initials.is_empty();                  
+//                     if notes.iter().any(|note| 
+//                         note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
+//                     ) {
+//                         notes.push(new_note.clone());
+//                         debug!("Contains notes already, inserting new: {new_note:?}");
+//                     }
+//                 } else {
+//                     let mut new_notes = Vec::new();
+//                     new_notes.push(new_note.clone());
+//                     debug!("there were no existing notes. creating note: {:?}", new_notes);
+//                     task.task_note = new_notes;
+//                 }
+//             }
+//         }
+//         // if updated { debug!("Note updated or inserted successfully."); } 
+//         // else { debug!("Task ID not found or note already exists."); }
+//     }
+//     Ok(())
+// }
+
 pub fn update_or_insert_notes(
     new_note: TaskNotePayload,
     task: &mut TaskPayload
@@ -111,30 +145,24 @@ pub fn update_or_insert_notes(
     if let Some(ref task_id) = new_note.task_id {
         if let Some(existing_task_id) = &task.id {
             if existing_task_id == task_id {
-                // Check if the note ID already exists
-                // let notes = task.task_note.get_or_insert_with(Vec::new);
-                if let Some(notes) = task.task_note.as_mut(){
-                    let x = new_note.note.is_empty() ;
-                    let y = new_note.created_at.is_empty();
-                    let z = new_note.everest_initials.is_empty();
-                    
-                    if notes.iter().any(|note| 
-                        note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
-                    ) {
-                        notes.push(new_note.clone());
-                        debug!("Contains notes already, inserting new: {new_note:?}");
-                    }
+                let notes = &mut task.task_note;
+                
+                if let Some(existing_note) = notes.iter_mut().find(|note| {
+                    note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
+                }) {
+                    info!("Found existing notes in task: {:?}", existing_note);
+                    // Apply diffs to the existing note
+                    let diffs = existing_note.diff(&new_note);
+                    existing_note.clone().apply(diffs);
+                    info!("Updated existing note: {:?}", existing_note);
                 } else {
-                    let mut vec = Vec::new();
-                    vec.push(new_note.clone());
-                    debug!("there were no existing notes. creating note: {:?}", vec);
-                    task.task_note = Some(vec);
+                    // Insert the new note if it doesn't exist
+                    notes.push(new_note.clone());
+                    info!("Inserted new note: {:?}", new_note);
                 }
 
             }
         }
-        // if updated { debug!("Note updated or inserted successfully."); } 
-        // else { debug!("Task ID not found or note already exists."); }
     }
     Ok(())
 }

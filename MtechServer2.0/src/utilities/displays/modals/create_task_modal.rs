@@ -258,12 +258,13 @@ impl CreateTaskModal {
                                     Some(so)
                                 } else { None };
 
+                                let notes: Vec<TaskNotePayload> = Vec::new();
                                 let mut task_payload = TaskPayload{
                                     task_name: self.task_name.clone(),
                                     task_description: self.description.clone(),
                                     due_date: y,
                                     priority: self.task_priority.clone(),
-                                    task_note: None,
+                                    task_note: notes,
                                     completed: false,
                                     status: Status::Todo,
                                     service_number,

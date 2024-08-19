@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.2.1"
+version = "4.2.2"
 edition = "2021"
 description = "Mastertech"
 build = "build.rs"
@@ -71,6 +71,7 @@ anyhow = { workspace=true }
 ratframe = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
+structdiff = { workspace=true }
 # egui_ratatui = { workspace=true }
 fuzzy-matcher = { workspace=true }
 uuid = { workspace=true }

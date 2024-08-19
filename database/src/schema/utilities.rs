@@ -1,5 +1,6 @@
 use crate::{DATABASE, schema::{Priority, Status, Cmd, SystemInformation, ClientId, ConnectedClient, Record, Store, TaskId, TaskNotePayload, TaskPayload, User, TASK_NOTE_TABLE, TASK_TABLE}};
 use async_trait::async_trait;
+use structdiff::StructDiff;
 use surrealdb::sql::{Id, Thing};
 use crossbeam::channel::Sender;
 use anyhow::{Result, Error};
@@ -28,6 +29,12 @@ pub trait FilterTasks{
 pub trait Sortable{
     fn sort_task_payloads(&mut self) -> &mut Vec<TaskPayload>;
 }
+
+// pub trait LiveUpdate{
+//     fn handle_live_create<T: StructDiff + PartialEq>(self, existing_tasks: &mut Vec<T>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
+//     fn handle_live_update(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
+//     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>
+// }
 
 pub trait LiveUpdate{
     fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>; // <T: Serialize + for<'a> Deserialize<'a>>

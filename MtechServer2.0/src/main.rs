@@ -80,8 +80,8 @@ impl eframe::App for MtechServer {
         if let Ok(action) = self.context.ui_actions_rx.try_recv(){
             match action{
                 TaskUiActions::OpenTaskModal(task) => {
-                    let task_modal = if let Some(notes) = &task.task_note{
-                        let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
+                    let task_modal = if !task.task_note.is_empty(){
+                        let chat_modal = ChatView::new(task.task_note.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
                         TaskModal::new(chat_modal, task.clone())
                     }else{ TaskModal::new(ChatView::new(Vec::new(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap()), task.clone()) };
                     self.context.current_modal = ModalType::TaskModal(task_modal);
@@ -194,7 +194,7 @@ impl eframe::App for MtechServer {
                         .rounding(Rounding::same(10.0)).stroke(Stroke::new(1.0, color));
 
                     Window::new(&client.connection_string).frame(column_frame)
-                        .max_size(Vec2::new(600., 600.))
+                        .max_size(Vec2::new(600., 400.))
                         .show(ctx, |ui| 
                     {
                         ui.vertical_centered_justified(|ui| {

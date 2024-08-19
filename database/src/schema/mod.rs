@@ -1,3 +1,4 @@
+use structdiff::{Difference, StructDiff};
 use surrealdb::{opt::RecordId, sql::{Id, Thing}};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
@@ -72,7 +73,7 @@ impl Default for UserId {
 }
 
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct TaskPayload {
     pub id: Option<TaskId>,
     pub task_name: String,
@@ -83,12 +84,13 @@ pub struct TaskPayload {
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
-    pub task_note: Option<Vec<TaskNotePayload>>,
+    #[difference(collection_strategy="ordered_array_like")]
+    pub task_note: Vec<TaskNotePayload>,
     pub completed: bool,
     pub status: Status,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct LiveTaskPayload{
     pub id: Option<TaskId>,
     pub task_name: String,
@@ -100,12 +102,13 @@ pub struct LiveTaskPayload{
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
-    pub task_note: Option<Vec<TaskNoteId>>, // 
+    #[difference(collection_strategy="ordered_array_like")]
+    pub task_note: Vec<TaskNoteId>,
     pub completed: bool,
     pub status: Status,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct TicketPayload{
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
@@ -127,7 +130,7 @@ pub struct TicketPayload{
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Difference)]
 pub struct TicketData{ // Live Ticket Payload
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
@@ -148,7 +151,7 @@ pub struct TicketData{ // Live Ticket Payload
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct CustomerData{
     pub id: Option<CustomerId>, 
     pub cust_code: String,
@@ -166,7 +169,6 @@ pub struct CustomerData{
 pub struct ComputerData{
     pub id: Option<ComputerId>,
     pub customer: Option<CustomerId>,
-    // pub seb_id: Option<SebId>,
     pub seb_info: Option<LocalSebData>,
     pub hostname: String,
     pub operating_system: String,
@@ -236,7 +238,7 @@ pub struct HardwareTests{
     pub ram_test: String
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct TaskNotePayload{
     pub id: Option<TaskNoteId>,
     pub task_id: Option<TaskId>,
@@ -264,8 +266,8 @@ pub struct ModifyTask{
     pub task_description: Option<String>, 
 }
 
-#[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq)]
-pub struct ConnectedClient{ // <'a>
+#[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq, Difference)]
+pub struct ConnectedClient{
     pub id: Option<ClientId>,
     pub assigned_user: Option<UserId>,
     pub client_hash: String,
@@ -353,7 +355,7 @@ pub struct GetKeysResponse{
     pub superanti_key: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Difference)]
 pub struct SystemInformation {
     /// Live CPU usage as a percentaget
     pub cpu_percentage: f32,
@@ -411,13 +413,6 @@ pub enum Node {
     File((String, String)),
     Folder(String, HashMap<String, Node>),
 }
-
-// impl Node {
-//     pub fn as_folder_mut(&mut self) -> Option<&mut HashMap<String, Node>> {
-//         if let Node::Folder(ref mut map) = self {Some(map) } 
-//         else { None }
-//     }
-// }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default)]
 pub enum Store{

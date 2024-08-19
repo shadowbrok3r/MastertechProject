@@ -2,6 +2,7 @@ use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, TaskNoteP
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
 use std::{collections::HashMap, fmt::Debug};
+use structdiff::{Difference, StructDiff};
 use crossbeam::channel::Sender;
 use futures::StreamExt;
 use log::{debug, info};
@@ -41,8 +42,8 @@ pub fn handle_live_notes(
         },
         Action::Delete => {
             debug!("Data: {data:?}");
-            if let Some(notes) = &mut existing_task.task_note{
-
+            let notes = &mut existing_task.task_note;
+            if !notes.is_empty(){
                 let index = notes.iter().position(|x| *x == data);
                 if let Some(idx) = index {
                     notes.remove(idx);
@@ -54,54 +55,6 @@ pub fn handle_live_notes(
     }
     Ok(())
 }
-
-
-macro_rules! update_fields {
-    ($vec:expr, $updated:expr, $($field:ident),+) => {
-        if let Some(existing) = $vec.iter_mut().find(|foo| foo.id == $updated.id) {
-            $(
-                if existing.$field != $updated.$field {
-                    existing.$field = $updated.$field.clone();
-                }
-            )+
-        }
-    };
-}
-
-// extern crate proc_macro;
-// use proc_macro::TokenStream;
-// use quote::quote;
-// use syn::{parse_macro_input, DeriveInput};
-
-// #[proc_macro_derive(UpdateFields)]
-// pub fn update_fields_derive(input: TokenStream) -> TokenStream {
-//     let input = parse_macro_input!(input as DeriveInput);
-//     let name = input.ident;
-    
-//     let fields = if let syn::Data::Struct(data) = input.data {
-//         data.fields.iter().map(|f| {
-//             let ident = &f.ident;
-//             quote! {
-//                 if self.#ident != other.#ident {
-//                     self.#ident = other.#ident.clone();
-//                 }
-//             }
-//         })
-//     } else {
-//         unimplemented!();
-//     };
-    
-//     let expanded = quote! {
-//         impl #name {
-//             pub fn update_fields(&mut self, other: &Self) {
-//                 #(#fields)*
-//             }
-//         }
-//     };
-    
-//     TokenStream::from(expanded)
-// }
-
 
 pub fn handle_live_create<T: Serialize + for<'a> Deserialize<'a> + Debug>(existing_data: &mut Vec<T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
     debug!("Data was Created: {:?}", new_data);
@@ -131,24 +84,6 @@ pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug + Parti
     Ok(())
 }
 
-// impl LiveUpdate for TaskNotePayload {
-//     fn handle_live_create(self, existing_tasks: &mut Vec<TaskNotePayload>) -> anyhow::Result<(), anyhow::Error>{
-//         debug!("Data was Created: {:?}", self);
-//         update_or_insert(existing_tasks, self)?;
-//         Ok(())
-//     }
-//     fn handle_live_update(self, _existing_tasks: &mut Vec<TaskNotePayload>) -> anyhow::Result<(), anyhow::Error>{
-//         debug!("Data was Updated: {:?}", self);
-//         Ok(())
-//     }
-//     fn handle_live_delete(self, existing_tasks: &mut Vec<TaskNotePayload>) -> anyhow::Result<(), anyhow::Error>{
-//         debug!("Data was Deleted: {:?}", self);
-//         update_or_insert(existing_tasks, self)?;
-//         Ok(())
-//     }
-// }
-
-
 impl LiveUpdate for LiveTaskPayload {
     fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
         debug!("Data was Created: {:?}", self);
@@ -168,6 +103,39 @@ impl LiveUpdate for LiveTaskPayload {
     }
 }
 
+// pub fn update_or_insert_notes(
+//     new_note: TaskNotePayload,
+//     task: &mut TaskPayload
+// ) -> anyhow::Result<(), anyhow::Error> {
+//     if let Some(ref task_id) = new_note.task_id {
+//         if let Some(existing_task_id) = &task.id {
+//             if existing_task_id == task_id {
+//                 // Check if the note ID already exists
+//                 let notes = &mut task.task_note;
+//                 if !notes.is_empty() {
+//                     let x = new_note.note.is_empty() ;
+//                     let y = new_note.created_at.is_empty();
+//                     let z = new_note.everest_initials.is_empty();                
+//                     if notes.iter().any(|note| 
+//                         note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
+//                     ) {
+//                         notes.push(new_note.clone());
+//                         debug!("Contains notes already, inserting new: {new_note:?}");
+//                     }
+//                 } else {
+//                     let mut new_notes = Vec::new();
+//                     new_notes.push(new_note.clone());
+//                     debug!("there were no existing notes. creating note: {:?}", new_notes);
+//                     task.task_note = new_notes;
+//                 }
+//             }
+//         }
+//         // if updated { debug!("Note updated or inserted successfully."); } 
+//         // else { debug!("Task ID not found or note already exists."); }
+//     }
+//     Ok(())
+// }
+
 pub fn update_or_insert_notes(
     new_note: TaskNotePayload,
     task: &mut TaskPayload
@@ -175,30 +143,23 @@ pub fn update_or_insert_notes(
     if let Some(ref task_id) = new_note.task_id {
         if let Some(existing_task_id) = &task.id {
             if existing_task_id == task_id {
-                // Check if the note ID already exists
-                // let notes = task.task_note.get_or_insert_with(Vec::new);
-                if let Some(notes) = task.task_note.as_mut(){
-                    let x = new_note.note.is_empty() ;
-                    let y = new_note.created_at.is_empty();
-                    let z = new_note.everest_initials.is_empty();
-                    
-                    if notes.iter().any(|note| 
-                        note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
-                    ) {
-                        notes.push(new_note.clone());
-                        debug!("Contains notes already, inserting new: {new_note:?}");
-                    }
+                let notes = &mut task.task_note;
+                
+                if let Some(existing_note) = notes.iter_mut().find(|note| {
+                    note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
+                }) {
+                    // Apply diffs to the existing note
+                    let diffs = existing_note.diff(&new_note);
+                    existing_note.clone().apply(diffs);
+                    debug!("Updated existing note: {:?}", existing_note);
                 } else {
-                    let mut vec = Vec::new();
-                    vec.push(new_note.clone());
-                    debug!("there were no existing notes. creating note: {:?}", vec);
-                    task.task_note = Some(vec);
+                    // Insert the new note if it doesn't exist
+                    notes.push(new_note.clone());
+                    debug!("Inserted new note: {:?}", new_note);
                 }
 
             }
         }
-        // if updated { debug!("Note updated or inserted successfully."); } 
-        // else { debug!("Task ID not found or note already exists."); }
     }
     Ok(())
 }
