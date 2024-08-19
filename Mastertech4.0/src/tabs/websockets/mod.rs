@@ -36,7 +36,12 @@ impl MastertechContext{
             
             if let Some(frontend) = &mut self.frontend {
                 let connected = frontend.initialize_websocket(ui);
-                if !connected{ } // if let Some(db) =  { spawn(async move { }); }
+                if !connected{ 
+                    if let Some(url) = &self.url{
+                        info!("Trying to reconnect");
+                        self.make_ws_connection(&url.to_string(), ui.ctx().clone());
+                    }
+                } 
             }
         });
     }
@@ -85,28 +90,48 @@ impl MastertechContext{
         let uuid = self.client_uuid.clone();
         spawn(async move {
             if let Some(uuid) = uuid {
-                if let Some(id) = query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.0.id.clone()).await? {
-                    info!("Client: {id:?} already exists");
+                match query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.0.id.clone()).await {
+                    Ok(id) => {
+                        if let Some(id) = id {
+                            info!("Client: {id:?} already exists");
+                            
+                            let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                                .query("UPDATE $id SET connected = true")
+                                .bind(("id", id.clone()))
+                                .await?.take(0);
+        
+                            match res{
+                                Ok(data) => tx.try_send(data.clone())?,
+                                Err(e) => info!("Error Updating Client: {e:?}"),
+                            }
+                        } else {
+                            let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                                .query("CREATE connected_client CONTENT $content")
+                                .bind(("content", connected_client.clone()))
+                                .await?.take(0);
+        
+                            match res{
+                                Ok(data) => tx.try_send(data.clone())?,
+                                Err(e) => info!("Error Creating Client: {e:?}"),
+                            }
+                        }
+                    },
+                    Err(e) => {
+
+                        if e.to_string().contains("already exists") {
+                            info!("Client: {:?} already exists", uuid.0.id.clone());
                     
-                    let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                        .query("UPDATE $id SET connected = true")
-                        .bind(("id", id.clone()))
-                        .await?.take(0);
-
-                    match res{
-                        Ok(data) => tx.try_send(data.clone())?,
-                        Err(e) => info!("Error Updating Client: {e:?}"),
-                    }
-                } else {
-                    let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                        .query("CREATE connected_client CONTENT $content")
-                        .bind(("content", connected_client.clone()))
-                        .await?.take(0);
-
-                    match res{
-                        Ok(data) => tx.try_send(data.clone())?,
-                        Err(e) => info!("Error Creating Client: {e:?}"),
-                    }
+                            let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                                .query("UPDATE $id SET connected = true")
+                                .bind(("id", uuid.0.id.clone().clone()))
+                                .await?.take(0);
+        
+                            match res{
+                                Ok(data) => tx.try_send(data.clone())?,
+                                Err(e) => info!("Error Updating Client: {e:?}"),
+                            }
+                        }
+                    },
                 }
             }
 
@@ -114,23 +139,28 @@ impl MastertechContext{
         });
 
         if let Some(url) = &self.url{
-
-            info!("self.url: {}", url.clone());
-            let ctx = ctx.clone();
-            let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
-
-            match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
-                Ok((mut ws_sender, ws_receiver)) => {
-                    ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
-                    self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
-                    self.error.clear();
-                }
-                Err(error) => {
-                    log::error!("Failed to connect to {:?}: {}", &self.url, error);
-                    self.error = error;
-                }
-            };
+            self.make_ws_connection(&url.to_string(), ctx);
         }
+    }
+
+    pub fn make_ws_connection(&mut self, url: &String, ctx: Context) {
+        info!("self.url: {}", url.clone());
+        let ctx = ctx.clone();
+        let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
+
+        match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
+            Ok((mut ws_sender, ws_receiver)) => {
+                ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
+                if self.frontend.is_none() {
+                    self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
+                }
+                self.error.clear();
+            }
+            Err(error) => {
+                log::error!("Failed to connect to {:?}: {}", &self.url, error);
+                self.error = error;
+            }
+        };
     }
 }
 
@@ -172,7 +202,7 @@ impl WebConsoleFrontend {
             command: Cmd::None,
             history: Vec::new(),
             send_specs: false,
-            connected: false,
+            connected: true,
             timeout_counter: Instant::now(),
             process: Arc::new(Mutex::new(None)),
             explorer: FileSystem::new(),
@@ -399,18 +429,25 @@ impl WebConsoleFrontend {
                     tx.send(cmd).unwrap();
                 });
             },
+            Cmd::CopyTools(tool) => {
+                
+            },
+            Cmd::ReadEvents => {
+                
+            },
             Cmd::QuitInteractive => {
                 let _ = self.interactive_input.0.try_send("quit".to_string());
             },
             Cmd::Quit => { self.connected = false; }
             _ => {},
+            // Cmd::Command => todo!(),
         }
     }
 
     pub fn initialize_websocket(&mut self, ui: &mut Ui) -> bool {
         ui.vertical_centered(|ui | ui.heading("Received events:"));
         ui.separator();
-        let connected = self.handle_events();
+        self.connected = self.handle_events();
 
         ScrollArea::vertical()
             .animated(true)
@@ -582,7 +619,7 @@ impl WebConsoleFrontend {
             }
         });
 
-      connected
+        self.connected  
     }
 }
 
@@ -623,29 +660,6 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Res
     let mut stderr = process.stderr.take().expect("Failed to get stderr");
     let stdin: ChildStdin = process.stdin.take().expect("Failed to open stdin");
     
-    // let mut stdout_stream = BufReader::new(stdout).lines();
-    // let mut stderr_stream = BufReader::new(stderr).lines();
-    // Use a loop to select between stdout and stderr streams
-    // loop {
-    //     select! {
-    //         Ok(line) = stdout_stream.next_line() => match line {
-    //             Some(line) => {
-    //                 // tx_clone.send(stderr_buf).ok();
-    //                 info!("stdout: {}", line);
-    //             },
-    //             None => break,
-    //         },
-    //         Ok(line) = stderr_stream.next_line() => match line {
-    //             Some(line) => {
-    //                 // tx_clone.send(stderr_buf).ok();
-    //                 info!("stderr: {}", line);
-    //             },
-    //             None => break,
-    //         },
-    //         else => break, // Exit the loop when both streams are exhausted
-    //     }
-    // }
-
     let tx_clone = tx.clone();
     tokio::spawn(async move {
         let mut stdout_buf = Vec::new();

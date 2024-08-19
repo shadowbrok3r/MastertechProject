@@ -81,6 +81,7 @@ chrono = { workspace=true }
 simplelog = { workspace=true }
 async-trait = { workspace=true }
 once_cell = { workspace=true }
+evtx = "0.8.3"
 
 # egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
 # egui-winit = { ver1.0.86 "0.27.2", optional = true, default-features = false }
@@ -93,18 +94,22 @@ once_cell = { workspace=true }
 # planif = "0.2"
 # tui-term = "0.1.11"
 
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3", features = ["processthreadsapi"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = "0.9"
+# libatasmart = "0.3.1"
+
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"]}
 
 [[bench]]
 name = "file_copy_benchmark"
 harness = false
-
-
-[target.'cfg(target_os = "linux")'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
-openssl-sys = "0.9"
-# libatasmart = "0.3.1"
 
 [profile.release]
 strip = "debuginfo"

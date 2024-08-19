@@ -14,6 +14,9 @@ use pages::login_page::HASH;
 use surrealdb::sql::Thing;
 use tokio::spawn;
 
+#[cfg(target_os="windows")]
+extern crate winapi;
+
 #[cfg(feature="term")]
 use terminal_mode::run_terminal_mode;
 
@@ -374,6 +377,16 @@ impl eframe::App for MasterTechApp {
 
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
+    #[cfg(target_os="windows")] {
+        use winapi::um::processthreadsapi::SetPriorityClass;
+        use winapi::um::processthreadsapi::GetCurrentProcess;
+        use winapi::um::winbase::ABOVE_NORMAL_PRIORITY_CLASS;
+
+        unsafe {
+            SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+        }
+    }
+
     // console_subscriber::init();
     // Init the logger
     // Configure log level and log file
