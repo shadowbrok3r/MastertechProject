@@ -232,7 +232,15 @@ impl TaskLayout {
                                                 let query = "fn::mark_all_due_today($id)";
                                                 info!("ID: {:?}", id.clone());
                                                 let _ = DATABASE.set("id", id).await.unwrap();
-                                                let _x: Option<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+                                                match DATABASE.query(query).await{
+                                                    Ok(query_res) => {
+                                                        match query_res.take(0){
+                                                            Some(res) => info!("There was a record: {res:?}"),
+                                                            None => info!("There was no record")
+                                                        }
+                                                    },
+                                                    Err(e) => info!("Error {e:?}")
+                                                }
                                             }
                                         });
                                     }, _ => {}

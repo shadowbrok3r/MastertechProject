@@ -1,6 +1,6 @@
 [package]
 name = "mtechserver"
-version = "2.0.3"
+version = "2.0.4"
 edition = "2021"
 
 [dependencies]
@@ -28,6 +28,7 @@ wasm-bindgen = { workspace=true }
 database = { workspace=true }
 surrealdb-alpha = { workspace=true }
 mime_guess = { workspace=true }
+structdiff = { workspace=true }
 # surrealdb = { workspace=true }
 once_cell = { workspace=true }
 async-trait = { workspace=true }

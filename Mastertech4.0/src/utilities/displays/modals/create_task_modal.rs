@@ -151,6 +151,8 @@ impl DisplayModal for CreateTaskModal {
                 )
                 .clone();
 
+                let notes: Vec<TaskNotePayload> = Vec::new();
+
                 let task_payload = TaskPayload{
                     task_name: self.task_name.clone(),
                     everest_initials: usr.everest_initials,
@@ -158,7 +160,7 @@ impl DisplayModal for CreateTaskModal {
                     assignee: usr.id,
                     due_date: y,
                     priority: self.task_priority.clone(),
-                    task_note: None,
+                    task_note: notes,
                     completed: false,
                     status: Status::Todo,
                     // dep: format!("{:?}", usr.store),

@@ -294,8 +294,8 @@ impl eframe::App for MasterTechApp {
         if let Ok(action) = self.context.ui_actions_rx.try_recv(){
             match action{
                 TaskUiActions::OpenTaskModal(task) => {
-                    let task_modal = if let Some(notes) = &task.task_note{
-                        let chat_modal = ChatView::new(notes.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
+                    let task_modal = if !task.task_note.is_empty(){
+                        let chat_modal = ChatView::new(task.task_note.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
                         TaskModal::new(chat_modal, task.clone())
                     }else{ TaskModal::new(ChatView::default(), task.clone()) };
                     self.context.current_modal = ModalType::TaskModal(task_modal);

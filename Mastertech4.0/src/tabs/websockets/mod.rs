@@ -38,6 +38,7 @@ impl MastertechContext{
                 let connected = frontend.initialize_websocket(ui);
                 if !connected{ 
                     if let Some(url) = &self.url{
+                        std::thread::sleep(Duration::from_secs(10));
                         info!("Trying to reconnect");
                         self.make_ws_connection(&url.to_string(), ui.ctx().clone());
                     }
@@ -150,6 +151,7 @@ impl MastertechContext{
 
         match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
             Ok((mut ws_sender, ws_receiver)) => {
+                info!("Connected to websocket server");
                 ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
                 if self.frontend.is_none() {
                     self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
@@ -157,7 +159,7 @@ impl MastertechContext{
                 self.error.clear();
             }
             Err(error) => {
-                log::error!("Failed to connect to {:?}: {}", &self.url, error);
+                info!("Failed to connect to {:?}: {}", &self.url, error);
                 self.error = error;
             }
         };
@@ -211,7 +213,7 @@ impl WebConsoleFrontend {
     }
 
     pub fn handle_events(&mut self) -> bool{
-        let mut connected = false;
+        let mut connected = true;
 
         while let Some(event) = self.ws_receiver.try_recv() { self.events.push(event); }
         

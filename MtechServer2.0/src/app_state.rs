@@ -372,7 +372,7 @@ impl MtechServerContext{
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
                 let task_name = task_modal.task.task_name.clone();
-                if let Some(_notes) = &task_modal.task.task_note {
+                if task_modal.task.task_note.is_empty() {
                     // info!("Notes: {:?}", notes);
                 }
                 

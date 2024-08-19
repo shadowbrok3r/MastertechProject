@@ -123,6 +123,8 @@ impl MtechServer {
             toast.add(auth_toast);
         }else{
             info!("4");
+            self.context.first_run = true;
+            self.first_run();
             self.state = AppState::NoAuth("No user detected".to_string());
         }
     }

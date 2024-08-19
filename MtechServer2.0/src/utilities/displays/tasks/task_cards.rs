@@ -157,8 +157,8 @@ impl Displayable for TaskPayload{
                         s.cell(|ui|{
                             ui.with_layout(Layout::centered_and_justified(Direction::RightToLeft), |ui|{
                                 let mut count = 0;
-                                if let Some(task_notes) = &self.task_note{
-                                    count = task_notes.len();
+                                if !self.task_note.is_empty(){
+                                    count = self.task_note.len();
                                 }
                                 ui.style_mut().spacing.button_padding.x = 6.0;
                                 ui.style_mut().spacing.button_padding.y = 6.0;
@@ -167,7 +167,7 @@ impl Displayable for TaskPayload{
                                 } else { RichText::new("💬").color(Color32::WHITE) };
                                 if Button::new(txt).small().min_size(Vec2::new(25.0, 20.0)).ui(ui).clicked(){
                                     let _ = tx.try_send(TaskUiActions::OpenChatModal(
-                                        (self.id.as_ref().unwrap().clone(), self.task_note.clone().unwrap_or(Vec::new()))
+                                        (self.id.as_ref().unwrap().clone(), self.task_note.clone())
                                     ));
                                 }
                             });

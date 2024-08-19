@@ -137,12 +137,10 @@ impl WebSocketClient{
     }
     
     pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)
-        let height = ui.available_height() / 1.2;
-        let strip_count = if let WsDisplayState::Shell = self.state { 3 } else { 2 };
-        let size = if strip_count == 2 { Size::remainder().at_most(height) } else { Size::exact(25.0) };
         StripBuilder::new(ui)
-            .sizes(size, strip_count)
-            .size(Size::remainder().at_most(height))
+            .size(Size::exact(25.0)) // .sizes(size, strip_count)
+            .size(Size::exact(25.0))
+            .size(Size::remainder().at_most(400.))
             .vertical(|mut strip| 
         {
             self.handle_events();
@@ -329,7 +327,7 @@ impl WebSocketClient{
                 let response = TextEdit::singleline(&mut self.path_edit)
                     .id(Id::new("path_edit"))
                     .cursor_at_end(true)
-                    .desired_width(ui.available_width() - 15.0)
+                    .desired_width(ui.available_width() / 1.1)
                     .ui(ui);
 
                 if response.lost_focus() {
@@ -416,13 +414,12 @@ impl WebSocketClient{
             ScrollArea::vertical()
                 .animated(true)
                 .max_width(f32::INFINITY)
-                .max_height(f32::INFINITY)
+                .max_height(400.)
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| 
             {
                 ui.set_width(ui.available_width());
-                ui.set_height(ui.available_height());
                 let max_msg_width = ui.available_width() / 1.5;
                 let fixed_height = 50.0;
                 // let min_width = 200.0;
