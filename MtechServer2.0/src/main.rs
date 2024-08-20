@@ -47,6 +47,7 @@ impl eframe::App for MtechServer {
                     info!("6");
                     if e.to_string().contains("Already connected"){
                         info!("7");
+                        self.load_data();
                         self.state = AppState::Authenticated(MainPages::Tasks); 
                         let toast = &mut self.context.toasts;
                         let auth_toast = Toast{
