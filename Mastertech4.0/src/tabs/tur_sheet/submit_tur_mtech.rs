@@ -37,7 +37,7 @@ pub async fn send_payload(
     customer_data: CustomerData,
     computer_data: ComputerData,
     mut task_data: LiveTaskPayload,
-    mut task_notes: Vec<TaskNotePayload>,
+    task_notes: Vec<TaskNotePayload>,
     send_specs: bool
 ) -> anyhow::Result<Vec<Record>, anyhow::Error> {
     info!("Send_Payload");

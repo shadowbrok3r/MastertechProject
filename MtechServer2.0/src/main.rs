@@ -22,8 +22,7 @@ impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // most important part of the whole app.. setting up our styling
         let arc_style = set_style();
-        ctx.set_style(arc_style);
-        // let alt_style = set_alternative_style(); ctx.set_style(alt_style);
+        ctx.set_style(arc_style); // let alt_style = set_alternative_style(); ctx.set_style(alt_style);
 
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(items) = data_update.take() { 
@@ -34,8 +33,7 @@ impl eframe::App for MtechServer {
         // let live_data_update = self.context.live_data_update.as_mut().unwrap();
         // if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
 
-        // do some setting up in the initial frame of our update loop for 
-        // 1. Getting database connection
+        // do some initial setting up
         if self.context.first_run{ self.first_run(); }
 
         // Retrieve our database connection, and 2. Requesting some task data
@@ -174,7 +172,6 @@ impl eframe::App for MtechServer {
             }
         }
 
-        
         // if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
         //     info!("New Ticket Update ");
         //     for (_, layout) in self.context.task_layouts.iter_mut() {

@@ -3,7 +3,7 @@ use std::{env, path::PathBuf};
 use crossbeam::channel;
 use fs_extra::dir::get_size;
 use log::debug;
-use tokio::{fs, spawn};
+use tokio::fs;
 use tracing::info;
 
 use crate::tabs::file_browser::{io::MetaData, read_folder};

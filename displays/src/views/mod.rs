@@ -2,8 +2,8 @@
 
 use std::fmt::Display;
 
-use eframe::egui::Ui;
-use egui_extras::Column;
+// use eframe::egui::Ui;
+// use egui_extras::Column;
 
 pub trait DisplayableData {
     fn headers(&self) -> Vec<impl Display>; // Column headers for the table
@@ -24,25 +24,25 @@ pub trait DisplayableData {
     // }
 }
 
-struct ProcessInfo {
-    pid: u32,
-    name: String,
-    cpu_usage: f32,
-}
+// struct ProcessInfo {
+//     pid: u32,
+//     name: String,
+//     cpu_usage: f32,
+// }
 
-impl DisplayableData for ProcessInfo {
-    fn headers(&self) -> Vec<impl Display> {
-        vec!["PID", "Name", "CPU Usage (%)"]
-    }
+// impl DisplayableData for ProcessInfo {
+//     fn headers(&self) -> Vec<impl Display> {
+//         vec!["PID", "Name", "CPU Usage (%)"]
+//     }
 
-    fn rows(&self) -> Vec<Vec<impl Display>> {
-        vec![vec![
-            self.pid.to_string(),
-            self.name.clone(),
-            format!("{:.2}", self.cpu_usage),
-        ]]
-    }
-}
+//     fn rows(&self) -> Vec<Vec<impl Display>> {
+//         vec![vec![
+//             self.pid.to_string(),
+//             self.name.clone(),
+//             format!("{:.2}", self.cpu_usage),
+//         ]]
+//     }
+// }
 
 // fn update_ui(ctx: &egui::CtxRef, processes: &[ProcessInfo], logs: &[EventLog], crashes: &[CrashReport]) {
 //     egui::CentralPanel::default().show(ctx, |ui| {

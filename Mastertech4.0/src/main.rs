@@ -1,17 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use database::{schema::{buckets::list_buckets, utilities::{get_store_users, get_tasks}, ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, TaskNotePayload, TicketId, TICKET_TABLE}, Database, DATABASE, STORAGE_URL};
 use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
-use database::{schema::{buckets::list_buckets, ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TaskPayload, TicketId, User, TICKET_TABLE}, Database, DATABASE, STORAGE_URL};
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use displays::ui_tools::{toasts::{Toast, ToastKind, ToastOptions}, carl_dark::{Aesthetix, CarlDark}};
 use std::{fs::File, sync::{Arc, Condvar, Mutex}};
 use tabs::tur_sheet::scaffold::AsanaResponse;
-use log::{debug, error, info, LevelFilter};
+use log::{debug, info, LevelFilter};
 use filesystem::system_info::ComputerInfo;
 use app_state::{AppState, MasterTechApp};
 use simplelog::{Config, WriteLogger};
-use crossbeam::channel::Sender;
 use pages::login_page::HASH;
 use surrealdb::sql::Thing;
+use anyhow::Error;
 use tokio::spawn;
 
 #[cfg(target_os="windows")]
@@ -131,7 +131,6 @@ impl eframe::App for MasterTechApp {
             match db{
                 Ok(db) => {
                     self.context.current_user = db.user.clone();
-                    let initial_tasks_tx = self.context.initial_tasks_tx.clone();
                     if let Some(usr) = db.user {
                         if let (
                             Some(access_key), Some(secret_key)
@@ -162,8 +161,13 @@ impl eframe::App for MasterTechApp {
 
                             });
                         }
-                        get_store_users(self.context.store_users_tx.clone(), usr.store);
-                        get_tasks(initial_tasks_tx);
+                        let initial_tasks_tx = self.context.initial_tasks_tx.clone();
+                        let tx = self.context.store_users_tx.clone();
+                        spawn(async move {
+                            get_store_users(tx, usr.store).await?;
+                            get_tasks(initial_tasks_tx).await?;
+                            Ok::<(), Error>(())
+                        });
                         self.context.connect(ctx.clone());
                     }
                 },
@@ -281,8 +285,6 @@ impl eframe::App for MasterTechApp {
             self.context.output_text += &serde_json::to_string_pretty(&computer).unwrap_or("".to_string());
         }
 
-        // if let Ok(_connected_clients) = self.context.connected_clients_rx.try_recv(){}
-
         if let Ok(users) = self.context.store_users_rx.try_recv(){
             self.context.store_users = Some(users);
         }
@@ -360,16 +362,16 @@ impl eframe::App for MasterTechApp {
         let id = self.context.client_uuid.clone();
         if let Some(id) = id{
             spawn(async move {
-                let res: Result<Option<Record>, surrealdb::Error> = DATABASE
+                let res: Option<Record> = DATABASE
                     .query("UPDATE connected_client SET connected = false WHERE id == $id")
                     .bind(("id", id.clone()))
-                    .await
-                    .unwrap().take(0);
+                    .await?.take(0)?;
 
                 match res{
-                    Ok(data) => info!("Disconnected. {data:?}"),
-                    Err(e) => info!("Error Creating Client: {e:?}"),
+                    Some(data) => info!("Disconnected. {data:?}"),
+                    None => info!("Error Disconnecting Client"),
                 }
+                Ok::<(), Error>(())
             });
         }
     }
@@ -433,7 +435,6 @@ async fn main() -> eframe::Result<()> {
 //     Ok(())
 // }
 
-
 fn set_style() -> Arc<Style>{
     let theme = CarlDark;
     let mut custom_style: Style = theme.custom_style();
@@ -475,45 +476,6 @@ fn set_style() -> Arc<Style>{
     custom_style.visuals.widgets.hovered.bg_stroke =  Stroke::new(0.5, Color32::from_rgba_premultiplied(120, 20, 120, 100));
     let arc_style = Arc::new(custom_style);
     arc_style
-}
-
-pub fn get_store_users(tx: Sender<Vec<User>>, store: Store) {
-    spawn(async move {
-        DATABASE.set("store", store).await.unwrap();
-        let data: Vec<User> = DATABASE.query("SELECT name, store, everest_initials, id, email FROM user WHERE store == $store")
-            .await
-            .unwrap()
-            .take(0)
-            .unwrap();
-        
-        match tx.try_send(data) {
-            Ok(_) => info!("Sent Data from querying tasks"),
-            Err(e) => error!("Error sending Task Data: {e:?}")
-        };
-    });
-}
-
-pub fn get_tasks(tx: Sender<Vec<TaskPayload>>){
-    spawn(async move {
-
-        let query = format!("SELECT * FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note");
-
-        let query_results: Result<Vec<TaskPayload>, surrealdb::Error> = DATABASE
-            .query(query)
-            .await
-            .unwrap()
-            .take(0);
-
-        match query_results {
-            Ok(data) => {
-                match tx.try_send(data){
-                    Ok(_) => drop(tx),
-                    Err(e) => error!("Error sending Task Data: {e:?}")
-                }
-            },
-            Err(e) => error!("Error unwrapping data: {e:?}"),
-        }
-    });
 }
 
 pub(crate) fn load_icon() -> IconData {

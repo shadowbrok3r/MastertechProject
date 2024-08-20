@@ -1,13 +1,9 @@
-use rusty_s3::{actions::ListObjectsV2, Bucket, Credentials, S3Action, UrlStyle::Path};
+use database::schema::buckets::list_buckets;
 use gloo_worker::{HandlerId, WorkerScope};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
-use reqwest::{Client, Error, Url};
-use web_time::Duration;
 use std::fmt::Debug;
 use log::info;
-
-const ONE_HOUR: Duration = Duration::from_secs(3600);
 
 #[derive(Debug)]
 pub struct Message(pub u32);
@@ -57,37 +53,4 @@ impl gloo_worker::Worker for WebWorker {
             }
         });
     }
-}
-
-
-pub async fn list_buckets(url: String, access_key: String, secret_key: String, name: String) -> Result<Vec<String>, Error> {
-    const ONE_HOUR: Duration = Duration::from_secs(3600);
-
-    let bucket = Bucket::new(
-        url.parse::<Url>().unwrap(), 
-        Path, 
-        name.to_lowercase(), 
-        "us-west"
-    ).expect("Couldnt get buckets");
-    
-    let credentials = Credentials::new(access_key, secret_key);
-    
-    let action = ListObjectsV2::new(&bucket, Some(&credentials));
-    let signed_url = action.sign(ONE_HOUR);
-    
-    let client = Client::new();
-
-    let resp = client.get(signed_url).send().await?.error_for_status()?;
-    let text = resp.text().await?;
-
-    let parsed = ListObjectsV2::parse_response(&text).unwrap();
-    info!("response: {parsed:?}");
-
-    let mut vec = Vec::new();
-
-    for y in parsed.contents{
-        vec.push(y.key);
-    }
-
-    Ok(vec)
 }

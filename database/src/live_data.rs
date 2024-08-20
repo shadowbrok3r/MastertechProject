@@ -2,7 +2,7 @@ use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, TaskNoteP
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
 use std::fmt::Debug;
-use structdiff::{Difference, StructDiff};
+use structdiff::StructDiff;
 use crossbeam::channel::Sender;
 use futures::StreamExt;
 use log::{debug, info};
@@ -27,10 +27,7 @@ pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_task
     Ok(())
 }
 
-pub fn handle_live_notes(
-    (action, data): (Action, TaskNotePayload), 
-    existing_task: &mut TaskPayload
-) 
+pub fn handle_live_notes((action, data): (Action, TaskNotePayload), existing_task: &mut TaskPayload) 
     -> anyhow::Result<(), anyhow::Error>
 {
     match action{
@@ -103,10 +100,7 @@ impl LiveUpdate for LiveTaskPayload {
     }
 }
 
-pub fn update_or_insert_notes(
-    new_note: TaskNotePayload,
-    task: &mut TaskPayload
-) -> anyhow::Result<(), anyhow::Error> {
+pub fn update_or_insert_notes(new_note: TaskNotePayload, task: &mut TaskPayload) -> anyhow::Result<(), anyhow::Error> {
     if let Some(ref task_id) = new_note.task_id {
         if let Some(existing_task_id) = &task.id {
             if existing_task_id == task_id {
@@ -131,10 +125,9 @@ pub fn update_or_insert_notes(
     Ok(())
 }
 
-pub fn update_or_insert_anything<T>(
-    current_data: &mut Vec<T>, 
-    new_data: T
-) -> anyhow::Result<(), anyhow::Error> where T: StructDiff + PartialEq + Debug {
+pub fn update_or_insert_anything<T: StructDiff + PartialEq + Debug>(current_data: &mut Vec<T>, new_data: T) 
+    -> anyhow::Result<(), anyhow::Error>
+{
     let mut updated = false;
     for existing_data in &mut current_data.iter_mut() {
         if *existing_data == new_data{
@@ -151,11 +144,9 @@ pub fn update_or_insert_anything<T>(
     Ok(())
 }
 
-pub fn update_or_insert(
-    tasks: &mut Vec<TaskPayload>, 
-    new_task: LiveTaskPayload,
-    new_ticket: Option<TicketPayload>
-) -> anyhow::Result<(), anyhow::Error>{
+pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload, new_ticket: Option<TicketPayload>) 
+    -> anyhow::Result<(), anyhow::Error>
+{
     if let Some(ref id) = new_task.id {
         let mut updated = false;
 
@@ -193,7 +184,9 @@ pub fn update_or_insert_layout(
     new_task: LiveTaskPayload,
     new_ticket: Option<TicketPayload>,
     task_to_replace: &mut TaskPayload
-) -> anyhow::Result<(), anyhow::Error> {
+) 
+    -> anyhow::Result<(), anyhow::Error> 
+{
     if let Some(ref id) = new_task.id {
         let mut updated = false;
 
@@ -250,19 +243,19 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayl
     }
 }
 
-pub async fn listen_data<T>(tx: Sender<(Action, T)>, resource: &str) -> anyhow::Result<(), anyhow::Error> 
-    where T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin 
+pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin>(tx: Sender<(Action, T)>, resource: &str) 
+    -> anyhow::Result<(), anyhow::Error> 
 {
     let data_stream: Stream<Vec<T>> = DATABASE.select(resource).live().await?;
     handle_streams(data_stream, tx).await?;
     Ok(())
 }
 
-async fn handle_streams<T>(
+async fn handle_streams<T: Serialize + Deserialize<'static> + Debug >(
     mut notification_stream: impl futures::Stream<Item = Result<Notification<T>, surrealdb::Error>> + Unpin,
     tx: Sender<(Action, T)>
-) -> anyhow::Result<(), Error> 
-    where T: Serialize + Deserialize<'static> + Debug 
+) 
+    -> anyhow::Result<(), Error> 
 {
     while let Some(notification) = notification_stream.next().await {
         let notif: Notification<T> = notification?;
