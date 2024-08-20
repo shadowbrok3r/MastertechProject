@@ -1,5 +1,6 @@
-use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, Record, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
+use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
@@ -113,7 +114,14 @@ impl MastertechContext{
         
                             match res{
                                 Ok(data) => tx.try_send(data.clone())?,
-                                Err(e) => info!("Error Creating Client: {e:?}"),
+                                Err(e) => {
+                                    info!("Error Creating Client: {e:?}");
+                                    let res: Option<Record> = DATABASE
+                                        .upsert(uuid.0.clone())
+                                        .content(connected_client)
+                                        .await?.take();
+                                    info!("last ditch effort: {:?}", res);
+                                },
                             }
                         }
                     },
@@ -242,9 +250,10 @@ impl WebConsoleFrontend {
                             self.history.push(format!("Raw Command: {}", txt.clone()));
                             let tx = self.command_tx.clone();
                             let text = txt.clone();
-                            let process = Arc::clone(&self.process);
+                            // let process = Arc::clone(&self.process);
                             spawn(async move {
-                                process_command(text.clone(), tx.clone(), process).await;
+                                let _ = handle_command_payload(text.clone(), tx.clone()).await;
+                                // process_command(text.clone(), tx.clone(), process).await;
                             });
                         },
                         _ => ()
@@ -612,7 +621,22 @@ impl WebConsoleFrontend {
         });
 
         ui.vertical_centered_justified(|ui| {
-            let text_edit = TextEdit::singleline(&mut self.input).hint_text("Send Message").ui(ui);
+            let mut theme = CodeTheme::from_memory(ui.ctx());
+            ui.collapsing("Theme", |ui| {
+                ui.group(|ui| {
+                    theme.ui(ui);
+                    theme.clone().store_in_memory(ui.ctx());
+                });
+            });
+            
+            let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
+                let mut layout_job =
+                    highlight(ui.ctx(), &theme, string, "bash".into()); // || "zsh".into()
+                layout_job.wrap.max_width = wrap_width;
+                ui.fonts(|f| f.layout_job(layout_job))
+            };
+
+            let text_edit = TextEdit::singleline(&mut self.input).hint_text("Send Message").layouter(&mut layouter).ui(ui);
             let key_press = ui.input(|i| i.key_pressed(Key::Enter));
             if text_edit.lost_focus() && key_press {
                 text_edit.request_focus();
@@ -691,12 +715,12 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Res
 
 async fn handle_windows_cmd_interactive(
     command_payload: String, 
-    tx: Sender<Vec<u8>>, 
+    tx: Sender<Vec<u8>>,
     rx: Receiver<String>
 ) ->  Result<(), Error> {
 
-    let mut process: Child = Command::new("cmd")
-        .arg("/C")
+    let mut process: Child = Command::new("sh")
+        .arg("-c")
         .arg(&command_payload)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -777,41 +801,49 @@ async fn process_command(text: String, tx: Sender<Vec<u8>>, process: Arc<Mutex<O
     }
 }
 
-async fn handle_linux_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Result<ChildStdin, Error> {
-    info!("Executing command: {}", command_payload);
-    let mut process = Command::new("sh")
-        .arg("-c")
+async fn handle_linux_cmd(
+    command_payload: String, 
+    tx: Sender<Vec<u8>>
+) ->  Result<ChildStdin, Error> {
+
+    let mut process: Child = Command::new("cmd")
+        .arg("/C")
         .arg(&command_payload)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
 
-
-    // Handle stdout and stderr
-    let mut stdout = process.stdout.take().expect("Failed to open stdout");
-    let mut stderr = process.stderr.take().expect("Failed to open stderr");
+    // Create a Tokio stream for stdout / stderr
+    let stdout = process.stdout.take().expect("Failed to get stdout");
+    let stderr = process.stderr.take().expect("Failed to get stderr");
     let stdin: ChildStdin = process.stdin.take().expect("Failed to open stdin");
 
-    let tx_clone = tx.clone();
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+
+    // Ensure the child process is spawned in the runtime so it can
+    // make progress on its own while we await for any output.
     tokio::spawn(async move {
-        let mut stdout_buf = Vec::new();
-        stdout.read_to_end(&mut stdout_buf).await.ok();
-        tx_clone.send(stdout_buf).ok();
+        let status = process.wait().await.expect("child process encountered an error");
+        info!("child status was: {}", status);
     });
 
     let tx_clone = tx.clone();
     tokio::spawn(async move {
-        let mut stderr_buf = Vec::new();
-        stderr.read_to_end(&mut stderr_buf).await.ok();
-        tx_clone.send(stderr_buf).ok();
+        while let Some(line) = stderr_reader.next_line().await? {
+            tx_clone.send(line.into_bytes()).ok();
+        }
+        Ok::<(), Error>(())
     });
 
-    let output = process.wait_with_output().await?;
     let tx_clone = tx.clone();
-    if !output.status.success() {
-        tx_clone.send(output.stderr).ok();
-    }
+    tokio::spawn(async move {
+        while let Some(line) = stdout_reader.next_line().await? {
+            tx_clone.try_send(line.into_bytes()).ok();
+        }
+        Ok::<(), Error>(())
+    });
 
     Ok(stdin)
 }

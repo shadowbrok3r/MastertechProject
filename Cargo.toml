@@ -6,7 +6,7 @@ members = [ "MtechServer2.0", "database" , "displays", "Mastertech4.0", "websock
 # displays = { path = "displays" }
 database = { path = "database" }
 eframe = { version="0.28", features=["persistence", "serde", "wgpu", "default_fonts"] } # wgpu
-egui_extras = { version = "0.28", features = ["datepicker"]}
+egui_extras = { version = "0.28", features = ["datepicker", "syntect"]}
 # surrealdb = { version = "1.5", features = ["protocol-ws"] } # kv-speedb "protocol-http", "native-tls"
 surrealdb-alpha = { version="=2.0.7", features = ["protocol-ws"] }
 egui_dock = { version = "0.13", features = ["serde"]}
