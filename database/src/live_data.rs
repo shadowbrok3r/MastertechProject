@@ -1,7 +1,7 @@
 use super::{DATABASE, schema::{utilities::LiveUpdate, LiveTaskPayload, TaskNotePayload, TicketPayload, TaskPayload, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use surrealdb::{method::Stream, Action, Notification};
-use std::{collections::HashMap, fmt::Debug};
+use std::{borrow::BorrowMut, collections::HashMap, fmt::Debug};
 use structdiff::{Difference, StructDiff};
 use crossbeam::channel::Sender;
 use futures::StreamExt;
@@ -103,39 +103,6 @@ impl LiveUpdate for LiveTaskPayload {
     }
 }
 
-// pub fn update_or_insert_notes(
-//     new_note: TaskNotePayload,
-//     task: &mut TaskPayload
-// ) -> anyhow::Result<(), anyhow::Error> {
-//     if let Some(ref task_id) = new_note.task_id {
-//         if let Some(existing_task_id) = &task.id {
-//             if existing_task_id == task_id {
-//                 // Check if the note ID already exists
-//                 let notes = &mut task.task_note;
-//                 if !notes.is_empty() {
-//                     let x = new_note.note.is_empty() ;
-//                     let y = new_note.created_at.is_empty();
-//                     let z = new_note.everest_initials.is_empty();                
-//                     if notes.iter().any(|note| 
-//                         note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
-//                     ) {
-//                         notes.push(new_note.clone());
-//                         debug!("Contains notes already, inserting new: {new_note:?}");
-//                     }
-//                 } else {
-//                     let mut new_notes = Vec::new();
-//                     new_notes.push(new_note.clone());
-//                     debug!("there were no existing notes. creating note: {:?}", new_notes);
-//                     task.task_note = new_notes;
-//                 }
-//             }
-//         }
-//         // if updated { debug!("Note updated or inserted successfully."); } 
-//         // else { debug!("Task ID not found or note already exists."); }
-//     }
-//     Ok(())
-// }
-
 pub fn update_or_insert_notes(
     new_note: TaskNotePayload,
     task: &mut TaskPayload
@@ -150,7 +117,7 @@ pub fn update_or_insert_notes(
                 }) {
                     // Apply diffs to the existing note
                     let diffs = existing_note.diff(&new_note);
-                    existing_note.clone().apply(diffs);
+                    existing_note.apply_mut(diffs);
                     debug!("Updated existing note: {:?}", existing_note);
                 } else {
                     // Insert the new note if it doesn't exist
@@ -160,6 +127,26 @@ pub fn update_or_insert_notes(
 
             }
         }
+    }
+    Ok(())
+}
+
+pub fn update_or_insert_anything<T>(
+    current_data: &mut Vec<T>, 
+    new_data: T
+) -> anyhow::Result<(), anyhow::Error> where T: StructDiff + PartialEq + Debug {
+    let mut updated = false;
+    for existing_data in &mut current_data.iter_mut() {
+        if *existing_data == new_data{
+            info!("existing_data match's new_data: {:?} // {:?}", existing_data, new_data);
+            let diffs = existing_data.diff(&new_data);
+            existing_data.apply_mut(diffs);
+            updated = true;
+            break;
+        } 
+    }
+    if !updated {
+        current_data.push(new_data);
     }
     Ok(())
 }

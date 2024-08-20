@@ -126,42 +126,90 @@ impl eframe::App for MtechServer {
             }
         }
 
-        if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
-            info!("New Ticket Update ");
-            for (_, layout) in self.context.task_layouts.iter_mut() {
-                for (_, tasks) in layout.task_map.iter_mut(){ // .zip(tasks) 
-                    for task in tasks.iter_mut(){
-                        if task.id.clone().unwrap().0.id == channel.new_task.1.id.clone().unwrap().0.id{
+        if let Ok(channel) = self.context.new_ticket_rx.try_recv() {
+            info!("New Ticket Update");
+        
+            let new_task_id = channel.new_task.1.id.clone().unwrap().0.id;
+        
+            for layout in self.context.task_layouts.values_mut() {
+                for tasks in layout.task_map.values_mut() {
+                    for task in tasks.iter_mut() {
+                        if task.id.as_ref().unwrap().0.id == new_task_id {
                             info!("\nReplacing {:?}\n with \n{:?}\n", task.task_name.clone(), channel.new_task.1.task_name.clone());
-                            match update_or_insert_layout(
-                                &mut self.context.tasks, 
-                                channel.new_task.1.clone(), 
-                            Some(channel.new_ticket.clone()), 
-                            task
-                            ){
-                                Ok(_) => {
-                                    self.context.rerun_filtering_my_tasks = true;
-                                    self.context.rerun_filtering_store_tasks = true;
-                                    self.context.rerun_filtering_completed = true;
-                                    info!("Updated existing task");
-                                },
-                                Err(e) => info!("Error updating existing task: {e:?}"),
+        
+                            if let Err(e) = update_or_insert_layout(
+                                &mut self.context.tasks,
+                                channel.new_task.1.clone(),
+                                Some(channel.new_ticket.clone()),
+                                task
+                            ) {
+                                info!("Error updating existing task: {e:?}");
+                            } else {
+                                self.context.rerun_filtering_my_tasks = true;
+                                self.context.rerun_filtering_store_tasks = true;
+                                self.context.rerun_filtering_completed = true;
+                                info!("Updated existing task");
                             }
-                        } else {
-                            match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
-                                Ok(_) => {
-                                    self.context.rerun_filtering_my_tasks = true;
-                                    self.context.rerun_filtering_store_tasks = true;
-                                    self.context.rerun_filtering_completed = true;
-                                    info!("Updated existing task")
-                                },
-                                Err(e) => info!("Error updating existing task: {e:?}"),
-                            }
+                            break;
                         }
                     }
                 }
             }
+        
+            // If no matching task was found in the layouts, add the task to the global context
+            if !self.context.tasks.iter().any(|task| task.id.as_ref().unwrap().0.id == new_task_id) {
+                if let Err(e) = update_or_insert(
+                    &mut self.context.tasks,
+                    channel.new_task.1.clone(),
+                    Some(channel.new_ticket.clone())
+                ) {
+                    info!("Error updating existing task: {e:?}");
+                } else {
+                    self.context.rerun_filtering_my_tasks = true;
+                    self.context.rerun_filtering_store_tasks = true;
+                    self.context.rerun_filtering_completed = true;
+                    info!("Inserted new task");
+                }
+            }
         }
+
+        
+        // if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
+        //     info!("New Ticket Update ");
+        //     for (_, layout) in self.context.task_layouts.iter_mut() {
+        //         for (_, tasks) in layout.task_map.iter_mut(){ 
+        //             for task in tasks.iter_mut(){
+        //                 if task.id.clone().unwrap().0.id == channel.new_task.1.id.clone().unwrap().0.id {
+        //                     info!("\nReplacing {:?}\n with \n{:?}\n", task.task_name.clone(), channel.new_task.1.task_name.clone());
+        //                     match update_or_insert_layout(
+        //                         &mut self.context.tasks, 
+        //                         channel.new_task.1.clone(), 
+        //                     Some(channel.new_ticket.clone()), 
+        //                     task
+        //                     ){
+        //                         Ok(_) => {
+        //                             self.context.rerun_filtering_my_tasks = true;
+        //                             self.context.rerun_filtering_store_tasks = true;
+        //                             self.context.rerun_filtering_completed = true;
+        //                             info!("Updated existing task");
+        //                         },
+        //                         Err(e) => info!("Error updating existing task: {e:?}"),
+        //                     }
+        //                 } else {
+        //                     match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
+        //                         Ok(_) => {
+        //                             self.context.rerun_filtering_my_tasks = true;
+        //                             self.context.rerun_filtering_store_tasks = true;
+        //                             self.context.rerun_filtering_completed = true;
+        //                             info!("Updated existing task")
+        //                         },
+        //                         Err(e) => info!("Error updating existing task: {e:?}"),
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         if let Ok(payload) = self.context.notes_rx.try_recv(){
             info!("New note");

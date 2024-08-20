@@ -105,39 +105,6 @@ impl LiveUpdate for LiveTaskPayload {
     }
 }
 
-// pub fn update_or_insert_notes(
-//     new_note: TaskNotePayload,
-//     task: &mut TaskPayload
-// ) -> anyhow::Result<(), anyhow::Error> {
-//     if let Some(ref task_id) = new_note.task_id {
-//         if let Some(existing_task_id) = &task.id {
-//             if existing_task_id == task_id {
-//                 // Check if the note ID already exists
-//                 let notes = &mut task.task_note;
-//                 if !notes.is_empty() {
-//                     let x = new_note.note.is_empty() ;
-//                     let y = new_note.created_at.is_empty();
-//                     let z = new_note.everest_initials.is_empty();                  
-//                     if notes.iter().any(|note| 
-//                         note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
-//                     ) {
-//                         notes.push(new_note.clone());
-//                         debug!("Contains notes already, inserting new: {new_note:?}");
-//                     }
-//                 } else {
-//                     let mut new_notes = Vec::new();
-//                     new_notes.push(new_note.clone());
-//                     debug!("there were no existing notes. creating note: {:?}", new_notes);
-//                     task.task_note = new_notes;
-//                 }
-//             }
-//         }
-//         // if updated { debug!("Note updated or inserted successfully."); } 
-//         // else { debug!("Task ID not found or note already exists."); }
-//     }
-//     Ok(())
-// }
-
 pub fn update_or_insert_notes(
     new_note: TaskNotePayload,
     task: &mut TaskPayload
@@ -188,12 +155,8 @@ pub fn update_or_insert(
         }
 
         if !updated {
-            info!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
+            info!("data was NOT updated");
             let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);  
-            // if let Some(ticket) = new_ticket{
-            //     new_task_converted.service_ticket = Some(ticket.clone());
-            //     new_task_converted.service_number = Some(ticket.service_number);
-            // }
             info!("new_task_converted: {new_task_converted:?}");
             // Insert the new task if it does not exist
             tasks.push(new_task_converted);
@@ -208,22 +171,28 @@ pub fn update_or_insert(
     Ok(())
 }
 
+
 pub fn update_or_insert_layout(
     tasks: &mut Vec<TaskPayload>, 
     new_task: LiveTaskPayload,
     new_ticket: Option<TicketPayload>,
     task_to_replace: &mut TaskPayload
-) -> anyhow::Result<(), anyhow::Error>{
+) -> anyhow::Result<(), anyhow::Error> {
     if let Some(ref id) = new_task.id {
         let mut updated = false;
 
         for task in tasks.iter_mut() {
             if let Some(existing_id) = &task.id {
-                if existing_id == id{
+                if existing_id == id {
                     debug!("ID's match: {:?} // {:?}", existing_id, id);
                     let updated_task = convert_live_to_task(new_task.clone(), task, new_ticket);
-                    *task = updated_task.clone();
-                    *task_to_replace = updated_task;
+
+                    // Calculate the diff and apply it to the existing task
+                    let diffs = task.diff(&updated_task);
+                    task.apply_mut(diffs);
+
+                    // Also update the task_to_replace with the updated task
+                    *task_to_replace = task.clone();
                     updated = true;
                     break;
                 }
@@ -231,26 +200,17 @@ pub fn update_or_insert_layout(
         }
 
         if !updated {
-            debug!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
-            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);  
-            // if let Some(ticket) = new_ticket{
-            //     new_task_converted.service_ticket = Some(ticket.clone());
-            //     new_task_converted.service_number = Some(ticket.service_number);
-            // }
-            debug!("new_task_converted: {new_task_converted:?}");
-            // Insert the new task if it does not exist
+            debug!("Data was NOT updated; inserting new task.");
+            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);
             tasks.push(new_task_converted);
         }
     } else {
-        debug!("there was NO task id");
+        debug!("No task ID provided; inserting new task.");
         let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);
-        debug!("new_task_converted: {new_task_converted:?}");
-        // If the new task does not have an ID, insert it
         tasks.push(new_task_converted);
     }
     Ok(())
 }
-
 
 pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayload, ticket: Option<TicketPayload>) -> TaskPayload {
 
@@ -258,11 +218,6 @@ pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayl
         Some(service)
     } else { existing_task.service_ticket.clone() };
 
-    // let notes = if let Some(existing_notes) = live_task.task_note{
-    //     info!("live_task.task_note: {:?}", live_task.task_note.clone());
-    // // } else { 
-    //     info!("existing_task.task_note.clone() : {:?}", existing_task.task_note.clone());
-    // };
     TaskPayload {
         id: live_task.id,
         task_name: live_task.task_name,
@@ -318,3 +273,84 @@ async fn handle_streams<T>(
     }; 
     Ok(())
 }
+
+
+/*
+ LEGACY
+
+pub fn update_or_insert_notes(
+    new_note: TaskNotePayload,
+    task: &mut TaskPayload
+) -> anyhow::Result<(), anyhow::Error> {
+    if let Some(ref task_id) = new_note.task_id {
+        if let Some(existing_task_id) = &task.id {
+            if existing_task_id == task_id {
+                // Check if the note ID already exists
+                let notes = &mut task.task_note;
+                if !notes.is_empty() {
+                    let x = new_note.note.is_empty() ;
+                    let y = new_note.created_at.is_empty();
+                    let z = new_note.everest_initials.is_empty();                  
+                    if notes.iter().any(|note| 
+                        note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
+                    ) {
+                        notes.push(new_note.clone());
+                        debug!("Contains notes already, inserting new: {new_note:?}");
+                    }
+                } else {
+                    let mut new_notes = Vec::new();
+                    new_notes.push(new_note.clone());
+                    debug!("there were no existing notes. creating note: {:?}", new_notes);
+                    task.task_note = new_notes;
+                }
+            }
+        }
+        // if updated { debug!("Note updated or inserted successfully."); } 
+        // else { debug!("Task ID not found or note already exists."); }
+    }
+    Ok(())
+}
+
+pub fn update_or_insert_layout(
+    tasks: &mut Vec<TaskPayload>, 
+    new_task: LiveTaskPayload,
+    new_ticket: Option<TicketPayload>,
+    task_to_replace: &mut TaskPayload
+) -> anyhow::Result<(), anyhow::Error>{
+    if let Some(ref id) = new_task.id {
+        let mut updated = false;
+
+        for task in tasks.iter_mut() {
+            if let Some(existing_id) = &task.id {
+                if existing_id == id{
+                    debug!("ID's match: {:?} // {:?}", existing_id, id);
+                    let updated_task = convert_live_to_task(new_task.clone(), task, new_ticket);
+                    *task = updated_task.clone();
+                    *task_to_replace = updated_task;
+                    updated = true;
+                    break;
+                }
+            }
+        }
+
+        if !updated {
+            debug!("data was NOT updated"); // TODO Do we want to 'update' the task in this case?
+            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);  
+            // if let Some(ticket) = new_ticket{
+            //     new_task_converted.service_ticket = Some(ticket.clone());
+            //     new_task_converted.service_number = Some(ticket.service_number);
+            // }
+            debug!("new_task_converted: {new_task_converted:?}");
+            // Insert the new task if it does not exist
+            tasks.push(new_task_converted);
+        }
+    } else {
+        debug!("there was NO task id");
+        let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);
+        debug!("new_task_converted: {new_task_converted:?}");
+        // If the new task does not have an ID, insert it
+        tasks.push(new_task_converted);
+    }
+    Ok(())
+}
+ */

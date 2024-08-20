@@ -1,4 +1,4 @@
-use database::{live_data::{handle_live_create, handle_live_delete, handle_live_update, listen_data, listen_task_notes, listen_tasks}, schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks}};
+use database::{live_data::{handle_live_create, handle_live_delete, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert_anything}, schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks}};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::egui::{Color32, RichText};
 use crate::utilities::get_data::get_customer_data;
@@ -177,8 +177,8 @@ impl MtechServer {
 
 
             match action{
-                Action::Create => handle_live_create(&mut self.context.clients, new_client.clone()).unwrap_or(()),
-                Action::Update => handle_live_update(&mut self.context.clients, new_client.clone()).unwrap_or(()),
+                Action::Create => update_or_insert_anything(&mut self.context.clients, new_client.clone()).unwrap_or(()),
+                Action::Update => update_or_insert_anything(&mut self.context.clients, new_client.clone()).unwrap_or(()),
                 Action::Delete => handle_live_delete(&mut self.context.clients, new_client.clone()).unwrap_or(()),
                 _ => (),
             };
