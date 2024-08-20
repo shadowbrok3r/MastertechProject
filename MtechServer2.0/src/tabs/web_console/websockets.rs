@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Label, Layout, Margin, Modifiers, Pos2, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::{schema::{Cmd, ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
@@ -426,9 +426,9 @@ impl WebSocketClient{
                 ui.set_width(ui.available_width());
                 let max_msg_width = ui.available_width() / 1.5;
                 let fixed_height = 50.0;
-                // let min_width = 200.0;
-    
+                let mut count = 0;
                 for item in self.history.iter(){
+                    count += 1;
                     let is_message_from_myself = if item.contains("You"){ true } else { false };
     
                     // Messages from the user are right-aligned.
@@ -542,22 +542,17 @@ impl WebSocketClient{
                                             Align::Center,
                                         ), |ui| {
                                             ui.set_width(ui.available_width());
-                                            // ui.label(txt);
-                                            let mut theme = CodeTheme::from_memory(ui.ctx());
-                                            ui.collapsing("Theme", |ui| {
-                                                ui.group(|ui| {
-                                                    theme.ui(ui);
-                                                    theme.clone().store_in_memory(ui.ctx());
-                                                });
-                                            });
-                                            
                                             let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
-                                                let mut layout_job =
-                                                    highlight(ui.ctx(), &theme, string, "bash".into()); // || "zsh".into()
+                                                let mut layout_job: eframe::egui::text::LayoutJob =
+                                                    highlight(ui.ctx(), &CodeTheme::dark(), string, "bash".into()); // || "zsh".into()
                                                 layout_job.wrap.max_width = wrap_width;
                                                 ui.fonts(|f| f.layout_job(layout_job))
                                             };
-                                            TextEdit::multiline(&mut txt.text()).layouter(&mut layouter).min_size(Vec2::INFINITY).ui(ui);
+                                            TextEdit::singleline(&mut txt.text())
+                                                .id_source(Id::new(format!("{item:?}-{count:?}")))
+                                                .layouter(&mut layouter)
+                                                .min_size(Vec2::new(ui.available_size_before_wrap().x / 1.1, 30.))
+                                                .ui(ui);
                                         });
                                     });
                             });

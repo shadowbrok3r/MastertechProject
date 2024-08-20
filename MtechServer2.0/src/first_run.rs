@@ -27,6 +27,7 @@ impl MtechServer {
                 if let Some(ref usr) = d.1{
                     self.context.current_user = Some(usr.clone());
                     self.context.file_system.set_user(usr.clone());
+                    self.load_data();
                 }
             },
             Err(e) => {
