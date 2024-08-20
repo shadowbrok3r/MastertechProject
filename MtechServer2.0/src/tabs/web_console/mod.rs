@@ -1,5 +1,5 @@
+use eframe::egui::{Button, CollapsingHeader, Color32, Frame, Margin, Rounding, ScrollArea, Stroke, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::utilities::get_connected_clients;
-use eframe::egui::{Align, Button, CollapsingHeader, Color32, Frame, Margin, Rounding, ScrollArea, Stroke, TopBottomPanel, Ui, Vec2, Widget};
 use crate::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
 

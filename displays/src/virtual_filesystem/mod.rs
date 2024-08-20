@@ -1,6 +1,5 @@
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
-use surrealdb::sql::Uuid;
 use std::{cell::RefCell, collections::{HashMap, HashSet}, iter};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use crossbeam::channel::{Receiver, Sender};
@@ -76,7 +75,7 @@ impl FileSystem {
             let mut current_path = String::new();
             let mut current = &mut self.root;
 
-            for (i, part) in parts.iter().enumerate() {
+            for (_, part) in parts.iter().enumerate() {
                 // let part = part.to_string();
                 if Self::is_file(&part) { // part.contains('.'){ // i == parts.len() - 1 { der.insert(part.to_string(), Node::File((path.clone(), part.to_string())));
                     if let Node::Folder(ref mut full_path, ref mut folder) = current {

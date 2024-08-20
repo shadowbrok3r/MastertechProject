@@ -6,7 +6,7 @@ use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use displays::virtual_filesystem::FileSystem;
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
-use egui_extras::{Size, Strip, StripBuilder};
+use egui_extras::{Size, StripBuilder};
 use surrealdb::Response;
 use bincode::serialize;
 use web_time::Instant;

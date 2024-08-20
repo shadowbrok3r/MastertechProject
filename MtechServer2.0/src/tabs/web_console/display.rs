@@ -1,7 +1,6 @@
-use eframe::egui::{Align, Button, CollapsingHeader, Color32, Frame, Layout, Margin, Rangef, RichText, Rounding, ScrollArea, Stroke, Ui, Vec2, Widget, Window};
+use eframe::egui::{Align, Button, Color32, Frame, Layout, Margin, RichText, Rounding, Stroke, Ui, Vec2, Widget};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use crate::app_state::MtechServerContext;
-use egui_extras::{Size, StripBuilder};
 use database::schema::ConnectedClient;
 use log::info;
 

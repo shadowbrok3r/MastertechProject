@@ -1,6 +1,6 @@
-use eframe::{egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget}, App, Storage};
-use crate::app_state::{AppState, MainPages, MtechServer};
+use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use database::{schema::{Store, USER_TABLE}, set_db_selection, DatabaseSelection, DATABASE};
+use crate::app_state::{AppState, MainPages, MtechServer};
 use surrealdb::{opt::RecordId, sql::Id};
 use egui_extras::{Size, StripBuilder};
 use wasm_bindgen_futures::spawn_local;

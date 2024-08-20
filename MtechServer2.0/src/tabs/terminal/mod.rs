@@ -2,7 +2,7 @@
 use eframe::egui::Ui;
 // use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use crate::app_state::MtechServerContext;
-use self::chart::render_chart1;
+// use self::chart::render_chart1;
 
 pub mod chart;
 

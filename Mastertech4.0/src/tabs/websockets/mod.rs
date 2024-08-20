@@ -1,9 +1,9 @@
-use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::{read_folder, FileBrowser}};
-use database::{schema::{utilities::{check_id_existence, deserialize_command, query_id, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
-use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem};
+use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
-use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
+use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
+use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
+use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
 use crossbeam::channel::{Receiver, Sender};
@@ -431,7 +431,7 @@ impl WebConsoleFrontend {
                     tx.send(cmd).unwrap();
                 });
             },
-            Cmd::CopyTools(tool) => {
+            Cmd::CopyTools(_tool) => {
                 
             },
             Cmd::ReadEvents => {
