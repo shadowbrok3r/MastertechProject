@@ -714,6 +714,7 @@ async fn handle_windows_cmd_interactive(
     // Ensure the child process is spawned in the runtime so it can
     // make progress on its own while we await for any output.
     tokio::spawn(async move {
+        
         let status = process.wait().await.expect("child process encountered an error");
         info!("child status was: {}", status);
     });
