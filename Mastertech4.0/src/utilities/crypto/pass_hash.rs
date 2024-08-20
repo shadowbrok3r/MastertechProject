@@ -82,7 +82,6 @@ pub fn load_encrypted_user_data(password: &[u8]) -> Option<Login> {
             let decrypted_data = decrypt_data(encrypted_data, &key);
             // let login: Login = serde_json::from_slice(&decrypted_data).unwrap();
             let login: Login = bincode::deserialize(&decrypted_data).unwrap();
-            info!("decrypted_data: {:?}", login);
             Some(login)
         },
         Err(e) => {

@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::{schema::{Cmd, ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
@@ -6,7 +6,7 @@ use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use displays::virtual_filesystem::FileSystem;
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
-use egui_extras::{Size, StripBuilder};
+use egui_extras::{syntax_highlighting::{highlight, CodeTheme}, Size, StripBuilder};
 use surrealdb::Response;
 use bincode::serialize;
 use web_time::Instant;
@@ -55,6 +55,8 @@ pub struct WebSocketClient {
     pub path_edit: String,
     pub current_path: String,
     pub interactive: bool,
+    pub history_idx: usize,
+    pub my_history: Vec<String>
 }
 
 impl WebSocketClient{
@@ -80,7 +82,9 @@ impl WebSocketClient{
             explorer: FileSystem::new(),
             path_edit: String::new(),
             current_path: String::new(),
-            interactive: false
+            interactive: false,
+            history_idx: 0,
+            my_history: Vec::new()
         }
     }
     
@@ -503,7 +507,15 @@ impl WebSocketClient{
                                                 .min_size(Vec2::new(30.0, 20.0))
                                                 .sense(Sense::hover())
                                                 .ui(ui);
-                                            
+
+                                            ui.add_space(max_msg_width / 1.1);
+
+                                            let btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                            if btn.clicked(){
+                                                ui.ctx().copy_text(item.clone());
+                                            }
                                         });
                                     } else {
                                         ui.with_layout(Layout::from_main_dir_and_cross_align(
@@ -515,6 +527,13 @@ impl WebSocketClient{
                                                 .min_size(Vec2::new(30.0, 20.0))
                                                 .sense(Sense::hover())
                                                 .ui(ui);
+                                            ui.add_space(max_msg_width / 1.1);
+                                            let btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                            if btn.clicked(){
+                                                ui.ctx().copy_text(item.clone());
+                                            }
                                         });
                                     }
                                     note_frame.show(ui, |ui| {
@@ -523,7 +542,22 @@ impl WebSocketClient{
                                             Align::Center,
                                         ), |ui| {
                                             ui.set_width(ui.available_width());
-                                            ui.label(txt);
+                                            // ui.label(txt);
+                                            let mut theme = CodeTheme::from_memory(ui.ctx());
+                                            ui.collapsing("Theme", |ui| {
+                                                ui.group(|ui| {
+                                                    theme.ui(ui);
+                                                    theme.clone().store_in_memory(ui.ctx());
+                                                });
+                                            });
+                                            
+                                            let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
+                                                let mut layout_job =
+                                                    highlight(ui.ctx(), &theme, string, "bash".into()); // || "zsh".into()
+                                                layout_job.wrap.max_width = wrap_width;
+                                                ui.fonts(|f| f.layout_job(layout_job))
+                                            };
+                                            TextEdit::multiline(&mut txt.text()).layouter(&mut layouter).min_size(Vec2::INFINITY).ui(ui);
                                         });
                                     });
                             });
@@ -558,18 +592,59 @@ impl WebSocketClient{
                     });
                 };
             });
-            ui.add_space(avail_size.y);
+            // ui.add_space(avail_size.y);
             ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
-                let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").ui(ui);
+                let mut theme = CodeTheme::from_memory(ui.ctx());
+                ui.collapsing("Theme", |ui| {
+                    ui.group(|ui| {
+                        theme.ui(ui);
+                        theme.clone().store_in_memory(ui.ctx());
+                    });
+                });
+                
+                let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
+                    let mut layout_job =
+                        highlight(ui.ctx(), &theme, string, "bash".into()); // || "zsh".into()
+                    layout_job.wrap.max_width = wrap_width;
+                    ui.fonts(|f| f.layout_job(layout_job))
+                };
+                let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").layouter(&mut layouter).ui(ui);
                 let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+                let up_press = ui.input(|i| i.key_pressed(Key::ArrowUp));
+                let down_press = ui.input(|i| i.key_pressed(Key::ArrowDown));
+                let copy_key = ui.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::C)));
+
+                if copy_key && text_edit.has_focus() {
+                    self.input.clear();
+                }
+
+                if down_press {
+                    if self.history_idx <= self.my_history.len() {
+                        self.history_idx += 1;
+                    }
+                    if let Some(history) = self.my_history.get(self.history_idx){
+                        self.input = history.clone();
+                    }
+                } 
+                if up_press {
+                    if self.history_idx > 0 {
+                        self.history_idx -= 1;
+                    }
+                    if let Some(history) = self.my_history.get(self.history_idx){
+                        self.input = history.clone();
+                    }
+                }
+
                 if text_edit.lost_focus() && key_press && !self.interactive{
                     self.loading = true;
                     text_edit.request_focus();
                     self.history.push(format!("You\n{}", self.input.clone()));
+                    self.my_history.push(self.input.clone());
                     self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
                 } else if text_edit.lost_focus() && key_press && self.interactive { 
                     text_edit.request_focus();
                     self.history.push(format!("You\n{}", self.input.clone()));
+                    self.my_history.push(self.input.clone());
                     match serialize(&Cmd::InteractiveInput(std::mem::take(&mut self.input))){
                         Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
                         Err(e) => self.history.push(e.to_string()),
