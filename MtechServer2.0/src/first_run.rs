@@ -1,7 +1,7 @@
-use database::{live_data::{handle_live_create, handle_live_delete, handle_live_update, listen_data, listen_task_notes, listen_tasks, update_or_insert_anything}, schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks}};
+use database::{live_data::{handle_live_create, handle_live_delete, handle_live_update, listen_data, update_or_insert_anything}, schema::{utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks}, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::egui::{Color32, RichText};
-use crate::utilities::get_data::get_customer_data;
+// use crate::utilities::get_data::get_customer_data;
 use crate::app_state::{AppState, MtechServer};
 use wasm_bindgen_futures::spawn_local;
 use database::STORAGE_URL;
@@ -79,17 +79,17 @@ impl MtechServer {
             }
 
             spawn_local(async move {
-                let listen_task_notes = listen_task_notes(notes_tx).await;
+                let listen_task_notes = listen_data(notes_tx, TASK_NOTE_TABLE).await;
                 info!("listen_task_notes: {listen_task_notes:?}");
             });
 
             spawn_local(async move {
-                let listen_tasks = listen_tasks(live_tasks_tx).await;
+                let listen_tasks = listen_data(live_tasks_tx, TASK_TABLE).await;
                 info!("listen_tasks: {listen_tasks:?}");
             });
 
             spawn_local(async move {
-                let listen_data = listen_data(live_clients_tx).await;
+                let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
                 info!("listen_data: {listen_data:?}");
             });
             
