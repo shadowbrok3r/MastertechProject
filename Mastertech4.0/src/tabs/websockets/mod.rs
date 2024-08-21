@@ -1,5 +1,5 @@
 use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, Record, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
-use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
+use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
@@ -80,11 +80,14 @@ impl MastertechContext{
                 Thing::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.0.id.clone()))
             )
         );
+        
 
         let connected_client = ConnectedClient {
             id: self.client_uuid.clone(),
             client_hash,
             connected: true,
+            assigned_user: Some(self.current_user.as_ref().unwrap().id.clone()),
+            connection_string: computer_id.0.id.clone().to_string(),
             ..Default::default()
         };
 
@@ -459,7 +462,7 @@ impl WebConsoleFrontend {
         ui.vertical_centered(|ui | ui.heading("Received events:"));
         ui.separator();
         self.connected = self.handle_events();
-
+        let mut theme = CodeTheme::dark();
         ScrollArea::vertical()
             .animated(true)
             .max_height(ui.available_height() - 5.0)
@@ -472,8 +475,9 @@ impl WebConsoleFrontend {
             let max_msg_width = ui.available_width() - 15.0;
             let fixed_height = 50.0;
             let min_width = 200.0;
-
+            let mut count = 0;
             for item in self.history.iter(){
+                count += 1;
                 let is_message_from_myself = if item.contains("You"){
                     true
                 } else { false };
@@ -584,7 +588,17 @@ impl WebConsoleFrontend {
                                         Align::Center,
                                     ), |ui| {
                                         ui.set_width(ui.available_width());
-                                        ui.label(txt);
+                                        let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
+                                            let mut layout_job: eframe::egui::text::LayoutJob =
+                                                highlight(ui.ctx(), &CodeTheme::dark(), string, "bash".into()); // || "zsh".into()
+                                            layout_job.wrap.max_width = wrap_width;
+                                            ui.fonts(|f| f.layout_job(layout_job))
+                                        };
+                                        TextEdit::singleline(&mut txt.text())
+                                            .id_source(Id::new(format!("{item:?}-{count:?}")))
+                                            .layouter(&mut layouter)
+                                            .min_size(Vec2::new(ui.available_size_before_wrap().x / 1.1, 30.))
+                                            .ui(ui);
                                     });
                                 });
                         });
@@ -621,13 +635,13 @@ impl WebConsoleFrontend {
         });
 
         ui.vertical_centered_justified(|ui| {
-            let mut theme = CodeTheme::from_memory(ui.ctx());
-            ui.collapsing("Theme", |ui| {
-                ui.group(|ui| {
-                    theme.ui(ui);
-                    theme.clone().store_in_memory(ui.ctx());
-                });
-            });
+            // let mut theme = CodeTheme::from_memory(ui.ctx());
+            // ui.collapsing("Theme", |ui| {
+            //     ui.group(|ui| {
+            //         theme.ui(ui);
+            //         theme.clone().store_in_memory(ui.ctx());
+            //     });
+            // });
             
             let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
                 let mut layout_job =
@@ -719,8 +733,8 @@ async fn handle_windows_cmd_interactive(
     rx: Receiver<String>
 ) ->  Result<(), Error> {
 
-    let mut process: Child = Command::new("sh")
-        .arg("-c")
+    let mut process: Child = Command::new("cmd")
+        .arg("/C")
         .arg(&command_payload)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -773,33 +787,33 @@ async fn handle_windows_cmd_interactive(
     Ok(())
 }
 
-async fn process_command(text: String, tx: Sender<Vec<u8>>, process: Arc<Mutex<Option<ChildStdin>>>) {
-    let mut process = process.lock().await;
-    if let Some(ref mut stdin) = *process {
-        if text == "quit".to_string(){
-            // drop(child.stdin);
-        } else {
-            info!("We have stdin!!");
-            let input = text.clone();
-            match stdin.write_all(input.as_bytes()).await {
-                Ok(_) => info!("Wrote to stdin"),
-                Err(e) => info!("error writing to stdin: {e:?}"),
-            }
-            match stdin.flush().await {
-                Ok(_) => info!("Flushed stdin"),
-                Err(e) => info!("Error flushing stdin: {:?}", e),
-            }
-        }
-    } else {
-        info!("No stdin yet");
-        match handle_command_payload(text.clone(), tx.clone()).await {
-            Ok(stdin) => {
-                *process = Some(stdin);
-            }
-            Err(e) => info!("error running command: {e:?}"),
-        }
-    }
-}
+// async fn process_command(text: String, tx: Sender<Vec<u8>>, process: Arc<Mutex<Option<ChildStdin>>>) {
+//     let mut process = process.lock().await;
+//     if let Some(ref mut stdin) = *process {
+//         if text == "quit".to_string(){
+//             // drop(child.stdin);
+//         } else {
+//             info!("We have stdin!!");
+//             let input = text.clone();
+//             match stdin.write_all(input.as_bytes()).await {
+//                 Ok(_) => info!("Wrote to stdin"),
+//                 Err(e) => info!("error writing to stdin: {e:?}"),
+//             }
+//             match stdin.flush().await {
+//                 Ok(_) => info!("Flushed stdin"),
+//                 Err(e) => info!("Error flushing stdin: {:?}", e),
+//             }
+//         }
+//     } else {
+//         info!("No stdin yet");
+//         match handle_command_payload(text.clone(), tx.clone()).await {
+//             Ok(stdin) => {
+//                 *process = Some(stdin);
+//             }
+//             Err(e) => info!("error running command: {e:?}"),
+//         }
+//     }
+// }
 
 async fn handle_linux_cmd(
     command_payload: String, 
