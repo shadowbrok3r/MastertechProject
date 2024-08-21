@@ -1,4 +1,5 @@
 use database::live_data::{handle_live_data, handle_live_notes, update_or_insert, update_or_insert_layout};
+use surrealdb::Action;
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::get_associated_ticket, ModalType, TaskUiActions};
 use displays::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, Context, FontId, Frame, Margin, Rounding, Stroke, Style, Vec2, Window};
@@ -211,12 +212,15 @@ impl eframe::App for MtechServer {
         // }
 
         if let Ok(payload) = self.context.notes_rx.try_recv(){
-            info!("New note");
+            info!("{:?}", payload);
             self.context.new_note = true;
             if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal{
                 handle_live_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
                 info!("Inserting note into modal");
-                task_modal.chat_view.insert_note(payload.1);
+                if let Action::Delete = payload.0 {
+                } else {
+                    task_modal.chat_view.insert_note(payload.1);
+                }
             } else if let ModalType::ChatView(chat_view) = &mut self.context.current_modal{
                 let task = self.context.tasks.iter_mut().find(|task| task.id == chat_view.task_id );
                 if let Some(task) = task{

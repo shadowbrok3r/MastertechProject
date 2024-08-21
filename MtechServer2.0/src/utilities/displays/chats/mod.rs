@@ -1,7 +1,7 @@
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
-use database::{schema::{Record, TaskId, TaskNotePayload, User}, DATABASE};
+use database::{live_data::handle_live_delete, schema::{Record, TaskId, TaskNotePayload, User}, DATABASE};
 use displays::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use crate::utilities::get_data::TaskNoteMod;
 use wasm_bindgen_futures::spawn_local;
@@ -21,6 +21,7 @@ pub struct ChatView{
     pub task_id: Option<TaskId>,
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
+    pub delete: Option<TaskNotePayload>,
 }
 
 impl Default for ChatView{
@@ -31,7 +32,8 @@ impl Default for ChatView{
             messages: Vec::new(), 
             current_user: None, 
             markdown_editor: EasyMarkEditor::default(),
-            task_id: None
+            task_id: None,
+            delete: None
         }
     }
 }
@@ -45,11 +47,33 @@ impl ChatView {
             state: ModalState::default(),
             title: "Chat".to_string(),
             markdown_editor: EasyMarkEditor::default(),
-            task_id: Some(task_id)
+            task_id: Some(task_id),
+            delete: None,
         }
     }
 
     pub fn insert_note(&mut self, new_note: TaskNotePayload){
+        // if let Some(ref task_id) = new_note.task_id {
+        //     if let Some(existing_task_id) = &task.id {
+        //         if existing_task_id == task_id {
+        //             let notes = &mut task.task_note;
+                    
+        //             if let Some(existing_note) = notes.iter_mut().find(|note| {
+        //                 note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
+        //             }) {
+        //                 // Apply diffs to the existing note
+        //                 let diffs = existing_note.diff(&new_note);
+        //                 existing_note.apply_mut(diffs);
+        //                 debug!("Updated existing note: {:?}", existing_note);
+        //             } else {
+        //                 // Insert the new note if it doesn't exist
+        //                 notes.push(new_note.clone());
+        //                 debug!("Inserted new note: {:?}", new_note);
+        //             }
+    
+        //         }
+        //     }
+        // }
         let x = new_note.note.is_empty();
         let y = new_note.created_at.is_empty();
         let z = new_note.everest_initials.is_empty();
@@ -65,9 +89,14 @@ impl ChatView {
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Option<String>{
-        
         let mut new_msg: Option<String> = None;
 
+        if let Some(note) = std::mem::take(&mut self.delete) {
+            let deletion = handle_live_delete(&mut self.messages, note.clone());
+            if let Err(e) = deletion {
+                info!("Error deleting note: {e:?}");
+            }
+        }
         let mut shadow = Shadow::default();
         shadow.blur = 10.0;
         shadow.spread = 5.0;
@@ -223,7 +252,7 @@ impl ChatView {
                                                 .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
 
                                             if btn.clicked(){
-                                                // item.
+                                                self.delete = Some(item.clone());
                                                 let mut item = item.clone();
                                                 spawn_local(async move {
                                                     match item.delete_note().await{

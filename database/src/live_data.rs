@@ -71,9 +71,9 @@ pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug + Parti
     Ok(())
 }
 
-pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug + PartialEq>(existing_data: &mut Vec<T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
-    debug!("Data was Deleted: {:?}", new_data);
-    let index = existing_data.iter().position(|x| *x == new_data);
+pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug + PartialEq>(existing_data: &mut Vec<T>, data_to_delete: T) -> anyhow::Result<(), anyhow::Error> {
+    debug!("Data was Deleted: {:?}", data_to_delete);
+    let index = existing_data.iter().position(|x| *x == data_to_delete);
     if let Some(idx) = index {
         info!("Deleting @ {idx}");
         existing_data.remove(idx);
