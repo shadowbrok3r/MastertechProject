@@ -121,7 +121,7 @@ impl MastertechContext{
                                     info!("Error Creating Client: {e:?}");
                                     let res: Option<Record> = DATABASE
                                         .upsert(uuid.0.clone())
-                                        .content(connected_client)
+                                        .merge(connected_client)
                                         .await?.take();
                                     info!("last ditch effort: {:?}", res);
                                 },
