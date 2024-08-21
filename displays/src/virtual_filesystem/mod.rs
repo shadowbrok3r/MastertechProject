@@ -31,7 +31,7 @@ pub struct FileSystem {
     bytes_tx: Sender<(Vec<u8>, u64)>,
     selected_items: RefCell<HashSet<String>>,
     directory_paths: HashSet<String>,
-    paths: Vec<String>,
+    pub paths: Vec<String>,
     total_size: f64,
     progress: f64,
     pub enter_directory: String,
@@ -69,6 +69,8 @@ impl FileSystem {
     }
 
     pub fn build_file_system(&mut self, paths: Vec<String>) -> &mut Self {
+        // Precompile the regex outside the loop
+        let file_pattern = Regex::new(r"\.[a-zA-Z]{1,4}$").unwrap();
         self.paths = paths.clone();
         for path in paths {
             let parts: Vec<&str> = if path.contains('\\') { path.split('\\').collect() } else { path.split('/').collect() };
@@ -77,7 +79,7 @@ impl FileSystem {
 
             for (_, part) in parts.iter().enumerate() {
                 // let part = part.to_string();
-                if Self::is_file(&part) { // part.contains('.'){ // i == parts.len() - 1 { der.insert(part.to_string(), Node::File((path.clone(), part.to_string())));
+                if Self::is_file(&part, &file_pattern) { // part.contains('.'){ // i == parts.len() - 1 { der.insert(part.to_string(), Node::File((path.clone(), part.to_string())));
                     if let Node::Folder(ref mut full_path, ref mut folder) = current {
                         let file_full_path = if full_path.contains('\\') { format!("{}\\{}", full_path, part) } else { format!("{}/{}", full_path, part) };
                         folder.insert(part.to_string(), Node::File((file_full_path, part.to_string().clone())));
@@ -126,8 +128,7 @@ impl FileSystem {
         root 
     }
 
-    fn is_file(name: &str) -> bool {
-        let file_pattern = Regex::new(r"^.*\.[a-zA-Z]{1,4}$").unwrap();
+    fn is_file(name: &str, file_pattern: &Regex) -> bool {
         file_pattern.is_match(name)
     }
 

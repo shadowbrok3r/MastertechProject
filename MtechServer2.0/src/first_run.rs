@@ -1,4 +1,4 @@
-use database::{live_data::{handle_live_delete, listen_data, update_or_insert_anything}, schema::{utilities::{get_connected_clients, get_store_users, get_tasks}, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
+use database::{live_data::{handle_live_delete, listen_data, update_or_insert_anything}, schema::{utilities::{get_connected_clients, get_store_users, get_tasks}, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE}, DATABASE};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::egui::{Color32, RichText};
 // use crate::utilities::get_data::get_customer_data;
@@ -27,7 +27,12 @@ impl MtechServer {
                 if let Some(ref usr) = d.1{
                     self.context.current_user = Some(usr.clone());
                     self.context.file_system.set_user(usr.clone());
-                    self.load_data();
+                    spawn_local(async move {
+                        match DATABASE.health().await {
+                            Ok(_) => info!("Healthy connection"),
+                            Err(e) => info!("Database connection health: {e:?}"),
+                        }
+                    });
                 }
             },
             Err(e) => {
@@ -56,27 +61,29 @@ impl MtechServer {
             let user = usr.clone();
             let name = usr.name.clone();
 
-            let bridge_op = &self.context.bridge;
+            if self.context.file_system.paths.is_empty() {
+                let bridge_op = &self.context.bridge;
 
-            if let (
-                Some(access_key), 
-                Some(secret_key), 
-                Some(bridge)
-            ) = (
-                usr.minio_access_key.clone(), 
-                usr.minio_secret_key.clone(), 
-                bridge_op
-            ) {
-                self.context.file_system.access_key = access_key.clone();
-                self.context.file_system.secret_key = secret_key.clone();
-                let name = usr.email.clone();
-                let parsed = name.split_once('@').unwrap().0.to_string().clone();
-                bridge.send(Input {
-                    url: STORAGE_URL.to_string(),
-                    access_key,
-                    secret_key,
-                    name: parsed
-                });
+                if let (
+                    Some(access_key), 
+                    Some(secret_key), 
+                    Some(bridge)
+                ) = (
+                    usr.minio_access_key.clone(), 
+                    usr.minio_secret_key.clone(), 
+                    bridge_op
+                ) {
+                    self.context.file_system.access_key = access_key.clone();
+                    self.context.file_system.secret_key = secret_key.clone();
+                    let name = usr.email.clone();
+                    let parsed = name.split_once('@').unwrap().0.to_string().clone();
+                    bridge.send(Input {
+                        url: STORAGE_URL.to_string(),
+                        access_key,
+                        secret_key,
+                        name: parsed
+                    });
+                }
             }
 
             spawn_local(async move {
@@ -95,26 +102,26 @@ impl MtechServer {
             });
             
             // spawn_local(async move { let listen_data = listen_notifications(notification_tx.clone()).await; info!("listen_notifications: {listen_notifications:?}"); });
-
-            spawn_local(async move {
-                let get_tasks = get_tasks(initial_tasks_tx).await;
-                let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
-                let get_connected_clients = get_connected_clients(tx, user.clone()).await;
-                // let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
-                // let get_custs = get_customer_data(live_output).await;
-                // info!("get_notifications: {get_notifications:?}");
-                info!("get_connected_clients: {get_connected_clients:?}");
-                info!("get_tasks: {get_tasks:?}");
-                info!("get_store_users: {get_store_users:?}");
-                // info!("get_custs: {get_custs:?}");
-            });
+            if self.context.tasks.is_empty() 
+                || self.context.store_users.is_none() 
+            {
+                spawn_local(async move {
+                    let get_tasks = get_tasks(initial_tasks_tx).await;
+                    let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
+                    let get_connected_clients = get_connected_clients(tx, user.clone()).await;
+                    // let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
+                    // let get_custs = get_customer_data(live_output).await;
+                    info!("get_connected_clients: {get_connected_clients:?}");
+                    info!("get_store_users: {get_store_users:?}");
+                    info!("get_tasks: {get_tasks:?}");
+                    // info!("get_notifications: {get_notifications:?}");
+                    // info!("get_custs: {get_custs:?}");
+                });
+            }
 
             // let live_bridge = &self.context.live_bridge;
-            // info!("live bridge?");
-            // if let Some(live_bridge) = live_bridge{
-            //     info!("Have live bridge");
-            //     live_bridge.send(LiveInput { url: "fuck if i know".to_string() });
-            // }
+            // if let Some(live_bridge) = live_bridge{live_bridge.send(LiveInput { url: "fuck if i know".to_string() });}
+
             let toast = &mut self.context.toasts;
             let auth_toast = Toast{
                 kind: ToastKind::Success,
