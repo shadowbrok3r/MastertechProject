@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::utilities::{FilterTasks, Sortable, TaskUiActions, Displayable};
+use structdiff::StructDiff;
 
 // use super::sub_menu::sub_menu;
 
@@ -22,17 +23,20 @@ pub struct SortTasks{
 }
 
 
-// #[derive(Serialize)]
+#[derive(Difference)]
 pub struct TaskLayout{
+    #[difference(skip)]
     pub search_inputs: HashMap<String, String>,
+    #[difference(collection_strategy = "unordered_map_like", map_equality = "key_and_value")]
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
+    #[difference(collection_strategy="ordered_array_like")]
     pub column_names: Vec<String>,
     pub assignees: Vec<User>,
     pub open_menu: bool,
-
+    #[difference(skip)]
     pub action: TaskUiActions,
     pub task: Option<Id>,
-    // #[serde(skip)]
+    #[difference(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
 }
 
@@ -56,34 +60,23 @@ impl TaskLayout {
         self
     }
 
-    pub fn update_tasks(&mut self, new_map: BTreeMap<String, Vec<TaskPayload>>)  -> &mut Self{
+    pub fn update_tasks(&mut self, new_map: BTreeMap<String, Vec<TaskPayload>>) -> &mut Self {
         for (key, new_payloads) in new_map.into_iter() {
             if let Some(existing_payloads) = self.task_map.get_mut(&key) {
+                // Ensure we have the same length of vectors, or handle mismatches
                 for (existing, new) in existing_payloads.iter_mut().zip(new_payloads.iter()) {
-                    // Update only non-UI bound fields or compare changes before updating
-                    if existing.assignee != new.assignee {
-                        existing.assignee = new.assignee.clone();
-                    }
-                    if existing.due_date != new.due_date {
-                        existing.due_date = new.due_date.clone();
-                    }
-                    if existing.everest_initials != new.everest_initials {
-                        existing.everest_initials = new.everest_initials.clone();
-                    }
-                    if existing.priority != new.priority {
-                        existing.priority = new.priority.clone();
-                    }
-                    if existing.status != new.status {
-                        existing.status = new.status.clone();
-                    }
-
-                    // In the update logic, check this flag
-                    // if !existing.is_editing {
-                    //     existing.service_name = new.service_name;
-                    // }
+                    // Compute the diffs between the existing and new payloads
+                    let diffs = existing.diff(&new);
+                    // Apply the diffs to the existing payload
+                    existing.apply_mut(diffs);
+                }
+                
+                // If new_payloads has more items than existing_payloads, add them
+                if new_payloads.len() > existing_payloads.len() {
+                    existing_payloads.extend(new_payloads[existing_payloads.len()..].iter().cloned());
                 }
             } else {
-                // Insert new key if it does not exist
+                // Insert new key and its associated task payloads if it does not exist
                 self.task_map.insert(key, new_payloads);
             }
         }

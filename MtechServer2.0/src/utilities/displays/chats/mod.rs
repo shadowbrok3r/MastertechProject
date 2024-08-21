@@ -9,7 +9,7 @@ use chrono::{DateTime, Local};
 use eframe::emath::Vec2;
 use serde::Serialize;
 use log::info;
-
+use structdiff::StructDiff;
 use super::modals::ModalState;
 
 #[derive(Debug, Clone, Serialize)]
@@ -52,39 +52,24 @@ impl ChatView {
         }
     }
 
-    pub fn insert_note(&mut self, new_note: TaskNotePayload){
-        // if let Some(ref task_id) = new_note.task_id {
-        //     if let Some(existing_task_id) = &task.id {
-        //         if existing_task_id == task_id {
-        //             let notes = &mut task.task_note;
-                    
-        //             if let Some(existing_note) = notes.iter_mut().find(|note| {
-        //                 note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
-        //             }) {
-        //                 // Apply diffs to the existing note
-        //                 let diffs = existing_note.diff(&new_note);
-        //                 existing_note.apply_mut(diffs);
-        //                 debug!("Updated existing note: {:?}", existing_note);
-        //             } else {
-        //                 // Insert the new note if it doesn't exist
-        //                 notes.push(new_note.clone());
-        //                 debug!("Inserted new note: {:?}", new_note);
-        //             }
-    
-        //         }
-        //     }
-        // }
-        let x = new_note.note.is_empty();
-        let y = new_note.created_at.is_empty();
-        let z = new_note.everest_initials.is_empty();
-        info!("X {x} // Y {y} // Z {z}");
-        if self.messages.iter().any(|note| {
-            if let (Some(new_id), Some(existing_id)) = (new_note.id.as_ref(), note.id.as_ref()) {
-                new_id.0.id != existing_id.0.id && !x && !y && !z
-            } else { false }
-        }) {
-            info!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
-            self.messages.push(new_note);
+    pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
+        if let Some(ref id) = new_note.id {
+            if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == Some(id.clone())) {
+                // Apply diffs to the existing note
+                let diffs = existing_note.diff(&new_note);
+                existing_note.apply_mut(diffs);
+                info!("Updated existing note: {:?}", existing_note);
+            } else {
+                self.messages.push(new_note.clone());
+            }
+        }
+    }
+
+    pub fn delete_note(&mut self, note_to_delete: &TaskNotePayload){
+        let index = self.messages.iter().position(|n| n == note_to_delete);
+        if let Some(idx) = index {
+            info!("Deleting Note @ {idx}");
+            self.messages.remove(idx);
         }
     }
 
@@ -246,9 +231,9 @@ impl ChatView {
                                         
                                             let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
                                             ui.label(RichText::new(formatted_date).weak());
-                                            ui.add_space(15.0);
+                                            ui.add_space(20.0);
                                             ui.add_space(other);
-                                            let btn = Button::new(RichText::new("X").small().weak().color(Color32::LIGHT_RED))
+                                            let btn = Button::new(RichText::new("🗙").small().weak().color(Color32::LIGHT_RED))
                                                 .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
 
                                             if btn.clicked(){
@@ -260,6 +245,15 @@ impl ChatView {
                                                         Err(e) => info!("Error deleting note: {e:?}"),
                                                     }
                                                 })
+                                            }
+
+                                            ui.add_space(10.0);
+
+                                            let copy_btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                            if copy_btn.clicked(){
+                                                ui.ctx().copy_text(item.note.clone());
                                             }
                                         });
                                         
@@ -277,7 +271,14 @@ impl ChatView {
                                         
                                             let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
                                             ui.label(RichText::new(formatted_date).small().weak());
-                                            // ui.add_space(15.0);
+                                            
+                                            ui.add_space(10.0);
+                                            let copy_btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                            if copy_btn.clicked(){
+                                                ui.ctx().copy_text(item.note.clone());
+                                            }
                                         });
                                     }
                                     note_frame.show(ui, |ui| {

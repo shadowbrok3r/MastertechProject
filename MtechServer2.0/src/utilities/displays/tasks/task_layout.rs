@@ -84,37 +84,6 @@ impl TaskLayout {
         self
     }
 
-    // pub fn update_tasks(&mut self, new_map: BTreeMap<String, Vec<TaskPayload>>)  -> &mut Self{
-    //     for (key, new_payloads) in new_map.into_iter() {
-    //         if let Some(existing_payloads) = self.task_map.get_mut(&key) {
-    //             let diffs = existing_data.diff(&new_data);
-    //             existing_data.apply_mut(diffs);
-    //             for (existing, new) in existing_payloads.iter_mut().zip(new_payloads.iter()) {
-    //                 // Update only non-UI bound fields or compare changes before updating
-    //                 if existing.assignee != new.assignee {
-    //                     existing.assignee = new.assignee.clone();
-    //                 }
-    //                 if existing.due_date != new.due_date {
-    //                     existing.due_date = new.due_date.clone();
-    //                 }
-    //                 if existing.everest_initials != new.everest_initials {
-    //                     existing.everest_initials = new.everest_initials.clone();
-    //                 }
-    //                 if existing.priority != new.priority {
-    //                     existing.priority = new.priority.clone();
-    //                 }
-    //                 if existing.status != new.status {
-    //                     existing.status = new.status.clone();
-    //                 }
-    //             }
-    //         } else {
-    //             // Insert new key if it does not exist
-    //             self.task_map.insert(key, new_payloads);
-    //         }
-    //     }
-    //     self
-    // }
-
     pub fn update_col_names(&mut self, column_names: Vec<String>) -> &mut Self {
         self.column_names = column_names;
         self
