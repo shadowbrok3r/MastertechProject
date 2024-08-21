@@ -5,7 +5,7 @@ use log::info;
 
 use crate::app_state::MtechServerContext;
 
-const TOKEN: &str = "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";
+const TOKEN: &str = "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";
 
 pub struct GithubIssue {
     pub github_issue_descript: String,
@@ -85,7 +85,7 @@ pub async fn create_new_issue(title: String, body: String, client: Client) -> an
     let res = client.post("https://api.github.com/repos/shadowbrok3r/MastertechProject/issues")
         .bearer_auth(TOKEN).header(ACCEPT, "application/vnd.github+json")
         .header(USER_AGENT, "MtechServer")
-        .header("X-GitHub-Api-Version", "2022-11-28")
+        // .header("X-GitHub-Api-Version", "2022-11-28")
         .json(&params).send().await?
         .text().await?;
     

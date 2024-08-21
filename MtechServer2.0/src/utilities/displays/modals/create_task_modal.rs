@@ -145,10 +145,19 @@ impl DisplayModal for CreateTaskModal {
                             s.empty();
                             s.cell(|ui| {
                                 ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
-                                match current_page_state{
-                                    ModalAction::TicketInfoPage => self.create_task(ui, avail_size),
-                                    ModalAction::ImportTask => display_task_page(ui, &mut self.tur.task_data, avail_size),
-                                    _ => self.create_task(ui, avail_size)
+                                response = match current_page_state {
+                                    ModalAction::TicketInfoPage => Some(self.create_task(ui, avail_size)),
+                                    ModalAction::ImportTask => {
+                                        display_task_page(ui, &mut self.tur.task_data, avail_size);
+                                        None
+                                    },
+                                    _ => {
+                                        if let ModalAction::Close = self.create_task(ui, avail_size) {
+                                            Some(ModalAction::Close)
+                                        }else {
+                                            None
+                                        }
+                                    }
                                 };
                             });
                             s.empty();
@@ -164,7 +173,9 @@ impl DisplayModal for CreateTaskModal {
 }
 
 impl CreateTaskModal {
-    pub fn create_task(&mut self, ui: &mut Ui, avail_size: Vec2) {
+    pub fn create_task(&mut self, ui: &mut Ui, avail_size: Vec2) -> ModalAction {
+        let mut action = ModalAction::None;
+        
         StripBuilder::new(ui)
             .size(Size::exact(avail_size.y / 4.0))
             .size(Size::exact(115.0))
@@ -290,6 +301,7 @@ impl CreateTaskModal {
                                         Err(e) => info!("Error getting user: {e:?}"),
                                     }
                                 }); 
+                                action = ModalAction::Close;
                             }
                         });
                     });
@@ -297,6 +309,8 @@ impl CreateTaskModal {
             });
             strip.empty();
         });
+
+        action
     }
 }
 
