@@ -1,6 +1,6 @@
 use crate::{pages::account_settings_page::AccountMod, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler}};
 use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
-use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{modals::ModalAction, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
@@ -379,7 +379,7 @@ impl MtechServerContext{
                 self.task_modal_handler.ui(
                     ctx, 
                     || Modal::new(&task_name).default_height(600.0),
-                    move |ui, _stay_open, page_state| {
+                    move |ui, _open, page_state| {
                         let action = task_modal.display(ui, page_state.to_owned());
                         // info!("Modal stuff");
                         // if let Some(notes) = &task_modal.task.task_note{
@@ -394,9 +394,12 @@ impl MtechServerContext{
                 self.create_task_modal_handler.ui(
                     ctx, 
                     || CreateTaskModal::new("Create Task", self.store_users.clone()),
-                    |ui, _stay_open, page_state| {
+                    |ui, open, page_state| {
                         let action = create_task_modal.display(ui, page_state.to_owned());
-                        if let Some(action) = action{
+                        if let Some(action) = action {
+                            // if let ModalAction::Close = action {
+                                // *open = false;
+                            // }
                             *page_state = action;
                         }
                     });

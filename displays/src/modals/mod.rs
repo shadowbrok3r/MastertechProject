@@ -133,6 +133,7 @@ pub enum ModalAction{
     ComputerInfoPage,
     TaskNotePage,
     ImportTask,
+    Close,
     #[default]
     None
 }
