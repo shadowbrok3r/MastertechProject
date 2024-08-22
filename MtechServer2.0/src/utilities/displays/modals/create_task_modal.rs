@@ -1,7 +1,7 @@
 use database::{schema::{prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop, PrestashopPayload}, CustomerData, CustomerId, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, TicketId, User, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use eframe::egui::{Align, Button, Color32, ComboBox, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
-use super::{task_modal::{display_task_page, ModalAction}, ModalState};
+use super::{task_modal::{display_ticket_page, ModalAction}, ModalState};
 // use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
@@ -148,7 +148,7 @@ impl DisplayModal for CreateTaskModal {
                                 response = match current_page_state {
                                     ModalAction::TicketInfoPage => Some(self.create_task(ui, avail_size)),
                                     ModalAction::ImportTask => {
-                                        display_task_page(ui, &mut self.tur.task_data, avail_size);
+                                        display_ticket_page(ui, &mut self.tur.task_data, avail_size);
                                         None
                                     },
                                     _ => {

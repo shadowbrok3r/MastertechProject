@@ -38,6 +38,7 @@ pub enum ModalAction{
     TaskNotePage,
     ImportTask,
     Close,
+    TaskPage,
     #[default]
     None
 }
@@ -131,28 +132,33 @@ impl DisplayModal for TaskModal {
                             let mut part_order_page = false;
                             let mut computer_info_page = false;
                             let mut task_note_page = false;
+                            let mut task_page = false;
                             match current_page_state{
                                 ModalAction::TicketInfoPage => {ticket_page = true},
                                 ModalAction::PartOrderPage => {part_order_page = true},
                                 ModalAction::ComputerInfoPage => {computer_info_page = true},
                                 ModalAction::TaskNotePage => { task_note_page = true },
-                                _ => {ticket_page = true},
+                                _ => {task_page = true},
                             };
 
                             
+                            let delete_btn = Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED));
 
-                            if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
-                                let mut ids = Vec::new();
-                                let _task_id = self.task.id.as_ref().unwrap().0.clone();
-                                let _ticket_id = if let Some(ticket) = &self.task.service_ticket{
-                                    Some(ticket.id.clone().unwrap())
-                                } else{ None };
+                            if delete_btn
+                                .ui(ui)
+                                .double_clicked() 
+                            {
+                                // let mut ids = Vec::new();
+                                // let _task_id = self.task.id.as_ref().unwrap().0.clone();
+                                // let _ticket_id = if let Some(ticket) = &self.task.service_ticket{
+                                //     Some(ticket.id.clone().unwrap())
+                                // } else{ None };
 
-                                for message in self.chat_view.messages.iter(){
-                                    if let Some(id) = &message.id.clone(){
-                                        ids.push(id.0.clone());
-                                    }
-                                };
+                                // for message in self.chat_view.messages.iter(){
+                                //     if let Some(id) = &message.id.clone(){
+                                //         ids.push(id.0.clone());
+                                //     }
+                                // };
                                 let task_id = self.task.id.as_ref().unwrap().0.clone();
 
                                 let id = task_id.clone();
@@ -162,21 +168,27 @@ impl DisplayModal for TaskModal {
                                         Err(e) => info!("Error: {e:?}"),
                                     }
                                 });
+                                response = Some(ModalAction::Close);
                             }
 
                             ui.add_space(200.0);
 
-                            if ui.selectable_label(ticket_page, RichText::new("🖹").heading()).clicked(){
-                                response = Some(ModalAction::TicketInfoPage);
-                            };
-                            if let Some(_) = self.task.service_ticket{
+                            if self.task.service_ticket.is_some() {
+                                if ui.selectable_label(ticket_page, RichText::new("🖹").heading()).clicked(){
+                                    response = Some(ModalAction::TicketInfoPage);
+                                };
                                 if ui.selectable_label(computer_info_page, RichText::new("🖥").heading()).clicked(){
                                     response = Some(ModalAction::ComputerInfoPage);
                                 };
                                 if ui.selectable_label(part_order_page, RichText::new("🔫").heading()).clicked(){
                                     response = Some(ModalAction::PartOrderPage);
                                 };
+                            } else {
+                                if ui.selectable_label(task_page, RichText::new("🖹").heading()).clicked(){
+                                    response = Some(ModalAction::TaskPage);
+                                };
                             }
+
                             if ui.selectable_label(task_note_page, RichText::new("💬").heading()).clicked(){
                                 response = Some(ModalAction::TaskNotePage);
                             };
@@ -210,7 +222,7 @@ impl DisplayModal for TaskModal {
                                 ui.horizontal_centered(|ui|{
                                     ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
                                     match current_page_state{
-                                        ModalAction::TicketInfoPage => display_task_page(ui, &mut self.task, avail_size),
+                                        ModalAction::TicketInfoPage => display_ticket_page(ui, &mut self.task, avail_size),
                                         ModalAction::ComputerInfoPage => display_computer_page(ui, &mut self.task, avail_size),
                                         ModalAction::PartOrderPage => self.spo.display_part_order_page(ui, avail_size),
                                         ModalAction::TaskNotePage => {
@@ -219,7 +231,7 @@ impl DisplayModal for TaskModal {
                                                 // self.task.update_task_notes(new_message);
                                             }
                                         },
-                                        _ => display_task_page(ui, &mut self.task, avail_size)
+                                        _ => display_task_page(ui, &mut self.task)
                                     };
                                 });
                             });
@@ -235,8 +247,19 @@ impl DisplayModal for TaskModal {
     }
 }
 
+pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload){
+    ui.add_space(ui.available_width() * 0.2 - 15.0);
+    ui.vertical_centered_justified(|ui| {
+        ui.label(RichText::new("Task Description:").font(FontId::proportional(15.0)));
+        TextEdit::multiline(&mut task.task_description.to_string())
+            .margin(Margin::same(5.0))
+            .desired_rows(8)
+            .desired_width(ui.available_width() / 1.4)
+            .ui(ui);
+    });
+}
 
-pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
+pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
     fn return_colors(num: usize, _style: &Style) -> Option<Color32>{
         let mut _col = Color32::from_rgb(30, 30, 38);
         if num % 2 == 0{
