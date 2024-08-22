@@ -8,7 +8,6 @@ use serde_json::Value;
 use tokio::{fs::File, io::AsyncWriteExt};
 
 const TOKEN: &str = "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";
-const _CREATE_NO_WINDOW: u32 = 0x08000000;
 
 pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
     let mut downloaded_bytes: u64 = 0;
