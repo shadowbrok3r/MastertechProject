@@ -2,7 +2,6 @@ use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, 
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use lazy_static::lazy_static;
 use once_cell::sync::Lazy;
-use serde_json::Value;
 use std::{fmt::Debug, sync::RwLock};
 use schema::User;
 use log::info;

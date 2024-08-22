@@ -462,7 +462,7 @@ impl WebConsoleFrontend {
         ui.vertical_centered(|ui | ui.heading("Received events:"));
         ui.separator();
         self.connected = self.handle_events();
-        let mut theme = CodeTheme::dark();
+        let theme = CodeTheme::dark();
         ScrollArea::vertical()
             .animated(true)
             .max_height(ui.available_height() - 5.0)
