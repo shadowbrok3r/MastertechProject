@@ -142,12 +142,13 @@ impl DisplayModal for TaskModal {
                             };
 
                             
-                            let delete_btn = Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED));
-
-                            if delete_btn
+                            let delete_btn = Button::new(
+                                    RichText::new("Delete Task").color(Color32::LIGHT_RED)
+                                )
                                 .ui(ui)
-                                .double_clicked() 
-                            {
+                                .on_hover_text("Double Click To Delete Task");
+
+                            if delete_btn.double_clicked() {
                                 // let mut ids = Vec::new();
                                 // let _task_id = self.task.id.as_ref().unwrap().0.clone();
                                 // let _ticket_id = if let Some(ticket) = &self.task.service_ticket{

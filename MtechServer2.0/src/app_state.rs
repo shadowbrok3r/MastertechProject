@@ -1,4 +1,4 @@
-use crate::{pages::account_settings_page::AccountMod, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler}};
+use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler}};
 use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
@@ -10,7 +10,7 @@ use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 use gloo_worker::Spawnable;
 use surrealdb::Action;
-use ratatui::Terminal;
+// use ratatui::Terminal;
 use serde::Serialize;
 use anyhow::Error;
 use log::info;
@@ -23,6 +23,7 @@ use crate::{
         DisplayModal, ModalType,TaskUiActions
     }
 };
+use displays::channel_manager::ChannelManager;
 
 #[derive(Serialize)]
 pub struct MtechServer{
@@ -141,6 +142,8 @@ pub struct MtechServerContext{
     pub live_output_tx: Sender<LiveOutput>,
     #[serde(skip)]
     pub live_output_rx: Receiver<LiveOutput>,
+    #[serde(skip)]
+    pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
@@ -154,6 +157,8 @@ pub struct MtechServerContext{
     pub file_system: FileSystem,
     #[serde(skip)]
     pub github_issue: GithubIssue,
+
+    pub github_releases: Vec<GithubRelease>,
     /// Terminal setup for console tab
     // #[serde(skip)]
     // pub terminal: Terminal<RataguiBackend>,
@@ -226,15 +231,6 @@ impl MtechServer{
                 }
             }
         }
-        
-        // let backend = RataguiBackend::new_with_fonts(
-        //     10,
-        //     10,
-        //     "Regular".into(),
-        //     "Bold".into(),
-        //     "Oblique".into(),
-        //     "BoldOblique".into(),
-        // );
 
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
@@ -268,6 +264,8 @@ impl MtechServer{
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let (live_output_tx, live_output_rx) = channel::unbounded::<LiveOutput>();
+        let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
+
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
 
@@ -297,6 +295,7 @@ impl MtechServer{
             new_note_tx, new_note_rx,
             notification_tx, notification_rx,
             live_output_tx, live_output_rx,
+            github_releases_channel,
 
             // MODALS / LAYOUTS
             ai_playground: AiPlayground::default(),
@@ -313,6 +312,7 @@ impl MtechServer{
 
             file_system: FileSystem::new(),
             github_issue: GithubIssue::new(),
+            github_releases: Vec::new(),
             // TERMINAL STUFF
             // terminal: Terminal::new(backend).unwrap(),
             tick_rate: Duration::from_millis(30),

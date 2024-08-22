@@ -2,7 +2,7 @@ use database::{live_data::{handle_live_delete, listen_data, update_or_insert_any
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::egui::{Color32, RichText};
 // use crate::utilities::get_data::get_customer_data;
-use crate::app_state::{AppState, MtechServer};
+use crate::{app_state::{AppState, MtechServer}, pages::downloads_page::get_github_releases};
 use wasm_bindgen_futures::spawn_local;
 use database::STORAGE_URL;
 use surrealdb::Action;
@@ -53,6 +53,7 @@ impl MtechServer {
         let store_users_tx = self.context.store_users_tx.clone();
         let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
+        let github_releases_tx = self.context.github_releases_channel.0.clone();
         // let notification_tx = self.context.notification_tx.clone();
         // let live_output = self.context.live_output_tx.clone();
 
@@ -109,14 +110,17 @@ impl MtechServer {
                     let get_tasks = get_tasks(initial_tasks_tx).await;
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                     let get_connected_clients = get_connected_clients(tx, user.clone()).await;
+                    let get_releases = get_github_releases(github_releases_tx).await;
                     // let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
                     // let get_custs = get_customer_data(live_output).await;
                     info!("get_connected_clients: {get_connected_clients:?}");
                     info!("get_store_users: {get_store_users:?}");
                     info!("get_tasks: {get_tasks:?}");
+                    info!("get_releases: {get_releases:?}");
                     // info!("get_notifications: {get_notifications:?}");
                     // info!("get_custs: {get_custs:?}");
                 });
+                
             }
 
             // let live_bridge = &self.context.live_bridge;
@@ -199,6 +203,11 @@ impl MtechServer {
             }
         }
 
+        if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
+            info!("Releases: {releases:?}");
+            self.context.github_releases = releases;
+        }
+        
         if let Ok(state) = self.context.app_state_rx.try_recv(){
             debug!("Got a new state: {state:?}");
             self.state = state
