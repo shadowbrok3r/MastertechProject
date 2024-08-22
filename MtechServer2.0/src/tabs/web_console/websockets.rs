@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Label, Layout, Margin, Modifiers, Pos2, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::{schema::{Cmd, ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};

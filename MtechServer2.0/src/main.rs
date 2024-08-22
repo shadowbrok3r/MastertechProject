@@ -108,7 +108,7 @@ impl eframe::App for MtechServer {
         }
 
         if let Ok(new_task) = self.context.live_tasks_rx.try_recv(){
-            info!("New Task Update");
+            info!("New Task Update: {:?}", new_task.0);
             let tx = self.context.new_ticket_tx.clone();
             if let Some(service_num) = new_task.clone().1.service_number{
                 if !service_num.is_empty() {
@@ -121,7 +121,7 @@ impl eframe::App for MtechServer {
                     });
                 }
             }else { 
-                info!("Inserting Task");
+                info!("Inserting Task: {:?}", new_task.0);
                 self.context.rerun_filtering_completed = true;
                 self.context.rerun_filtering_my_tasks = true;
                 self.context.rerun_filtering_store_tasks = true;
