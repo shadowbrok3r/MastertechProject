@@ -88,29 +88,18 @@ impl Database{
 
         match jwt{
             Some(jwt) => {
-                info!("We already have a jwt, attempting token auth");
+                info!("Have a JWT, attempting token auth");
                 let auth = DATABASE.authenticate(jwt.clone()).await;
                 match auth{
                     Ok(_) => {
-                        info!("Auth ok");
-                        if !username.is_empty() || !password.is_empty(){
-                            let query = "SELECT * FROM user WHERE email == $email";
-                            DATABASE.set("email", username).await?;
-                            let user: Vec<Value> = DATABASE.query(query).await?.take(0)?;
-                            info!("user: {user:#?}");
-                            let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
-                            Ok(Self { jwt: Some(jwt.into()), user: Some(usr) })
-                        }else{
-                            info!("Auth not ok");
-                            Ok(Self { jwt: Some(jwt.into()), user: None })
-                        }
+                        info!("Auth not ok");
+                        Ok(Self { jwt: Some(jwt.into()), user: None })
                     },
                     Err(e) => Err(e.into()),
                 }
             },
             None => {
-                info!("connecting");
-                info!("signing in: {:?}", username.clone());
+                info!("No JWT, sigining in: {:?}", username.clone());
 
                 // Select a specific namespace / database
                 let jwt = DATABASE.signin(
@@ -125,11 +114,13 @@ impl Database{
                             }
                     }
                 ).await?;
-                info!("JWT {jwt:?}");
+
                 DATABASE.set("email", username.clone().to_lowercase()).await?;
-                info!("About to query usr");
-                let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE email == $email").await.unwrap().take(0)?;
-                info!("user: {user:?}");
+                
+                let user: Option<User> = DATABASE
+                    .query("SELECT * FROM user WHERE email == $email")
+                    .await?
+                    .take(0)?;
                 Ok(Self {jwt: Some(jwt), user })
             },
         }
