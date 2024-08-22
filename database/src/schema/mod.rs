@@ -108,6 +108,24 @@ pub struct LiveTaskPayload{
     pub status: Status,
 }
 
+impl From<LiveTaskPayload> for TaskPayload {
+    fn from(live_task: LiveTaskPayload) -> Self {
+        Self {
+            id: live_task.id,
+            task_name: live_task.task_name,
+            everest_initials: live_task.everest_initials,
+            task_description: live_task.task_description,
+            assignee: live_task.assignee,
+            service_number: live_task.service_number,
+            due_date: live_task.due_date,
+            priority: live_task.priority,
+            completed: live_task.completed,
+            status: live_task.status,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct TicketPayload{
     pub id: Option<TicketId>,

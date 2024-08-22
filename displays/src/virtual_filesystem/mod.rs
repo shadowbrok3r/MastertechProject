@@ -408,12 +408,12 @@ impl FileSystem {
     }
 
     #[cfg(feature="tokio")]
-    pub fn upload_folder_tokio(&self, path: String) {
-        let task = rfd::AsyncFileDialog::new().pick_folders();
-        let secret_key = self.secret_key.clone();
-        let access_key = self.access_key.clone();
+    pub fn upload_folder_tokio(&self, _path: String) {
+        let _task = rfd::AsyncFileDialog::new().pick_folders();
+        let _secret_key = self.secret_key.clone();
+        let _access_key = self.access_key.clone();
         let name = self.user.email.clone();
-        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        let _parsed = name.split_once('@').unwrap().0.to_string().clone();
         // spawn(async move {
         //     let result = Self::perform_upload(
         //         &name.clone(),
@@ -428,12 +428,12 @@ impl FileSystem {
     }
 
     #[cfg(feature="wasm")]
-    pub fn upload_folder(&self, path: String) {
+    pub fn upload_folder(&self, _path: String) {
         // let task = rfd::AsyncFileDialog::new().pick_folder();
-        let secret_key = self.secret_key.clone();
-        let access_key = self.access_key.clone();
+        let _secret_key = self.secret_key.clone();
+        let _access_key = self.access_key.clone();
         let name = self.user.email.clone();
-        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        let _parsed = name.split_once('@').unwrap().0.to_string().clone();
         // spawn(async move {
         //     let result = Self::perform_upload(
         //         &name.clone(),
@@ -491,7 +491,7 @@ impl FileSystem {
     }
 
     #[cfg(feature="tokio")]
-    fn download_selection_tokio(&self, path: String, filename: String) {
+    fn _download_selection_tokio(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
         let secret_key = self.secret_key.clone();
