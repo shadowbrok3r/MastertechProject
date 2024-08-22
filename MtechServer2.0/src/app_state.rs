@@ -1,6 +1,6 @@
 use crate::{pages::account_settings_page::AccountMod, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler}};
 use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
-use displays::{modals::ModalAction, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
 use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
@@ -18,7 +18,7 @@ use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::WebSocketClient}, 
     utilities::{
         displays::{
-            chats::ChatView, modals::{create_task_modal::CreateTaskModal, ModalHandler}, tasks::task_layout::TaskLayout
+            chats::ChatView, modals::{task_modal::ModalAction, create_task_modal::CreateTaskModal, ModalHandler}, tasks::task_layout::TaskLayout
         }, 
         DisplayModal, ModalType,TaskUiActions
     }
@@ -397,9 +397,9 @@ impl MtechServerContext{
                     |ui, open, page_state| {
                         let action = create_task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action {
-                            // if let ModalAction::Close = action {
-                                // *open = false;
-                            // }
+                            if let ModalAction::Close = action {
+                                *open = false;
+                            }
                             *page_state = action;
                         }
                     });
