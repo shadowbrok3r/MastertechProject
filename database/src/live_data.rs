@@ -17,10 +17,10 @@ pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_task
             data.handle_live_create(existing_tasks, new_ticket)?;
         },
         Action::Update => {
-            data.handle_live_delete(existing_tasks, new_ticket)?;
+            data.handle_live_update(existing_tasks, new_ticket)?;
         },
         Action::Delete => {
-            data.handle_live_update(existing_tasks, new_ticket)?;
+            data.handle_live_delete(existing_tasks, new_ticket)?;
         },
         _ => {},
     }
@@ -88,14 +88,22 @@ impl LiveUpdate for LiveTaskPayload {
         Ok(())
     }
     
-    fn handle_live_update(self, _existing_tasks: &mut Vec<TaskPayload>, _new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
+    fn handle_live_update(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
         debug!("Data was Updated: {:?}", self);
+        update_or_insert(existing_tasks, self, new_ticket)?;
         Ok(())
     }
     
-    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
-        // debug!("Data was Deleted: {:?}", self);
-        update_or_insert(existing_tasks, self, new_ticket)?;
+    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, _new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
+        debug!("Data was Deleted: {:?}", self);
+        let data = self.clone();
+        if !existing_tasks.is_empty(){
+            let index = existing_tasks.iter().position(|x| *x == data.clone().into());
+            info!("Index of deleted data: {index:?}");
+            if let Some(idx) = index {
+                existing_tasks.remove(idx);
+            }
+        }
         Ok(())
     }
 }
@@ -154,7 +162,16 @@ pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload,
             if let Some(existing_id) = &task.id {
                 if existing_id == id{
                     info!("ID's match: {:?} // {:?}", existing_id, id);
-                    let updated_task = convert_live_to_task(new_task.clone(), task, new_ticket);
+                    let mut updated_task: TaskPayload = new_task.clone().into(); // convert_live_to_task(new_task.clone(), task, new_ticket);
+
+                    updated_task.service_ticket = if let Some(service) = new_ticket {
+                        Some(service)
+                    } else { task.service_ticket.clone() };
+                    updated_task.task_note = task.task_note.clone();
+                    // Calculate the diff and apply it to the existing task
+                    let diffs = task.diff(&updated_task);
+                    task.apply_mut(diffs);
+
                     *task = updated_task;
                     updated = true;
                     break;
@@ -164,17 +181,11 @@ pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload,
 
         if !updated {
             info!("data was NOT updated");
-            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);  
-            info!("new_task_converted: {new_task_converted:?}");
-            // Insert the new task if it does not exist
-            tasks.push(new_task_converted);
+            tasks.push(new_task.into());
         }
     } else {
         debug!("there was NO task id");
-        let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);
-        debug!("new_task_converted: {new_task_converted:?}");
-        // If the new task does not have an ID, insert it
-        tasks.push(new_task_converted);
+        tasks.push(new_task.into());
     }
     Ok(())
 }
@@ -194,7 +205,12 @@ pub fn update_or_insert_layout(
             if let Some(existing_id) = &task.id {
                 if existing_id == id {
                     debug!("ID's match: {:?} // {:?}", existing_id, id);
-                    let updated_task = convert_live_to_task(new_task.clone(), task, new_ticket);
+                    let mut updated_task: TaskPayload = new_task.clone().into(); // convert_live_to_task(new_task.clone(), task, new_ticket);
+
+                    updated_task.service_ticket = if let Some(service) = new_ticket {
+                        Some(service)
+                    } else { task.service_ticket.clone() };
+                    updated_task.task_note = task.task_note.clone();
 
                     // Calculate the diff and apply it to the existing task
                     let diffs = task.diff(&updated_task);
@@ -210,37 +226,13 @@ pub fn update_or_insert_layout(
 
         if !updated {
             debug!("Data was NOT updated; inserting new task.");
-            let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);
-            tasks.push(new_task_converted);
+            tasks.push(new_task.into());
         }
     } else {
         debug!("No task ID provided; inserting new task.");
-        let new_task_converted = convert_live_to_task(new_task, &TaskPayload::default(), None);
-        tasks.push(new_task_converted);
+        tasks.push(new_task.into());
     }
     Ok(())
-}
-
-pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayload, ticket: Option<TicketPayload>) -> TaskPayload {
-
-    let service_ticket = if let Some(service) = ticket {
-        Some(service)
-    } else { existing_task.service_ticket.clone() };
-
-    TaskPayload {
-        id: live_task.id,
-        task_name: live_task.task_name,
-        service_ticket, // Preserve the existing service_ticket
-        everest_initials: live_task.everest_initials,
-        task_description: live_task.task_description,
-        assignee: live_task.assignee,
-        service_number: live_task.service_number,
-        due_date: live_task.due_date,
-        priority: live_task.priority,
-        task_note: existing_task.task_note.clone(), // Preserve the existing task_note
-        completed: live_task.completed,
-        status: live_task.status
-    }
 }
 
 pub async fn listen_data<T: DeserializeOwned + Serialize + 'static + Debug + std::marker::Unpin>(tx: Sender<(Action, T)>, resource: &str) 
@@ -270,159 +262,31 @@ async fn handle_streams<T: Serialize + Deserialize<'static> + Debug >(
     Ok(())
 }
 
+
 /*
  LEGACY
 
- pub fn handle_live_data((action, data): (Action, LiveTaskPayload), existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error>{
-    match action{
-        Action::Create => {
-            data.handle_live_create(existing_tasks, new_ticket)?;
-        },
-        Action::Update => {
-            data.handle_live_delete(existing_tasks, new_ticket)?;
-        },
-        Action::Delete => {
-            data.handle_live_update(existing_tasks, new_ticket)?;
-        },
-        _ => {},
-    }
-    Ok(())
-}
+ pub fn convert_live_to_task(live_task: LiveTaskPayload, existing_task: &TaskPayload, ticket: Option<TicketPayload>) -> TaskPayload {
 
-pub fn handle_live_notes(
-    (action, data): (Action, TaskNotePayload), 
-    existing_task: &mut TaskPayload
-) 
-    -> anyhow::Result<(), anyhow::Error>
-{
-    match action{
-        Action::Create => {
-            update_or_insert_notes(data, existing_task)?;
-        },
-        Action::Update => {
-            update_or_insert_notes(data, existing_task)?;
-        },
-        Action::Delete => {
-            debug!("Data: {data:?}");
-            update_or_insert_notes(data, existing_task)?;
-        },
-        _ => {},
-    }
-    Ok(())
-}
+    let service_ticket = if let Some(service) = ticket {
+        Some(service)
+    } else { existing_task.service_ticket.clone() };
 
-
-pub fn handle_live_create<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
-    debug!("Data was Created: {:?}", new_data);
-
-    Ok(())
-}
-
-pub fn handle_live_update<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
-    debug!("Data was Updated: {:?}", new_data);
-
-    Ok(())
-}
-
-pub fn handle_live_delete<T: Serialize + for<'a> Deserialize<'a> + Debug>(_existing_data: &mut HashMap<String, T>, new_data: T) -> anyhow::Result<(), anyhow::Error> {
-    debug!("Data was Deleted: {:?}", new_data);
-
-    Ok(())
-}
-
-
-impl LiveUpdate for LiveTaskPayload {
-    fn handle_live_create(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error> {
-        debug!("Data was Created: {:?}", self);
-        update_or_insert(existing_tasks, self, new_ticket)?;
-        Ok(())
-    }
-    
-    fn handle_live_update(self, _existing_tasks: &mut Vec<TaskPayload>, _new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error> {
-        debug!("Data was Updated: {:?}", self);
-        Ok(())
-    }
-    
-    fn handle_live_delete(self, existing_tasks: &mut Vec<TaskPayload>, new_ticket: Option<TicketPayload>) -> anyhow::Result<(), anyhow::Error> {
-        update_or_insert(existing_tasks, self, new_ticket)?;
-        Ok(())
+    TaskPayload {
+        id: live_task.id,
+        task_name: live_task.task_name,
+        service_ticket, // Preserve the existing service_ticket
+        everest_initials: live_task.everest_initials,
+        task_description: live_task.task_description,
+        assignee: live_task.assignee,
+        service_number: live_task.service_number,
+        due_date: live_task.due_date,
+        priority: live_task.priority,
+        task_note: existing_task.task_note.clone(), // Preserve the existing task_note
+        completed: live_task.completed,
+        status: live_task.status
     }
 }
-
-pub fn update_or_insert_notes(
-    new_note: TaskNotePayload,
-    task: &mut TaskPayload
-) -> anyhow::Result<(), anyhow::Error> {
-    if let Some(ref task_id) = new_note.task_id {
-        if let Some(existing_task_id) = &task.id {
-            if existing_task_id == task_id {
-                let notes = &mut task.task_note;
-                
-                if let Some(existing_note) = notes.iter_mut().find(|note| {
-                    note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
-                }) {
-                    info!("Found existing notes in task: {:?}", existing_note);
-                    // Apply diffs to the existing note
-                    let diffs = existing_note.diff(&new_note);
-                    existing_note.clone().apply(diffs);
-                    info!("Updated existing note: {:?}", existing_note);
-                } else {
-                    // Insert the new note if it doesn't exist
-                    notes.push(new_note.clone());
-                    info!("Inserted new note: {:?}", new_note);
-                }
-
-            }
-        }
-    }
-    Ok(())
-}
-
-pub async fn listen_task_notes(tx: Sender<(Action, TaskNotePayload)>) -> anyhow::Result<(), anyhow::Error> {
-    info!("Listening to task notes");
-    let note_stream: Stream<Vec<TaskNotePayload>> = DATABASE.select(TASK_NOTE_TABLE).live().await?;
-    handle_streams(note_stream, tx).await?;
-    Ok(())
-}
-
-pub async fn listen_tasks(tx: Sender<(Action, LiveTaskPayload)>) -> anyhow::Result<(), anyhow::Error> {
-    let task_stream: Stream<Vec<LiveTaskPayload>> = DATABASE.select(TASK_TABLE).live().await?;
-    handle_streams(task_stream, tx).await?;
-    Ok(())
-}
-pub fn update_or_insert_notes(
-    new_note: TaskNotePayload,
-    task: &mut TaskPayload
-) -> anyhow::Result<(), anyhow::Error> {
-    if let Some(ref task_id) = new_note.task_id {
-        if let Some(existing_task_id) = &task.id {
-            if existing_task_id == task_id {
-                // Check if the note ID already exists
-                let notes = &mut task.task_note;
-                if !notes.is_empty() {
-                    let x = new_note.note.is_empty() ;
-                    let y = new_note.created_at.is_empty();
-                    let z = new_note.everest_initials.is_empty();                  
-                    if notes.iter().any(|note| 
-                        note.id.as_ref().unwrap().0.id != new_note.id.as_ref().unwrap().0.id && !x && !y && !z
-                    ) {
-                        notes.push(new_note.clone());
-                        debug!("Contains notes already, inserting new: {new_note:?}");
-                    }
-                } else {
-                    let mut new_notes = Vec::new();
-                    new_notes.push(new_note.clone());
-                    debug!("there were no existing notes. creating note: {:?}", new_notes);
-                    task.task_note = new_notes;
-                }
-            }
-        }
-        // if updated { debug!("Note updated or inserted successfully."); } 
-        // else { debug!("Task ID not found or note already exists."); }
-    }
-    Ok(())
-}
-
 pub fn update_or_insert_layout(
     tasks: &mut Vec<TaskPayload>, 
     new_task: LiveTaskPayload,
