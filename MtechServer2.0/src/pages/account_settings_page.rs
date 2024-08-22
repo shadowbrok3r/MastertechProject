@@ -1,7 +1,7 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
-use database::{schema::{Store, USER_TABLE}, set_db_selection, DatabaseSelection, DATABASE};
+use database::{schema::Store, set_db_selection, DatabaseSelection, DATABASE};
 use crate::app_state::{AppState, MainPages, MtechServer};
-use surrealdb::{opt::RecordId, sql::Id};
+use surrealdb::{sql::Id, Response};
 use egui_extras::{Size, StripBuilder};
 use wasm_bindgen_futures::spawn_local;
 use crossbeam::channel::Sender;
@@ -23,13 +23,17 @@ impl AccountMod{
             name: self.name.clone(),
             email: self.email.clone(),
             store: self.store.clone(),
-            ..Default::default()
+            database: self.database.clone(),
+            password: self.password.clone()
         };
-        let account_modification = acc_mod.clone();
+
         spawn_local(async move {
-            let x: Result<Option<RecordId>, surrealdb::Error> = DATABASE.update((USER_TABLE, user_id))
-                .merge(account_modification).await;
-            info!("X: {x:?}");
+            let mod_user_result: Result<Response, surrealdb::Error> = DATABASE
+                .query("fn::modify_account($user, $new)")
+                .bind(("user", user_id))
+                .bind(("new", acc_mod))
+                .await;
+            info!("mod_user_result: {mod_user_result:?}");
         });
     }
 
