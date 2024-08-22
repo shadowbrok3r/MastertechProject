@@ -1,7 +1,7 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
 use database::schema::{CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TicketData};
-use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
+use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use get_ticket::{request_seb_info, SendRequest};
 use egui_extras::{*, DatePickerButton};
 use std::collections::BTreeSet;
@@ -440,7 +440,19 @@ impl MastertechContext {
                                         self.taco_first_run = true;
                                         info!("Submitting TUR sheet");
                                         self.output_text += "Sent TUR to Master-tech.app";
-                                        self.submit_tur_mastertech();
+                                        if self.current_user.is_none() {
+                                            self.submit_tur_mastertech();
+                                        } else {
+                                            let toast = &mut self.toasts;
+                                            let error_toast = Toast{
+                                                kind: ToastKind::Error,
+                                                text: "You are not logged in".into(),
+                                                options: ToastOptions::default()
+                                                    .show_progress(true)
+                                                    .duration_in_seconds(6.0)
+                                            };
+                                            toast.add(error_toast);
+                                        }
                                     }
 
                                 }); // horizontal_top
