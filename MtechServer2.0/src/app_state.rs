@@ -372,19 +372,11 @@ impl MtechServerContext{
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
                 let task_name = task_modal.task.task_name.clone();
-                if task_modal.task.task_note.is_empty() {
-                    // info!("Notes: {:?}", notes);
-                }
-                
                 self.task_modal_handler.ui(
                     ctx, 
                     || Modal::new(&task_name).default_height(600.0),
                     move |ui, _open, page_state| {
                         let action = task_modal.display(ui, page_state.to_owned());
-                        // info!("Modal stuff");
-                        // if let Some(notes) = &task_modal.task.task_note{
-                        //     info!("Notes: {:?}", notes);
-                        // }
                         if let Some(action) = action{
                             *page_state = action;
                         }
@@ -397,24 +389,25 @@ impl MtechServerContext{
                     |ui, open, page_state| {
                         let action = create_task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action {
+                            // This will allow me to close the modal 
+                            // upon ModalAction::Close (when creating a task)
                             if let ModalAction::Close = action {
                                 *open = false;
                             }
+                            // Otherwise, handle the according ModalAction
                             *page_state = action;
                         }
                     });
             },
             ModalType::ChatView(chat_modal) => {
-                info!("opening chat");
                 self.chat_modal_handler.ui(
                     ctx, 
                     || Modal::new("Chats").default_height(600.0),
                     move |ui, _stay_open, _page_state| {
                         if let Some(_new_message) = chat_modal.ui(ui){
                             spawn_local(async move { });
-                            // let _ = update_task_notes(new_message).await;
                             
-                        } // task_modal.chat_view.insert_note(payload.1);
+                        } 
                     });
             }
             _ => {},
