@@ -375,9 +375,12 @@ impl MtechServerContext{
                 self.task_modal_handler.ui(
                     ctx, 
                     || Modal::new(&task_name).default_height(600.0),
-                    move |ui, _open, page_state| {
+                    move |ui, open, page_state| {
                         let action = task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action{
+                            if let ModalAction::Close = action {
+                                *open = false;
+                            }
                             *page_state = action;
                         }
                     });
