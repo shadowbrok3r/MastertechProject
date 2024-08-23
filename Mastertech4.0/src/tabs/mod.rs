@@ -33,4 +33,15 @@ impl MastertechContext {
             if ui.button("Detach File Browser").clicked(){self.show_deferred_viewport.store(new_state, Ordering::Relaxed);}
         }
     }
+
+    pub fn websocket_menu(&mut self, ui: &mut Ui) {
+        let current_state = self.show_ws_viewport.load(Ordering::Relaxed);
+        let new_state = !current_state; // Toggle the state: if it's true, make it false, and vice versa
+
+        if current_state{
+            if ui.button("Attach Websocket Console").clicked(){self.show_ws_viewport.store(new_state, Ordering::Relaxed);}
+        }else {
+            if ui.button("Detach Websocket Console").clicked(){self.show_ws_viewport.store(new_state, Ordering::Relaxed);}
+        }
+    }
 }

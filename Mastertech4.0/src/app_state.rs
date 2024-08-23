@@ -115,6 +115,7 @@ pub struct MastertechContext {
     pub border_stroke_color: Stroke,
     pub frame_counter: u64,
     pub show_deferred_viewport: Arc<AtomicBool>,
+    pub show_ws_viewport: Arc<AtomicBool>,
 
     pub task_map: HashMap<String, Vec<TaskPayload>>,
     pub task_layouts: HashMap<String, TaskLayout>,
@@ -305,7 +306,8 @@ impl MasterTechApp {
 
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
-
+            show_ws_viewport: Arc::new(AtomicBool::new(false)),
+            
             added_nodes: Vec::new(),
             
             current_modal: ModalType::Null,
@@ -435,6 +437,7 @@ impl TabViewer for MastertechContext {
     fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
+            "Websockets" => self.websocket_menu(ui),
             "File Browser 📂" => self.file_browser_popup(ui),
             _ => {
                 ui.label(tab.to_string());

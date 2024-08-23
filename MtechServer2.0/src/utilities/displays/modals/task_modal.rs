@@ -138,7 +138,8 @@ impl DisplayModal for TaskModal {
                                 ModalAction::PartOrderPage => {part_order_page = true},
                                 ModalAction::ComputerInfoPage => {computer_info_page = true},
                                 ModalAction::TaskNotePage => { task_note_page = true },
-                                _ => {task_page = true},
+                                ModalAction::TaskPage => { task_page = true }
+                                _ => {ticket_page = true},
                             };
 
                             

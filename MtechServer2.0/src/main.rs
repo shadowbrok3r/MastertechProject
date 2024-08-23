@@ -292,7 +292,7 @@ impl eframe::App for MtechServer {
                         .rounding(Rounding::same(10.0)).stroke(Stroke::new(1.0, color));
 
                     Window::new(&client.connection_string).frame(column_frame)
-                        .max_size(Vec2::new(600., 400.))
+                        .max_size(Vec2::new(700., 400.))
                         .show(ctx, |ui| 
                     {
                         ui.vertical_centered_justified(|ui| {

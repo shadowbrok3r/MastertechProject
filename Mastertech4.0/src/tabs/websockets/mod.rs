@@ -3,7 +3,7 @@ use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Id, Key, 
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
-use std::{env, path::{Path, PathBuf}, process::Stdio, sync::Arc, time::{Duration, Instant}};
+use std::{env, path::{Path, PathBuf}, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
 use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
@@ -15,27 +15,29 @@ use tracing::info;
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
-        let _db_tx = self.db_tx.clone();
+        if !self.show_ws_viewport.load(Ordering::Relaxed) {
+            let _db_tx = self.db_tx.clone();
 
-        if self.current_user.is_none(){
-            let _ = self.app_state_tx.send(crate::app_state::AppState::NoAuth("No User".to_string()));
-        }
-        
-        ui.vertical_centered(|ui| {
-            if ui.button("Connect").clicked()
-            {
-                self.connect(ui.ctx().clone());
-            }
-
-            if !self.error.is_empty() {
-                TopBottomPanel::top("error").show_inside(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(Color32::RED, format!("Error: {}", &self.error));
-                    });
-                });
+            if self.current_user.is_none(){
+                let _ = self.app_state_tx.send(crate::app_state::AppState::NoAuth("No User".to_string()));
             }
             
-            if let Some(frontend) = &mut self.frontend {
+            ui.vertical_centered(|ui| {
+                if ui.button("Connect").clicked()
+                {
+                    self.connect(ui.ctx().clone());
+                }
+    
+                if !self.error.is_empty() {
+                    TopBottomPanel::top("error").show_inside(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(Color32::RED, format!("Error: {}", &self.error));
+                        });
+                    });
+                }
+            });
+    
+            if let Some(ref mut frontend) = self.frontend {
                 let connected = frontend.initialize_websocket(ui);
                 if !connected{ 
                     if let Some(url) = &self.url{
@@ -43,9 +45,9 @@ impl MastertechContext{
                         info!("Trying to reconnect");
                         self.make_ws_connection(&url.to_string(), ui.ctx().clone());
                     }
-                } 
+                }
             }
-        });
+        }
     }
 
     pub fn connect(&mut self, ctx: Context) {
@@ -87,7 +89,7 @@ impl MastertechContext{
             client_hash,
             connected: true,
             assigned_user: Some(self.current_user.as_ref().unwrap().id.clone()),
-            connection_string: computer_id.0.id.clone().to_string(),
+            connection_string: url_string.clone(),
             ..Default::default()
         };
 
@@ -250,6 +252,7 @@ impl WebConsoleFrontend {
                             self.handle_command(cmd);
                         },
                         WsMessage::Text(txt) => {
+                            info!("Got txt from websocket connection: {:?}", txt.clone());
                             self.history.push(format!("Raw Command: {}", txt.clone()));
                             let tx = self.command_tx.clone();
                             let text = txt.clone();
@@ -272,6 +275,7 @@ impl WebConsoleFrontend {
                 },
                 WsEvent::Error(e) => {
                     connected = false;
+                    info!("{e:?}");
                     self.history.push(e.clone())
                 },
             }
@@ -820,8 +824,8 @@ async fn handle_linux_cmd(
     tx: Sender<Vec<u8>>
 ) ->  Result<ChildStdin, Error> {
 
-    let mut process: Child = Command::new("cmd")
-        .arg("/C")
+    let mut process: Child = Command::new("sh")
+        .arg("-c")
         .arg(&command_payload)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -70,7 +70,7 @@ impl MtechServerContext{
                 let cloned_client = client.clone();
                 ui.with_layout(Layout::left_to_right(Align::Center), 
                 |ui| {
-                    ui.add_space(ui.available_width() / 2.8);
+                    ui.add_space(ui.available_width() / 3.1);
                     let txt = if let Some(friendly_name) = cloned_client.clone().friendly_name{
                         friendly_name
                     } else { cloned_client.clone().connection_string };
