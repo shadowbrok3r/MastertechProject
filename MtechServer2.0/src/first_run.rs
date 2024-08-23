@@ -103,9 +103,7 @@ impl MtechServer {
             });
             
             // spawn_local(async move { let listen_data = listen_notifications(notification_tx.clone()).await; info!("listen_notifications: {listen_notifications:?}"); });
-            if self.context.tasks.is_empty() 
-                || self.context.store_users.is_none() 
-            {
+            if self.context.tasks.is_empty() || self.context.store_users.is_empty() {
                 spawn_local(async move {
                     let get_tasks = get_tasks(initial_tasks_tx).await;
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
@@ -146,8 +144,12 @@ impl MtechServer {
             self.context.tasks = tasks;
         }
 
-        if let Ok(users) = self.context.store_users_rx.try_recv(){
-            self.context.store_users = Some(users);
+        if let Ok(users) = self.context.store_users_rx.try_recv() {
+            info!("Got users: {:?}", &users);
+            for (_, layout) in self.context.task_layouts.iter_mut() {
+                layout.update_assignees(users.clone());
+            }
+            self.context.store_users = users;
         }
 
         // if let Ok(notifications) = self.context.notification_rx.try_recv(){

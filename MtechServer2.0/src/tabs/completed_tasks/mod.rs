@@ -4,7 +4,8 @@ use eframe::egui::Ui;
 
 impl MtechServerContext{
     pub fn completed_tasks(&mut self, ui: &mut Ui){ 
-        if let Some(users) = self.store_users.as_ref(){
+        if !self.store_users.is_empty(){
+            let users = &self.store_users;
             let page = "CompletedTasks";
             // let current_user = self.current_user.as_ref().unwrap();
             if let Some(layout) = self.task_layouts.get_mut(page){

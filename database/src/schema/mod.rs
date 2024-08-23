@@ -40,7 +40,7 @@ pub struct CustomerId(pub RecordId);
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TicketId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct UserId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -72,6 +72,11 @@ impl Default for UserId {
     }
 }
 
+impl Default for TaskId {
+    fn default() -> Self {
+        TaskId(Thing::from((String::new(), Id::String(String::new()))).clone())
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct TaskPayload {
@@ -432,7 +437,7 @@ pub enum Node {
     Folder(String, HashMap<String, Node>),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord)]
 pub enum Store{
     #[default]
     RIV,
@@ -545,7 +550,7 @@ impl Store{
     pub const VALUES: [Self; 7] = [Self::RIV, Self::LTN, Self::MUR, Self::AF, Self::WJ, Self::ORE, Self::SAN];
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, PartialOrd, Ord)]
 pub struct User {
     pub id: UserId,
     pub name: String,

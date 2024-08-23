@@ -78,7 +78,7 @@ pub struct MtechServerContext{
     pub live_tasks: Option<LiveTaskPayload>,
     pub tasks: Vec<TaskPayload>,
     pub data_output: LiveOutput,
-    pub store_users: Option<Vec<User>>,
+    pub store_users: Vec<User>,
     /// Receives task data over crossbeam channel
     #[serde(skip)]
     pub tasks_tx: Sender<(Action, TaskPayload)>,
@@ -278,7 +278,7 @@ impl MtechServer{
             live_tasks: None,
             tasks,
             data_output: LiveOutput::default(),
-            store_users: None,
+            store_users: Vec::new(),
 
             // CHANNEL SENDERS / RECEIVERS
             db_tx, db_rx,

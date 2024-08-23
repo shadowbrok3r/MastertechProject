@@ -48,37 +48,37 @@ impl MtechServer{
                 let mut inputs = BTreeSet::new();
                 
 
-                    for task in self.context.tasks.iter(){
-                        inputs.insert(task.task_name.clone());
-                        inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
-                    }
-                    ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_rgb(50, 2, 43));
-                    ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
-                    ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(100);
-                    let result = AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
-                        .highlight_matches(true)
-                        .max_suggestions(10)
-                        .set_text_edit_properties(|text_edit: TextEdit<'_>| 
-                    {
-                        text_edit
-                            .hint_text("Search for task")
-                            .desired_width(150.0)
-                            .font(FontId::proportional(12.0))
-                            .frame(true)
-                    }).ui(ui);
+                for task in self.context.tasks.iter(){
+                    inputs.insert(task.task_name.clone());
+                    inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
+                }
+                ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::from_rgb(50, 2, 43));
+                ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12,12,14);
+                ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(100);
+                let result = AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
+                    .highlight_matches(true)
+                    .max_suggestions(10)
+                    .set_text_edit_properties(|text_edit: TextEdit<'_>| 
+                {
+                    text_edit
+                        .hint_text("Search for task")
+                        .desired_width(150.0)
+                        .font(FontId::proportional(12.0))
+                        .frame(true)
+                }).ui(ui);
 
-                    if result.clicked(){
-                        info!("selected? {}", self.context.search_input.clone());
-                        if let Some(input) = inputs.get(&self.context.search_input){
-                            let task = self.context.tasks.iter().find(|&x| 
-                                x.task_name == *input || format!("{}",x.service_number.clone().unwrap_or_default()) == format!("{}",*input)
-                            );
+                if result.clicked(){
+                    info!("selected? {}", self.context.search_input.clone());
+                    if let Some(input) = inputs.get(&self.context.search_input){
+                        let task = self.context.tasks.iter().find(|&x| 
+                            x.task_name == *input || format!("{}",x.service_number.clone().unwrap_or_default()) == format!("{}",*input)
+                        );
 
-                            if let Some(task) = task{
-                                let _ = self.context.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task.clone()));
-                            }
+                        if let Some(task) = task{
+                            let _ = self.context.ui_actions_tx.try_send(TaskUiActions::OpenTaskModal(task.clone()));
                         }
                     }
+                }
                 
             });
 

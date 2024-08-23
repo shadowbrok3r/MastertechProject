@@ -1,4 +1,6 @@
+use std::collections::BTreeSet;
 use eframe::egui::{text::CCursorRange, *};
+use crate::ui_tools::mention_handler::{self, MentionHandler};
 pub mod highlighter;
 pub mod parser;
 pub mod viewer;
@@ -8,7 +10,9 @@ pub struct EasyMarkEditor {
     message: String,
     highlight_editor: bool,
     show_rendered: bool,
+    pub inputs: BTreeSet<String>,
     pub highlighter: highlighter::MemoizedEasymarkHighlighter,
+    pub mention_handler: MentionHandler
 }
 
 impl PartialEq for EasyMarkEditor {
@@ -25,18 +29,22 @@ impl Default for EasyMarkEditor {
             highlight_editor: true,
             show_rendered: false,
             highlighter: Default::default(),
+            inputs: BTreeSet::new(),
+            mention_handler: MentionHandler::default()
             // default_msg: DEFAULT_CODE.trim().to_owned(),
         }
     }
 }
 
 impl EasyMarkEditor {
-    pub fn new(msg: String) -> Self {
+    pub fn new(mention_handler: MentionHandler) -> Self {
         Self {
-            message: msg,
+            message: String::new(),
             highlight_editor: true,
             show_rendered: false,
             highlighter: Default::default(),
+            inputs: BTreeSet::new(),
+            mention_handler
             // default_msg: DEFAULT_CODE.trim().to_owned(),
         }
     }
@@ -110,7 +118,6 @@ impl EasyMarkEditor {
                         .layouter(&mut layouter),
                 )
             // }
-
         } else {
             ui.add(
                 TextEdit::multiline(message).desired_width(f32::INFINITY)

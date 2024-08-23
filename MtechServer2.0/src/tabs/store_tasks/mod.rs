@@ -4,7 +4,8 @@ use eframe::egui::Ui;
 
 impl MtechServerContext{
     pub fn store_tasks(&mut self, ui: &mut Ui) {
-        if let Some(users) = self.store_users.as_ref(){
+        if !self.store_users.is_empty(){
+            let users = &self.store_users;
             let page = "StoreTasks";
             let current_user = self.current_user.as_ref().unwrap();
             if let Some(layout) = self.task_layouts.get_mut(page){
@@ -28,8 +29,7 @@ impl MtechServerContext{
                     }
                 });
                 let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();
-                let mut layout = TaskLayout::new(BTreeMap::new(), user_names, self.ui_actions_tx.clone(), users.clone());
-                layout.update_tasks(map);
+                let layout = TaskLayout::new(map, user_names, self.ui_actions_tx.clone(), users.clone());
                 self.task_layouts.insert(page.to_string(), layout);
             }
         }

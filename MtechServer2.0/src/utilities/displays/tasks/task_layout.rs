@@ -92,7 +92,6 @@ impl TaskLayout {
     pub fn layout_cols(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
-        
         ScrollArea::horizontal()
             .show_viewport(ui, |ui, _|
         {
@@ -104,22 +103,24 @@ impl TaskLayout {
                 .size(Size::exact(x))
                 .vertical(|mut strip| 
             {
-                strip.strip(|strip| 
-                {
-                    strip.sizes(column_width, self.column_names.len()).horizontal( |strip| self.headers(strip));
-                });
-                
-                strip.empty();
-                
-                strip.strip(|strip| 
-                {
-                    strip.sizes(column_width, self.column_names.len()).horizontal( |mut strip| 
+                if self.column_names.len() > 0 {
+                    strip.strip(|strip| 
                     {
-                        // for (name, tasks) in self.task_map.iter_mut() {
-                            self.columns(strip.borrow_mut());
-                        // }
+                        strip.sizes(column_width, self.column_names.len()).horizontal( |strip| self.headers(strip));
                     });
-                });
+
+                    strip.empty();
+
+                    strip.strip(|strip| 
+                    {
+                        strip.sizes(column_width, self.column_names.len()).horizontal( |mut strip| 
+                        {
+                            // for (name, tasks) in self.task_map.iter_mut() {
+                                self.columns(strip.borrow_mut());
+                            // }
+                        });
+                    });
+                }
             });
         });
     }
