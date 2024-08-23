@@ -282,6 +282,10 @@ impl MastertechContext {
                                                     }
 
                                                     ui.end_row();
+                                                    if let Some(users) = &self.store_users{
+                                                        let names = users.iter().
+                                                        ui.add(self.mention_handler);
+                                                    }
                                                 }); // grid
                                             });
                                         }); // v center justified
