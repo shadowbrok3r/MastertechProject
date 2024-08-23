@@ -1,6 +1,6 @@
 use database::{schema::{prestashop_schema::PrestashopPayload, ClientId, ComputerData, ConnectedClient, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData, User}, Database};
 use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
-use displays::{channel_manager::ChannelManager, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{channel_manager::ChannelManager, ui_tools::{mention_handler::MentionHandler, toasts::Toasts}, virtual_filesystem::FileSystem};
 use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
 use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use crossbeam::channel::{Receiver, Sender};
@@ -83,7 +83,7 @@ pub struct MastertechContext {
     pub seb_info: Option<LocalSebData>,
     pub opened_file: Option<PathBuf>,
     pub open_file_dialog: Option<FileDialog>,
-
+    pub mention_handler: MentionHandler,
     pub ram_test_cbox: HardwareTest, // We just need one of these...
     pub hdd_test_cbox: HardwareTest,
     pub ssd_test_cbox: HardwareTest,
@@ -262,6 +262,7 @@ impl MasterTechApp {
             current_antivirus: "".to_string(),
             opened_file: None,
             open_file_dialog: None,
+            mention_handler: MentionHandler::default(),
 
             database: None,
             
