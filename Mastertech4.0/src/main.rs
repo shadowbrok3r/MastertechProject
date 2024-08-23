@@ -3,7 +3,7 @@ use database::{schema::{buckets::list_buckets, utilities::{get_store_users, get_
 use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use displays::ui_tools::{toasts::{Toast, ToastKind, ToastOptions}, carl_dark::{Aesthetix, CarlDark}};
-use std::{fs::File, sync::{Arc, Condvar, Mutex}};
+use std::{fs::File, sync::{atomic::Ordering, Arc, Condvar, Mutex}};
 use tabs::tur_sheet::scaffold::AsanaResponse;
 use log::{debug, info, LevelFilter};
 use filesystem::system_info::ComputerInfo;
@@ -169,6 +169,7 @@ impl eframe::App for MasterTechApp {
                             Ok::<(), Error>(())
                         });
                         self.context.connect(ctx.clone());
+                        self.context.show_ws_viewport.store(true, Ordering::Relaxed);
                     }
                 },
                 Err(e) => {
