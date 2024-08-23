@@ -13,7 +13,6 @@ use super::websockets::{ClientHandler, WebSocketClient};
 // const MIN_REPAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl MtechServerContext{
-
     pub fn headers(&mut self, ui: &mut Ui, client: ConnectedClient) {
         let header_frame = Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
