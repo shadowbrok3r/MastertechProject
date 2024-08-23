@@ -91,7 +91,6 @@ impl MastertechContext{
                                 info!("Index_html: {:?}", index_html.metadata.sha256_hash());
                             }
                             // let mut reader = Reader::from_file(index_html.data.as_ref()).unwrap();
-
                             // let mut count = 0;
                             // let mut txt = Vec::new();
                             // loop {
