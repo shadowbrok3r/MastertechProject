@@ -10,6 +10,7 @@ use serde::Serialize;
 pub mod autocomplete;
 pub mod toasts;
 pub mod carl_dark;
+pub mod mention_handler;
 
 #[derive(Debug, Clone)]
 pub enum TaskUiActions{

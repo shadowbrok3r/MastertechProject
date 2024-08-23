@@ -21,7 +21,7 @@ pub struct CreateTaskModal{
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
     pub full_span_content: bool,  
-    pub store_users: Option<Vec<User>>,
+    pub store_users: Vec<User>,
 
     pub task_name: String,
     pub task_priority: Priority,
@@ -43,12 +43,12 @@ pub struct Tur{
     pub task_data: TaskPayload,
     pub customer_data: CustomerData,
     pub task_notes: Vec<TaskNotePayload>,
-    pub store_users: Option<Vec<User>>,
+    pub store_users: Vec<User>,
 }
 
 impl CreateTaskModal{
     /// Create a new modal with the given title.
-    pub fn new(title: &str, store_users: Option<Vec<User>>) -> Self {
+    pub fn new(title: &str, store_users: Vec<User>) -> Self {
         Self {
             title: title.to_owned(),
             min_width: Some(600.0),
@@ -198,24 +198,21 @@ impl CreateTaskModal {
                             .ui(ui);
 
                         let mut inputs = BTreeSet::new();
-                        
-                        if let Some(users) = &mut self.store_users{
-                            for user in users.iter(){
-                                let parsed = user.email.split_once("@").unwrap_or(("","")).0;
-                                inputs.insert(parsed.to_string());
-                            }
-                            let _result = AutoCompleteTextEdit::new(&mut self.assignee, inputs.clone())
-                                .highlight_matches(true)
-                                .max_suggestions(3)
-                                .set_text_edit_properties(move |text_edit| 
-                            {
-                                text_edit
-                                    .hint_text("Assignee")
-                                    .desired_width(200.0)
-                                    .font(FontId::proportional(12.0))
-                                    .frame(true)
-                            }).ui(ui);
+                        for user in self.store_users.iter_mut(){
+                            let parsed = user.email.split_once("@").unwrap_or(("","")).0;
+                            inputs.insert(parsed.to_string());
                         }
+                        let _result = AutoCompleteTextEdit::new(&mut self.assignee, inputs.clone())
+                            .highlight_matches(true)
+                            .max_suggestions(3)
+                            .set_text_edit_properties(move |text_edit| 
+                        {
+                            text_edit
+                                .hint_text("Assignee")
+                                .desired_width(200.0)
+                                .font(FontId::proportional(12.0))
+                                .frame(true)
+                        }).ui(ui);
                     });
                     
                     s.cell(|ui| {
@@ -324,14 +321,14 @@ impl Default for Tur {
             task_data: TaskPayload::default(),
             customer_data: CustomerData::default(),
             task_notes: Vec::new(),
-            store_users: None,
+            store_users: Vec::new(),
             data: PrestashopPayload::default(),
         }
     }
 }
 
 impl Tur {
-    pub fn set_store_users(&mut self, users: Option<Vec<User>>) -> &mut Self {
+    pub fn set_store_users(&mut self, users: Vec<User>) -> &mut Self {
         self.store_users = users;
         self
     }

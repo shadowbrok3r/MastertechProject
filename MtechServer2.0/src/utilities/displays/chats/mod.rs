@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
+
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
 use database::{live_data::handle_live_delete, schema::{Record, TaskId, TaskNotePayload, User}, DATABASE};
-use displays::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
+use displays::{markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER}, ui_tools::mention_handler::MentionHandler};
 use crate::utilities::get_data::TaskNoteMod;
 use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local};
@@ -22,6 +24,7 @@ pub struct ChatView{
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
     pub delete: Option<TaskNotePayload>,
+    pub users: BTreeSet<String>,
 }
 
 impl Default for ChatView{
@@ -33,22 +36,32 @@ impl Default for ChatView{
             current_user: None, 
             markdown_editor: EasyMarkEditor::default(),
             task_id: None,
-            delete: None
+            delete: None,
+            users: BTreeSet::new()
         }
     }
 }
 
 impl ChatView {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: TaskId) -> Self {
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: TaskId, users: Vec<User>) -> Self {
         // info!("Before messages: {messages:?}");
+        let mut users_set = BTreeSet::new();
+        for user in users {
+            let parsed_email = user.email.split_once('@');
+            if let Some(email) = parsed_email {
+                users_set.insert(email.0.to_string());
+            }
+        }
+
         ChatView {
             current_user: Some(current_user),
             messages,
             state: ModalState::default(),
             title: "Chat".to_string(),
-            markdown_editor: EasyMarkEditor::default(),
+            markdown_editor: EasyMarkEditor::new(MentionHandler::new(users_set.clone())),
             task_id: Some(task_id),
             delete: None,
+            users: users_set
         }
     }
 
@@ -94,6 +107,7 @@ impl ChatView {
         let color = Color32::from_rgb(6,6,10);
 
         let markdown_editor = &mut self.markdown_editor;
+        markdown_editor.inputs = self.users.clone();
 
         let central_panel_frame = Frame::none().fill(color)
             .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
@@ -116,6 +130,7 @@ impl ChatView {
             
             if let Some(response) = markdown_editor.ui(ui)
             {
+                info!("Users: {:?}", self.users);
                 if response.clicked() || enter_pressed {
                     let txt = markdown_editor.submit();
                     info!("Txt: {txt}");

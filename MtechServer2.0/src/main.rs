@@ -83,12 +83,27 @@ impl eframe::App for MtechServer {
         if let Ok(action) = self.context.ui_actions_rx.try_recv(){
             match action{
                 TaskUiActions::OpenTaskModal(task) => {
-                    let task_modal = if !task.task_note.is_empty(){
-                        let chat_modal = ChatView::new(task.task_note.clone(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap());
-                        TaskModal::new(chat_modal, task.clone())
-                    }else{ TaskModal::new(ChatView::new(Vec::new(), self.context.current_user.as_ref().unwrap().clone(), task.id.clone().unwrap()), task.clone()) };
-                    self.context.current_modal = ModalType::TaskModal(task_modal);
-                    self.context.task_modal_handler.open();
+                    if let (Some(id), Some(usr)) = (task.id.clone(), self.context.current_user.clone()) {
+                        let task_modal = if !task.task_note.is_empty(){
+                            let chat_modal = ChatView::new(
+                                task.task_note.clone(), 
+                                usr, 
+                                id,
+                                self.context.store_users.clone()
+                            );
+                            TaskModal::new(chat_modal, task.clone())
+                        }else{ 
+
+                            TaskModal::new(ChatView::new(
+                                task.task_note.clone(), 
+                                usr, 
+                                id,
+                                self.context.store_users.clone()
+                            ), task.clone()) 
+                        };
+                        self.context.current_modal = ModalType::TaskModal(task_modal);
+                        self.context.task_modal_handler.open();
+                    }
                 },
                 TaskUiActions::CreateTaskModal => {
                     let create_modal = CreateTaskModal::new("Create Task", self.context.store_users.clone());
@@ -99,7 +114,7 @@ impl eframe::App for MtechServer {
                 TaskUiActions::OpenChatModal(pld) => {
                     info!("Got Chat action");
                     if let Some(current_user) = self.context.current_user.as_ref() {
-                        let chat_modal = ChatView::new(pld.1.to_owned(), current_user.clone(), pld.0.clone());
+                        let chat_modal = ChatView::new(pld.1.to_owned(), current_user.clone(), pld.0.clone(), self.context.store_users.clone());
                         self.context.current_modal = ModalType::ChatView(chat_modal);
                         self.context.chat_modal_handler.open();
                     }// self.context.chat = ModalType::ChatView(pld);
@@ -125,7 +140,13 @@ impl eframe::App for MtechServer {
                 self.context.rerun_filtering_completed = true;
                 self.context.rerun_filtering_my_tasks = true;
                 self.context.rerun_filtering_store_tasks = true;
-                handle_live_data(new_task.to_owned(), &mut self.context.tasks, None).unwrap(); 
+                if let Err(e) = handle_live_data(
+                    new_task.to_owned(), 
+                    &mut self.context.tasks, 
+                    None
+                ) {
+                    info!("Error handling live data: {e:?}");
+                }
             }
         }
 

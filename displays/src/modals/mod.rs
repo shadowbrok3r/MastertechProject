@@ -69,7 +69,7 @@ pub struct CreateTaskModal{
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
     pub full_span_content: bool,  
-    pub store_users: Option<Vec<User>>,
+    pub store_users: Vec<User>,
 
     pub ticket_data: TicketData,
     pub task_data: TaskPayload,

@@ -157,15 +157,19 @@ where
             max_suggestions,
         );
 
+
         let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter))
             || ui.input_mut(|input| input.key_pressed(Key::Tab));
+
         if let (Some(index), true) = (
             state.selected_index,
-            ui.memory(|mem| mem.is_popup_open(id)) && accepted_by_keyboard,
+            // If accepted by keyboard, close the popup. If the popup is closed with a selected index, take that text
+            accepted_by_keyboard || !ui.memory(|mem| mem.is_popup_open(id)),
         ) {
-            text_field.replace_with(match_results[index].0.as_ref())
+            text_field.replace_with(match_results[index].0.as_ref());
+            state.selected_index = None;
         }
-        popup::popup_below_widget(ui, id, &text_response, PopupCloseBehavior::CloseOnClick, |ui| {
+        popup::popup_below_widget(ui, id, &text_response, PopupCloseBehavior::IgnoreClicks , |ui| {
             for (i, (output, _, match_indices)) in
                 match_results.iter().take(max_suggestions).enumerate()
             {
@@ -186,9 +190,13 @@ where
                     job.append(output.as_ref(), 0.0, TextFormat::default());
                     job
                 };
-                if ui.toggle_value(&mut selected, text).clicked() {
-                    text_field.replace_with(output.as_ref());
+                //  Update selected index based on hover
+                if ui.toggle_value(&mut selected, text).hovered() {
+                    state.selected_index = Some(i);
                 }
+                // if ui.toggle_value(&mut selected, text).clicked() {
+                //     text_field.replace_with(output.as_ref());
+                // }
             }
         });
         if !text_field.as_str().is_empty() && text_response.has_focus() && !match_results.is_empty()
@@ -209,7 +217,7 @@ where
 }
 
 /// Highlights all the match indices in the provided text
-fn highlight_matches(text: &str, match_indices: &[usize], color: Color32) -> LayoutJob {
+pub fn highlight_matches(text: &str, match_indices: &[usize], color: Color32) -> LayoutJob {
     let mut formatted = LayoutJob::default();
     let mut it = text.char_indices().enumerate().peekable();
     // Iterate through all indices in the string
