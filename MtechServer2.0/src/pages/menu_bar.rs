@@ -1,4 +1,4 @@
-use eframe::egui::{menu, Align, Context, Margin, Rounding, ScrollArea, Separator, TextEdit};
+use eframe::egui::{menu, Align, Context, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit};
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use crate::app_state::{AppState, MainPages, MtechServer};
@@ -84,15 +84,33 @@ impl MtechServer{
 
             if let Some(usr) = &self.context.current_user{
                 ui.add_space(ui.available_width() / 2.8);
-                // ui.vertical_centered(|ui| {
-                    if ui.add(Button::new(format!("Mastertech Server {}", env!("CARGO_PKG_VERSION")))).clicked(){
-                        self.state = AppState::Authenticated(MainPages::Tasks);
-                        match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
-                            Ok(_) => info!("AppState::Authenticated(MainPages::Tasks)"),
-                            Err(e) => info!("Error: {e:?}"),
-                        }
+                if ui.add(Button::new(format!("Mastertech Server {}", env!("CARGO_PKG_VERSION")))).clicked(){
+                    self.state = AppState::Authenticated(MainPages::Tasks);
+                    match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
+                        Ok(_) => info!("AppState::Authenticated(MainPages::Tasks)"),
+                        Err(e) => info!("Error: {e:?}"),
                     }
-                // });
+                }
+
+                while let Ok(res) = self.context.bytes_channel.1.try_recv(){
+                    self.context.total_download_size = res.1 as f32;
+                    for y in res.0 {
+                        self.context.download_progress += y as f32;
+                    }
+                }
+
+                if self.context.download_progress == self.context.total_download_size {
+                    self.context.download_progress = 0.0;
+                    self.context.total_download_size = 0.0;
+                }
+
+                ui.add_space(50.0);
+
+                ProgressBar::new(self.context.download_progress / self.context.total_download_size)
+                    .fill(Color32::from_rgba_premultiplied(50, 10, 50, 65))
+                    .show_percentage()
+                    .desired_width(150.0)
+                    .ui(ui);
 
                 ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                     ui.add_space(20.0);

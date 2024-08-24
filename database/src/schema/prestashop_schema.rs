@@ -6,6 +6,7 @@ use reqwest::{Client, header::{AUTHORIZATION, CONTENT_TYPE, ACCEPT}};
 use log::info;
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
+const PRESTASHOP_API_URL_WASM: &str = "https://master-tech.app/pcl";
 // const PRESTASHOP_API_URL_DEV: &str = "https://localhost:9001/api";
 
 pub struct Prestashop<'a>{
@@ -85,6 +86,46 @@ impl <'a>Prestashop<'a> {
         format!("{}{}", base_url, query_string)
     }
 
+    pub fn query_args_wasm(&self, resource_name: &str, url_params: HashMap<&str, &str>) -> String {
+        let base_url = format!("{PRESTASHOP_API_URL_WASM}/{resource_name}");
+        
+        let mut query_params = vec![];
+
+        // Adding `display` parameter
+        if !self.display.is_empty() {
+            query_params.push(format!("display={}", self.display));
+        }
+
+        // Adding `schema` parameter if present
+        if let Some(ref schema) = self.schema {
+            query_params.push(format!("schema={}", schema));
+        }
+
+        // Adding `filter` parameter if present
+        if let Some(ref filter) = self.filter {
+            query_params.push(format!("filter[{}]={}", resource_name, filter));
+        }
+
+        // Adding `limit` parameter if present
+        if let Some((start, end)) = self.limit {
+            query_params.push(format!("limit={},{}", start, end));
+        }
+
+        // Adding other URL parameters
+        for (key, value) in url_params {
+            query_params.push(format!("{}={}", key, value));
+        }
+
+        // Constructing the final URL
+        let query_string = if !query_params.is_empty() {
+            format!("?{}", query_params.join("&"))
+        } else {
+            String::new()
+        };
+
+        format!("{}{}", base_url, query_string)
+    }
+
     pub async fn request_subresources_by_id<T>(
         &self, 
         resource: &str, 
@@ -94,6 +135,32 @@ impl <'a>Prestashop<'a> {
         -> anyhow::Result<T, anyhow::Error> where T: for <'de>Deserialize<'de> + std::fmt::Debug
     {
         let url = format!("{PRESTASHOP_API_URL}/{resource}/{id}?output_format=JSON");
+        let response: Value = self.client 
+            .get(url.clone())
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .header(AUTHORIZATION, AUTH_TOKEN)
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        info!("query:{url}\nresponse: {:#?}", response);
+
+        let x: T = from_value(response[name].clone())?;
+        info!("x: {x:#?}");
+        Ok(x)
+    }
+
+    pub async fn request_subresources_by_id_wasm<T>(
+        &self, 
+        resource: &str, 
+        name: &str, 
+        id: &str
+    ) 
+        -> anyhow::Result<T, anyhow::Error> where T: for <'de>Deserialize<'de> + std::fmt::Debug
+    {
+        let url = format!("{PRESTASHOP_API_URL_WASM}/{resource}/{id}?output_format=JSON");
         let response: Value = self.client 
             .get(url.clone())
             .header(CONTENT_TYPE, "application/json")
@@ -122,6 +189,33 @@ impl <'a>Prestashop<'a> {
         info!(
             "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}", 
             self.query_args(resource_name, url_params.clone())
+        );
+        
+        let response: Value = self.client.get(self.query_args(resource_name, url_params))
+            .header(AUTHORIZATION, AUTH_TOKEN)
+            .send()
+            .await?
+            .json()
+            .await?;
+        
+        info!("response: {:#?}", response);
+        let x: Vec<T> = from_value(response[resource_name].clone())?;
+        info!("x: {x:#?}");
+        
+        Ok(x)
+    }
+
+    pub async fn request_resources_wasm<T>(
+        &self, 
+        resource_name: &str,
+        url_params: HashMap<&str, &str>
+    ) 
+        -> anyhow::Result<Vec<T>, anyhow::Error>
+            where T: for <'de>Deserialize<'de> + std::fmt::Debug
+    {
+        info!(
+            "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}", 
+            self.query_args_wasm(resource_name, url_params.clone())
         );
         
         let response: Value = self.client.get(self.query_args(resource_name, url_params))

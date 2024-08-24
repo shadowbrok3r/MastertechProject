@@ -1,12 +1,16 @@
-use eframe::egui::{Align, CentralPanel, Context, Direction, FontId, Frame, Layout};
+use anyhow::{Error, Result};
+use eframe::egui::{Align, CentralPanel, Color32, Context, Direction, FontId, Frame, Layout, RichText};
 // use displays::markdown_editor::viewer::easy_mark;
 use egui_extras::{Column, TableBuilder};
+use futures::StreamExt;
+use reqwest::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT}, Client};
 use serde::{Deserialize, Serialize};
+use wasm_bindgen_futures::spawn_local;
 use crate::app_state::MtechServer;
 use crossbeam::channel::Sender;
 use gloo_net::http::Request;
 use chrono::DateTime;
-use log::info;
+use log::{debug, info};
 
 const TOKEN: &str = "Bearer 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";
 
@@ -23,6 +27,7 @@ pub struct GithubRelease {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Asset {
     pub name: String,
+    pub url: String,
     pub browser_download_url: String,
     pub size: u64,
     pub created_at: String,
@@ -55,9 +60,11 @@ impl MtechServer{
 
                 TableBuilder::new(ui)
                     .striped(true)
-                    .cell_layout(Layout::top_down_justified(Align::Center))
-                    .column(Column::auto().resizable(true))
-                    .column(Column::auto().resizable(true))
+                    .cell_layout(Layout::top_down_justified(Align::Min))
+                    .cell_layout(Layout::top_down_justified(Align::Min))
+                    .cell_layout(Layout::top_down_justified(Align::Min))
+                    .column(Column::exact(180.0))
+                    .column(Column::exact(130.0))
                     .column(Column::remainder().resizable(true))
                     .header(20.0, |mut header| 
                 {
@@ -72,28 +79,40 @@ impl MtechServer{
                     });
                 })
                 .body(|mut body| {
-                    for release in releases.iter() {
+                    let assets: Vec<Asset> = releases.iter()
+                        .flat_map(|r| r.assets.iter().cloned())
+                        .collect();
+                    for (release, asset) in releases.iter().zip(assets.iter()) {
                         body.row(100.0,  |mut row| {
-                            // let row_index = row.index();
                             row.col(|ui| {
-                                // for asset in &release.assets {format!("{} Mb", bytes_to_megabytes(asset.size));}
-                                ui.horizontal_centered(|ui| {
-                                    ui.add_space(15.0);
-                                    let link = ui.link(&release.name); // .on_hover_text(text)
-                                    if link.clicked() { }// download asset asset.browser_download_url
+                                ui.add_space(5.0);
+                                ui.vertical_centered(|ui| {
+                                    ui.add_space(20.0);
+                                    let link_txt = RichText::new(&release.name).color(Color32::LIGHT_RED);
+                                    let link = ui.link(link_txt).on_hover_text(&asset.name);
+                                    
+                                    if link.clicked() { 
+                                        let asset = asset.clone();
+                                        let tx = self.context.bytes_channel.0.clone();
+                                        spawn_local(async move {
+                                            download_release(asset, tx).await;
+                                        });
+                                    }
+
+                                    ui.add_space(10.0);
+                                    ui.label(&asset.name);
                                 });
                             });
 
                             row.col(|ui| {
                                 ui.horizontal_centered(|ui| {
-                                    // ui.add_space(ui.available_width() * 0.2);
-                                    ui.add_space(15.0);
+                                    ui.add_space(5.0);
                                     ui.label(format_date(&release.created_at));
                                 });
                             });
                             row.col(|ui| {
+                                ui.add_space(5.0);
                                 ui.label(&release.body);
-                                // easy_mark(ui, );
                             });
                         });
                     }
@@ -104,44 +123,62 @@ impl MtechServer{
 }
 
 
-pub async fn get_github_releases(tx: Sender<Vec<GithubRelease>>) -> anyhow::Result<(), anyhow::Error> {
-    // let mut downloaded_bytes: u64 = 0;
-    
+pub async fn get_github_releases(
+    tx: Sender<Vec<GithubRelease>>
+) -> Result<(), Error> {
     let response: Vec<GithubRelease> = Request::get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest 
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", "shadowbrok3r")
         .header("Authorization", TOKEN)
-        .send()
-        .await?
-        .json()
-        .await?;
+        .send().await?
+        .json().await?;
 
-    info!("response {:?}", response.clone());
+    debug!("response {:?}", response.clone());
     tx.try_send(response.clone())?;
-    // let releases = response.get("assets");
-    // if let Some(release) = releases{
-    //     tx.try_send(response.clone())?;
-        // let url: &str = release[0].get("url").unwrap().as_str().unwrap();
-        // let total_length: u64 = release[0].get("size").unwrap().as_u64().unwrap();
-        // info!("response: {url}\nLen: {total_length}");
-    
-        // if !url.is_empty(){
-        //     let response: Value = Request::get(url) 
-        //         .header("Accept", "application/octet-stream")
-        //         .header("Content-Type", "application/octet-stream")
-        //         .header("X-GitHub-Api-Version", "2022-11-28")
-        //         .header("User-Agent", "shadowbrok3r")
-        //         .header("Authorization", TOKEN)
-        //         .send()
-        //         .await?
-        //         .json()
-        //         .await?;
+    Ok(())
+}
 
-        //     tx.try_send(response)?;
-        //     // info!("response: {response:?}");
-        // }
-    // }
+pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>) -> Result<(), Error> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_file_name(asset.name.clone())
+        .save_file()
+        .await;
+
+        if !asset.url.is_empty(){
+            let client = Client::new();
+            // let url = format!("https://corsproxy.io/?{}", &asset.url);
+            let resp = client.get(&asset.url)
+                .header(AUTHORIZATION, TOKEN)
+                .header(ACCEPT, "application/octet-stream")
+                .header(CONTENT_TYPE, "application/octet-stream")
+                .header(USER_AGENT, "shadowbrok3r")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .send().await?;
+        
+            let content_length = resp.content_length().unwrap_or(0);
+            let mut downloaded_bytes: u64 = 0;
+            
+            let mut byte_stream = resp.bytes_stream();
+            info!("Content length: {content_length}");
+
+            let mut byte_vec = Vec::new();
+
+            while let Some(item) = byte_stream.next().await{
+                let chunk = item?.clone();
+                byte_vec.push(chunk.to_vec());
+                let _ = tx.try_send((chunk.to_vec(), content_length));
+                downloaded_bytes += chunk.len() as u64;
+            }
+        
+            if downloaded_bytes == content_length {
+                info!("Downloaded: {downloaded_bytes}");
+                let x = byte_vec.concat();
+                if let Some(ref file) = file {
+                    file.write(x.as_slice()).await?;
+                }
+            }
+        }
 
     Ok(())
 }
