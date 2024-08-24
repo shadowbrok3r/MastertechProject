@@ -443,7 +443,7 @@ impl MastertechContext {
                                         self.taco_first_run = true;
                                         info!("Submitting TUR sheet");
                                         self.output_text += "Sent TUR to Master-tech.app";
-                                        if self.current_user.is_none() {
+                                        if self.current_user.is_some() {
                                             self.submit_tur_mastertech();
                                         } else {
                                             let toast = &mut self.toasts;
