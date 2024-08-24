@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::{env, fs::create_dir, path::PathBuf};
 
 use crossbeam::channel;
 use fs_extra::dir::get_size;
@@ -61,23 +61,37 @@ impl FileBrowser{
                 }
             },
 
-            Command::Copy(source, destination, progress_tx) => {
-                info!("Source: {source:?}");
-                
+            Command::Copy(source, mut destination, progress_tx) => {
+                info!("Source: {source:?} // Destination: {destination:?}");
+                if source.len() == 1 {
+                    if let Some(path) = source[0].file_name(){
+                        info!("Single path: {:?}", path);
+                        info!("Making a directory here: {:?}", destination.join(path));
+                        destination = destination.join(path);
+                        if !destination.exists() {
+                            info!("Creating destination directory");
+                            let create_dest_dir = create_dir(destination.clone());
+                            if let Err(e) = create_dest_dir {
+                                info!("Error creating dir: {e:?}");
+                            }
+                        }
+                    }
+                }
+                info!("Running copy operations, pasting here: {:?}", destination.clone());
                 // spawn(async move {
                 //     run_robocopy(source.get(0).unwrap(), &destination, log_output).await;
                 // });
-                std::thread::spawn(move ||{
-                    for entry in source{
-                        CopyBuilder::new(entry, destination.clone())
-                            .overwrite_if_newer(true)
-                            .overwrite_if_size_differs(true)
-                            .with_exclude_filter(".sys")
-                            .with_exclude_filter(".dat")
-                            .run(progress_tx.clone())
-                            .unwrap_or(());
-                    }
-                }); // copy_files(source, &destination, progress_tx).await.unwrap();
+                // std::thread::spawn(move ||{
+                //     for entry in source{
+                //         CopyBuilder::new(entry, destination.clone())
+                //             .overwrite_if_newer(true)
+                //             .overwrite_if_size_differs(true)
+                //             .with_exclude_filter(".sys")
+                //             .with_exclude_filter(".dat")
+                //             .run(progress_tx.clone())
+                //             .unwrap_or(());
+                //     }
+                // }); // copy_files(source, &destination, progress_tx).await.unwrap();
             },
 
             Command::Move(source, destination) => {
