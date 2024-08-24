@@ -61,29 +61,35 @@ impl FileBrowser{
                 }
             },
 
-            Command::Copy(source, mut destination, progress_tx) => {
+            Command::Copy(source, destination, progress_tx) => {
                 info!("Source: {source:?} // Destination: {destination:?}");
-                if source.len() == 1 {
-                    if let Some(path) = source[0].file_name(){
-                        info!("Single path: {:?}", path);
-                        info!("Making a directory here: {:?}", destination.join(path));
-                        destination = destination.join(path);
-                        if !destination.exists() {
+                for path in source.iter() {
+                    let mut current_destination = destination.clone();
+                    if let Some(folder_name) = path.file_name(){
+                        info!("Single path: {:?}", folder_name);
+                        current_destination = current_destination.join(folder_name);
+                        if !current_destination.exists() {
+                            info!("Making a directory here: {:?}", current_destination.clone());
                             info!("Creating destination directory");
-                            let create_dest_dir = create_dir(destination.clone());
+                            let create_dest_dir = create_dir(current_destination.clone());
                             if let Err(e) = create_dest_dir {
                                 info!("Error creating dir: {e:?}");
                             }
                         }
                     }
                 }
+
                 info!("Running copy operations, pasting here: {:?}", destination.clone());
                 // spawn(async move {
                 //     run_robocopy(source.get(0).unwrap(), &destination, log_output).await;
                 // });
+                let destinations_to_create = source.clone().iter().map(|d| 
+                    if let Some(folder_name) = d.file_name() { destination.join(folder_name) } else { destination.clone() }
+                ).collect::<Vec<PathBuf>>();
+                
                 std::thread::spawn(move ||{
-                    for entry in source{
-                        CopyBuilder::new(entry, destination.clone())
+                    for (src, dest) in source.iter().zip(destinations_to_create.iter()) {
+                        CopyBuilder::new(src, dest.clone())
                             .overwrite_if_newer(true)
                             .overwrite_if_size_differs(true)
                             .with_exclude_filter(".sys")
