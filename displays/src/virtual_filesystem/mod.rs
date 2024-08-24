@@ -226,7 +226,7 @@ impl FileSystem {
                                         info!("Path: {:?}", full_path.clone());
                                         if cfg!(target_os="windows") || cfg!(target_os="linux"){
                                             #[cfg(target_os="windows")]
-                                            self.download_selection_tokio(full_path.to_string(), label.clone());
+                                            self._download_selection_tokio(full_path.to_string(), label.clone());
                                         } else {
                                             self.download_selection(full_path.to_string(), label.clone());
                                         }

@@ -81,17 +81,17 @@ impl FileBrowser{
                 // spawn(async move {
                 //     run_robocopy(source.get(0).unwrap(), &destination, log_output).await;
                 // });
-                // std::thread::spawn(move ||{
-                //     for entry in source{
-                //         CopyBuilder::new(entry, destination.clone())
-                //             .overwrite_if_newer(true)
-                //             .overwrite_if_size_differs(true)
-                //             .with_exclude_filter(".sys")
-                //             .with_exclude_filter(".dat")
-                //             .run(progress_tx.clone())
-                //             .unwrap_or(());
-                //     }
-                // }); // copy_files(source, &destination, progress_tx).await.unwrap();
+                std::thread::spawn(move ||{
+                    for entry in source{
+                        CopyBuilder::new(entry, destination.clone())
+                            .overwrite_if_newer(true)
+                            .overwrite_if_size_differs(true)
+                            .with_exclude_filter(".sys")
+                            .with_exclude_filter(".dat")
+                            .run(progress_tx.clone())
+                            .unwrap_or(());
+                    }
+                }); // copy_files(source, &destination, progress_tx).await.unwrap();
             },
 
             Command::Move(source, destination) => {
