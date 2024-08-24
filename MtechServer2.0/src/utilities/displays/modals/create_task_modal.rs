@@ -427,7 +427,7 @@ impl Tur {
                 query.insert("filter[id_order]", input.as_str());
                 query.insert("output_format", "JSON");
                 
-                let customer_threads: Vec<CustomerThread> = api_call.request_resources(
+                let customer_threads: Vec<CustomerThread> = api_call.request_resources_wasm(
                     "customer_threads",
                     query.clone()
                 ).await.unwrap_or_default();
@@ -438,7 +438,7 @@ impl Tur {
                     for thread in customer_threads.iter(){
                         for msg in thread.associations.customer_messages.iter(){
                             customer_messages.push(
-                                api_call.request_subresources_by_id(
+                                api_call.request_subresources_by_id_wasm(
                                     "customer_messages", 
                                     "customer_message",
                                     msg.id.as_str()
@@ -448,7 +448,7 @@ impl Tur {
                     }
                 }
 
-                let order: Order = api_call.request_subresources_by_id(
+                let order: Order = api_call.request_subresources_by_id_wasm(
                     "orders", 
                     "order", 
                     &input
@@ -461,7 +461,7 @@ impl Tur {
                 info!("order: {order:#?}");
 
                 let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0"){
-                    let employee: Employee = api_call.request_subresources_by_id(
+                    let employee: Employee = api_call.request_subresources_by_id_wasm(
                         "employees", 
                         "employee", 
                         &order.id_employee_sales_rep
@@ -473,7 +473,7 @@ impl Tur {
                     None
                 };
                 let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0"){
-                    let employee_2: Employee = api_call.request_subresources_by_id(
+                    let employee_2: Employee = api_call.request_subresources_by_id_wasm(
                         "employees", 
                         "employee", 
                         &order.id_employee_split_rep
@@ -486,7 +486,7 @@ impl Tur {
                 };
 
 
-                let cust: Customer = api_call.request_subresources_by_id(
+                let cust: Customer = api_call.request_subresources_by_id_wasm(
                     "customers", 
                     "customer", 
                     &order.id_customer
@@ -494,7 +494,7 @@ impl Tur {
 
                 // info!("customer: {customer:#?}");
 
-                let address: Address = api_call.request_subresources_by_id(
+                let address: Address = api_call.request_subresources_by_id_wasm(
                     "addresses", 
                     "address", 
                     &order.id_address_invoice

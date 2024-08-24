@@ -144,6 +144,8 @@ pub struct MtechServerContext{
     pub live_output_rx: Receiver<LiveOutput>,
     #[serde(skip)]
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
+    #[serde(skip)]
+    pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
@@ -210,6 +212,8 @@ pub struct MtechServerContext{
     pub toasts: Toasts,
     pub notifications: Vec<Notification>,
     pub read_notifications: bool,
+    pub total_download_size: f32,
+    pub download_progress: f32,
 }
 
 impl MtechServer{
@@ -265,6 +269,7 @@ impl MtechServer{
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let (live_output_tx, live_output_rx) = channel::unbounded::<LiveOutput>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
+        let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
 
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
@@ -296,6 +301,7 @@ impl MtechServer{
             notification_tx, notification_rx,
             live_output_tx, live_output_rx,
             github_releases_channel,
+            bytes_channel,
 
             // MODALS / LAYOUTS
             ai_playground: AiPlayground::default(),
@@ -339,6 +345,8 @@ impl MtechServer{
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),
             read_notifications: false,
+            total_download_size: 0.0,
+            download_progress: 0.0,
         };
         
         Self { login: Login::default(), signup: Signup::default(), account_mod: AccountMod::default(), state: AppState::default(), context, tree }

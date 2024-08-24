@@ -145,7 +145,6 @@ impl MtechServer {
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv() {
-            info!("Got users: {:?}", &users);
             for (_, layout) in self.context.task_layouts.iter_mut() {
                 layout.update_assignees(users.clone());
             }
@@ -206,7 +205,7 @@ impl MtechServer {
         }
 
         if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
-            info!("Releases: {releases:?}");
+            debug!("Releases: {releases:?}");
             self.context.github_releases = releases;
         }
         

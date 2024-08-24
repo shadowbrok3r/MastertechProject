@@ -32,8 +32,8 @@ pub struct FileSystem {
     selected_items: RefCell<HashSet<String>>,
     directory_paths: HashSet<String>,
     pub paths: Vec<String>,
-    total_size: f64,
-    progress: f64,
+    total_size: f32,
+    progress: f32,
     pub enter_directory: String,
     pub execute_file: String,
     pub open_folder: bool,
@@ -253,8 +253,6 @@ impl FileSystem {
                                             info!("Dir: {:?}", dir.clone());
                                             if cfg!(target_os="windows") || cfg!(target_os="linux"){
                                                 #[cfg(target_os="windows")]
-                                                self.upload_folder_tokio(dir);
-                                            } else {
                                                 self.upload_folder(dir);
                                             }
                                         }
@@ -301,8 +299,6 @@ impl FileSystem {
                                         info!("Dir: {:?}", dir.clone());
                                         if cfg!(target_os="windows") || cfg!(target_os="linux"){
                                             #[cfg(target_os="windows")]
-                                            self.upload_folder_tokio(dir);
-                                        } else {
                                             self.upload_folder(dir);
                                         }
                                     }
@@ -362,16 +358,16 @@ impl FileSystem {
 
     pub fn show_progress(&mut self, ui: &mut Ui) {
         while let Ok(x) = self.bytes_rx.try_recv() {
-            self.total_size = x.1 as f64;
+            self.total_size = x.1 as f32;
             for y in x.0 {
-                self.progress += y as f64;
+                self.progress += y as f32;
             }
         }
         if self.progress == self.total_size {
             self.progress = 0.0;
             self.total_size = 0.0;
         }
-        ProgressBar::new(self.progress as f32/ self.total_size as f32).show_percentage().fill(Color32::from_rgba_premultiplied(50, 10, 50, 65)).ui(ui);
+        ProgressBar::new(self.progress / self.total_size).show_percentage().fill(Color32::from_rgba_premultiplied(50, 10, 50, 65)).ui(ui);
     }
 
     fn path_lookup(&self, file_name: &str) -> Option<String> {
@@ -408,7 +404,7 @@ impl FileSystem {
     }
 
     #[cfg(feature="tokio")]
-    pub fn upload_folder_tokio(&self, _path: String) {
+    pub fn upload_folder(&self, _path: String) {
         let _task = rfd::AsyncFileDialog::new().pick_folders();
         let _secret_key = self.secret_key.clone();
         let _access_key = self.access_key.clone();
@@ -422,27 +418,6 @@ impl FileSystem {
         //         &path.clone(),
         //         task
         //     ).await;
-
-        //     info!("Result: {result:?}");
-        // });
-    }
-
-    #[cfg(feature="wasm")]
-    pub fn upload_folder(&self, _path: String) {
-        // let task = rfd::AsyncFileDialog::new().pick_folder();
-        let _secret_key = self.secret_key.clone();
-        let _access_key = self.access_key.clone();
-        let name = self.user.email.clone();
-        let _parsed = name.split_once('@').unwrap().0.to_string().clone();
-        // spawn(async move {
-        //     let result = Self::perform_upload(
-        //         &name.clone(),
-        //         &access_key.clone(),
-        //         &secret_key.clone(),
-        //         &path.clone(),
-        //         task
-        //     ).await;
-
         //     info!("Result: {result:?}");
         // });
     }

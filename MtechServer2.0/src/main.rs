@@ -7,7 +7,7 @@ use app_state::{AppState, MainPages, MtechServer};
 use wasm_bindgen_futures::spawn_local;
 use eframe::egui::FontFamily;
 use std::sync::Arc;
-use log::info;
+use log::{debug, info};
 
 #[cfg(target_arch="wasm32")]
 use app_state::check_authentication;
@@ -28,7 +28,7 @@ impl eframe::App for MtechServer {
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(items) = data_update.take() { 
             if !items.is_empty() && self.context.file_system.paths.is_empty() {
-                info!("Files: {items:?}");
+                debug!("Files: {items:?}");
                 self.context.file_system.build_file_system(items); 
             }
         }
