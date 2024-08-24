@@ -626,24 +626,24 @@ impl FileBrowser{
         let shift = ui.input_mut(|i| i.modifiers.shift);
         
         if copy && shift{ // && self.selected_items
+            self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
+            info!("Copied Items: {:?}", self.copied_items_src);
+
+            let name = if self.copied_items_src.len() == 1 {
+                if let Some(path) = self.copied_items_src[0].file_name()
+                { path.to_string_lossy().to_string() } 
+                else { "No Source".to_string() }
+            } else { format!("{} items", self.copied_items_src.len()) };
+
             let copy_toast = Toast{
                 kind: ToastKind::Info,
-                text: "Copied".into(),
+                text: format!("Copied {}", name).into(),
                 options: ToastOptions::default()
                     .show_progress(true)
                     .duration_in_seconds(6.0)
             };
             self.toasts.add(copy_toast);
-            self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
-            info!("Copied Items: {:?}", self.copied_items_src);
-
-            if self.copied_items_src.len() == 1 {
-                info!("Path == {:?}", self.copied_items_src[0].file_name());
-                
-                if let Some(path) = self.copied_items_src[0].file_name(){
-                    info!("Single path: {:?}", path);
-                }
-            }
+            
             for path in &self.copied_items_src{
                 match self.command_tx.clone().send(Some(Command::ReadMetadata(path.clone()))) {
                     Ok(_) => info!("Getting file size"),
@@ -679,6 +679,17 @@ impl FileBrowser{
                 }else {
                     self.copied_items_dest = PathBuf::from(&self.path_edit);
                 }
+
+                let name = self.copied_items_dest.to_string_lossy().to_string();
+    
+                let paste_toast = Toast{
+                    kind: ToastKind::Info,
+                    text: format!("Pasting items to: {name}").into(),
+                    options: ToastOptions::default()
+                        .show_progress(true)
+                        .duration_in_seconds(6.0)
+                };
+                self.toasts.add(paste_toast);
             }
 
             info!("Pasted {:?}\nin directory: {:?}", self.copied_items_src, self.copied_items_dest);
