@@ -436,10 +436,9 @@ impl MastertechContext {
                                         .stroke(Stroke::new(1.0, Color32::from_rgb(191, 33, 101)))
                                         .min_size(Vec2::new(width, 20.0))
                                     );
-                                    // if self.taco_first_run && txt == "Bitch" {  
-                                    //     sleep(Duration::from_secs(1));
-                                    //     self.taco_first_run = false;
-                                    // } 
+
+                                    // if self.taco_first_run && txt == "Bitch" {  sleep(Duration::from_secs(1)); self.taco_first_run = false; } 
+                                    
                                     if button.clicked() {
                                         self.taco_first_run = true;
                                         info!("Submitting TUR sheet");
@@ -448,7 +447,7 @@ impl MastertechContext {
                                             self.submit_tur_mastertech();
                                         } else {
                                             let toast = &mut self.toasts;
-                                            let error_toast = Toast{
+                                            let error_toast = Toast {
                                                 kind: ToastKind::Error,
                                                 text: "You are not logged in".into(),
                                                 options: ToastOptions::default()
@@ -458,7 +457,6 @@ impl MastertechContext {
                                             toast.add(error_toast);
                                         }
                                     }
-
                                 }); // horizontal_top
                             }); // vertical center
                         }); // cell
