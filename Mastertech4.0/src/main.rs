@@ -180,11 +180,6 @@ impl eframe::App for MasterTechApp {
             }
         }
 
-        if let Ok(state) = self.context.app_state_rx.try_recv(){
-            info!("Got a new state: {state:?}");
-            self.state = state
-        }
-
         while let Ok(message) = self.context.rx.try_recv() {       
             if let Ok(info) = serde_json::from_str::<GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty(){
@@ -341,6 +336,11 @@ impl eframe::App for MasterTechApp {
             self.context.toolbox.build_file_system(files);
         }
 
+        if let Ok(state) = self.context.app_state_rx.try_recv(){
+            info!("Got a new state: {state:?}");
+            self.state = state
+        }
+        
         match &self.state{
             app_state::AppState::Authenticated(page) => {
                 match page{
