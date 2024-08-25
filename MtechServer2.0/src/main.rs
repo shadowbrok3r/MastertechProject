@@ -28,7 +28,7 @@ impl eframe::App for MtechServer {
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(items) = data_update.take() { 
             if !items.is_empty() && self.context.file_system.paths.is_empty() {
-                debug!("Files: {items:?}");
+                info!("Files: {items:?}");
                 self.context.file_system.build_file_system(items); 
             }
         }

@@ -3,7 +3,7 @@ use gloo_worker::{HandlerId, WorkerScope};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use log::info;
+use gloo_console::log;
 
 #[derive(Debug)]
 pub struct Message(pub u32);
@@ -29,12 +29,12 @@ impl gloo_worker::Worker for WebWorker {
     type Output = Output;
 
     fn create(_scope: &WorkerScope<Self>) -> Self {
-        info!("create");
+        log!("create");
         WebWorker
     }
 
     fn update(&mut self, _scope: &WorkerScope<Self>, msg: Self::Message) {
-        info!("update {msg:?}");
+        log!("update {msg:?}");
     }
 
     fn received(
@@ -43,13 +43,13 @@ impl gloo_worker::Worker for WebWorker {
         msg: Self::Input,
         id: HandlerId,
     ) {
-        info!("received {msg:?}");
+        log!(format!("received {msg:?}"));
         let scope = scope.clone();
         spawn_local(async move {
             let result = list_buckets(msg.url, msg.access_key, msg.secret_key, msg.name).await;
             match result {
                 Ok(buckets) => scope.respond(id, Output { buckets }),
-                Err(err) => info!("Error: {:?}", err),
+                Err(err) => log!(format!("Error: {:?}", err.to_string())),
             }
         });
     }
