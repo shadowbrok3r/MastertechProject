@@ -1,6 +1,6 @@
 use std::{env, fs::create_dir, path::PathBuf};
 
-use crossbeam::channel;
+use crossbeam::channel::Sender;
 use fs_extra::dir::get_size;
 use log::debug;
 use tokio::fs;
@@ -12,7 +12,7 @@ use super::{file_copy::CopyBuilder, FileBrowser};
 
 #[derive(Debug)]
 pub enum Command {
-    Copy(Vec<PathBuf>, PathBuf, channel::Sender<u64>),
+    Copy(Vec<PathBuf>, PathBuf, Sender<u64>, Sender<String>),
     Move(PathBuf, PathBuf),
     Delete(PathBuf),
     Rename(PathBuf, PathBuf),
@@ -61,7 +61,7 @@ impl FileBrowser{
                 }
             },
 
-            Command::Copy(source, destination, progress_tx) => {
+            Command::Copy(source, destination, progress_tx, copied_items_tx) => {
                 info!("Source: {source:?} // Destination: {destination:?}");
                 for path in source.iter() {
                     let mut current_destination = destination.clone();
@@ -94,7 +94,7 @@ impl FileBrowser{
                             .overwrite_if_size_differs(true)
                             .with_exclude_filter(".sys")
                             .with_exclude_filter(".dat")
-                            .run(progress_tx.clone())
+                            .run(progress_tx.clone(), copied_items_tx.clone())
                             .unwrap_or(());
                     }
                 }); // copy_files(source, &destination, progress_tx).await.unwrap();
