@@ -1,5 +1,6 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::{schema::{Cmd, ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
+use regex::Regex;
 use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
@@ -118,6 +119,20 @@ impl WebSocketClient{
                                     }
                                 }
                             } else{ 
+                                if self.interactive {
+                                    let msg = String::from_utf8_lossy(&bin.clone()).to_string();
+                                    let regex = Regex::new("Tron.*complete");
+                                    match regex {
+                                        Ok(r) => {
+                                            if r.is_match(&msg) {
+                                                self.interactive = false;
+
+                                            }
+                                        },
+                                        Err(e) => info!("Error with regex: {e:?}"),
+                                    }
+                                }
+
                                 if bin.len() > 0 {
                                     self.loading = false;
                                     self.history.push(String::from_utf8_lossy(&bin).to_string());
@@ -326,10 +341,11 @@ impl WebSocketClient{
     }
 
     fn show_explorer(&mut self, ui: &mut Ui) {
-        TopBottomPanel::top("file_browser_top").show_inside(ui, |ui| {
+        let id = Id::new(format!("file_browser_top-{:?}", self.client.client_hash));
+        TopBottomPanel::top(id).show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 let response = TextEdit::singleline(&mut self.path_edit)
-                    .id(Id::new("path_edit"))
+                    .id(Id::new(format!("path_edit-{:?}", self.client.client_hash)))
                     .cursor_at_end(true)
                     .desired_width(ui.available_width() / 1.1)
                     .ui(ui);
@@ -415,7 +431,9 @@ impl WebSocketClient{
         let avail_size = ui.available_size();
         info!("avail_size: {:?}", avail_size);
         ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
+            let id = Id::new(format!("scroll_area-{:?}", self.client.client_hash));
             ScrollArea::vertical()
+                .id_source(id)
                 .animated(true)
                 .max_width(f32::INFINITY)
                 .max_height(400.)
@@ -549,7 +567,7 @@ impl WebSocketClient{
                                                 ui.fonts(|f| f.layout_job(layout_job))
                                             };
                                             TextEdit::singleline(&mut txt.text())
-                                                .id_source(Id::new(format!("{item:?}-{count:?}")))
+                                                .id_source(format!("TextEdit-{:?}-{:?}-{:?}", self.client.client_hash, count, item.clone()))
                                                 .layouter(&mut layouter)
                                                 .min_size(Vec2::new(ui.available_size_before_wrap().x / 1.1, 30.))
                                                 .ui(ui);
@@ -590,7 +608,7 @@ impl WebSocketClient{
             // ui.add_space(avail_size.y);
             ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
                 let mut theme = CodeTheme::from_memory(ui.ctx());
-                ui.collapsing("Theme", |ui| {
+                ui.collapsing(format!("Theme-{:?}", self.client.client_hash), |ui| {
                     ui.group(|ui| {
                         theme.ui(ui);
                         theme.clone().store_in_memory(ui.ctx());

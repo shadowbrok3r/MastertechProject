@@ -38,6 +38,8 @@ impl eframe::App for MasterTechApp {
 
         if self.context.specs_first_run{
             self.context.specs_first_run = false;
+            // let x = std::env::current_exe().unwrap();
+            // std::fs::rename( x, "Mastertech1").unwrap();
             let tx = self.context.db_tx.clone();
             let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
             let pair_clone = Arc::clone(&pair);

@@ -442,6 +442,20 @@ impl WebConsoleFrontend {
                 });
             },
             Cmd::InteractiveInput(cmd) => {
+                if cmd.ends_with("tron.bat") {
+                    let path = Path::new(&cmd);
+                    if path.exists() {
+                        let whitelist = if cfg!(target_os="windows") {
+                            path.join("tron\\resources\\stage_0_prep\\processkiller\\whitelist.txt")
+                        } else { path.join("tron/resources/stage_0_prep/processkiller/whitelist.txt") };
+
+                        if whitelist.exists() {
+
+                        }
+                    }
+                } else {
+
+                }
                 let tx = self.interactive_input.0.clone();
                 std::thread::spawn(move || {
                     tx.send(cmd).unwrap();

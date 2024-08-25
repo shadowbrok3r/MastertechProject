@@ -1,5 +1,6 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Id, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
+use surrealdb::sql::Uuid;
 use std::{cell::RefCell, collections::{HashMap, HashSet}, iter};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use crossbeam::channel::{Receiver, Sender};
@@ -26,6 +27,7 @@ pub const ONE_HOUR: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Clone)]
 pub struct FileSystem {
+    pub scroll_id: Id,
     pub root: Node,
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
     bytes_tx: Sender<(Vec<u8>, u64)>,
@@ -46,6 +48,7 @@ impl FileSystem {
     pub fn new() -> Self {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
         Self {
+            scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
             bytes_tx,
             bytes_rx,
             root: Node::Folder(String::new(), HashMap::new()),
@@ -134,7 +137,9 @@ impl FileSystem {
 
     pub fn display(&mut self, ui: &mut Ui){
         let size = ui.available_size_before_wrap();
-        ScrollArea::vertical().max_width(size.x)
+        ScrollArea::vertical()
+            .id_source(self.scroll_id)
+            .max_width(size.x)
             .max_height(size.y)
             .auto_shrink(false)
             .show(ui, |ui| 
@@ -169,7 +174,8 @@ impl FileSystem {
 
                     if let Node::Folder(full_path, _) = node {
                         count+=1;
-                        let id = ui.make_persistent_id(format!("{label}-{:?}", count));
+                        
+                        let id = ui.make_persistent_id(format!("virtual_fs_collapsing-header-{:?}-{}-{}", self.scroll_id, label, count));
 
                         let collapsing_head = CollapsingState::load_with_default_open(
                             ui.ctx(), 
