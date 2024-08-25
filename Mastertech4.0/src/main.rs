@@ -343,6 +343,12 @@ impl eframe::App for MasterTechApp {
             self.state = state
         }
         
+        while let Ok(copied_items) = self.context.copied_items_rx.try_recv() { 
+            // info!("GOT COPIED ITEMS: {copied_items:?}");
+            self.context.output_text += &format!("{copied_items}\n");
+            // if self.context.output_text.is_empty() {}
+        }
+
         match &self.state{
             app_state::AppState::Authenticated(page) => {
                 match page{
