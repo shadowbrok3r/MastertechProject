@@ -10,7 +10,7 @@ impl MasterTechApp{
             let show_deferred_viewport = self.context.show_deferred_viewport.clone();
             let viewport_id = ViewportId::from_hash_of("deferred_viewport");
             let viewport_builder = ViewportBuilder::default().with_title("File Browser").with_inner_size([400.0, 500.0]);
-
+            let tx = self.context.copied_items_tx.clone();
             ctx.show_viewport_deferred(
                 viewport_id,
                 viewport_builder,
@@ -19,7 +19,7 @@ impl MasterTechApp{
                     CentralPanel::default().show(ctx, |ui| {
                         // Lock the Mutex and show the GUI
                         let mut file_browser = file_browser_clone.lock().unwrap();
-                        file_browser.show(ui);
+                        file_browser.show(ui, tx.clone());
                     });
                     if ctx.input(|i| i.viewport().close_requested()) {
                         // Tell parent to close us.
