@@ -1,3 +1,4 @@
+use crossbeam::channel::Sender;
 use log::*;
 // use rayon::prelude::*;
 // #[cfg(feature = "jwalk")]
@@ -125,7 +126,7 @@ impl CopyBuilder {
         }
     }
     /// Execute the copy operation
-    pub fn run(&self, progress_tx: crossbeam::channel::Sender<u64>) -> Result<(), std::io::Error> {
+    pub fn run(&self, progress_tx: Sender<u64>, copied_items: Sender<String>) -> Result<(), std::io::Error> {
         if !self.destination.is_dir() {
             info!("MKDIR {:?}", &self.destination);
             std::fs::create_dir_all(&self.destination)?;
@@ -212,8 +213,9 @@ impl CopyBuilder {
                 if entry.file_type().is_file() {
                     // The regular copy operation
                     info!("CP {} DST {}", entry.path().display(), dest_entry.display());
+                    let copied_item = format!("Copying {} -> {}", &entry.file_name().to_string_lossy().to_string(), &dest_entry.display());
                     progress_tx.try_send(copy(entry.path(), dest_entry)?).unwrap();
-                    
+                    copied_items.try_send(copied_item).unwrap();
                 } else if entry.file_type().is_symlink() {
                     info!(
                         "CP LNK {} DST {}",
@@ -252,7 +254,8 @@ pub fn _copy_dir_advanced<P: AsRef<Path>, Q: AsRef<Path>>(
     overwrite_if_size_differs: bool,
     exclude_filters: Vec<String>,
     include_filters: Vec<String>,
-    progress_tx: crossbeam::channel::Sender<u64>
+    progress_tx: Sender<u64>,
+    copied_items: Sender<String>
 ) -> Result<(), std::io::Error> {
     CopyBuilder {
         source: source.as_ref().to_path_buf(),
@@ -263,11 +266,11 @@ pub fn _copy_dir_advanced<P: AsRef<Path>, Q: AsRef<Path>>(
         exclude_filters,
         include_filters,
     }
-    .run(progress_tx)
+    .run(progress_tx, copied_items)
 }
 
 /// Copy a directory from `source` to `dest`, creating `dest`, with minimal options.
-pub fn _copy_dir<P: AsRef<Path>, Q: AsRef<Path>>(source: P, dest: Q, progress_tx: crossbeam::channel::Sender<u64>) -> Result<(), std::io::Error> {
+pub fn _copy_dir<P: AsRef<Path>, Q: AsRef<Path>>(source: P, dest: Q, progress_tx: Sender<u64>, copied_items: Sender<String>) -> Result<(), std::io::Error> {
     CopyBuilder {
         source: source.as_ref().to_path_buf(),
         destination: dest.as_ref().to_path_buf(),
@@ -277,5 +280,5 @@ pub fn _copy_dir<P: AsRef<Path>, Q: AsRef<Path>>(source: P, dest: Q, progress_tx
         exclude_filters: vec![],
         include_filters: vec![],
     }
-    .run(progress_tx)
+    .run(progress_tx, copied_items)
 }

@@ -3,7 +3,7 @@ use eframe::egui::{*, collapsing_header::CollapsingState, text::LayoutJob};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts};
 use self::{command::Command, io::{format_path_metadata, MetaData}};
 use crate::app_state::MastertechContext;
-use crossbeam::channel;
+use crossbeam::channel::{self, Receiver, Sender};
 use pollster::block_on;
 use log::{debug, info};
 use serde::Serialize;
@@ -23,7 +23,7 @@ impl MastertechContext {
             // Lock the Mutex and show the GUI
             let file_browser_clone = Arc::clone(&self.file_browser);
             let mut file_browser = file_browser_clone.lock().unwrap();
-            file_browser.show(ui);
+            file_browser.show(ui, self.copied_items_tx.clone());
         }
     }
 }
@@ -143,7 +143,7 @@ impl FileBrowser{
           }
     }
     
-    pub fn show(&mut self, ui: &mut Ui ) {     
+    pub fn show(&mut self, ui: &mut Ui, copied_items_tx: Sender<String>) {     
         let mut total_size = 0;
         
         ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
@@ -158,7 +158,7 @@ impl FileBrowser{
         ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
         ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
 
-        self.handle_keyboard_events(ui);
+        self.handle_keyboard_events(ui, copied_items_tx.clone());
         self.top_panel(ui);
         self.bottom_panel(ui);
         self.central_panel(ui);
@@ -619,13 +619,19 @@ impl FileBrowser{
         }
     }
 
-    fn handle_keyboard_events(&mut self, ui: &Ui){
-        let cut = ui.input_mut(|i| i.key_pressed(Key::X));
-        let copy = ui.input_mut(|i| i.key_pressed(Key::C));
-        let paste = ui.input_mut(|i| i.key_pressed(Key::V));
-        let shift = ui.input_mut(|i| i.modifiers.shift);
-        
-        if copy && shift{ // && self.selected_items
+    fn handle_keyboard_events(&mut self, ui: &Ui, copied_items_tx: Sender<String>){
+        let cut = ui.input(|i| i.key_pressed(Key::Cut));
+        // let copy = ui.input_mut(|i| i.key_pressed(Key::C));
+        // let paste = ui.input_mut(|i| i.key_pressed(Key::V));
+        // let shift = ui.input_mut(|i| i.modifiers.shift);
+        let copy = ui.input(|i| i.events.iter().any(|ev| matches!(ev, Event::Copy)));
+        let paste = ui.input(|i| i.events.iter().any(|ev| matches!(ev, Event::Paste(_))));
+
+        // if x { info!("x: {x:?}"); }
+
+        let selected_item_len = self.selected_items.borrow().len();
+
+        if copy && selected_item_len > 0 { // 
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Copied Items: {:?}", self.copied_items_src);
 
@@ -650,7 +656,7 @@ impl FileBrowser{
                     Err(e) => info!("hovered sender error: {e:?}"),
                 }
             }
-        }else if cut && shift{
+        } else if cut && selected_item_len > 0{
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Cut Items: {:?}", self.copied_items_src);
 
@@ -660,7 +666,7 @@ impl FileBrowser{
                     Err(e) => info!("hovered sender error: {e:?}"),
                 }
             }
-        }else if paste && shift{
+        } else if paste {
             self.animated_progress = true;
             if let Some(selected_path) = &self.selected_item{
                 if selected_path.is_dir(){
@@ -669,16 +675,15 @@ impl FileBrowser{
                             Command::Copy(
                                 self.copied_items_src.clone(), 
                                 self.copied_items_dest.clone(), 
-                                self.progress_tx.clone()
+                                self.progress_tx.clone(),
+                                copied_items_tx.clone()
                             )
                         )
                     ){
                         Ok(_) => info!("Source: {:?}\nDest: {:?}\n", self.copied_items_src, self.copied_items_dest),
                         Err(e) => info!("{e}"),
                     }
-                }else {
-                    self.copied_items_dest = PathBuf::from(&self.path_edit);
-                }
+                }else { self.copied_items_dest = PathBuf::from(&self.path_edit); }
 
                 let name = self.copied_items_dest.to_string_lossy().to_string();
     
