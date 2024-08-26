@@ -9,6 +9,7 @@ pub mod github_issue;
 pub mod toolbox;
 pub mod ai_playground;
 pub mod customer; 
+pub mod logger;
 
 use eframe::egui::Ui;
 use super::app_state::MtechServerContext;

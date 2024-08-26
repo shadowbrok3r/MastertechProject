@@ -14,11 +14,8 @@ use log::info;
 use crate::{
     pages::login_page::Login, 
     tabs::{
-        file_browser::FileBrowser, 
-        minidump::MiniDumpApp, scripts::Scripts, 
-        tur_sheet::{get_ticket::SendRequest, 
-            scaffold::{self, HardwareTest}}, 
-        websockets::WebConsoleFrontend
+        file_browser::FileBrowser, logger::logger_ui, minidump::MiniDumpApp, scripts::Scripts, tur_sheet::{get_ticket::SendRequest, 
+            scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend
     }, 
     utilities::{
         displays::{
@@ -426,7 +423,7 @@ impl TabViewer for MastertechContext {
             "Tasks" => self.mastertech_website(ui),
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
-            // "Logs" => logger_ui().show(ui),
+            "Logs" => logger_ui().show(ui),
             _ => {
                 let sysinfo_tab = &"SysInfo".to_string();
                 if ui.label(tab.as_str()).clicked(){
