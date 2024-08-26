@@ -83,6 +83,7 @@ simplelog = { workspace=true }
 async-trait = { workspace=true }
 once_cell = { workspace=true }
 evtx = "0.8.3"
+egui_json_tree = "0.6.0"
 
 # egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
 # egui-winit = { ver1.0.86 "0.27.2", optional = true, default-features = false }

@@ -356,7 +356,9 @@ fn main() {
     // use eframe::wgpu::PowerPreference;
     // use eframe::wgpu::{Backends, PowerPreference};
     use log::LevelFilter;
-    eframe::WebLogger::init(LevelFilter::Info).ok();
+    use tabs::logger::logging::builder;
+    builder().init().unwrap(); 
+    // eframe::WebLogger::init(LevelFilter::Info).ok();
     let web_options = eframe::WebOptions::default();
     // web_options.wgpu_options.power_preference = PowerPreference::HighPerformance;
     // web_options.wgpu_options.supported_backends = Backends::METAL;

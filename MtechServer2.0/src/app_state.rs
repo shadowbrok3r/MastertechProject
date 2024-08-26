@@ -1,4 +1,4 @@
-use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue}, utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler}};
+use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue, logger::logger_ui}, utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler}};
 use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
 use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
@@ -468,6 +468,7 @@ impl TabViewer for MtechServerContext {
             "Completed Tasks" => self.completed_tasks(ui),
             "Bug Report" => self.github(ui),
             "Customers" => self.customer_view(ui),
+            "Logs" => logger_ui().show(ui),
             _ => {  }
         }
     }
@@ -507,6 +508,7 @@ impl TabViewer for MtechServerContext {
             &"Ai Playground".to_string(),
             &"Completed Tasks".to_string(),
             &"Customers".to_string(),
+            &"Logs".to_string(),
         ];
 
         for tab in tabs{

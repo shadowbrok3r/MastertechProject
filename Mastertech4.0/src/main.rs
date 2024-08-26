@@ -4,7 +4,7 @@ use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::C
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use displays::ui_tools::{toasts::{Toast, ToastKind, ToastOptions}, carl_dark::{Aesthetix, CarlDark}};
 use std::{fs::File, sync::{atomic::Ordering, Arc, Condvar, Mutex}};
-use tabs::tur_sheet::scaffold::AsanaResponse;
+use tabs::{logger::logging::builder, tur_sheet::scaffold::AsanaResponse};
 use log::{debug, info, LevelFilter};
 use filesystem::system_info::ComputerInfo;
 use app_state::{AppState, MasterTechApp};
@@ -72,7 +72,9 @@ impl eframe::App for MasterTechApp {
                     disks_arr.push(disk_json);
                 } else { debug!("Expected self.context.drives to be an Array"); }
             }
-            self.context.output_text += format!("{:#?}", &self.context.computer_data.seb_info.as_mut()).as_str();
+            if let Some(seb_inf) = &self.context.computer_data.seb_info {
+                self.context.output_text += &format!("{:#?}", &seb_inf);
+            }
 
             let loaded_data = load_encrypted_user_data(HASH);
             match loaded_data{
@@ -401,14 +403,15 @@ async fn main() -> eframe::Result<()> {
     // console_subscriber::init();
     // Init the logger
     // Configure log level and log file
-    // builder().init().unwrap(); 
-    let log_level = LevelFilter::Info; 
-    let log_file = File::create("output.log").unwrap();
-    WriteLogger::init( 
-        log_level,
-        Config::default(),
-        log_file
-    ).unwrap();
+    builder().init().unwrap(); 
+
+    // let log_level = LevelFilter::Info; 
+    // let log_file = File::create("output.log").unwrap();
+    // WriteLogger::init( 
+    //     log_level,
+    //     Config::default(),
+    //     log_file
+    // ).unwrap();
 
     #[cfg(feature = "gui")]
     let eframe_app = eframe::run_native(
