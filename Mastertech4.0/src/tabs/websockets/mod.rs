@@ -1,6 +1,7 @@
 use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, Record, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
+use log::error;
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
@@ -109,7 +110,7 @@ impl MastertechContext{
         
                             match res{
                                 Ok(data) => tx.try_send(data.clone())?,
-                                Err(e) => info!("Error Updating Client: {e:?}"),
+                                Err(e) => error!("Error Updating Client: {e:?}"),
                             }
                         } else {
                             let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
@@ -120,7 +121,7 @@ impl MastertechContext{
                             match res{
                                 Ok(data) => tx.try_send(data.clone())?,
                                 Err(e) => {
-                                    info!("Error Creating Client: {e:?}");
+                                    error!("Error Creating Client: {e:?}");
                                     let res: Option<Record> = DATABASE
                                         .upsert(uuid.0.clone())
                                         .merge(connected_client)
@@ -142,7 +143,7 @@ impl MastertechContext{
         
                             match res{
                                 Ok(data) => tx.try_send(data.clone())?,
-                                Err(e) => info!("Error Updating Client: {e:?}"),
+                                Err(e) => error!("Error Updating Client: {e:?}"),
                             }
                         }
                     },
@@ -293,7 +294,7 @@ impl WebConsoleFrontend {
                 spawn(async move { 
                     match live_computer_stats(tx.clone(), connected).await{
                         Ok(_) => drop(tx),
-                        Err(e) => info!("Error with live data {e:?}"),
+                        Err(e) => error!("Error with live data {e:?}"),
                     }
                 });
             },
@@ -388,7 +389,7 @@ impl WebConsoleFrontend {
 
                 match payload {
                     Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                    Err(e) => info!("Error serializing paths: {e:?}"),
+                    Err(e) => error!("Error serializing paths: {e:?}"),
                 }
             },
             Cmd::UpDirectory(new_path) => {
@@ -406,7 +407,7 @@ impl WebConsoleFrontend {
         
                         match payload {
                             Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                            Err(e) => info!("Error serializing paths: {e:?}"),
+                            Err(e) => error!("Error serializing paths: {e:?}"),
                         }
                     }
                 } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
@@ -426,7 +427,7 @@ impl WebConsoleFrontend {
         
                         match payload {
                             Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                            Err(e) => info!("Error serializing paths: {e:?}"),
+                            Err(e) => error!("Error serializing paths: {e:?}"),
                         }
                     }
                 } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
@@ -815,11 +816,11 @@ async fn handle_windows_cmd_interactive(
 //             let input = text.clone();
 //             match stdin.write_all(input.as_bytes()).await {
 //                 Ok(_) => info!("Wrote to stdin"),
-//                 Err(e) => info!("error writing to stdin: {e:?}"),
+//                 Err(e) => error!("Error writing to stdin: {e:?}"),
 //             }
 //             match stdin.flush().await {
 //                 Ok(_) => info!("Flushed stdin"),
-//                 Err(e) => info!("Error flushing stdin: {:?}", e),
+//                 Err(e) => error!("Error flushing stdin: {:?}", e),
 //             }
 //         }
 //     } else {
@@ -828,7 +829,7 @@ async fn handle_windows_cmd_interactive(
 //             Ok(stdin) => {
 //                 *process = Some(stdin);
 //             }
-//             Err(e) => info!("error running command: {e:?}"),
+//             Err(e) => error!("Error running command: {e:?}"),
 //         }
 //     }
 // }

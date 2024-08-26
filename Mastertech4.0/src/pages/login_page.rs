@@ -1,7 +1,7 @@
 use crossbeam::channel::Sender;
 use eframe::egui::{Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
-use log::info;
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use tokio::spawn;
 use database::{Database, DATABASE};
@@ -45,7 +45,7 @@ impl Login{
                 
             },
             Err(e) => {
-                info!("Error with db: {e:?}");
+                error!("Error with db: {e:?}");
                 let check = e.to_string().contains("Already connected");
                 if check { appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?; }
                 else { appstate_tx.try_send(AppState::NoAuth(e.to_string()))?; }
@@ -159,7 +159,7 @@ impl MasterTechApp{
                                         let app_tx = appstate_tx.clone();
                                         match app_tx.try_send(AppState::CreateAccount){
                                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                            Err(e) => info!("Error {e:?}"),
+                                            Err(e) => error!("Error {e:?}"),
                                         }
                                     }
 

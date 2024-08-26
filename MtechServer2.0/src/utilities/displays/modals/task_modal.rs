@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use serde::Serialize;
-use log::info;
+use log::{error, info};
 
 use super::ModalState;
 
@@ -167,7 +167,7 @@ impl DisplayModal for TaskModal {
                                 spawn_local(async move {
                                     match delete_task(id).await {
                                         Ok(_) => info!("Deleted task"),
-                                        Err(e) => info!("Error: {e:?}"),
+                                        Err(e) => error!("Error: {e:?}"),
                                     }
                                 });
                                 response = Some(ModalAction::Close);
@@ -190,7 +190,6 @@ impl DisplayModal for TaskModal {
                                     response = Some(ModalAction::TaskPage);
                                 };
                             }
-
                             if ui.selectable_label(task_note_page, RichText::new("💬").heading()).clicked(){
                                 response = Some(ModalAction::TaskNotePage);
                             };
@@ -233,7 +232,8 @@ impl DisplayModal for TaskModal {
                                                 // self.task.update_task_notes(new_message);
                                             }
                                         },
-                                        _ => display_task_page(ui, &mut self.task)
+                                        ModalAction::TaskPage => display_task_page(ui, &mut self.task),
+                                        _ => display_ticket_page(ui, &mut self.task, avail_size)
                                     };
                                 });
                             });

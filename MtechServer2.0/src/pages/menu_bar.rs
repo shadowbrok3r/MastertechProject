@@ -7,7 +7,7 @@ use wasm_bindgen_futures::spawn_local;
 use database::schema::Notification;
 use database::{self, DATABASE};
 use std::collections::BTreeSet;
-use log::info;
+use log::{error, info};
 
 impl MtechServer{
     pub fn menu_bar(&mut self, ctx: &Context) {
@@ -88,7 +88,7 @@ impl MtechServer{
                     self.state = AppState::Authenticated(MainPages::Tasks);
                     match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
                         Ok(_) => info!("AppState::Authenticated(MainPages::Tasks)"),
-                        Err(e) => info!("Error: {e:?}"),
+                        Err(e) => error!("Error: {e:?}"),
                     }
                 }
 
@@ -124,7 +124,7 @@ impl MtechServer{
                                 self.state = AppState::Authenticated(MainPages::AccountSettings);
                                 match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::AccountSettings)){
                                     Ok(_) => info!("Switching to AccountSettings Page"),
-                                    Err(e) => info!("Error: {e:?}"),
+                                    Err(e) => error!("Error: {e:?}"),
                                 }
                             }
 
@@ -132,7 +132,7 @@ impl MtechServer{
                                 self.state = AppState::Authenticated(MainPages::Downloads);
                                 match self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Downloads)){
                                     Ok(_) => info!("Switching to Downloads Page"),
-                                    Err(e) => info!("Error: {e:?}"),
+                                    Err(e) => error!("Error: {e:?}"),
                                 }
                             }
 
@@ -164,7 +164,7 @@ impl MtechServer{
                                 self.state = AppState::NoAuth(logout_msg.clone());
                                 match self.context.app_state_tx.try_send(AppState::NoAuth(logout_msg)){
                                     Ok(_) => info!("Logged out"),
-                                    Err(e) => info!("Error: {e:?}"),
+                                    Err(e) => error!("Error: {e:?}"),
                                 }
                             }
                         });
@@ -238,7 +238,7 @@ impl MtechServer{
                         self.state = AppState::Authenticated(MainPages::Downloads);
                         match self.context.app_state_tx.try_send(AppState::NoAuth("clicked login button".to_string())) {
                             Ok(_) => info!("Switching to Login Page"),
-                            Err(e) => info!("Error: {e:?}"),
+                            Err(e) => error!("Error: {e:?}"),
                         }
                     }
                 });

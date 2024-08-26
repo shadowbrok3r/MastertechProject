@@ -4,7 +4,7 @@ use crate::{app_state::MastertechContext, utilities::{displays::tasks::task_layo
 use database::{schema::{Status, TaskPayload}, DATABASE};
 use eframe::egui::Ui;
 use tokio::spawn;
-use log::debug;
+use log::{debug, error};
 use tracing::info;
 
 
@@ -36,10 +36,10 @@ impl MastertechContext {
                                     Err(err) => debug!("Send error: {:?}", err.to_string()),
                                 }
                             },
-                            Err(e) => info!("Error unwrapping task data: {e:?}"),
+                            Err(e) => error!("Error unwrapping task data: {e:?}"),
                         }
                     },
-                    Err(e) => info!("Error retrieving task data: {e:?}"),
+                    Err(e) => error!("Error retrieving task data: {e:?}"),
                 }
 
             });

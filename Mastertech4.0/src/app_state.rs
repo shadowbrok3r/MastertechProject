@@ -14,7 +14,7 @@ use log::info;
 use crate::{
     pages::login_page::Login, 
     tabs::{
-        file_browser::FileBrowser, logger::logger_ui, minidump::MiniDumpApp, scripts::Scripts, tur_sheet::{get_ticket::SendRequest, 
+        file_browser::FileBrowser, github::self_updater::GithubRelease, logger::logger_ui, minidump::MiniDumpApp, scripts::Scripts, tur_sheet::{get_ticket::SendRequest, 
             scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend
     }, 
     utilities::{
@@ -174,6 +174,9 @@ pub struct MastertechContext {
     pub minio_files: (Sender<Vec<String>>, Receiver<Vec<String>>),
     pub copied_items_tx: Sender<String>, 
     pub copied_items_rx: Receiver<String>,
+    pub github_releases: Vec<GithubRelease>,
+    pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
+    pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
 }
 
 impl MasterTechApp {
@@ -181,7 +184,7 @@ impl MasterTechApp {
         setup_custom_fonts(&cc.egui_ctx);
 
         let mut tree = DockState::new(
-            vec!["TUR Sheet".to_owned(), "Tasks".to_owned(), "Part Order".to_owned(), "Minidump Analysis".to_owned()]
+            vec!["TUR Sheet".to_owned(), "Tasks".to_owned(), "Part Order".to_owned(), "Minidump Analysis".to_owned(), "Downloads".to_owned()]
         );
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
@@ -225,6 +228,8 @@ impl MasterTechApp {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let minio_files = <Vec<String>>::create_unbounded_channel();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
+        let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
+        let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
 
         let mastertech_context = MastertechContext {
             current_user: None,
@@ -325,6 +330,7 @@ impl MasterTechApp {
             db_tx, db_rx,
             cps_keys_tx, cps_keys_rx,
             copied_items_tx, copied_items_rx,
+            github_releases_channel,
             
             store_users_tx, store_users_rx,
             initial_tasks_tx,  initial_tasks_rx,
@@ -334,7 +340,9 @@ impl MasterTechApp {
             progress: (0.0, 0.0),
             special_part_order: SpecialPartOrder::default(),
             toolbox: FileSystem::new(),
-            minio_files
+            minio_files,
+            github_releases: Vec::new(),
+            bytes_channel,
         };
         let context = mastertech_context;
 
@@ -423,6 +431,7 @@ impl TabViewer for MastertechContext {
             "Tasks" => self.mastertech_website(ui),
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
+            "Downloads" => self.downloads_page(ui),
             "Logs" => logger_ui().show(ui),
             _ => {
                 let sysinfo_tab = &"SysInfo".to_string();

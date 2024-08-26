@@ -5,7 +5,7 @@ use std::fmt::Debug;
 use structdiff::StructDiff;
 use crossbeam::channel::Sender;
 use futures::StreamExt;
-use log::{debug, info};
+use log::{debug, error, info};
 
 use anyhow::Error;
 
@@ -256,7 +256,7 @@ async fn handle_streams<T: Serialize + Deserialize<'static> + Debug >(
         info!("Data: {:?}", action);
         match tx.try_send((action, data)){
             Ok(_) => info!("Sent notification"),
-            Err(e) => info!("Error Sending notification {e:?}"),
+            Err(e) => error!("Error Sending notification {e:?}"),
         }
     }; 
     Ok(())

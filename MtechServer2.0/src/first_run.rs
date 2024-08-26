@@ -6,7 +6,7 @@ use crate::{app_state::{AppState, MtechServer}, pages::downloads_page::get_githu
 use wasm_bindgen_futures::spawn_local;
 use database::STORAGE_URL;
 use surrealdb::Action;
-use log::debug;
+use log::{debug, error};
 use log::info;
 use mtechserver::webworker::Input;
 
@@ -37,7 +37,7 @@ impl MtechServer {
             },
             Err(e) => {
                 info!("2");
-                info!("Error with auth: {e:?}");
+                error!("Error with auth: {e:?}");
                 self.state = AppState::NoAuth(e.to_string());
                 self.context.current_user = None;
             },

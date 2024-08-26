@@ -5,7 +5,7 @@ use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
 use parking_lot::Mutex;
 use std::sync::Arc;
-use log::info;
+use log::{error, info};
 use anyhow::{Context, Result};
 
 #[derive(Serialize, Deserialize, Default)]
@@ -122,7 +122,7 @@ impl RemoteViewer {
             &mut bandwidth_history,
             &mut frame_size_history,
         ) {
-            info!("Error with Client: {e:?}");
+            error!("Error with Client: {e:?}");
         }
 
         client
@@ -222,7 +222,7 @@ fn run(
     loop {
         match outgoing_msg_rx.try_recv() {
             Ok(msg) => ws_sender.send(WsMessage::Binary(encode_message(&msg)?)),
-            Err(e) => info!("Error: {e:?}"),
+            Err(e) => error!("Error: {e:?}"),
         }
 
         while let Some(event) = ws_receiver.try_recv() {
@@ -241,7 +241,7 @@ fn run(
                         _ => {}
                     }
                 },
-                WsEvent::Error(e) => info!("Error: {e:?}"),
+                WsEvent::Error(e) => error!("Error: {e:?}"),
                 WsEvent::Closed => break,
             }
         }

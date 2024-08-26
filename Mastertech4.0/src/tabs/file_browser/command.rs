@@ -2,7 +2,7 @@ use std::{env, fs::create_dir, path::PathBuf};
 
 use crossbeam::channel::Sender;
 use fs_extra::dir::get_size;
-use log::debug;
+use log::{debug, error};
 use tokio::fs;
 use tracing::info;
 
@@ -73,7 +73,7 @@ impl FileBrowser{
                             info!("Creating destination directory");
                             let create_dest_dir = create_dir(current_destination.clone());
                             if let Err(e) = create_dest_dir {
-                                info!("Error creating dir: {e:?}");
+                                error!("Error creating dir: {e:?}");
                             }
                         }
                     }

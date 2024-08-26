@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use wasm_bindgen_futures::spawn_local;
 use surrealdb::sql::Thing;
 use serde::Serialize;
-use log::info;
+use log::{error, info};
 
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct CreateTaskModal{
@@ -295,7 +295,7 @@ impl CreateTaskModal {
                                                 .await
                                                 .unwrap();
                                         },
-                                        Err(e) => info!("Error getting user: {e:?}"),
+                                        Err(e) => error!("Error getting user: {e:?}"),
                                     }
                                 }); 
                                 action = ModalAction::Close;
@@ -530,7 +530,7 @@ impl Tur {
 
                 match tx.try_send(presta_payload){
                     Ok(_) => drop(tx),
-                    Err(err) => info!("Error: {err:?}"),
+                    Err(err) => error!("Error: {err:?}"),
                 };
             });
         }

@@ -227,7 +227,7 @@ impl ChatView {
                                                 spawn(async move {
                                                     // match item.delete_note().await{
                                                     //     Ok(_) => info!("Deleted Note"),
-                                                    //     Err(e) => info!("Error deleting note: {e:?}"),
+                                                    //     Err(e) =>  deleting note: {e:?}"),
                                                     // }
                                                 });
                                             }

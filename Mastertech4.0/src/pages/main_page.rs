@@ -26,6 +26,8 @@ impl MasterTechApp {
                         &"Bug Tracker".to_string(),
                         &"Websockets".to_string(),
                         &"ToolBox".to_string(),
+                        &"Downloads".to_string(),
+                        &"Logs".to_string()
                     ] {
                         if ui
                             .selectable_label(self.context.open_tabs.contains(*tab), *tab)
@@ -79,16 +81,21 @@ impl MasterTechApp {
 
                     while let Ok(res) = self.context.bytes_rx.try_recv(){
                         self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
-                        
+                        self.context.progress.1 = res.1 as f32;
+                        self.context.progress.0 += res.0 as f32;
                         if res.0 == res.1{
+                            self.context.progress = (0.0, 0.0);
                             self.context.output_text += "\nFinished";
                         }
-
-                        let _ = ProgressBar::new(res.0 as f32 / res.1 as f32)
-                            .show_percentage()
-                            .fill(Color32::from_rgb(255, 77, 210))
-                            .animate(true).ui(ui);
                     }
+
+                    let progress = self.context.progress;
+
+                    let _ = ProgressBar::new(progress.0 / progress.1)
+                        .fill(Color32::from_rgba_premultiplied(255, 77, 210, 20))
+                        .desired_width(ui.available_width() / 4.0)
+                        .show_percentage()
+                        .animate(true).ui(ui);
 
                 });
             })

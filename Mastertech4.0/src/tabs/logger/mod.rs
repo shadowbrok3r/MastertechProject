@@ -194,9 +194,10 @@ impl LoggerUi {
                         let string_format = format!("[{}]: {}", level, string);
 
                         let response = match level {
-                            log::Level::Warn => ui.colored_label(Color32::YELLOW, string_format),
-                            log::Level::Error => ui.colored_label(Color32::RED, string_format),
-                            _ => ui.label(string_format),
+                            log::Level::Warn => ui.colored_label(Color32::LIGHT_YELLOW, string_format),
+                            log::Level::Error => ui.colored_label(Color32::LIGHT_RED, string_format),
+                            log::Level::Info => ui.colored_label(Color32::LIGHT_GREEN, string_format),
+                            _ => ui.colored_label(Color32::LIGHT_BLUE, string_format),
                         };
 
                         if self.style.enable_ctx_menu {

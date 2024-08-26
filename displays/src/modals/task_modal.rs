@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use serde::Serialize;
-use log::info;
+use log::{error, info};
 
 use super::ModalState;
 
@@ -158,7 +158,7 @@ impl DisplayModal for TaskModal {
                                 spawn_local(async move {
                                     match delete_task(id).await {
                                         Ok(_) => info!("Deleted task"),
-                                        Err(e) => info!("Error: {e:?}"),
+                                        Err(e) => error!("Error: {e:?}"),
                                     }
                                 });
                             }

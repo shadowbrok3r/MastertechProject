@@ -13,7 +13,7 @@ use surrealdb::Action;
 // use ratatui::Terminal;
 use serde::Serialize;
 use anyhow::Error;
-use log::info;
+use log::{error, info};
 use crate::{
     pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::WebSocketClient}, 
     utilities::{
@@ -443,7 +443,7 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> R
                     info!("Sent DB");
                     drop(db_tx);
                 },
-                Err(err) => info!("Error sending db connection: {err:?}"),
+                Err(err) =>  error!("sending db connection: {err:?}"),
             }
         });
         state = AppState::Authenticated(MainPages::Tasks);

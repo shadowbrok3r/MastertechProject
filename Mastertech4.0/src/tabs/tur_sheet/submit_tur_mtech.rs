@@ -1,7 +1,7 @@
 use database::{schema::{utilities::{query_id, query_user_from_email}, ComputerData, CustomerData, LiveTaskPayload, Priority, Record, TaskNotePayload, TicketData, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
 use crate::app_state::MastertechContext;
 use chrono::{DateTime, SecondsFormat};
-use log::info;
+use log::{error, info};
 use tokio::spawn;
 
 impl MastertechContext{
@@ -79,15 +79,15 @@ pub async fn send_payload(
     } else {
         match DATABASE.create::<Vec<Record>>(CUSTOMER_TABLE).content(customer_data.clone()).await {
             Ok(create_cust_record) => info!("Created Record: {create_cust_record:?}"),
-            Err(e) => info!("Error with create_cust_record: {e:?}")
+            Err(e) => error!("Error with create_cust_record: {e:?}")
         }
         match DATABASE.create::<Vec<Record>>(COMPUTER_TABLE).content(computer_data).await{
             Ok(create_computer_record) => info!("Created Record: {create_computer_record:?}"),
-            Err(e) => info!("Error with create_computer_record: {e:?}")
+            Err(e) => error!("Error with create_computer_record: {e:?}")
         }
         match DATABASE.create::<Vec<Record>>(TICKET_TABLE).content(ticket_data).await{
             Ok(create_ticket_record) => info!("Created Record: {create_ticket_record:?}"),
-            Err(e) => info!("Error with create_ticket_record: {e:?}")
+            Err(e) => error!("Error with create_ticket_record: {e:?}")
         }
     }
 

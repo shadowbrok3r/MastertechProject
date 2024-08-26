@@ -633,7 +633,7 @@ impl Tur {
 
                 match tx.try_send(presta_payload){
                     Ok(_) => drop(tx),
-                    Err(err) => info!("Error: {err:?}"),
+                    Err(err) => error!("Error: {err:?}"),
                 };
             });
         }

@@ -7,7 +7,7 @@ use egui_extras::{*, DatePickerButton};
 use std::collections::BTreeSet;
 use egui_file::FileDialog;
 use std::path::PathBuf; 
-use log::{debug, info};
+use log::{debug, error, info};
 use tokio::spawn;
 
 pub mod get_ticket;
@@ -255,7 +255,7 @@ impl MastertechContext {
                                                                 Ok(seb) => {
                                                                     info!("SEB: {seb:?}");
                                                                 },
-                                                                Err(e) => info!("Error getting SEB data: {e:?}"),
+                                                                Err(e) => error!("Error getting SEB data: {e:?}"),
                                                             }
                                                         });
                                                     }
@@ -282,7 +282,7 @@ impl MastertechContext {
                                                     }
 
                                                     ui.end_row();
-                                                    if let Some(users) = &self.store_users{
+                                                    if let Some(_users) = &self.store_users{
                                                         // let names = users.iter().
                                                         // ui.add(self.mention_handler);
                                                     }
