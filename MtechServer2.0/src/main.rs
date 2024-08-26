@@ -1,13 +1,13 @@
 use database::live_data::{handle_live_data, handle_live_notes, update_or_insert, update_or_insert_layout};
-use surrealdb::Action;
 use utilities::{displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, get_data::get_associated_ticket, ModalType, TaskUiActions};
 use displays::ui_tools::{carl_dark::{CarlDark, Aesthetix}, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, Context, FontId, Frame, Margin, Rounding, Stroke, Style, Vec2, Window};
 use app_state::{AppState, MainPages, MtechServer};
 use wasm_bindgen_futures::spawn_local;
 use eframe::egui::FontFamily;
+use log::{debug, error, info};
+use surrealdb::Action;
 use std::sync::Arc;
-use log::{debug, info};
 
 #[cfg(target_arch="wasm32")]
 use app_state::check_authentication;
@@ -28,7 +28,7 @@ impl eframe::App for MtechServer {
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(items) = data_update.take() { 
             if !items.is_empty() && self.context.file_system.paths.is_empty() {
-                info!("Files: {items:?}");
+                debug!("Files: {items:?}");
                 self.context.file_system.build_file_system(items); 
             }
         }
@@ -131,7 +131,7 @@ impl eframe::App for MtechServer {
                     spawn_local(async move {
                         match get_associated_ticket(tx, new_task.clone()).await{
                             Ok(_) => {},// info!("Got associated ticket"),
-                            Err(e) => info!("Error getting associated ticket: {e:?}")
+                            Err(e) => error!("Error getting associated ticket: {e:?}")
                         }
                     });
                 }
@@ -145,7 +145,7 @@ impl eframe::App for MtechServer {
                     &mut self.context.tasks, 
                     None
                 ) {
-                    info!("Error handling live data: {e:?}");
+                    error!("Error handling live data: {e:?}");
                 }
             }
         }
@@ -167,7 +167,7 @@ impl eframe::App for MtechServer {
                                 Some(channel.new_ticket.clone()),
                                 task
                             ) {
-                                info!("Error updating existing task: {e:?}");
+                                error!("Error updating existing task: {e:?}");
                             } else {
                                 self.context.rerun_filtering_my_tasks = true;
                                 self.context.rerun_filtering_store_tasks = true;
@@ -187,7 +187,7 @@ impl eframe::App for MtechServer {
                     channel.new_task.1.clone(),
                     Some(channel.new_ticket.clone())
                 ) {
-                    info!("Error updating existing task: {e:?}");
+                    error!("Error updating existing task: {e:?}");
                 } else {
                     self.context.rerun_filtering_my_tasks = true;
                     self.context.rerun_filtering_store_tasks = true;
@@ -216,7 +216,7 @@ impl eframe::App for MtechServer {
         //                             self.context.rerun_filtering_completed = true;
         //                             info!("Updated existing task");
         //                         },
-        //                         Err(e) => info!("Error updating existing task: {e:?}"),
+        //                         Err(e) => error!("Error updating existing task: {e:?}"),
         //                     }
         //                 } else {
         //                     match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
@@ -226,7 +226,7 @@ impl eframe::App for MtechServer {
         //                             self.context.rerun_filtering_completed = true;
         //                             info!("Updated existing task")
         //                         },
-        //                         Err(e) => info!("Error updating existing task: {e:?}"),
+        //                         Err(e) => error!("Error updating existing task: {e:?}"),
         //                     }
         //                 }
         //             }

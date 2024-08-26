@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use eframe::egui::{text::CCursorRange, *};
-use crate::ui_tools::mention_handler::{self, MentionHandler};
+use crate::ui_tools::mention_handler::MentionHandler;
 pub mod highlighter;
 pub mod parser;
 pub mod viewer;

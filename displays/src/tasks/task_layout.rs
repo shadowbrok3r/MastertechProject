@@ -232,7 +232,7 @@ impl TaskLayout {
                                                             None => info!("There was no record")
                                                         }
                                                     },
-                                                    Err(e) => info!("Error {e:?}")
+                                                    Err(e) =>  {e:?}")
                                                 }
                                             }
                                         });

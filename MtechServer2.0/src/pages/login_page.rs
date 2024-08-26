@@ -6,7 +6,7 @@ use database::{Database, DATABASE};
 use wasm_cookies::CookieOptions;
 use crossbeam::channel::Sender;
 use anyhow::{Result, Error};
-use log::info;
+use log::{error, info};
 
 use crate::app_state::{AppState, MainPages, MtechServer};
 
@@ -153,7 +153,7 @@ impl MtechServer{
                                         let app_tx = appstate_tx.clone();
                                         match app_tx.try_send(AppState::CreateAccount){
                                             Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                            Err(e) => info!("Error {e:?}"),
+                                            Err(e) => error!("Error {e:?}"),
                                         }
                                     }
 

@@ -10,7 +10,7 @@ use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local};
 use eframe::emath::Vec2;
 use serde::Serialize;
-use log::info;
+use log::{error, info};
 use structdiff::StructDiff;
 use super::modals::ModalState;
 
@@ -92,7 +92,7 @@ impl ChatView {
         if let Some(note) = std::mem::take(&mut self.delete) {
             let deletion = handle_live_delete(&mut self.messages, note.clone());
             if let Err(e) = deletion {
-                info!("Error deleting note: {e:?}");
+                error!("Error deleting note: {e:?}");
             }
         }
         let mut shadow = Shadow::default();
@@ -257,7 +257,7 @@ impl ChatView {
                                                 spawn_local(async move {
                                                     match item.delete_note().await{
                                                         Ok(_) => info!("Deleted Note"),
-                                                        Err(e) => info!("Error deleting note: {e:?}"),
+                                                        Err(e) => error!("Error deleting note: {e:?}"),
                                                     }
                                                 })
                                             }

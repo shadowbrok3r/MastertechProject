@@ -1,13 +1,32 @@
-use std::error::Error;
-
+use reqwest::{header::{ACCEPT, CONTENT_TYPE, USER_AGENT}, Client};
+use tokio::{fs::File, io::AsyncWriteExt};
+use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use futures::StreamExt;
-use log::info;
-use reqwest::{header::{ACCEPT, CONTENT_TYPE, USER_AGENT}, Client};
+use log::{error, info};
 use serde_json::Value;
-use tokio::{fs::File, io::AsyncWriteExt};
 
-const TOKEN: &str = "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";
+pub const TOKEN: &str = "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";
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct GithubRelease {
+    pub url: String,
+    pub html_url: String,
+    pub name: String,
+    pub created_at: String,
+    pub body: String,
+    pub assets: Vec<Asset>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct Asset {
+    pub name: String,
+    pub url: String,
+    pub browser_download_url: String,
+    pub size: u64,
+    pub created_at: String,
+}
+
 
 pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), anyhow::Error> {
     let mut downloaded_bytes: u64 = 0;
@@ -38,7 +57,7 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
                 .send()
                 .await
                 .map_err(|e| {
-                    info!("e.source() {:?}", e.source());
+                    error!("e.source() {:?}", e.to_string());
                     info!("URL: {:?}", e.url());
                     info!("{}", e.to_string());
                 }).unwrap();
@@ -61,7 +80,7 @@ pub async fn run(client: Client, tx: Sender<(u64, u64)>) -> anyhow::Result<(), a
                 let sender = (downloaded_bytes, total_length);
                 
                 if let Err(e) = tx.try_send(sender){
-                    info!("Error sending bytes: {e}");
+                    error!("Error sending bytes: {e}");
                 }
             }
 

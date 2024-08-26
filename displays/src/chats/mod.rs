@@ -7,7 +7,7 @@ use crate::utilities::get_data::TaskNoteMod;
 use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local};
 use eframe::emath::Vec2;
-use log::{debug, info};
+use log::{debug, error, info};
 use serde::Serialize;
 
 use super::modals::ModalState;
@@ -232,7 +232,7 @@ impl ChatView {
                                                 spawn_local(async move {
                                                     match item.delete_note().await{
                                                         Ok(_) => info!("Deleted Note"),
-                                                        Err(e) => info!("Error deleting note: {e:?}"),
+                                                        Err(e) => error!("Error deleting note: {e:?}"),
                                                     }
                                                 })
                                             }

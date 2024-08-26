@@ -11,7 +11,7 @@ use egui_extras::{syntax_highlighting::{highlight, CodeTheme}, Size, StripBuilde
 use surrealdb::Response;
 use bincode::serialize;
 use web_time::Instant;
-use log::info;
+use log::{error, info};
 
 use super::charts::LinePlot;
 
@@ -129,7 +129,7 @@ impl WebSocketClient{
 
                                             }
                                         },
-                                        Err(e) => info!("Error with regex: {e:?}"),
+                                        Err(e) => error!("Error with regex: {e:?}"),
                                     }
                                 }
 
@@ -429,7 +429,7 @@ impl WebSocketClient{
 
     fn show_shell(&mut self, ui: &mut Ui) {
         let avail_size = ui.available_size();
-        info!("avail_size: {:?}", avail_size);
+        // info!("avail_size: {:?}", avail_size);
         ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
             let id = Id::new(format!("scroll_area-{:?}", self.client.client_hash));
             ScrollArea::vertical()

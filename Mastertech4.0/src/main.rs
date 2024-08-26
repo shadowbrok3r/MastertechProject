@@ -3,16 +3,16 @@ use database::{schema::{buckets::list_buckets, utilities::{get_store_users, get_
 use utilities::{crypto::pass_hash::load_encrypted_user_data, displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal}}, ModalType, TaskUiActions};
 use eframe::egui::{style::Style, Color32, Context, FontFamily, FontId, IconData, Stroke, Vec2, ViewportBuilder};
 use displays::ui_tools::{toasts::{Toast, ToastKind, ToastOptions}, carl_dark::{Aesthetix, CarlDark}};
-use std::{fs::File, sync::{atomic::Ordering, Arc, Condvar, Mutex}};
-use tabs::{logger::logging::builder, tur_sheet::scaffold::AsanaResponse};
-use log::{debug, info, LevelFilter};
+use std::sync::{atomic::Ordering, Arc, Condvar, Mutex};
+use tabs::{github::get_github_releases, logger::logging::builder, tur_sheet::scaffold::AsanaResponse};
+use log::{debug, error, info};
 use filesystem::system_info::ComputerInfo;
 use app_state::{AppState, MasterTechApp};
-use simplelog::{Config, WriteLogger};
 use pages::login_page::HASH;
 use surrealdb::sql::Thing;
 use anyhow::Error;
 use tokio::spawn;
+// use simplelog::{Config, WriteLogger};
 
 #[cfg(target_os="windows")]
 extern crate winapi;
@@ -43,7 +43,8 @@ impl eframe::App for MasterTechApp {
             let tx = self.context.db_tx.clone();
             let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
             let pair_clone = Arc::clone(&pair);
-            
+            let github_tx = self.context.github_releases_channel.0.clone();
+            let client = self.context.client.clone();
             spawn(async move {
                 match ComputerData::default().get_computer_data().await{ // sysinfo_tx
                     Ok(data) => {
@@ -53,7 +54,11 @@ impl eframe::App for MasterTechApp {
                         info!("Computer Data: {comp_data:?}");
                         cvar.notify_one();
                     },
-                    Err(e) => info!("Error getting specs: {e:?}"),
+                    Err(e) => error!("Error getting specs: {e:?}"),
+                }
+                match get_github_releases(github_tx, client).await {
+                    Ok(_) => info!("Got github releases"),
+                    Err(e) => error!("Error getting github releases: {e:?}"),
                 }
             });
 
@@ -89,7 +94,7 @@ impl eframe::App for MasterTechApp {
                                 info!("Sent DB connection");
                                 drop(tx)
                             },
-                            Err(e) => info!("Error sending specs: {e:?}"),
+                            Err(e) => error!("Error sending specs: {e:?}"),
                         }
                     });
 
@@ -160,7 +165,7 @@ impl eframe::App for MasterTechApp {
 
                                 match list_bucket_res{
                                     Ok(files) => minio_tx.try_send(files).unwrap(),
-                                    Err(e) => info!("Error getting minio files: {e:?}"),
+                                    Err(e) => error!("Error getting minio files: {e:?}"),
                                 }
 
                             });
@@ -177,11 +182,16 @@ impl eframe::App for MasterTechApp {
                     }
                 },
                 Err(e) => {
-                    info!("Error with auth: {e:?}");
+                    error!("Error with auth: {e:?}");
                     self.state = AppState::NoAuth(e.to_string());
                     self.context.current_user = None;
                 },
             }
+        }
+        
+        if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
+            debug!("Releases: {releases:?}");
+            self.context.github_releases = releases;
         }
 
         while let Ok(message) = self.context.rx.try_recv() {       
@@ -380,7 +390,7 @@ impl eframe::App for MasterTechApp {
 
                 match res{
                     Some(data) => info!("Disconnected. {data:?}"),
-                    None => info!("Error Disconnecting Client"),
+                    None => error!("Error Disconnecting Client"),
                 }
                 Ok::<(), Error>(())
             });
@@ -425,11 +435,11 @@ async fn main() -> eframe::Result<()> {
     );
 
     if let Err(e) = eframe_app {
-        info!("Error running eframe_native: {e:?} \nswitching to secondary application");
+        error!("Error running eframe_native: {e:?} \nswitching to secondary application");
         #[cfg(feature="term")] {
             let res = run_terminal_mode();
             if let Err(e) = res {
-                info!("Error running terminal app: {e:?}");
+                error!("Error running terminal app: {e:?}");
             }   
         }
     }
@@ -442,7 +452,7 @@ async fn main() -> eframe::Result<()> {
 // async fn main() -> eframe::Result<()> {
 //     let res = run_terminal_mode();
 //     if let Err(e) = res {
-//         info!("Error running terminal app: {e:?}");
+//         error!("Error running terminal app: {e:?}");
 //     }   
 //     Ok(())
 // }

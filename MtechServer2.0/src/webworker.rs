@@ -34,7 +34,7 @@ impl gloo_worker::Worker for WebWorker {
     }
 
     fn update(&mut self, _scope: &WorkerScope<Self>, msg: Self::Message) {
-        log!("update {msg:?}");
+        log!(format!("update {:?}", msg));
     }
 
     fn received(

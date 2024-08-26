@@ -1,7 +1,7 @@
 use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
 use reqwest::{header::{ACCEPT, USER_AGENT}, Client};
 use wasm_bindgen_futures::spawn_local;
-use log::info;
+use log::{error, info};
 
 use crate::app_state::MtechServerContext;
 
@@ -72,9 +72,12 @@ impl GithubIssue {
 
                     match create_issue{
                         Ok(val) => info!("Sent request ok: {val:?}"),
-                        Err(e) => info!("Error creating issue: {e:?}")
+                        Err(e) => error!("Error creating issue: {e:?}")
                     }
                 });
+
+                self.github_issue_title.clear();
+                self.github_issue_descript.clear();
             }
         });
     }

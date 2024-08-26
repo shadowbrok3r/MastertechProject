@@ -4,7 +4,7 @@ use crossbeam::channel::Sender;
 use database::{schema::Store, Database};
 use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
-use log::info;
+use log::{error, info};
 use wasm_bindgen_futures::spawn_local;
 #[allow(unused_imports)]
 use wasm_cookies::CookieOptions;
@@ -66,10 +66,10 @@ impl Signup{
                             info!("Sent db connection across thread");
                             drop(db_tx);
                         },
-                        Err(err) => info!("Error sending db connection: {err:?}"),
+                        Err(err) => error!("Error sending db connection: {err:?}"),
                     }
                 },
-                Err(e) => info!("Error with db: {e:?}"),
+                Err(e) => error!("Error with db: {e:?}"),
             }
         });
     }
@@ -168,7 +168,7 @@ impl MtechServer{
                                             {
                                                 match appstate_tx.try_send(AppState::NoAuth("Login".to_string())){
                                                     Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                                    Err(e) => info!("Error {e:?}"),
+                                                    Err(e) => error!("Error {e:?}"),
                                                 }
                                             }
                                             

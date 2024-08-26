@@ -5,7 +5,7 @@ use self::{command::Command, io::{format_path_metadata, MetaData}};
 use crate::app_state::MastertechContext;
 use crossbeam::channel::{self, Receiver, Sender};
 use pollster::block_on;
-use log::{debug, info};
+use log::{debug, error, info};
 use serde::Serialize;
 use eframe::egui::Ui;
 use walkdir::WalkDir;
@@ -67,23 +67,23 @@ pub struct FileBrowser {
     folder_metadata: RefCell<HashMap<PathBuf, MetaData>>, 
     /// Send size of file in bytes
     #[serde(skip)]
-    metadata_tx: channel::Sender<u64>, 
+    metadata_tx: Sender<u64>, 
     /// Send size of folder in bytes
     #[serde(skip)]
-    metadata_rx: channel::Receiver<u64>, 
+    metadata_rx: Receiver<u64>, 
     
     /// Progress percentage
     progress: f64, 
     /// Send progress 
     #[serde(skip)]
-    progress_tx: channel::Sender<u64>, 
+    progress_tx: Sender<u64>, 
     /// Retrieve progress 
     #[serde(skip)]
-    progress_rx: channel::Receiver<u64>, 
+    progress_rx: Receiver<u64>, 
     #[serde(skip)]
-    command_tx: channel::Sender<Option<Command>>,
+    command_tx: Sender<Option<Command>>,
     #[serde(skip)]
-    command_rx: channel::Receiver<Option<Command>>,
+    command_rx: Receiver<Option<Command>>,
     /// Animate the progress bar
     animated_progress: bool, 
     /// When CTRL+C is hit, get the selected files to be copied
@@ -112,7 +112,7 @@ impl FileBrowser{
         }
         let (progress_tx, progress_rx) = channel::unbounded();
         let (metadata_tx, metadata_rx) = channel::unbounded();
-        let (command_tx, command_rx) = crossbeam::channel::unbounded();
+        let (command_tx, command_rx) = channel::unbounded();
 
         Self {
             path,
@@ -401,7 +401,7 @@ impl FileBrowser{
                         let command = Command::ReadDirectory(path.clone()); // Contents are not cached, fetch in the background
                         match command_sender.send(Some(command)){
                             Ok(_) => drop(command_sender),
-                            Err(e) => info!("error: {e:?}")
+                            Err(e) => error!("Error: {e:?}")
                         }
                         vec![] // Return an empty Vec for now
                     }
@@ -457,7 +457,7 @@ impl FileBrowser{
                         { //|| selectable_label.ctx.input(|state| state.key_pressed(Key::Enter))
                             match command_sender2.send(Some(Command::OpenPath(path.clone()))) {
                                 Ok(_) => drop(command_sender2),
-                                Err(e) => info!("error: {e:?}"),
+                                Err(e) => error!("Error: {e:?}"),
                             }
                         }
 
@@ -478,7 +478,7 @@ impl FileBrowser{
                 if selectable_label.clicked() {
                     match command_sender3.send(Some(Command::Select(path.clone()))) {
                         Ok(_) => drop(command_sender3),
-                        Err(e) => info!("error: {e:?}"),
+                        Err(e) => error!("Error: {e:?}"),
                     }
                     // If the control key is down and the item was not selected, select it 
                     if modifiers.ctrl { self.selected_items.borrow_mut().insert(path.clone());} 

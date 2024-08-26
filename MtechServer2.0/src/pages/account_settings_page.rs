@@ -6,7 +6,7 @@ use egui_extras::{Size, StripBuilder};
 use wasm_bindgen_futures::spawn_local;
 use crossbeam::channel::Sender;
 use serde::Serialize;
-use log::info;
+use log::{error, info};
 
 #[derive(Serialize, Debug, Default, Clone)]
 pub struct AccountMod {
@@ -167,7 +167,7 @@ impl MtechServer{
                                                 acc_mod.mod_account(appstate_tx.clone(), usr.id.0.id.clone());
                                                 match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
                                                     Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                                    Err(e) => info!("Error {e:?}"),
+                                                    Err(e) => error!("Error {e:?}"),
                                                 }
                                             }
                                             ui.add_space(5.0);
@@ -182,7 +182,7 @@ impl MtechServer{
                                                 acc_mod.change_password(usr.id.0.id.clone());
                                                 match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
                                                     Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
-                                                    Err(e) => info!("Error {e:?}"),
+                                                    Err(e) => error!("Error {e:?}"),
                                                 }
                                             }
                                         }

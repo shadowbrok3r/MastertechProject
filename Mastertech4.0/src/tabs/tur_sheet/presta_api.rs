@@ -5,7 +5,7 @@ use serde_json::{from_value, Value};
 use std::collections::HashMap;
 use surrealdb::sql::Thing;
 use serde::Deserialize;
-use log::info;
+use log::{error, info};
 
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 
@@ -124,7 +124,7 @@ impl MastertechContext {
 
                 match tx.try_send(presta_payload){
                     Ok(_) => drop(tx),
-                    Err(err) => info!("Error: {err:?}"),
+                    Err(err) => error!("Error: {err:?}"),
                 };
             });
         }

@@ -16,7 +16,7 @@ use anyhow::{anyhow, Context};
 use futures_util::FutureExt;
 use sha2::{Digest, Sha256};
 use surrealdb::sql::Thing;
-use log::{debug, info};
+use log::{debug, error, info};
 use serde_json::Value;
 use serde_json::json;
 use dotenv::dotenv;
@@ -59,7 +59,7 @@ impl ComputerInfo for ComputerData{
         let seb_data: Result<LocalSebData, anyhow::Error> = request_seb_info(client, None)
             .await
             .or_else(|err|{
-                info!("Error Pulling SEB info: {:?}", err.to_string());
+                error!("Error Pulling SEB info: {:?}", err.to_string());
                 Err(err)
             }).and_then(|data|{
                 info!("Pulled SEB Data successfully: {data:#?}");

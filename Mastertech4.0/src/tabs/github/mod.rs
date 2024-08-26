@@ -1,10 +1,19 @@
-use eframe::egui::{Align, Button, Color32, Layout, Stroke, TextEdit, Ui};
-use log::info;
+use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Ui};
+use reqwest::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT}, Client};
+use self_updater::{Asset, GithubRelease};
+use egui_extras::{Column, TableBuilder};
+use crossbeam::channel::Sender;
+use anyhow::{Result, Error};
+use futures::StreamExt;
+use log::{error, info};
+use chrono::DateTime;
+use serde_json::Value;
 use tokio::spawn;
 
 use crate::app_state::MastertechContext;
 
 use self::issues::create_new_issue;
+const TOKEN: &str = "Bearer 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";
 
 
 pub mod self_updater;
@@ -56,7 +65,7 @@ impl MastertechContext{
 
                     match create_issue{
                         Ok(val) => info!("Sent request ok: {val:?}"),
-                        Err(e) => info!("Error creating issue: {e:?}")
+                        Err(e) => error!("Error creating issue: {e:?}")
                     }
                 });
                 
@@ -64,4 +73,152 @@ impl MastertechContext{
         });
     
     }
+
+    pub fn downloads_page(&mut self, ui: &mut Ui){
+        CentralPanel::default()
+            .frame(Frame::central_panel(&ui.ctx().style()).outer_margin(10.).inner_margin(10.))
+            .show_inside(ui, |ui| 
+        {
+            ui.with_layout(
+                Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), 
+                |ui|
+            {
+
+                ui.style_mut().override_font_id = Some(FontId::proportional(15.0));
+                let releases = self.github_releases.clone();
+
+                TableBuilder::new(ui)
+                    .striped(true)
+                    .cell_layout(Layout::top_down_justified(Align::Min))
+                    .cell_layout(Layout::top_down_justified(Align::Min))
+                    .cell_layout(Layout::top_down_justified(Align::Min))
+                    .column(Column::exact(180.0))
+                    .column(Column::exact(130.0))
+                    .column(Column::remainder().resizable(true))
+                    .header(20.0, |mut header| 
+                {
+                    header.col(|ui| {
+                        ui.heading("Release Name");
+                    });
+                    header.col(|ui| {
+                        ui.heading("Created At");
+                    });
+                    header.col(|ui| {
+                        ui.heading("Description");
+                    });
+                })
+                .body(|mut body| {
+                    let assets: Vec<Asset> = releases.iter()
+                        .flat_map(|r| r.assets.iter().cloned())
+                        .collect();
+                    for (release, asset) in releases.iter().zip(assets.iter()) {
+                        body.row(100.0,  |mut row| {
+                            row.col(|ui| {
+                                ui.add_space(5.0);
+                                ui.vertical_centered(|ui| {
+                                    ui.add_space(20.0);
+                                    let link_txt = RichText::new(&release.name).color(Color32::LIGHT_RED);
+                                    let link = ui.link(link_txt).on_hover_text(&asset.name);
+                                    
+                                    if link.clicked() { 
+                                        let asset = asset.clone();
+                                        let tx = self.bytes_channel.0.clone();
+                                        spawn(async move {
+                                            let download_res = download_release(asset, tx, Client::new()).await;
+                                            info!("Download Result: {:?}", download_res);
+                                        });
+                                    }
+
+                                    ui.add_space(10.0);
+                                    ui.label(&asset.name);
+                                });
+                            });
+
+                            row.col(|ui| {
+                                ui.horizontal_centered(|ui| {
+                                    ui.add_space(5.0);
+                                    ui.label(format_date(&release.created_at));
+                                });
+                            });
+                            row.col(|ui| {
+                                ui.add_space(5.0);
+                                ui.label(&release.body);
+                            });
+                        });
+                    }
+                });
+            });
+        });
+    }
+}
+
+fn format_date(date_str: &str) -> String {
+    let datetime = DateTime::parse_from_rfc3339(date_str).unwrap();
+    let naive_date = datetime.naive_local().date();
+    naive_date.format("%m/%d/%Y").to_string()
+}
+
+fn _bytes_to_megabytes(bytes: u64) -> f64 {
+    bytes as f64 / 1_048_576.0
+}
+
+pub async fn get_github_releases(
+    tx: Sender<Vec<GithubRelease>>,
+    client: Client
+) -> Result<(), Error> {
+    let response: Vec<GithubRelease> = client.get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest 
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("User-Agent", "shadowbrok3r")
+        .header("Authorization", TOKEN)
+        .send().await?
+        .json().await?;
+
+    info!("response {:?}", response.clone());
+    tx.try_send(response.clone())?;
+    Ok(())
+}
+
+
+pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>, client: Client) -> Result<(), Error> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_file_name(asset.name.clone())
+        .save_file()
+        .await;
+
+        if !asset.url.is_empty(){
+            // let url = format!("https://corsproxy.io/?{}", &asset.url);
+            let resp = client.get(&asset.url)
+                .header(AUTHORIZATION, TOKEN)
+                .header(ACCEPT, "application/octet-stream")
+                .header(CONTENT_TYPE, "application/octet-stream")
+                .header(USER_AGENT, "shadowbrok3r")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .send().await?;
+        
+            let content_length = resp.content_length().unwrap_or(0);
+            let mut downloaded_bytes: u64 = 0;
+            
+            let mut byte_stream = resp.bytes_stream();
+            info!("Content length: {content_length}");
+
+            let mut byte_vec = Vec::new();
+
+            while let Some(item) = byte_stream.next().await{
+                let chunk = item?.clone();
+                byte_vec.push(chunk.to_vec());
+                let _ = tx.try_send((chunk.to_vec(), content_length));
+                downloaded_bytes += chunk.len() as u64;
+            }
+        
+            if downloaded_bytes == content_length {
+                info!("Downloaded: {downloaded_bytes}");
+                let x = byte_vec.concat();
+                if let Some(ref file) = file {
+                    file.write(x.as_slice()).await?;
+                }
+            }
+        }
+
+    Ok(())
 }
