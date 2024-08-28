@@ -2,8 +2,7 @@ use rusty_s3::{actions::ListObjectsV2, Bucket, Credentials, S3Action, UrlStyle::
 use web_time::Duration;
 use reqwest::{header::ACCEPT_ENCODING, Client, Url};
 use anyhow::{Error, Result};
-use log::info;
-
+use gloo_console::log;
 
 pub async fn list_buckets(url: String, access_key: String, secret_key: String, name: String) -> Result<Vec<String>, Error> {
     const ONE_HOUR: Duration = Duration::from_secs(3600);
@@ -17,8 +16,10 @@ pub async fn list_buckets(url: String, access_key: String, secret_key: String, n
     
     let credentials = Credentials::new(access_key, secret_key);
     
-    let action = ListObjectsV2::new(&bucket, Some(&credentials));
-    let signed_url = action.sign(ONE_HOUR);
+    let mut list_objects_action = ListObjectsV2::new(&bucket, Some(&credentials));
+    list_objects_action.query_mut().insert("delimiter", "/");
+
+    let signed_url = list_objects_action.sign(ONE_HOUR);
     
     let client = Client::new();
 
@@ -28,16 +29,35 @@ pub async fn list_buckets(url: String, access_key: String, secret_key: String, n
         .send()
         .await?
         .error_for_status()?;
-    info!("response: {resp:?}");
     let text = resp.text().await?;
-
-    let parsed = ListObjectsV2::parse_response(&text)?;
     
+    let parsed = ListObjectsV2::parse_response(&text)?;
+
+    log!(format!("parsed: {parsed:?}"));
 
     let mut vec = Vec::new();
+    
+    for prefix in parsed.common_prefixes{
+        let mut list_objs = ListObjectsV2::new(&bucket, Some(&credentials));
+        list_objs.query_mut().insert("prefix", prefix.prefix);
+        list_objs.query_mut().insert("delimiter", "/");
 
-    for y in parsed.contents{
-        vec.push(y.key);
+        let signed_url = list_objs.sign(ONE_HOUR);
+
+        let resp = client
+            .get(signed_url)
+            .header(ACCEPT_ENCODING, "br")
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let text = resp.text().await?;
+        
+        let parsed = ListObjectsV2::parse_response(&text)?;
+
+        for y in parsed.contents{
+            vec.push(y.key);
+        }
     }
 
     Ok(vec)
