@@ -621,17 +621,17 @@ impl FileBrowser{
 
     fn handle_keyboard_events(&mut self, ui: &Ui, copied_items_tx: Sender<String>){
         let cut = ui.input(|i| i.key_pressed(Key::Cut));
-        // let copy = ui.input_mut(|i| i.key_pressed(Key::C));
-        // let paste = ui.input_mut(|i| i.key_pressed(Key::V));
-        // let shift = ui.input_mut(|i| i.modifiers.shift);
-        let copy = ui.input(|i| i.events.iter().any(|ev| matches!(ev, Event::Copy)));
-        let paste = ui.input(|i| i.events.iter().any(|ev| matches!(ev, Event::Paste(_))));
+        let copy = ui.input_mut(|i| i.key_pressed(Key::C));
+        let paste = ui.input_mut(|i| i.key_pressed(Key::V));
+        let shift = ui.input_mut(|i| i.modifiers.shift);
+        // let copy = ui.input(|i| i.events.iter().any(|ev| matches!(ev, Event::Copy)));
+        // let paste = ui.input(|i| i.events.iter().any(|ev| matches!(ev, Event::Paste(_))));
 
         // if x { info!("x: {x:?}"); }
 
         let selected_item_len = self.selected_items.borrow().len();
 
-        if copy && selected_item_len > 0 { // 
+        if copy && shift && selected_item_len > 0 {
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Copied Items: {:?}", self.copied_items_src);
 
@@ -656,7 +656,7 @@ impl FileBrowser{
                     Err(e) => info!("hovered sender error: {e:?}"),
                 }
             }
-        } else if cut && selected_item_len > 0{
+        } else if cut && shift &&  selected_item_len > 0{
             self.copied_items_src = self.selected_items.borrow_mut().drain().collect();
             info!("Cut Items: {:?}", self.copied_items_src);
 
@@ -666,7 +666,7 @@ impl FileBrowser{
                     Err(e) => info!("hovered sender error: {e:?}"),
                 }
             }
-        } else if paste {
+        } else if paste && shift{
             self.animated_progress = true;
             if let Some(selected_path) = &self.selected_item{
                 if selected_path.is_dir(){
