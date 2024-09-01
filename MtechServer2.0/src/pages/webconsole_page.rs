@@ -5,9 +5,11 @@ use crate::{
 use database::schema::{utilities::get_connected_clients, ConnectedClient};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::egui::{
-    Align, Button, CollapsingHeader, Color32, Context, Frame, Layout, Margin, RichText, Rounding,
-    ScrollArea, Stroke, TopBottomPanel, Ui, Vec2, Widget,
+    Align, Button, CentralPanel, CollapsingHeader, Color32, Context, Frame, Layout, Margin,
+    RichText, Rounding, ScrollArea, Stroke, TopBottomPanel, Ui, Vec2, Widget,
 };
+use egui_extras::Column;
+use log::info;
 use wasm_bindgen_futures::spawn_local;
 
 // We reserve this much space for eterm to show some stats.
@@ -110,6 +112,7 @@ impl MtechServer {
                     if button.clicked() {
                         let url = format!(
                             "wss://sock.master-tech.app/websocket?role=master&room_id={}",
+                            // "ws://localhost:8081/websocket?role=master&room_id={}",
                             cli_clone.connection_string.clone()
                         );
 
@@ -172,7 +175,7 @@ impl MtechServer {
     }
 
     pub fn web_console(&mut self, ctx: &Context) {
-        ui.ctx().request_repaint();
+        ctx.request_repaint();
 
         let side_panel_frame = Frame::default()
             .inner_margin(Margin::same(6.0))
@@ -180,7 +183,9 @@ impl MtechServer {
             .fill(Color32::from_rgb(17, 17, 19))
             .rounding(Rounding::same(5.0));
 
-        ui.style_mut().spacing.button_padding = Vec2::new(10.0, 4.0);
+        let central_panel_frame = Frame::default()
+            .inner_margin(Margin::same(20.0))
+            .fill(Color32::from_rgb(10, 10, 12));
 
         TopBottomPanel::top("Client_Top_panel")
             .frame(side_panel_frame)
@@ -212,47 +217,102 @@ impl MtechServer {
             });
         }
 
-        ui.style_mut().visuals.window_rounding = Rounding::same(10.);
+        // ui.style_mut().visuals.window_rounding = Rounding::same(10.);
+        CentralPanel::default()
+            .frame(central_panel_frame)
+            .show(ctx, |ui| {
+                ui.columns(2, |columns| {
+                    columns[0].vertical_centered(|ui| ui.heading("Connected"));
+                    columns[1].vertical_centered(|ui| ui.heading("Disconnected"));
+                });
 
-        ScrollArea::vertical().show_viewport(ui, |ui, _| {
-            for client in self.context.clients.clone() {
-                let connection_string = client.connection_string.clone();
-                let color = if client.connected {
-                    Color32::LIGHT_BLUE
-                } else {
-                    Color32::LIGHT_RED
-                };
+                ScrollArea::vertical().show_viewport(ui, |ui, _| {
+                    for client in self.context.clients.clone() {
+                        let connection_string = client.connection_string.clone();
+                        let connected_color = if client.connected {
+                            Color32::LIGHT_BLUE
+                        } else {
+                            Color32::LIGHT_RED
+                        };
 
-                let column_frame = Frame::default()
-                    .fill(Color32::from_rgb(12, 12, 14))
-                    .inner_margin(Margin::same(4.0))
-                    .outer_margin(Margin::symmetric(5.0, 3.0))
-                    .rounding(Rounding::same(10.0))
-                    .stroke(Stroke::new(1.0, color));
+                        let column_frame = Frame::default()
+                            .fill(Color32::from_rgb(12, 12, 14))
+                            .inner_margin(Margin::same(4.0))
+                            .outer_margin(Margin::symmetric(5.0, 3.0))
+                            .rounding(Rounding::same(10.0))
+                            .stroke(Stroke::new(1.0, connected_color));
 
-                let undock =
-                    if let Some(undock) = self.context.undock_client.get(&connection_string) {
-                        undock
-                    } else {
-                        &false
-                    };
+                        let undock = if let Some(undock) =
+                            self.context.undock_client.get(&connection_string)
+                        {
+                            undock
+                        } else {
+                            &false
+                        };
 
-                if !*undock {
-                    CollapsingHeader::new(connection_string.clone()).show_unindented(ui, |ui| {
-                        column_frame.show(ui, |ui| {
-                            ui.set_min_size(Vec2::new(400., 400.));
-                            ui.vertical_centered_justified(|ui| {
-                                ui.horizontal(|ui| self.context.headers(ui, client));
-                                if let Some(ws_client) =
-                                    self.context.ws_clients.get_mut(&connection_string)
-                                {
-                                    ws_client.show(ui);
+                        if !*undock {
+                            ui.columns(2, |columns| {
+                                if client.connected {
+                                    ScrollArea::vertical()
+                                        .max_height(f32::INFINITY)
+                                        .id_source(format!(
+                                            "connected-{:?}",
+                                            connection_string.clone()
+                                        ))
+                                        .show(&mut columns[0], |ui| {
+                                            // ui.heading("Connected Clients");
+                                            CollapsingHeader::new(connection_string.clone())
+                                                .show_unindented(ui, |ui| {
+                                                    column_frame.show(ui, |ui| {
+                                                        ui.set_min_size(Vec2::new(400., 400.));
+                                                        ui.vertical_centered_justified(|ui| {
+                                                            ui.horizontal(|ui| {
+                                                                self.context.headers(ui, client)
+                                                            });
+                                                            if let Some(ws_client) = self
+                                                                .context
+                                                                .ws_clients
+                                                                .get_mut(&connection_string)
+                                                            {
+                                                                ws_client.show(ui);
+                                                            }
+                                                        });
+                                                    });
+                                                });
+                                        });
+                                } else {
+                                    ScrollArea::vertical()
+                                        .id_source(format!(
+                                            "disconnected-{:?}",
+                                            connection_string.clone()
+                                        ))
+                                        .max_height(f32::INFINITY)
+                                        .show(&mut columns[1], |ui| {
+                                            // ui.heading("Disconnected Clients");
+                                            CollapsingHeader::new(connection_string.clone())
+                                                .show_unindented(ui, |ui| {
+                                                    column_frame.show(ui, |ui| {
+                                                        ui.set_min_size(Vec2::new(400., 400.));
+                                                        ui.vertical_centered_justified(|ui| {
+                                                            ui.horizontal(|ui| {
+                                                                self.context.headers(ui, client)
+                                                            });
+                                                            if let Some(ws_client) = self
+                                                                .context
+                                                                .ws_clients
+                                                                .get_mut(&connection_string)
+                                                            {
+                                                                ws_client.show(ui);
+                                                            }
+                                                        });
+                                                    });
+                                                });
+                                        });
                                 }
                             });
-                        });
-                    });
-                }
-            }
-        });
+                        }
+                    }
+                });
+            });
     }
 }

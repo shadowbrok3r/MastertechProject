@@ -379,7 +379,7 @@ impl eframe::App for MtechServer {
             AppState::Authenticated(MainPages::AccountSettings) => {
                 self.account_settings_page(ctx, self.context.app_state_tx.clone())
             }
-            AppState::Authenticated(MainPages::WebConsole) => self.web_console(ui),
+            AppState::Authenticated(MainPages::WebConsole) => self.web_console(ctx),
             AppState::Authenticated(_) => self.main_page(ctx),
             AppState::CreateAccount => self.signup_page(
                 ctx,
