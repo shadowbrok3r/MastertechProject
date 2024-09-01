@@ -298,7 +298,8 @@ pub struct ConnectedClient{
     pub command_history: Option<Vec<String>>,
     pub connected: bool,
     pub friendly_name: Option<String>,
-    pub customer: Option<CustomerId>
+    pub customer: Option<CustomerId>,
+    pub last_update: String,
 }
 
 

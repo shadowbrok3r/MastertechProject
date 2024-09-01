@@ -23,7 +23,6 @@ RUN mv mold-2.32.1-x86_64-linux/bin/* /usr/bin/
 
 ## STAGE 3
 FROM messense/rust-musl-cross:x86_64-musl as builder
-# ENV RUSTFLAGS="-C link-arg=-fuse-ld=/usr/bin/mold"
 COPY --from=mold /usr/bin/*mold* /usr/bin/mold
 
 COPY . /server
@@ -36,7 +35,7 @@ RUN ls -las /server/target/x86_64-unknown-linux-musl/release/
 
 FROM rust:slim-buster
 WORKDIR /
-COPY --from=builder /server/target/x86_64-unknown-linux-musl/release/websocket_server /websocket_server
+COPY --from=builder /server/target/x86_64-unknown-linux-musl/release/websocket_server2 /websocket_server2
 EXPOSE 8081
-ENTRYPOINT ["/websocket_server"]
+ENTRYPOINT ["/websocket_server2"]
 RUN echo output.log
