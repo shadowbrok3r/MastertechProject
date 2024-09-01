@@ -5,6 +5,7 @@
         "MtechServer2.0/Cargo.toml",
         "displays/Cargo.toml",
         "websocket_server/Cargo.toml",
+        "websocket_server2/Cargo.toml"
     ],
     "rust-analyzer.showUnlinkedFileNotification": true
 }

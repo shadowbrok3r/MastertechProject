@@ -56,7 +56,7 @@ impl Default for LoggerUi {
     fn default() -> Self {
         Self {
             loglevels: [true, true, true, false, false],
-            search_term: "info".to_string(),
+            search_term: String::new(),
             search_case_sensitive: false,
             regex: None,
             search_use_regex: false,

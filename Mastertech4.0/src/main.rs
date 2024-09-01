@@ -154,6 +154,7 @@ impl eframe::App for MasterTechApp {
                             let name = usr.email.clone();
                             let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
 
+                            info!("Getting Minio files");
                             spawn(async move {
 
                                 let list_bucket_res = list_buckets(
@@ -164,7 +165,10 @@ impl eframe::App for MasterTechApp {
                                 ).await;
 
                                 match list_bucket_res{
-                                    Ok(files) => minio_tx.try_send(files).unwrap(),
+                                    Ok(files) => {
+                                        info!("Got files: {files:?}");
+                                        minio_tx.try_send(files).unwrap()
+                                    },
                                     Err(e) => error!("Error getting minio files: {e:?}"),
                                 }
 
