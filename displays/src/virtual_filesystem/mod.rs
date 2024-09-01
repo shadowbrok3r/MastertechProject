@@ -1,6 +1,5 @@
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Id, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
-use surrealdb::sql::Uuid;
 use std::{cell::RefCell, collections::{HashMap, HashSet}, iter};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use crossbeam::channel::{Receiver, Sender};
@@ -8,6 +7,7 @@ use database::{schema::{Node, User}, STORAGE_URL};
 use futures::{StreamExt, Future};
 use anyhow::{Result, Error};
 use mime_guess::from_path;
+use surrealdb::sql::Uuid;
 use web_time::Duration;
 use rfd::FileHandle;
 use bytes::Bytes;

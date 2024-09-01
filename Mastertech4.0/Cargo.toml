@@ -15,6 +15,31 @@ inline = []
 # compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"] cpu_fix = []
 
 [dependencies]
+eframe = { workspace=true, optional = true }
+database = { workspace=true }
+surrealdb-alpha = { workspace=true }
+tokio = { workspace=true }
+serde_json = { workspace=true }
+serde = { workspace=true }
+log  = { workspace=true }
+bytes = { workspace=true }
+egui_extras = { workspace=true }
+egui_dock = { workspace=true }
+anyhow = { workspace=true }
+ratframe = { workspace=true }
+crossbeam = { workspace=true }
+futures = { workspace=true }
+structdiff = { workspace=true }
+fuzzy-matcher = { workspace=true }
+uuid = { workspace=true }
+bincode = { workspace=true }
+rfd = { workspace=true }
+regex = { workspace=true }
+chrono = { workspace=true }
+simplelog = { workspace=true }
+async-trait = { workspace=true }
+once_cell = { workspace=true }
+
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
 ratatui = { version = "0.28.0", features = ["crossterm"], optional = true }
@@ -56,34 +81,12 @@ hex = "0.4.3"
 ring = "0.17.8"
 egui_tracing = "0.2.2"
 rust-s3 = "0.34"
-
-eframe = { workspace=true, optional = true }
-database = { workspace=true }
-surrealdb-alpha = { workspace=true }
-tokio = { workspace=true }
-serde_json = { workspace=true }
-serde = { workspace=true }
-log  = { workspace=true }
-bytes = { workspace=true }
-egui_extras = { workspace=true }
-egui_dock = { workspace=true }
-anyhow = { workspace=true }
-ratframe = { workspace=true }
-crossbeam = { workspace=true }
-futures = { workspace=true }
-structdiff = { workspace=true }
-# egui_ratatui = { workspace=true }
-fuzzy-matcher = { workspace=true }
-uuid = { workspace=true }
-bincode = { workspace=true }
-rfd = { workspace=true }
-regex = { workspace=true }
-chrono = { workspace=true }
-simplelog = { workspace=true }
-async-trait = { workspace=true }
-once_cell = { workspace=true }
 evtx = "0.8.3"
 egui_json_tree = "0.6.0"
+
+
+# egui_ratatui = { workspace=true }
+
 
 # egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
 # egui-winit = { ver1.0.86 "0.27.2", optional = true, default-features = false }

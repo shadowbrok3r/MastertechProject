@@ -1,7 +1,8 @@
 use rusty_s3::{actions::ListObjectsV2, Bucket, Credentials, S3Action, UrlStyle::Path};
-use web_time::Duration;
 use reqwest::{header::ACCEPT_ENCODING, Client, Url};
 use anyhow::{Error, Result};
+use web_time::Duration;
+#[cfg(target_arch="wasm32")] 
 use gloo_console::log;
 
 pub async fn list_buckets(url: String, access_key: String, secret_key: String, name: String) -> Result<Vec<String>, Error> {
@@ -33,6 +34,7 @@ pub async fn list_buckets(url: String, access_key: String, secret_key: String, n
     
     let parsed = ListObjectsV2::parse_response(&text)?;
 
+    #[cfg(target_arch="wasm32")] 
     log!(format!("parsed: {parsed:?}"));
 
     let mut vec = Vec::new();
