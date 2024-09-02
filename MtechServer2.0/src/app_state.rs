@@ -1,32 +1,55 @@
-use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{ai_playground::AiPlayground, github_issue::GithubIssue, logger::logger_ui}, utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler}};
-use database::{schema::{ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User}, Database};
-use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
-use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText}, CreationContext};
-use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, rc::Rc};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
+use crate::{
+    pages::{account_settings_page::AccountMod, downloads_page::GithubRelease},
+    tabs::{ai_playground::AiPlayground, github_issue::GithubIssue, logger::logger_ui},
+    utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler},
+};
 use crossbeam::channel::{self, Receiver, Sender};
-use mtechserver::{webworker::WebWorker, live_worker::{LiveOutput, LiveWorker}};
+use database::{
+    schema::{
+        ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload,
+        TicketPayload, User,
+    },
+    Database,
+};
+use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use eframe::{
+    egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText},
+    CreationContext,
+};
+use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
+use gloo_worker::Spawnable;
+use mtechserver::{
+    live_worker::{LiveOutput, LiveWorker},
+    webworker::WebWorker,
+};
+use std::{
+    cell::Cell,
+    collections::{BTreeMap, HashMap, HashSet},
+    rc::Rc,
+};
+use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-use gloo_worker::Spawnable;
-use surrealdb::Action;
 // use ratatui::Terminal;
-use serde::Serialize;
-use anyhow::Error;
-use log::{error, info};
 use crate::{
-    pages::{login_page::Login, signup_page::Signup}, tabs::{terminal::chart::App, web_console::websockets::WebSocketClient}, 
+    pages::{login_page::Login, signup_page::Signup},
+    tabs::{terminal::chart::App, web_console::websockets::WebSocketClient},
     utilities::{
         displays::{
-            chats::ChatView, modals::{task_modal::ModalAction, create_task_modal::CreateTaskModal, ModalHandler}, tasks::task_layout::TaskLayout
-        }, 
-        DisplayModal, ModalType,TaskUiActions
-    }
+            chats::ChatView,
+            modals::{create_task_modal::CreateTaskModal, task_modal::ModalAction, ModalHandler},
+            tasks::task_layout::TaskLayout,
+        },
+        DisplayModal, ModalType, TaskUiActions,
+    },
 };
+use anyhow::Error;
 use displays::channel_manager::ChannelManager;
+use log::{error, info};
+use serde::Serialize;
 
 #[derive(Serialize)]
-pub struct MtechServer{
+pub struct MtechServer {
     #[serde(skip)]
     login: Login,
     #[serde(skip)]
@@ -39,23 +62,23 @@ pub struct MtechServer{
 }
 
 #[derive(Default, Serialize, Debug, PartialEq)]
-pub enum MainPages{
+pub enum MainPages {
     #[default]
     Tasks,
     ChatGpt,
     Downloads,
     WebConsole,
-    AccountSettings
+    AccountSettings,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
-pub enum AppState{
+pub enum AppState {
     Authenticated(MainPages),
     CreateAccount,
     NoAuth(String),
 }
 
-impl Default for AppState{
+impl Default for AppState {
     fn default() -> Self {
         Self::NoAuth("Not Authenticated".to_string())
     }
@@ -63,11 +86,11 @@ impl Default for AppState{
 
 pub struct NewTicketChannel {
     pub new_ticket: TicketPayload,
-    pub new_task: (Action, LiveTaskPayload)
+    pub new_task: (Action, LiveTaskPayload),
 }
 
 #[derive(Serialize)]
-pub struct MtechServerContext{
+pub struct MtechServerContext {
     #[serde(skip)]
     pub current_user: Option<User>,
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
@@ -125,7 +148,7 @@ pub struct MtechServerContext{
     #[serde(skip)]
     pub db_rx: Receiver<anyhow::Result<Database, Error>>,
     #[serde(skip)]
-    pub db_tx:  Sender<anyhow::Result<Database, Error>>,
+    pub db_tx: Sender<anyhow::Result<Database, Error>>,
     #[serde(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
     #[serde(skip)]
@@ -184,6 +207,7 @@ pub struct MtechServerContext{
     /// Widgets / Modals / Ui for portions throughout the app
     pub new_note: bool,
     pub search_input: String,
+    pub client_search_input: String,
     pub edited_task: TaskPayload,
     #[serde(skip)]
     pub task_layouts: HashMap<String, TaskLayout>,
@@ -216,16 +240,32 @@ pub struct MtechServerContext{
     pub download_progress: f32,
 }
 
-impl MtechServer{
+impl MtechServer {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         setup_custom_fonts(&cc.egui_ctx);
 
-        let mut tree = DockState::new(vec!["Store Tasks".to_owned(),"Completed Tasks".to_owned(), //"Quote Fullfilled".to_owned(), "Aging Tasks".to_owned(),  
-            "Web Console".to_owned(), "Customers".to_owned()]);
-        let [_a, b] = tree.main_surface_mut().split_below(NodeIndex::root(),0.6, vec!["My Tools".to_owned(), "Bug Report".to_owned(), "Logs".to_string()]);
-        //"Terminal".to_owned(), 
-        let [_, _] = tree.main_surface_mut().split_left(b,0.78,vec!["My Tasks".to_owned(), "Ai Playground".to_owned()]);
+        let mut tree = DockState::new(vec![
+            "Store Tasks".to_owned(),
+            "Completed Tasks".to_owned(), //"Quote Fullfilled".to_owned(), "Aging Tasks".to_owned(),
+            "Web Console".to_owned(),
+            "Customers".to_owned(),
+        ]);
+        let [_a, b] = tree.main_surface_mut().split_below(
+            NodeIndex::root(),
+            0.6,
+            vec![
+                "My Tools".to_owned(),
+                "Bug Report".to_owned(),
+                "Logs".to_string(),
+            ],
+        );
+        //"Terminal".to_owned(),
+        let [_, _] = tree.main_surface_mut().split_left(
+            b,
+            0.78,
+            vec!["My Tasks".to_owned(), "Ai Playground".to_owned()],
+        );
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
         let mut open_tabs = HashSet::new();
         for node in tree[SurfaceIndex::main()].iter() {
@@ -246,23 +286,26 @@ impl MtechServer{
             .callback(move |response| {
                 sender.set(Some(response.buckets));
                 context.request_repaint();
-            }).spawn("./dummy_worker.js");
+            })
+            .spawn("./dummy_worker.js");
 
         let live_bridge = <LiveWorker as Spawnable>::spawner()
             .callback(move |response| {
                 live_sender.set(Some(response));
                 ctx.request_repaint();
-            }).spawn("./live_worker.js");
+            })
+            .spawn("./live_worker.js");
 
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
-        let (store_users_tx,store_users_rx) = channel::unbounded::<Vec<User>>();
+        let (store_users_tx, store_users_rx) = channel::unbounded::<Vec<User>>();
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
-        let (app_state_tx,app_state_rx) = channel::unbounded::<AppState>();
+        let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
-        let (connected_clients_tx, connected_clients_rx) = channel::unbounded::<Vec<ConnectedClient>>();
+        let (connected_clients_tx, connected_clients_rx) =
+            channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
@@ -274,7 +317,7 @@ impl MtechServer{
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
 
-        let context = MtechServerContext{
+        let context = MtechServerContext {
             current_user: None,
             first_run: true,
             clients: Vec::new(),
@@ -286,20 +329,34 @@ impl MtechServer{
             store_users: Vec::new(),
 
             // CHANNEL SENDERS / RECEIVERS
-            db_tx, db_rx,
-            live_tasks_tx, live_tasks_rx,
-            live_clients_tx, live_clients_rx,
-            tasks_tx, tasks_rx,
-            initial_tasks_tx,  initial_tasks_rx,
-            app_state_tx, app_state_rx,
-            store_users_tx, store_users_rx,
-            ui_actions_tx, ui_actions_rx,
-            connected_clients_tx, connected_clients_rx,
-            new_ticket_tx, new_ticket_rx,
-            notes_tx, notes_rx,
-            new_note_tx, new_note_rx,
-            notification_tx, notification_rx,
-            live_output_tx, live_output_rx,
+            db_tx,
+            db_rx,
+            live_tasks_tx,
+            live_tasks_rx,
+            live_clients_tx,
+            live_clients_rx,
+            tasks_tx,
+            tasks_rx,
+            initial_tasks_tx,
+            initial_tasks_rx,
+            app_state_tx,
+            app_state_rx,
+            store_users_tx,
+            store_users_rx,
+            ui_actions_tx,
+            ui_actions_rx,
+            connected_clients_tx,
+            connected_clients_rx,
+            new_ticket_tx,
+            new_ticket_rx,
+            notes_tx,
+            notes_rx,
+            new_note_tx,
+            new_note_rx,
+            notification_tx,
+            notification_rx,
+            live_output_tx,
+            live_output_rx,
             github_releases_channel,
             bytes_channel,
 
@@ -338,6 +395,7 @@ impl MtechServer{
             live_data_update: Some(live_data_update),
             data_update: Some(data_update),
             search_input: String::new(),
+            client_search_input: String::new(),
             open_tabs,
             style: None,
             added_nodes: Vec::new(),
@@ -348,59 +406,67 @@ impl MtechServer{
             total_download_size: 0.0,
             download_progress: 0.0,
         };
-        
-        Self { login: Login::default(), signup: Signup::default(), account_mod: AccountMod::default(), state: AppState::default(), context, tree }
+
+        Self {
+            login: Login::default(),
+            signup: Signup::default(),
+            account_mod: AccountMod::default(),
+            state: AppState::default(),
+            context,
+            tree,
+        }
     }
 
     pub fn login_mut(&mut self) -> Option<&mut Login> {
-        match self.state{
+        match self.state {
             AppState::NoAuth(_) => Some(&mut self.login),
             AppState::Authenticated(MainPages::Tasks) => None,
-            _ => None
+            _ => None,
         }
     }
-    
+
     pub fn signup_mut(&mut self) -> Option<&mut Signup> {
-        match self.state{
+        match self.state {
             AppState::CreateAccount => Some(&mut self.signup),
-            _ => None
+            _ => None,
         }
     }
 
     pub fn account_mut(&mut self) -> Option<&mut AccountMod> {
-        match self.state{
+        match self.state {
             AppState::Authenticated(MainPages::AccountSettings) => Some(&mut self.account_mod),
-            _ => None
+            _ => None,
         }
     }
 }
 
-impl MtechServerContext{
-    pub fn handle_modals(&mut self, ctx: &Context){
+impl MtechServerContext {
+    pub fn handle_modals(&mut self, ctx: &Context) {
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
                 let task_name = task_modal.task.task_name.clone();
                 self.task_modal_handler.ui(
-                    ctx, 
+                    ctx,
                     || Modal::new(&task_name).default_height(600.0),
                     move |ui, open, page_state| {
                         let action = task_modal.display(ui, page_state.to_owned());
-                        if let Some(action) = action{
+                        if let Some(action) = action {
                             if let ModalAction::Close = action {
                                 *open = false;
                             }
                             *page_state = action;
                         }
-                    });
-            },
+                    },
+                );
+            }
             ModalType::CreateTaskModal(create_task_modal) => {
                 self.create_task_modal_handler.ui(
-                    ctx, 
+                    ctx,
                     || CreateTaskModal::new("Create Task", self.store_users.clone()),
                     |ui, open, page_state| {
                         let action = create_task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action {
-                            // This will allow me to close the modal 
+                            // This will allow me to close the modal
                             // upon ModalAction::Close (when creating a task)
                             if let ModalAction::Close = action {
                                 *open = false;
@@ -408,42 +474,46 @@ impl MtechServerContext{
                             // Otherwise, handle the according ModalAction
                             *page_state = action;
                         }
-                    });
-            },
+                    },
+                );
+            }
             ModalType::ChatView(chat_modal) => {
                 self.chat_modal_handler.ui(
-                    ctx, 
+                    ctx,
                     || Modal::new("Chats").default_height(600.0),
                     move |ui, _stay_open, _page_state| {
-                        if let Some(_new_message) = chat_modal.ui(ui){
-                            spawn_local(async move { });
-                            
-                        } 
-                    });
+                        if let Some(_new_message) = chat_modal.ui(ui) {
+                            spawn_local(async move {});
+                        }
+                    },
+                );
             }
-            _ => {},
+            _ => {}
         }
     }
 }
 
 // #[cfg(target_arch="wasm32")]
-pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(AppState, Option<User>), Error>{
+pub fn check_authentication(
+    db_tx: Sender<anyhow::Result<Database, Error>>,
+) -> Result<(AppState, Option<User>), Error> {
     let cookie = wasm_cookies::get("jwt");
     let user_cookie = wasm_cookies::get("user");
     let mut state = AppState::default();
     let mut current_user: Option<User> = None;
-    if let (Some(cookie), Some(usr)) = (cookie, user_cookie){
+    if let (Some(cookie), Some(usr)) = (cookie, user_cookie) {
         current_user = Some(serde_json::from_str(usr?.as_str())?);
         let _user = current_user.clone();
         let db_tx = db_tx.clone();
         spawn_local(async move {
-            let database = Database::new("".to_string(), "".to_string(), Some(cookie.unwrap())).await;
-            match db_tx.try_send(database){
+            let database =
+                Database::new("".to_string(), "".to_string(), Some(cookie.unwrap())).await;
+            match db_tx.try_send(database) {
                 Ok(_) => {
                     info!("Sent DB");
                     drop(db_tx);
-                },
-                Err(err) =>  error!("sending db connection: {err:?}"),
+                }
+                Err(err) => error!("sending db connection: {err:?}"),
             }
         });
         state = AppState::Authenticated(MainPages::Tasks);
@@ -456,7 +526,6 @@ impl TabViewer for MtechServerContext {
     type Tab = String;
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-
         match tab.as_str() {
             "Lil menu" => self.simple_demo_menu(ui),
             "Terminal" => self.terminal(ui),
@@ -469,11 +538,17 @@ impl TabViewer for MtechServerContext {
             "Bug Report" => self.github(ui),
             "Customers" => self.customer_view(ui),
             "Logs" => logger_ui().show(ui),
-            _ => {  }
+            _ => {}
         }
     }
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+    fn context_menu(
+        &mut self,
+        ui: &mut Ui,
+        tab: &mut Self::Tab,
+        _surface_index: SurfaceIndex,
+        _node_index: NodeIndex,
+    ) {
         match tab.as_str() {
             "My Tasks" => self.simple_demo_menu(ui),
             _ => {
@@ -482,16 +557,16 @@ impl TabViewer for MtechServerContext {
             }
         }
     }
-    
+
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
         tab.as_str().into()
     }
-    
+
     fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
         self.open_tabs.remove(tab);
         true
     }
-    
+
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
         self.added_nodes.push((surface_index, node_index));
     }
@@ -511,28 +586,33 @@ impl TabViewer for MtechServerContext {
             &"Logs".to_string(),
         ];
 
-        for tab in tabs{
-            if ui.selectable_label(self.open_tabs.contains(*tab), *tab)
+        for tab in tabs {
+            if ui
+                .selectable_label(self.open_tabs.contains(*tab), *tab)
                 .clicked()
             {
-                if !self.open_tabs.contains(*tab){
+                if !self.open_tabs.contains(*tab) {
                     self.on_add(SurfaceIndex::main(), NodeIndex::root());
                 }
             }
         }
     }
-
 }
 
 fn setup_custom_fonts(ctx: &Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = FontDefinitions::default();
 
-    fonts.font_data.insert("Monaspace".to_owned(),
-   FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Light.otf"))); // .ttf and .otf supported
+    fonts.font_data.insert(
+        "Monaspace".to_owned(),
+        FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Light.otf")),
+    ); // .ttf and .otf supported
 
     // Put my font first (highest priority):
-    fonts.families.get_mut(&FontFamily::Proportional).unwrap()
+    fonts
+        .families
+        .get_mut(&FontFamily::Proportional)
+        .unwrap()
         .insert(0, "Monaspace".to_owned());
 
     fonts.font_data.insert(
@@ -547,11 +627,11 @@ fn setup_custom_fonts(ctx: &Context) {
         "Bold".to_owned(),
         FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Bold.otf")),
     );
-    fonts.families.insert(
-        FontFamily::Name("Bold".into()),
-        vec!["Bold".to_owned()],
-    );
+    fonts
+        .families
+        .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
 
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
 }
+

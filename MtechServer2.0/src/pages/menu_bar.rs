@@ -72,7 +72,7 @@ impl MtechServer {
                             })
                             .ui(ui);
 
-                    if result.clicked() {
+                    if result.secondary_clicked() {
                         info!("selected? {}", self.context.search_input.clone());
                         if let Some(input) = inputs.get(&self.context.search_input) {
                             let task = self.context.tasks.iter().find(|&x| {
@@ -214,8 +214,6 @@ impl MtechServer {
                                         Err(e) => error!("Error: {e:?}"),
                                     }
                                 }
-
-
                             });
 
                             Separator::default().shrink(20.0).ui(ui);
