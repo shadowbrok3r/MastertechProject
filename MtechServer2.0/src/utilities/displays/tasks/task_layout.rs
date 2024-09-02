@@ -294,8 +294,7 @@ impl TaskLayout {
                     ui.vertical_centered_justified(|ui| {
                         ScrollArea::vertical()
                             .auto_shrink(false)
-                            .show_rows(ui, 80.0, tasks.len(), |ui, _range|
-                        {
+                            .show(ui, |ui| {
                             // info!("Row {}/{}", row + 1, total_rows);
                             let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
                             if !search_input.is_empty(){

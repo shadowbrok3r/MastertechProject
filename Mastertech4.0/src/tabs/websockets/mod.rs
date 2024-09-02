@@ -65,8 +65,8 @@ impl MastertechContext{
 
         self.url = Some(
             format!(
-                // "wss://sock.master-tech.app/websocket?room_id={}&role=client",  
-                "ws://localhost:8081/websocket?role=client&room_id={}",
+                "wss://sock.master-tech.app/websocket?room_id={}&role=client",  
+                // "ws://localhost:8081/websocket?role=client&room_id={}",
                 url_string.clone()
             )
         );

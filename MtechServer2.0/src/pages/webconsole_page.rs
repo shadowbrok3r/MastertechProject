@@ -1,15 +1,22 @@
+use std::collections::BTreeSet;
+
 use crate::{
     app_state::MtechServer,
     tabs::web_console::websockets::{ClientHandler, WebSocketClient},
+    utilities::FilterClients,
 };
 use database::schema::{utilities::get_connected_clients, ConnectedClient};
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use displays::ui_tools::{
+    autocomplete::AutoCompleteTextEdit,
+    toasts::{Toast, ToastKind, ToastOptions},
+};
 use eframe::egui::{
-    Align, Button, CentralPanel, CollapsingHeader, Color32, Context, Frame, Layout, Margin,
-    RichText, Rounding, ScrollArea, Stroke, TopBottomPanel, Ui, Vec2, Widget,
+    Align, Button, CentralPanel, CollapsingHeader, Color32, Context, FontId, Frame, Layout, Margin,
+    RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget,
 };
 use egui_extras::Column;
 use log::info;
+use uuid::timestamp::context;
 use wasm_bindgen_futures::spawn_local;
 
 // We reserve this much space for eterm to show some stats.
@@ -206,6 +213,29 @@ impl MtechServer {
                         }
                     }
                 });
+
+                // let _result =
+                //     AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
+                //         .highlight_matches(true)
+                //         .max_suggestions(10)
+                //         .set_text_edit_properties(|text_edit: TextEdit<'_>| {
+                //             text_edit
+                //                 .hint_text("Search for client")
+                //                 .desired_width(150.0)
+                //                 .font(FontId::proportional(12.0))
+                //                 .frame(true)
+                //         })
+                //         .ui(ui);
+
+                let mut margin = Margin::default();
+                margin.top = 6.0;
+                margin.left = 4.0;
+
+                TextEdit::singleline(&mut self.context.client_search_input)
+                    .hint_text("Search")
+                    .desired_width(100.0)
+                    .margin(margin)
+                    .ui(ui);
             });
 
         if !self.context.error.is_empty() {
@@ -226,8 +256,33 @@ impl MtechServer {
                     columns[1].vertical_centered(|ui| ui.heading("Disconnected"));
                 });
 
+                let mut inputs = BTreeSet::new();
+
+                for client in self.context.clients.clone() {
+                    let connection_string = client.connection_string.clone();
+                    inputs.insert(connection_string.clone());
+                    if let Some(friendly_name) = client.friendly_name {
+                        inputs.insert(friendly_name.clone());
+                    }
+                }
+
                 ScrollArea::vertical().show_viewport(ui, |ui, _| {
-                    for client in self.context.clients.clone() {
+                    let search_input = self.context.client_search_input.clone();
+
+                    let clients = self.context.clients.clone();
+                    let mut client_vec = Vec::new();
+                    if !search_input.is_empty() {
+                        for mut client in
+                            clients.filter_by_client(inputs.clone(), search_input.clone())
+                        {
+                            client_vec.push(client);
+                        }
+                    } else {
+                        for client in clients {
+                            client_vec.push(client);
+                        }
+                    }
+                    for client in client_vec.clone() {
                         let connection_string = client.connection_string.clone();
                         let connected_color = if client.connected {
                             Color32::LIGHT_BLUE

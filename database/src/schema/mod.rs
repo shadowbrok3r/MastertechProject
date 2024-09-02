@@ -1,12 +1,15 @@
-use structdiff::{Difference, StructDiff};
-use surrealdb::{opt::RecordId, sql::{Id, Thing}};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use structdiff::{Difference, StructDiff};
+use surrealdb::{
+    opt::RecordId,
+    sql::{Id, Thing},
+};
 
-pub mod prestashop_schema;
-pub mod deserializer;
-pub mod utilities;
 pub mod buckets;
+pub mod deserializer;
+pub mod prestashop_schema;
+pub mod utilities;
 
 pub const NS: &str = "Mastertech";
 pub const DB: &str = "MastertechDB";
@@ -20,7 +23,6 @@ pub const SEB_TABLE: &str = "seb_data";
 pub const USER_TABLE: &str = "user";
 pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
-
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Record {
@@ -62,8 +64,8 @@ pub struct RecordResult {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct RecordSuccess{
-    pub success: bool
+pub struct RecordSuccess {
+    pub success: bool,
 }
 
 impl Default for UserId {
@@ -84,30 +86,30 @@ pub struct TaskPayload {
     pub task_name: String,
     pub service_ticket: Option<TicketPayload>,
     pub everest_initials: String,
-    pub task_description: String, 
+    pub task_description: String,
     pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
-    #[difference(collection_strategy="ordered_array_like")]
+    #[difference(collection_strategy = "ordered_array_like")]
     pub task_note: Vec<TaskNotePayload>,
     pub completed: bool,
     pub status: Status,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
-pub struct LiveTaskPayload{
+pub struct LiveTaskPayload {
     pub id: Option<TaskId>,
     pub task_name: String,
     pub service_ticket: Option<TicketId>,
     // #[serde(skip)]
     pub everest_initials: String,
-    pub task_description: String, 
+    pub task_description: String,
     pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
-    #[difference(collection_strategy="ordered_array_like")]
+    #[difference(collection_strategy = "ordered_array_like")]
     pub task_note: Vec<TaskNoteId>,
     pub completed: bool,
     pub status: Status,
@@ -132,7 +134,7 @@ impl From<LiveTaskPayload> for TaskPayload {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
-pub struct TicketPayload{
+pub struct TicketPayload {
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
     pub customer: Option<CustomerData>,
@@ -154,7 +156,8 @@ pub struct TicketPayload{
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Difference)]
-pub struct TicketData{ // Live Ticket Payload
+pub struct TicketData {
+    // Live Ticket Payload
     pub id: Option<TicketId>,
     pub created_at: Option<String>,
     pub customer: Option<CustomerId>,
@@ -175,8 +178,8 @@ pub struct TicketData{ // Live Ticket Payload
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
-pub struct CustomerData{
-    pub id: Option<CustomerId>, 
+pub struct CustomerData {
+    pub id: Option<CustomerId>,
     pub cust_code: String,
     pub part_order_links: Option<Vec<String>>,
     pub name: String,
@@ -189,7 +192,7 @@ pub struct CustomerData{
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
-pub struct ComputerData{
+pub struct ComputerData {
     pub id: Option<ComputerId>,
     pub customer: Option<CustomerId>,
     pub seb_info: Option<LocalSebData>,
@@ -200,9 +203,16 @@ pub struct ComputerData{
     pub ram: String,
     pub drives: Vec<DriveData>,
 }
-impl ComputerData{
-    pub fn new() -> Self { ComputerData{ drives: Vec::new(), ..Default::default() } }
-    pub fn add_disk(&mut self, disk: DriveData){ self.drives.push(disk); }
+impl ComputerData {
+    pub fn new() -> Self {
+        ComputerData {
+            drives: Vec::new(),
+            ..Default::default()
+        }
+    }
+    pub fn add_disk(&mut self, disk: DriveData) {
+        self.drives.push(disk);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
@@ -247,7 +257,7 @@ pub struct ExtendedSeb {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct DriveData{
+pub struct DriveData {
     pub drive_letter: String,
     pub drive_type: String,
     pub total_size: String,
@@ -255,14 +265,14 @@ pub struct DriveData{
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
-pub struct HardwareTests{
+pub struct HardwareTests {
     pub hdd_test: String,
     pub ssd_test: String,
-    pub ram_test: String
+    pub ram_test: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
-pub struct TaskNotePayload{
+pub struct TaskNotePayload {
     pub id: Option<TaskNoteId>,
     pub task_id: Option<TaskId>,
     pub everest_initials: String,
@@ -272,25 +282,25 @@ pub struct TaskNotePayload{
 
 // I will probably end up merging ModifyTask and TaskPayload since they contain most of the exact same data
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ModifyTask{
+pub struct ModifyTask {
     /// unique id for tasks
     pub task_id: TaskId,
     /// change priority
-    pub priority: Option<Priority>, 
+    pub priority: Option<Priority>,
     /// change which status task is part of
-    pub status: Option<Status>, 
+    pub status: Option<Status>,
     /// change completed / incomplete
-    pub completed: Option<bool>, 
-    /// update due_date 
-    pub due_date: Option<String>, 
-    /// update task name 
-    pub task_name: Option<String>, 
+    pub completed: Option<bool>,
+    /// update due_date
+    pub due_date: Option<String>,
+    /// update task name
+    pub task_name: Option<String>,
     /// modify description of task
-    pub task_description: Option<String>, 
+    pub task_description: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq, Difference)]
-pub struct ConnectedClient{
+pub struct ConnectedClient {
     pub id: Option<ClientId>,
     pub assigned_user: Option<UserId>,
     pub client_hash: String,
@@ -302,17 +312,16 @@ pub struct ConnectedClient{
     pub last_update: String,
 }
 
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Notification{
+pub struct Notification {
     /// receiver of notification
     pub user: UserId,
     /// description of notification
-    pub notification_description: String, 
+    pub notification_description: String,
     /// type of notification
     pub notification_type: String,
     /// Has the notification been read?
-    pub status: String
+    pub status: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -322,36 +331,36 @@ pub enum NotificationType {
     NewTask,
     TaggedInComment,
     GroupTag,
-    OverdueTask
+    OverdueTask,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum NotificationStatus{
+pub enum NotificationStatus {
     Read,
-    Unread
+    Unread,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ModifyNotification{
+pub struct ModifyNotification {
     pub id: NotificationId,
     pub everest_initials: Option<String>,
     /// either Read or Unread
     pub status: Option<NotificationStatus>,
     pub mark_all_read: Option<bool>,
     pub mark_all_unread: Option<bool>,
-    pub archive: Option<bool>
+    pub archive: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub enum Status{
+pub enum Status {
     #[default]
     Todo,
     InRepair,
-    Complete
+    Complete,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub enum Priority{
+pub enum Priority {
     Express,
     Rfs,
     CustomerFire,
@@ -361,7 +370,7 @@ pub enum Priority{
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum Category{
+pub enum Category {
     StoreTasks,
     MyTasks,
     CompletedTasks,
@@ -374,7 +383,7 @@ struct CommandRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
-pub struct GetKeysResponse{
+pub struct GetKeysResponse {
     pub webroot_key: String,
     pub superanti_key: String,
 }
@@ -408,7 +417,7 @@ pub struct SystemInformation {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub enum Cmd{
+pub enum Cmd {
     LiveData,
     Command,
     Tuneup,
@@ -432,7 +441,7 @@ pub enum Cmd{
     QuitInteractive,
     ReadEvents,
     Quit,
-    None
+    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -442,33 +451,33 @@ pub enum Node {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord)]
-pub enum Store{
+pub enum Store {
     #[default]
     RIV,
     LTN,
     MUR,
     AF,
-    WJ, 
+    WJ,
     ORE,
-    SAN
+    SAN,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SpecialPartOrder {
-    customer_name: String,          //  "kathleen Hoffmon",
-    customer_phone_number: String,          //  "801-888-8888",
-    notes: String,          //  "These are some notes",
-    system_order_number: String,            //  "123456",
-    id_location: String,            //  "Riverdale",
-    request_type: String,           //  "Any",
+    customer_name: String,              //  "kathleen Hoffmon",
+    customer_phone_number: String,      //  "801-888-8888",
+    notes: String,                      //  "These are some notes",
+    system_order_number: String,        //  "123456",
+    id_location: String,                //  "Riverdale",
+    request_type: String,               //  "Any",
     shipping_method: String,            //  "2 - 2-3 Day Express",
-    part_manufacturer: Manufacturer,          //  "PC Laptops",
-    manufacturer_model_number: String,          //  "12345Test",
-    manufacturer_serial_number: String,             //  "123456789",
-    manufacturer_part_number: String,           //  "324657687",
-    part_color: String,             //  "N/A",
+    part_manufacturer: Manufacturer,    //  "PC Laptops",
+    manufacturer_model_number: String,  //  "12345Test",
+    manufacturer_serial_number: String, //  "123456789",
+    manufacturer_part_number: String,   //  "324657687",
+    part_color: String,                 //  "N/A",
     part_description: String,           //  "Test",
-    part_lcd_toggle: bool,            //  "0"
+    part_lcd_toggle: bool,              //  "0"
     spo_status: SpoStatus,
 }
 
@@ -487,21 +496,21 @@ pub enum Manufacturer {
     Other,
 }
 
-impl Manufacturer{
-    pub fn as_str(&mut self) -> &str{
-        match self{
+impl Manufacturer {
+    pub fn as_str(&mut self) -> &str {
+        match self {
             Manufacturer::Pclaptops => "PC Laptops",
             Manufacturer::Other => "Other",
         }
     }
 }
 
-impl SpoStatus{
-    pub fn as_str(&mut self) -> &str{
-        match self{
+impl SpoStatus {
+    pub fn as_str(&mut self) -> &str {
+        match self {
             SpoStatus::AwaitingQuote => "Awaiting Quote",
             SpoStatus::OrderPendingDM => "Pending DM",
-            SpoStatus::QuoteFullfilled => "Quote Fullfilled"
+            SpoStatus::QuoteFullfilled => "Quote Fullfilled",
         }
     }
 }
@@ -528,14 +537,14 @@ impl Default for SpecialPartOrder {
     }
 }
 
-impl Store{
-    pub fn as_str(&self) -> &str{
-        match self{
+impl Store {
+    pub fn as_str(&self) -> &str {
+        match self {
             Store::RIV => "RIV",
             Store::LTN => "LTN",
             Store::MUR => "MUR",
-            Store::AF =>  "AF",
-            Store::WJ =>  "WJ",
+            Store::AF => "AF",
+            Store::WJ => "WJ",
             Store::ORE => "ORE",
             Store::SAN => "SAN",
         }
@@ -551,7 +560,15 @@ impl Store{
             Store::ORE => "pclore@pclaptops.com",
         }
     }
-    pub const VALUES: [Self; 7] = [Self::RIV, Self::LTN, Self::MUR, Self::AF, Self::WJ, Self::ORE, Self::SAN];
+    pub const VALUES: [Self; 7] = [
+        Self::RIV,
+        Self::LTN,
+        Self::MUR,
+        Self::AF,
+        Self::WJ,
+        Self::ORE,
+        Self::SAN,
+    ];
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, PartialOrd, Ord)]
@@ -563,12 +580,12 @@ pub struct User {
     pub store: Store,
     // pub notifications: Option<Vec<NotificationId>>,
     pub minio_access_key: Option<String>,
-    pub minio_secret_key: Option<String>
+    pub minio_secret_key: Option<String>,
 }
 
-impl Priority{
-    pub fn as_str(&self) -> &str{
-        match self{
+impl Priority {
+    pub fn as_str(&self) -> &str {
+        match self {
             Priority::Normal => "Normal",
             Priority::Rfs => "Rfs",
             Priority::Qc => "Qc",
@@ -576,12 +593,18 @@ impl Priority{
             Priority::CustomerFire => "CustomerFire",
         }
     }
-    pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::CustomerFire];
+    pub const VALUES: [Self; 5] = [
+        Self::Normal,
+        Self::Rfs,
+        Self::Qc,
+        Self::Express,
+        Self::CustomerFire,
+    ];
 }
 
-impl Status{
-    pub fn as_str(&self) -> &str{
-        match self{
+impl Status {
+    pub fn as_str(&self) -> &str {
+        match self {
             Status::Todo => "Todo",
             Status::InRepair => "In Repair",
             Status::Complete => "Complete",
