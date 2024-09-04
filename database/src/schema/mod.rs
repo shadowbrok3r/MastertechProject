@@ -309,7 +309,7 @@ pub struct ConnectedClient {
     pub connected: bool,
     pub friendly_name: Option<String>,
     pub customer: Option<CustomerId>,
-    pub last_update: String,
+    pub last_update: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

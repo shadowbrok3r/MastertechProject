@@ -5,10 +5,15 @@ use database::live_data::{
 use displays::ui_tools::{
     carl_dark::{Aesthetix, CarlDark},
     toasts::{Toast, ToastKind, ToastOptions},
+    // tokyo_dark::TokyoNight,
 };
-use eframe::egui::FontFamily;
 use eframe::egui::{
-    Color32, Context, FontId, Frame, Margin, Rounding, Stroke, Style, Vec2, Window,
+    style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets},
+    FontFamily, Visuals,
+};
+use eframe::egui::{
+    Color32, Context, CursorIcon, FontId, Frame, Margin, Rounding, Shadow, Stroke, Style, Vec2,
+    Window,
 };
 use log::{debug, error, info};
 use std::sync::Arc;
@@ -36,7 +41,8 @@ pub mod webworker;
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // most important part of the whole app.. setting up our styling
-        let arc_style = set_style();
+        // let arc_style = set_style();
+        let arc_style = set_darker_style();
         ctx.set_style(arc_style); // let alt_style = set_alternative_style(); ctx.set_style(alt_style);
 
         let data_update = self.context.data_update.as_mut().unwrap();
@@ -474,6 +480,7 @@ fn main() -> eframe::Result<()> {
 
 fn set_style() -> Arc<Style> {
     let theme = CarlDark;
+    // let theme = TokyoNight;
     let mut custom_style: Style = theme.custom_style();
     let mut font = FontId::default();
     font.size = 10.5;
@@ -516,6 +523,119 @@ fn set_style() -> Arc<Style> {
         Stroke::new(0.5, Color32::from_rgba_premultiplied(120, 20, 120, 100));
     let arc_style = Arc::new(custom_style);
     arc_style
+}
+
+fn set_darker_style() -> Arc<Style> {
+    // Define colors based on "Tokyo Night Dark" theme
+    let background_color = Color32::from_rgb(10, 10, 13); // Editor background
+    let foreground_color = Color32::from_rgb(169, 177, 214); // Editor foreground
+    let widget_bg_color = Color32::from_rgb(20, 20, 22); // Background for inactive widgets
+    let hovered_bg_color = Color32::from_rgb(35, 35, 40); // Background for hovered widgets
+    let active_bg_color = Color32::from_rgb(28, 28, 28); // Background for active widgets
+    let border_color = Color32::from_rgb(16, 16, 23); // Border color for windows and panels
+    let text_color = Color32::from_rgb(199, 202, 245); // Default text color
+    let error_color = Color32::from_rgb(187, 97, 107); // Error text color
+    let warn_color = Color32::from_rgb(227, 175, 104); // Warning text color
+    let link_color = Color32::from_rgb(113, 156, 202); // Hyperlink color
+
+    let theme = CarlDark; // Assuming a theme object or struct
+    let mut custom_style: Style = theme.custom_style();
+
+    // Font settings
+    let mut font = FontId::default();
+    font.size = 10.5;
+    font.family = FontFamily::Proportional;
+
+    // Assign custom font
+    custom_style.override_font_id = Some(font);
+
+    // Adjust spacing and interactions
+    custom_style.spacing.button_padding = Vec2::new(3.0, 3.0);
+    custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+    custom_style.spacing.combo_height = 55.0;
+    custom_style.spacing.combo_width = 100.0;
+    custom_style.interaction.selectable_labels = true;
+    custom_style.interaction.interact_radius = 10.0;
+
+    // Define visuals with updated values
+    custom_style.visuals = Visuals {
+        dark_mode: true,                       // Set for dark mode
+        override_text_color: Some(text_color), // Global text color override
+        widgets: Widgets {
+            noninteractive: WidgetVisuals {
+                bg_fill: widget_bg_color,
+                weak_bg_fill: widget_bg_color,
+                bg_stroke: Stroke::new(1.0, Color32::from_rgb(50, 50, 60)),
+                rounding: Rounding::same(4.0),
+                fg_stroke: Stroke::new(1.0, foreground_color),
+                expansion: 0.0,
+            },
+            inactive: WidgetVisuals {
+                bg_fill: widget_bg_color,
+                weak_bg_fill: Color32::from_rgb(18, 18, 20),
+                bg_stroke: Stroke::new(1.0, Color32::from_rgb(80, 80, 80)),
+                rounding: Rounding::same(4.0),
+                fg_stroke: Stroke::new(1.0, text_color),
+                expansion: 0.0,
+            },
+            hovered: WidgetVisuals {
+                bg_fill: hovered_bg_color,
+                weak_bg_fill: Color32::from_rgb(40, 40, 45),
+                bg_stroke: Stroke::new(0.5, Color32::from_rgba_premultiplied(120, 20, 120, 100)),
+                rounding: Rounding::same(4.0),
+                fg_stroke: Stroke::new(1.0, link_color), // Highlight text in link color
+                expansion: 0.1,
+            },
+            active: WidgetVisuals {
+                bg_fill: active_bg_color,
+                weak_bg_fill: Color32::from_rgb(28, 28, 28),
+                bg_stroke: Stroke::new(1.0, Color32::from_rgb(90, 90, 100)),
+                rounding: Rounding::same(4.0),
+                fg_stroke: Stroke::new(1.0, foreground_color), // Active widget text
+                expansion: 0.1,
+            },
+            open: WidgetVisuals {
+                bg_fill: Color32::from_rgb(30, 30, 35),
+                weak_bg_fill: Color32::from_rgb(35, 35, 40),
+                bg_stroke: Stroke::new(1.0, Color32::from_rgb(100, 100, 110)),
+                rounding: Rounding::same(4.0),
+                fg_stroke: Stroke::new(1.0, foreground_color), // Open widget text
+                expansion: 0.1,
+            },
+        },
+        selection: Selection {
+            bg_fill: Color32::from_rgba_premultiplied(81, 92, 126, 64), // Selection background
+            stroke: Stroke::new(1.0, Color32::from_rgb(81, 92, 126)),   // Selection border
+        },
+        hyperlink_color: link_color,                   // Hyperlink color
+        faint_bg_color: Color32::from_rgb(20, 20, 25), // Subtle background elements
+        extreme_bg_color: Color32::from_rgb(15, 15, 20), // Very dark background for contrast
+        code_bg_color: Color32::from_rgb(20, 20, 27),  // Background for code blocks
+        warn_fg_color: warn_color,                     // Warning text color
+        error_fg_color: error_color,                   // Error text color
+        window_rounding: Rounding::same(4.0),
+        window_shadow: Shadow::default(),
+        window_fill: background_color,
+        window_stroke: Stroke::new(1.0, border_color), // Window border
+        window_highlight_topmost: true,
+        menu_rounding: Rounding::same(4.0),
+        panel_fill: background_color,
+        popup_shadow: Shadow::default(),
+        resize_corner_size: 10.0,
+        text_cursor: TextCursorStyle::default(),
+        clip_rect_margin: 5.0,
+        button_frame: true,
+        collapsing_header_frame: true,
+        indent_has_left_vline: true,
+        striped: true,
+        slider_trailing_fill: true,
+        handle_shape: HandleShape::Circle,
+        interact_cursor: Some(CursorIcon::PointingHand),
+        image_loading_spinners: true,
+        numeric_color_space: NumericColorSpace::Linear, // How numeric values are displayed
+    };
+
+    Arc::new(custom_style)
 }
 
 fn _set_alternative_style() -> Arc<Style> {

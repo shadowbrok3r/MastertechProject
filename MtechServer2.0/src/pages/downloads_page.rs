@@ -1,16 +1,21 @@
 use anyhow::{Error, Result};
-use eframe::egui::{Align, CentralPanel, Color32, Context, Direction, FontId, Frame, Layout, RichText};
+use eframe::egui::{
+    Align, CentralPanel, Color32, Context, Direction, FontId, Frame, Layout, RichText,
+};
 // use displays::markdown_editor::viewer::easy_mark;
+use crate::app_state::MtechServer;
+use chrono::DateTime;
+use crossbeam::channel::Sender;
 use egui_extras::{Column, TableBuilder};
 use futures::StreamExt;
-use reqwest::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT}, Client};
+use gloo_net::http::Request;
+use log::{debug, info};
+use reqwest::{
+    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
+    Client,
+};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
-use crate::app_state::MtechServer;
-use crossbeam::channel::Sender;
-use gloo_net::http::Request;
-use chrono::DateTime;
-use log::{debug, info};
 
 const TOKEN: &str = "Bearer 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";
 
@@ -43,96 +48,99 @@ fn bytes_to_megabytes(bytes: u64) -> f64 {
     bytes as f64 / 1_048_576.0
 }
 
-
-impl MtechServer{
-    pub fn downloads_page(&mut self, ctx: &Context){
+impl MtechServer {
+    pub fn downloads_page(&mut self, ctx: &Context) {
         CentralPanel::default()
-            .frame(Frame::central_panel(&ctx.style()).outer_margin(10.).inner_margin(10.))
-            .show(ctx, |ui| 
-        {
-            ui.with_layout(
-                Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), 
-                |ui|
-            {
+            .frame(
+                Frame::central_panel(&ctx.style())
+                    .outer_margin(10.)
+                    .inner_margin(10.),
+            )
+            .show(ctx, |ui| {
+                ui.with_layout(
+                    Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center),
+                    |ui| {
+                        ui.style_mut().override_font_id = Some(FontId::proportional(15.0));
+                        let releases = self.context.github_releases.clone();
 
-                ui.style_mut().override_font_id = Some(FontId::proportional(15.0));
-                let releases = self.context.github_releases.clone();
+                        TableBuilder::new(ui)
+                            .striped(true)
+                            .cell_layout(Layout::top_down_justified(Align::Min))
+                            .cell_layout(Layout::top_down_justified(Align::Min))
+                            .cell_layout(Layout::top_down_justified(Align::Min))
+                            .column(Column::exact(180.0))
+                            .column(Column::exact(130.0))
+                            .column(Column::remainder().resizable(true))
+                            .header(20.0, |mut header| {
+                                header.col(|ui| {
+                                    ui.heading("Release Name");
+                                });
+                                header.col(|ui| {
+                                    ui.heading("Created At");
+                                });
+                                header.col(|ui| {
+                                    ui.heading("Description");
+                                });
+                            })
+                            .body(|mut body| {
+                                let assets: Vec<Asset> = releases
+                                    .iter()
+                                    .flat_map(|r| r.assets.iter().cloned())
+                                    .collect();
+                                for (release, asset) in releases.iter().zip(assets.iter()) {
+                                    body.row(100.0, |mut row| {
+                                        row.col(|ui| {
+                                            ui.add_space(5.0);
+                                            ui.vertical_centered(|ui| {
+                                                ui.add_space(20.0);
+                                                let link_txt = RichText::new(&release.name)
+                                                    .color(Color32::from_rgb(113, 156, 202));
+                                                let link =
+                                                    ui.link(link_txt).on_hover_text(&asset.name);
 
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .cell_layout(Layout::top_down_justified(Align::Min))
-                    .cell_layout(Layout::top_down_justified(Align::Min))
-                    .cell_layout(Layout::top_down_justified(Align::Min))
-                    .column(Column::exact(180.0))
-                    .column(Column::exact(130.0))
-                    .column(Column::remainder().resizable(true))
-                    .header(20.0, |mut header| 
-                {
-                    header.col(|ui| {
-                        ui.heading("Release Name");
-                    });
-                    header.col(|ui| {
-                        ui.heading("Created At");
-                    });
-                    header.col(|ui| {
-                        ui.heading("Description");
-                    });
-                })
-                .body(|mut body| {
-                    let assets: Vec<Asset> = releases.iter()
-                        .flat_map(|r| r.assets.iter().cloned())
-                        .collect();
-                    for (release, asset) in releases.iter().zip(assets.iter()) {
-                        body.row(100.0,  |mut row| {
-                            row.col(|ui| {
-                                ui.add_space(5.0);
-                                ui.vertical_centered(|ui| {
-                                    ui.add_space(20.0);
-                                    let link_txt = RichText::new(&release.name).color(Color32::LIGHT_RED);
-                                    let link = ui.link(link_txt).on_hover_text(&asset.name);
-                                    
-                                    if link.clicked() { 
-                                        let asset = asset.clone();
-                                        let tx = self.context.bytes_channel.0.clone();
-                                        spawn_local(async move {
-                                            download_release(asset, tx).await;
+                                                if link.clicked() {
+                                                    let asset = asset.clone();
+                                                    let tx = self.context.bytes_channel.0.clone();
+                                                    spawn_local(async move {
+                                                        download_release(asset, tx).await;
+                                                    });
+                                                }
+
+                                                ui.add_space(10.0);
+                                                ui.label(&asset.name);
+                                            });
                                         });
-                                    }
 
-                                    ui.add_space(10.0);
-                                    ui.label(&asset.name);
-                                });
+                                        row.col(|ui| {
+                                            ui.horizontal_centered(|ui| {
+                                                ui.add_space(5.0);
+                                                ui.label(format_date(&release.created_at));
+                                            });
+                                        });
+                                        row.col(|ui| {
+                                            ui.add_space(5.0);
+                                            ui.label(&release.body);
+                                        });
+                                    });
+                                }
                             });
-
-                            row.col(|ui| {
-                                ui.horizontal_centered(|ui| {
-                                    ui.add_space(5.0);
-                                    ui.label(format_date(&release.created_at));
-                                });
-                            });
-                            row.col(|ui| {
-                                ui.add_space(5.0);
-                                ui.label(&release.body);
-                            });
-                        });
-                    }
-                });
+                    },
+                );
             });
-        });
     }
 }
 
-
-pub async fn get_github_releases(
-    tx: Sender<Vec<GithubRelease>>
-) -> Result<(), Error> {
-    let response: Vec<GithubRelease> = Request::get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest 
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("User-Agent", "shadowbrok3r")
-        .header("Authorization", TOKEN)
-        .send().await?
-        .json().await?;
+pub async fn get_github_releases(tx: Sender<Vec<GithubRelease>>) -> Result<(), Error> {
+    let response: Vec<GithubRelease> =
+        Request::get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "shadowbrok3r")
+            .header("Authorization", TOKEN)
+            .send()
+            .await?
+            .json()
+            .await?;
 
     debug!("response {:?}", response.clone());
     tx.try_send(response.clone())?;
@@ -145,40 +153,43 @@ pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>) -> Resul
         .save_file()
         .await;
 
-        if !asset.url.is_empty(){
-            let client = Client::new();
-            // let url = format!("https://corsproxy.io/?{}", &asset.url);
-            let resp = client.get(&asset.url)
-                .header(AUTHORIZATION, TOKEN)
-                .header(ACCEPT, "application/octet-stream")
-                .header(CONTENT_TYPE, "application/octet-stream")
-                .header(USER_AGENT, "shadowbrok3r")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .send().await?;
-        
-            let content_length = resp.content_length().unwrap_or(0);
-            let mut downloaded_bytes: u64 = 0;
-            
-            let mut byte_stream = resp.bytes_stream();
-            info!("Content length: {content_length}");
+    if !asset.url.is_empty() {
+        let client = Client::new();
+        // let url = format!("https://corsproxy.io/?{}", &asset.url);
+        let resp = client
+            .get(&asset.url)
+            .header(AUTHORIZATION, TOKEN)
+            .header(ACCEPT, "application/octet-stream")
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header(USER_AGENT, "shadowbrok3r")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .await?;
 
-            let mut byte_vec = Vec::new();
+        let content_length = resp.content_length().unwrap_or(0);
+        let mut downloaded_bytes: u64 = 0;
 
-            while let Some(item) = byte_stream.next().await{
-                let chunk = item?.clone();
-                byte_vec.push(chunk.to_vec());
-                let _ = tx.try_send((chunk.to_vec(), content_length));
-                downloaded_bytes += chunk.len() as u64;
-            }
-        
-            if downloaded_bytes == content_length {
-                info!("Downloaded: {downloaded_bytes}");
-                let x = byte_vec.concat();
-                if let Some(ref file) = file {
-                    file.write(x.as_slice()).await?;
-                }
+        let mut byte_stream = resp.bytes_stream();
+        info!("Content length: {content_length}");
+
+        let mut byte_vec = Vec::new();
+
+        while let Some(item) = byte_stream.next().await {
+            let chunk = item?.clone();
+            byte_vec.push(chunk.to_vec());
+            let _ = tx.try_send((chunk.to_vec(), content_length));
+            downloaded_bytes += chunk.len() as u64;
+        }
+
+        if downloaded_bytes == content_length {
+            info!("Downloaded: {downloaded_bytes}");
+            let x = byte_vec.concat();
+            if let Some(ref file) = file {
+                file.write(x.as_slice()).await?;
             }
         }
+    }
 
     Ok(())
 }
+
