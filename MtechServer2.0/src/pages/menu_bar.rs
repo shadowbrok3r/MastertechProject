@@ -226,8 +226,9 @@ impl MtechServer {
                                 let read_button =
                                     ui.button(RichText::new("Read").color(Color32::LIGHT_GREEN));
                                 ui.add_space(ui.available_width() - 50.0);
-                                let unread_button =
-                                    ui.button(RichText::new("Unread").color(Color32::LIGHT_RED));
+                                let unread_button = ui.button(
+                                    RichText::new("Unread").color(Color32::from_rgb(113, 156, 202)),
+                                );
                                 if read_button.clicked() {
                                     self.context.read_notifications = true;
                                 }
@@ -265,7 +266,7 @@ impl MtechServer {
                                             if notification.status == "Read" {
                                                 Color32::LIGHT_GREEN
                                             } else {
-                                                Color32::LIGHT_RED
+                                                Color32::from_rgb(113, 156, 202)
                                             },
                                         ))
                                         .show(ui, |ui| {
@@ -274,7 +275,7 @@ impl MtechServer {
                                                 ui.set_width(w);
                                                 ui.add_space(w / 3.0);
                                                 ui.colored_label(
-                                                    Color32::LIGHT_RED,
+                                                    Color32::from_rgb(113, 156, 202),
                                                     RichText::new(
                                                         notification.notification_type.clone(),
                                                     )
@@ -282,7 +283,8 @@ impl MtechServer {
                                                 );
                                                 ui.add_space(80.0);
                                                 let button = Button::new(
-                                                    RichText::new("X").color(Color32::LIGHT_RED),
+                                                    RichText::new("X")
+                                                        .color(Color32::from_rgb(113, 156, 202)),
                                                 )
                                                 .ui(ui);
                                                 if button.clicked() {

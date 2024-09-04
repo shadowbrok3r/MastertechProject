@@ -208,6 +208,7 @@ pub struct MtechServerContext {
     pub new_note: bool,
     pub search_input: String,
     pub client_search_input: String,
+    pub client_search_inputs: HashMap<String, String>,
     pub edited_task: TaskPayload,
     #[serde(skip)]
     pub task_layouts: HashMap<String, TaskLayout>,
@@ -396,6 +397,7 @@ impl MtechServer {
             data_update: Some(data_update),
             search_input: String::new(),
             client_search_input: String::new(),
+            client_search_inputs: HashMap::new(),
             open_tabs,
             style: None,
             added_nodes: Vec::new(),

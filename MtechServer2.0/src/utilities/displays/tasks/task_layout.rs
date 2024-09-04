@@ -145,7 +145,7 @@ impl TaskLayout {
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(8.0, 1.0))
             .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(0.4, Color32::WHITE));
+            .stroke(Stroke::new(0.4, Color32::from_rgb(42, 195, 222)));
 
         for (name, tasks) in self.task_map.iter(){
             s.cell(|ui|{
@@ -278,7 +278,7 @@ impl TaskLayout {
             .fill(Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(8.0))
             .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(70)));
+            .stroke(Stroke::new(1.0,  Color32::from_additive_luminance(100)));
 
         let mut inputs = BTreeSet::new();
 
