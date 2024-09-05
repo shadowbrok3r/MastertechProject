@@ -5,18 +5,18 @@ use crate::{
     tabs::web_console::websockets::{ClientHandler, WebSocketClient},
     utilities::FilterClients,
 };
+use chrono::{DateTime, Utc};
 use database::schema::{utilities::get_connected_clients, ConnectedClient};
 use displays::ui_tools::{
     autocomplete::AutoCompleteTextEdit,
     toasts::{Toast, ToastKind, ToastOptions},
 };
 use eframe::egui::{
-    Align, Button, CentralPanel, CollapsingHeader, Color32, Context, FontId, Frame, Layout, Margin,
-    RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget,
+    text::LayoutJob, Align, Button, CentralPanel, CollapsingHeader, Color32, Context, FontFamily,
+    FontId, Frame, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, TextEdit, TextFormat,
+    TopBottomPanel, Ui, Vec2, Widget, WidgetText,
 };
-use egui_extras::Column;
 use log::info;
-use uuid::timestamp::context;
 use wasm_bindgen_futures::spawn_local;
 
 // We reserve this much space for eterm to show some stats.
@@ -336,6 +336,42 @@ impl MtechServer {
                                                 });
                                         });
                                 } else {
+                                    // Create a new LayoutJob
+                                    let mut job = LayoutJob::default();
+
+                                    job.append(
+                                        &connection_string,
+                                        0.0,
+                                        TextFormat {
+                                            font_id: FontId::new(14.0, FontFamily::Proportional),
+                                            color: Color32::WHITE, // Set the color for the first part
+                                            valign: Align::Center,
+                                            ..Default::default()
+                                        },
+                                    );
+
+                                    if let Some(update) = &client.last_update {
+                                        let date = update.parse::<DateTime<Utc>>();
+                                        if let Ok(date) = date {
+                                            job.append(
+                                                &date.date_naive().to_string(),
+                                                20.0,
+                                                TextFormat {
+                                                    font_id: FontId::new(
+                                                        14.0,
+                                                        FontFamily::Proportional,
+                                                    ),
+                                                    color: Color32::LIGHT_RED,
+                                                    valign: Align::Center,
+                                                    ..Default::default()
+                                                },
+                                            );
+                                        }
+                                    }
+
+                                    // Convert LayoutJob to WidgetText
+                                    let formatted_text = WidgetText::from(job);
+
                                     ScrollArea::vertical()
                                         .id_source(format!(
                                             "disconnected-{:?}",
@@ -344,8 +380,9 @@ impl MtechServer {
                                         .max_height(f32::INFINITY)
                                         .show(&mut columns[1], |ui| {
                                             // ui.heading("Disconnected Clients");
-                                            CollapsingHeader::new(connection_string.clone())
-                                                .show_unindented(ui, |ui| {
+                                            CollapsingHeader::new(formatted_text).show_unindented(
+                                                ui,
+                                                |ui| {
                                                     column_frame.show(ui, |ui| {
                                                         ui.set_min_size(Vec2::new(400., 400.));
                                                         ui.vertical_centered_justified(|ui| {
@@ -361,7 +398,8 @@ impl MtechServer {
                                                             }
                                                         });
                                                     });
-                                                });
+                                                },
+                                            );
                                         });
                                 }
                             });
