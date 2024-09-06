@@ -9,7 +9,7 @@ use serde_json::{from_value, Value};
 use std::collections::HashMap;
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
-const PRESTASHOP_API_URL_WASM: &str = "https://master-tech.app/pcl";
+const PRESTASHOP_API_URL_WASM: &str = "https://master-tech.app/pcl/api";
 // const PRESTASHOP_API_URL_DEV: &str = "https://localhost:9001/api";
 
 pub struct Prestashop<'a> {
