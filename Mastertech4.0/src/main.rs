@@ -283,14 +283,14 @@ impl eframe::App for MasterTechApp {
                 services.push(ticket_id.clone());
             }
 
-            if let Some(service) = service_details{
-                if service.len() == 1{
-                    let svc = service.get(0);
+            if !service_details.is_empty() {
+                if service_details.len() == 1 {
+                    let svc = service_details.get(0);
                     if let Some(service) = svc {
                         ticket.checkin_notes = service.check_in_notes.clone();
                     }
-                }else{
-                    info!("Theres a couple.... {:?}", service);
+                } else {
+                    info!("Theres a couple.... {:?}", service_details);
                 }
             }
 

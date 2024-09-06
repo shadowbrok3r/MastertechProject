@@ -9,7 +9,7 @@ use serde_json::{from_value, Value};
 use std::collections::HashMap;
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
-const PRESTASHOP_API_URL_WASM: &str = "https://master-tech.app/pcl/api";
+const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
 // const PRESTASHOP_API_URL_DEV: &str = "https://localhost:9001/api";
 
 pub struct Prestashop<'a> {
@@ -157,8 +157,6 @@ impl<'a> Prestashop<'a> {
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, AUTH_TOKEN)
-            //.bearer_auth("SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
-            //.fetch_credentials_include()
             .send()
             .await?
             .json()
@@ -187,8 +185,6 @@ impl<'a> Prestashop<'a> {
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
             .header(AUTHORIZATION, AUTH_TOKEN)
-            // .bearer_auth("SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
-            .fetch_credentials_include()
             .send()
             .await?
             .json()
@@ -247,8 +243,6 @@ impl<'a> Prestashop<'a> {
             .client
             .get(self.query_args_wasm(resource_name, url_params))
             .header(AUTHORIZATION, AUTH_TOKEN)
-            // .basic_auth("SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06")
-            .fetch_credentials_include()
             .send()
             .await?
             .json()
@@ -339,9 +333,15 @@ pub struct Order {
 pub struct Associations {
     #[serde(default = "new_vec")]
     pub order_rows: Vec<OrderRow>,
-    pub order_service: Option<Vec<ServiceOrder>>,
+    #[serde(default = "new_svc_vec")]
+    pub order_service: Vec<ServiceOrder>,
 }
+
 fn new_vec() -> Vec<OrderRow> {
+    Vec::new()
+}
+
+fn new_svc_vec() -> Vec<ServiceOrder> {
     Vec::new()
 }
 
@@ -400,20 +400,30 @@ pub struct CustMessage {
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ServiceOrder {
-    // #[serde(deserialize_with="deserialize_to_string")]
     // pub id: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub id_order_service: String,
     // pub id_order: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub device_name: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub device_mfg: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub device_model: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub device_serial: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub device_password: String,
     // pub id_status_service: String, // This is fucky
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub device_power_supply: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub other_hardware_software: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub physical_damage: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub check_in_notes: String,
+    #[serde(deserialize_with = "deserialize_to_string")]
     pub intake_notes: String,
     // pub id_employee_qc_tech: String,
     // pub id_employee_qc_signoff: String,
@@ -517,4 +527,3 @@ impl SubResource for Employee {
         "employee".to_string()
     }
 }
-

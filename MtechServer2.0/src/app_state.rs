@@ -1,13 +1,15 @@
 use crate::{
     pages::{account_settings_page::AccountMod, downloads_page::GithubRelease},
     tabs::{ai_playground::AiPlayground, github_issue::GithubIssue, logger::logger_ui},
-    utilities::displays::modals::{ChatModalHandler, Modal, TaskModalHandler},
+    utilities::displays::modals::{
+        create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler,
+    },
 };
 use crossbeam::channel::{self, Receiver, Sender};
 use database::{
     schema::{
-        ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload,
-        TicketPayload, User,
+        prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification,
+        TaskNotePayload, TaskPayload, TicketPayload, User,
     },
     Database,
 };
@@ -169,6 +171,8 @@ pub struct MtechServerContext {
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
     #[serde(skip)]
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
+    #[serde(skip)]
+    pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
 
     #[serde(skip)]
     pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
@@ -187,6 +191,7 @@ pub struct MtechServerContext {
     /// Terminal setup for console tab
     // #[serde(skip)]
     // pub terminal: Terminal<RataguiBackend>,
+    pub tur: Tur,
     /// example chart for console tab
     #[serde(skip)]
     pub chart_app: App,
@@ -314,6 +319,7 @@ impl MtechServer {
         let (live_output_tx, live_output_rx) = channel::unbounded::<LiveOutput>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
+        let tur_channel = PrestashopPayload::create_unbounded_channel();
 
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
@@ -360,8 +366,10 @@ impl MtechServer {
             live_output_rx,
             github_releases_channel,
             bytes_channel,
+            tur_channel,
 
             // MODALS / LAYOUTS
+            tur: Tur::default(),
             ai_playground: AiPlayground::default(),
             edited_task: TaskPayload::default(),
             task_layouts: HashMap::new(),
@@ -464,7 +472,13 @@ impl MtechServerContext {
             ModalType::CreateTaskModal(create_task_modal) => {
                 self.create_task_modal_handler.ui(
                     ctx,
-                    || CreateTaskModal::new("Create Task", self.store_users.clone()),
+                    || {
+                        CreateTaskModal::new(
+                            "Create Task",
+                            self.store_users.clone(),
+                            self.tur_channel.0.clone(),
+                        )
+                    },
                     |ui, open, page_state| {
                         let action = create_task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action {
@@ -636,4 +650,3 @@ fn setup_custom_fonts(ctx: &Context) {
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
 }
-
