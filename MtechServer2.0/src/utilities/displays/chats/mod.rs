@@ -130,7 +130,6 @@ impl ChatView {
             
             if let Some(response) = markdown_editor.ui(ui)
             {
-                info!("Users: {:?}", self.users);
                 if response.clicked() || enter_pressed {
                     let txt = markdown_editor.submit();
                     info!("Txt: {txt}");
