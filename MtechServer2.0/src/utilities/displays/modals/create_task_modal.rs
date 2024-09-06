@@ -527,7 +527,10 @@ impl Tur {
                 };
 
                 match tx.try_send(presta_payload) {
-                    Ok(_) => drop(tx),
+                    Ok(_) => {
+                        info!("SENT PRESTASHOP DATA");
+                        drop(tx);
+                    }
                     Err(err) => error!("Error: {err:?}"),
                 };
             });

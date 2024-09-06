@@ -7,7 +7,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::{from_value, Value};
 use std::collections::HashMap;
-const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
+// const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
 const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
 // const PRESTASHOP_API_URL_DEV: &str = "https://localhost:9001/api";
@@ -156,7 +156,7 @@ impl<'a> Prestashop<'a> {
             .get(url.clone())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
-            .header(AUTHORIZATION, AUTH_TOKEN)
+            // .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .json()
@@ -184,7 +184,7 @@ impl<'a> Prestashop<'a> {
             .get(url.clone())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
-            .header(AUTHORIZATION, AUTH_TOKEN)
+            // .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .json()
@@ -213,7 +213,7 @@ impl<'a> Prestashop<'a> {
         let response: Value = self
             .client
             .get(self.query_args(resource_name, url_params))
-            .header(AUTHORIZATION, AUTH_TOKEN)
+            // .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .json()
@@ -242,7 +242,7 @@ impl<'a> Prestashop<'a> {
         let response: Value = self
             .client
             .get(self.query_args_wasm(resource_name, url_params))
-            .header(AUTHORIZATION, AUTH_TOKEN)
+            // .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .json()

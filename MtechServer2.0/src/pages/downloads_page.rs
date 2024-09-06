@@ -17,8 +17,6 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
 
-const TOKEN: &str = "Bearer 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";
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct GithubRelease {
     pub url: String,
@@ -132,11 +130,10 @@ impl MtechServer {
 
 pub async fn get_github_releases(tx: Sender<Vec<GithubRelease>>) -> Result<(), Error> {
     let response: Vec<GithubRelease> =
-        Request::get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest
+        Request::get("https://git.master-tech.app/repos/shadowbrok3r/MastertechProject/releases") // /latest
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
             .header("User-Agent", "shadowbrok3r")
-            .header("Authorization", TOKEN)
             .send()
             .await?
             .json()
@@ -155,10 +152,10 @@ pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>) -> Resul
 
     if !asset.url.is_empty() {
         let client = Client::new();
-        // let url = format!("https://corsproxy.io/?{}", &asset.url);
+        let asset_url = asset.url.replace("api.github.com", "git.master-tech.app");
+
         let resp = client
-            .get(&asset.url)
-            .header(AUTHORIZATION, TOKEN)
+            .get(&asset_url)
             .header(ACCEPT, "application/octet-stream")
             .header(CONTENT_TYPE, "application/octet-stream")
             .header(USER_AGENT, "shadowbrok3r")
@@ -192,4 +189,3 @@ pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>) -> Resul
 
     Ok(())
 }
-
