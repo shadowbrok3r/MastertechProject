@@ -137,8 +137,11 @@ impl eframe::App for MtechServer {
                     }
                 }
                 TaskUiActions::CreateTaskModal => {
-                    let create_modal =
-                        CreateTaskModal::new("Create Task", self.context.store_users.clone());
+                    let create_modal = CreateTaskModal::new(
+                        "Create Task",
+                        self.context.store_users.clone(),
+                        self.context.tur_channel.0.clone(),
+                    );
                     self.context.current_modal = ModalType::CreateTaskModal(create_modal);
                     self.context.create_task_modal_handler.open();
                 }
