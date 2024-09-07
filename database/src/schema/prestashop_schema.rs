@@ -302,10 +302,13 @@ pub struct Employee {
     pub id_last_customer_message: String,
     /// ❌	isUnsignedInt
     pub id_last_customer: String,
+    pub initials: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct Order {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
     pub order_type_name: Option<String>,
     pub id_address_delivery: String, // ✔️
     pub id_address_invoice: String,  // ✔️
@@ -313,14 +316,16 @@ pub struct Order {
     // pub id_cart: String, // ✔️
     pub invoice_number: String, // ❌
     pub invoice_date: String,   // ❌
-    pub date_add: String,       // ❌
-    pub date_upd: String,       // ❌
+    pub payment: String,
+    pub date_add: String, // ❌
+    pub date_upd: String, // ❌
     pub id_employee_sales_rep: String,
     pub id_employee_split_rep: String,
     pub id_employee_editing: String,
     pub id_order_everest: String,
-    pub id_store: String,        // 1 = warehouse
-    pub total_paid: String,      // ✔️
+    pub id_store: String,   // 1 = warehouse
+    pub total_paid: String, // ✔️
+    pub total_products_wt: String,
     pub reference: String, // what prestashop sees since order id and reference are different...
     pub id_order_parent: String, // no idea
     pub shipping_number: String, // Tracking number

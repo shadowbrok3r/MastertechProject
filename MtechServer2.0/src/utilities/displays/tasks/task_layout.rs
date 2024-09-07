@@ -92,10 +92,11 @@ impl TaskLayout {
     pub fn layout_cols(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
+        let x: f32 = ui.available_height() - 40.0;
         ScrollArea::horizontal()
             .show_viewport(ui, |ui, _|
         {
-            let x: f32 = ui.available_height() - 40.0;
+            
             StripBuilder::new(ui)
                 .cell_layout(Layout::top_down_justified(Align::Center))
                 .size(Size::exact(30.0))
@@ -276,7 +277,7 @@ impl TaskLayout {
     fn columns(&mut self, s: &mut Strip) {
         let column_frame = Frame::default()
             .fill(Color32::from_rgb(12, 12, 14))
-            .inner_margin(Margin::same(8.0))
+            .inner_margin(Margin::same(6.0))
             .rounding(Rounding::same(10.0))
             .stroke(Stroke::new(1.0,  Color32::from_additive_luminance(100)));
 
@@ -295,26 +296,14 @@ impl TaskLayout {
                         ScrollArea::vertical()
                             .auto_shrink(false)
                             .show(ui, |ui| {
-                            // info!("Row {}/{}", row + 1, total_rows);
                             let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
                             if !search_input.is_empty(){
                                 for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
                                     task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                    // if let Some(action) = action{
-                                    //     self.action = action.clone();
-                                    //     self.ui_actions_tx.try_send(action).unwrap();
-                                    // }
                                 }
                             }else{
                                 for task in &mut *tasks {
                                     task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                    // if let Some(action) = action{
-                                    //     // if !TaskUiActions::None = action{
-                                    //         self.action = action.clone();
-                                    //         info!("self.action {:?}", self.action.clone());
-                                    //         self.ui_actions_tx.try_send(action).unwrap();
-                                    //     // }
-                                    // }
                                 }
                             }
                         });

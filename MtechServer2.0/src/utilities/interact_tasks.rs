@@ -17,7 +17,7 @@ impl Interaction for TaskPayload {
         // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name)
             .desired_width(ui.available_width() - 10.0)
-            .horizontal_align(Align::Center)
+            .horizontal_align(Align::Min)
             .vertical_align(Align::Center)
             .ui(ui);
 
@@ -71,12 +71,12 @@ impl Interaction for TaskPayload {
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response {
         let frame_color = date_colors(self.due_date.clone(), self.completed);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, frame_color);
-        // ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(0.5, frame_color);
+        ui.style_mut().spacing.button_padding = Vec2::new(15.0, 3.0);
         let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
 
         let id = self.id.clone().unwrap().0.id.to_string();
         let date_picker = DatePickerButton::new(&mut due_date)
-            .format("%m/%d/%y")
+            .format("%m/%d")
             .id_source(id.as_str())
             .show_icon(false)
             .ui(ui);
@@ -103,8 +103,8 @@ impl Interaction for TaskPayload {
     fn interact_completed(&mut self, ui: &mut Ui) -> Response {
         if self.completed {
             let hover_txt = "✔";
-            let color_complete = Color32::from_rgb(51, 255, 189);
-            let stroke = Stroke::new(1.0, color_complete);
+            let color_complete = Color32::from_rgba_premultiplied(51, 255, 189, 200);
+            let stroke = Stroke::new(0.7, color_complete);
             return Button::new(hover_txt)
                 .stroke(stroke)
                 .small()
@@ -112,8 +112,8 @@ impl Interaction for TaskPayload {
                 .ui(ui);
         } else {
             let hover_txt = "✖";
-            let color_incomplete = Color32::from_rgb(255, 51, 153);
-            let stroke = Stroke::new(1.0, color_incomplete);
+            let color_incomplete = Color32::from_rgba_premultiplied(255, 51, 153, 200);
+            let stroke = Stroke::new(0.7, color_incomplete);
             return Button::new(hover_txt)
                 .stroke(stroke)
                 .small()
@@ -161,7 +161,7 @@ impl Interaction for TaskPayload {
 
     fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response {
         ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
-            .selected_text(RichText::new(&self.everest_initials).small())
+            .selected_text(&self.everest_initials)
             .width(ui.available_width() / 1.3)
             .height(ui.available_height() - 2.0)
             .show_ui(ui, |ui| {
@@ -179,4 +179,3 @@ impl Interaction for TaskPayload {
             .response
     }
 }
-

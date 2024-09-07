@@ -1,23 +1,23 @@
+use super::Sortable;
 use chrono::{DateTime, Timelike};
 use database::schema::{Priority, TaskPayload};
-use super::Sortable;
 
-impl Sortable for Vec<TaskPayload>{
+impl Sortable for Vec<TaskPayload> {
     fn sort_task_payloads(&mut self) -> &mut Vec<TaskPayload> {
         let priority_mapping = |priority: &Priority| -> i32 {
             match priority {
                 Priority::Express => 2,
                 Priority::Rfs => 3,
-                Priority::CustomerFire => 4,
+                Priority::Fire => 4,
                 Priority::Qc => 1,
                 Priority::Normal => 0,
             }
         };
-    
+
         self.sort_by(|a, b| {
             let date_a = get_date_without_time(a);
             let date_b = get_date_without_time(b);
-    
+
             if date_a < date_b {
                 return std::cmp::Ordering::Less;
             } else if date_a > date_b {
@@ -33,11 +33,18 @@ impl Sortable for Vec<TaskPayload>{
     }
 }
 
-
 fn get_date_without_time(task: &TaskPayload) -> chrono::prelude::DateTime<chrono::prelude::Utc> {
     // info!("date: {:?}", &task.due_date);
     let date = DateTime::parse_from_rfc3339(&task.due_date).unwrap();
-    date.with_hour(2).unwrap().with_minute(2).unwrap().with_second(2).unwrap().with_nanosecond(3).unwrap().into()
+    date.with_hour(2)
+        .unwrap()
+        .with_minute(2)
+        .unwrap()
+        .with_second(2)
+        .unwrap()
+        .with_nanosecond(3)
+        .unwrap()
+        .into()
 }
 
 /*
@@ -52,3 +59,4 @@ fn get_date_without_time(task: &TaskPayload) -> anyhow::Result<DateTime<Utc>, an
     Ok(final_date)
 }
 */
+

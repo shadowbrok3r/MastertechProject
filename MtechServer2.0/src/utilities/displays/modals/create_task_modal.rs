@@ -9,7 +9,7 @@ use database::{
             PrestashopPayload,
         },
         CustomerData, CustomerId, Priority, Record, Status, TaskNotePayload, TaskPayload,
-        TicketData, TicketId, User, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE,
+        TicketPayload, User, CUSTOMER_TABLE, TASK_TABLE,
     },
     DATABASE,
 };
@@ -21,7 +21,7 @@ use eframe::egui::{
 // use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use crate::utilities::{get_data::get_user_from_email, DisplayModal, ModalTypes};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam::channel::Sender;
 use eframe::egui::vec2;
 use egui_extras::{DatePickerButton, Size, StripBuilder};
 use log::{error, info};
@@ -54,7 +54,7 @@ pub struct CreateTaskModal {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Tur {
     pub data: PrestashopPayload,
-    pub ticket_data: TicketData,
+    pub ticket_data: TicketPayload,
     pub task_data: TaskPayload,
     pub customer_data: CustomerData,
     pub task_notes: Vec<TaskNotePayload>,
@@ -101,25 +101,19 @@ impl ModalTypes for CreateTaskModal {
 impl DisplayModal for CreateTaskModal {
     fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction> {
         let mut response: Option<ModalAction> = None;
-        let avail_size = Vec2::new(680., 600.);
+        let avail_size = Vec2::new(680., 580.);
 
         StripBuilder::new(ui)
             .cell_layout(Layout::top_down_justified(Align::Center))
             .size(Size::exact(30.0))
             .size(Size::exact(10.0))
-            .size(Size::relative(0.8))
+            .size(Size::relative(0.9))
             .vertical(|mut strip| {
                 strip.strip(|strip| {
-                    let size = if let ModalAction::ImportTask = response {
-                        Size::exact(avail_size.x / 3.0)
-                    } else {
-                        Size::exact(avail_size.x / 3.0)
-                    };
-
                     strip
-                        .size(size)
+                        .size(Size::exact(avail_size.x / 3.0))
                         .size(Size::remainder())
-                        .size(size)
+                        .size(Size::exact(avail_size.x / 3.0))
                         .cell_layout(Layout::top_down_justified(Align::Center))
                         .cell_layout(Layout::left_to_right(Align::Center))
                         .cell_layout(Layout::top_down_justified(Align::Center))
@@ -163,9 +157,8 @@ impl DisplayModal for CreateTaskModal {
                         .size(Size::exact(avail_size.x))
                         .horizontal(|mut strip| {
                             strip.strip(|s| {
-                                let size = if let ModalAction::ImportTask = Some(current_page_state)
-                                {
-                                    Size::exact(avail_size.x)
+                                let size = if let ModalAction::ImportTask = current_page_state {
+                                    Size::exact(avail_size.x - 15.0)
                                 } else {
                                     Size::exact(avail_size.x / 2.0)
                                 };
@@ -179,12 +172,13 @@ impl DisplayModal for CreateTaskModal {
                                     .horizontal(|mut s| {
                                         s.empty();
                                         s.cell(|ui| {
-                                            ui.style_mut().override_font_id =
-                                                Some(FontId::proportional(13.0));
+                                            // ui.style_mut().override_font_id =
+                                            //     Some(FontId::proportional(13.0));
                                             match current_page_state {
                                                 ModalAction::TicketInfoPage => {
                                                     if let Some(tx) = self.prestashop_api_tx.clone()
                                                     {
+                                                        ui.add_space(50.0);
                                                         self.create_task(
                                                             ui,
                                                             avail_size,
@@ -193,6 +187,7 @@ impl DisplayModal for CreateTaskModal {
                                                     }
                                                 }
                                                 ModalAction::ImportTask => {
+                                                    ui.set_width(660.0);
                                                     display_ticket_page(
                                                         ui,
                                                         &mut self.tur.task_data,
@@ -244,12 +239,23 @@ impl CreateTaskModal {
                         .size(Size::exact(150.0))
                         .vertical(|mut s| {
                             s.cell(|ui| {
+                                let service_num = self.tur.ticket_data.service_number.clone();
+
+                                if !service_num.is_empty() {
+                                    self.task_name = format!(
+                                        "{} - {}",
+                                        self.tur.customer_data.name,
+                                        self.tur.ticket_data.service_number
+                                    );
+                                }
+
                                 TextEdit::singleline(&mut self.task_name)
                                     .hint_text("Task Name")
                                     .margin(Margin::symmetric(6.0, 4.0))
                                     .desired_width(200.0)
                                     .ui(ui);
 
+                                ui.add_space(15.0);
                                 let mut inputs = BTreeSet::new();
                                 for user in self.store_users.iter_mut() {
                                     let parsed = user.email.split_once("@").unwrap_or(("", "")).0;
@@ -308,9 +314,9 @@ impl CreateTaskModal {
                                         .desired_width(200.0)
                                         .ui(ui);
 
-                                    ui.add_space(10.0);
+                                    ui.add_space(15.0);
                                     if Button::new("Submit")
-                                        .min_size(Vec2::new(120.0, 30.0))
+                                        .min_size(Vec2::new(130.0, 30.0))
                                         .fill(Color32::from_rgb(30, 30, 35))
                                         .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
                                         .ui(ui)
@@ -324,7 +330,6 @@ impl CreateTaskModal {
                                         let service_number =
                                             if !so.is_empty() { Some(so) } else { None };
 
-                                        let notes: Vec<TaskNotePayload> = Vec::new();
                                         let assignee = self.assignee.clone();
 
                                         let mut task_payload = TaskPayload {
@@ -332,10 +337,11 @@ impl CreateTaskModal {
                                             task_description: self.description.clone(),
                                             due_date: y,
                                             priority: self.task_priority.clone(),
-                                            task_note: notes,
+                                            task_note: self.tur.task_notes.clone(),
                                             completed: false,
                                             status: Status::Todo,
                                             service_number,
+                                            service_ticket: Some(self.tur.ticket_data.clone()),
                                             ..Default::default()
                                         };
 
@@ -388,7 +394,7 @@ impl Tur {
         if ui.add_enabled(check, button).clicked() {
             let service_num = self.ticket_data.service_number.clone();
             self.presta_api(prestashop_api_tx);
-            self.ticket_data = TicketData::default();
+            self.ticket_data = TicketPayload::default();
             self.task_data = TaskPayload::default();
             self.customer_data = CustomerData::default();
             // self.task_notes = Vec::new::<Vec<TaskNotePayload>>();
