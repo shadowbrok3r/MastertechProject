@@ -254,18 +254,23 @@ impl MtechServer {
 
             let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
             let split_rep = presta_data.split_rep.clone().unwrap_or_default();
+
+            let sales_rep_initials = sales_rep.initials.clone();
+            let split_initials = split_rep.initials.clone();
+
             let email = sales_rep
                 .email
                 .split_once("@")
                 .clone()
-                .unwrap_or(("!! Getting Tech !!", ""))
+                .unwrap_or((&sales_rep_initials, ""))
                 .0
                 .to_string();
+
             let email_split_rep = split_rep
                 .email
                 .split_once("@")
                 .clone()
-                .unwrap_or(("!! Getting Salesman !!", ""))
+                .unwrap_or((&split_initials, ""))
                 .0
                 .to_string();
 
@@ -282,10 +287,15 @@ impl MtechServer {
             customer.email = presta_data.customer.email.clone();
             customer.name = presta_data.customer.name.clone();
             customer.phone_number = presta_data.customer.phone_number.clone();
-            ticket.salesman = email_split_rep;
-            ticket.tech = email;
-            ticket.customer = customer.id.clone();
 
+            ticket.salesman = email_split_rep;
+            ticket.tech = email.clone();
+            ticket.customer = Some(customer.clone());
+            ticket.checkin_rep = email;
+            ticket.terms = presta_data.order.payment.clone();
+            ticket.ticket_total = presta_data.order.total_products_wt.clone();
+            ticket.doc_alias = presta_data.order.order_type.clone();
+            ticket.service_number = presta_data.order.id.clone();
             ticket.id = Some(TicketId(Thing::from((
                 TICKET_TABLE.to_string(),
                 ticket.service_number.clone(),
@@ -305,12 +315,13 @@ impl MtechServer {
                     info!("Theres a couple.... {:?}", service_details);
                 }
             }
+
             if let ModalType::CreateTaskModal(ref mut create_task_modal) =
                 self.context.current_modal
             {
                 info!("Updating modal data");
                 create_task_modal.tur.data = presta_data.clone();
-                create_task_modal.tur.task_data.service_ticket = Some(ticket.clone().into());
+                create_task_modal.tur.task_data.service_ticket = Some(ticket.clone());
 
                 if let Some(service) = create_task_modal.tur.task_data.service_ticket.as_mut() {
                     service.customer = Some(customer.clone());

@@ -384,7 +384,7 @@ pub enum Status {
 pub enum Priority {
     Express,
     Rfs,
-    CustomerFire,
+    Fire,
     Qc,
     #[default]
     Normal,
@@ -611,16 +611,10 @@ impl Priority {
             Priority::Rfs => "Rfs",
             Priority::Qc => "Qc",
             Priority::Express => "Express",
-            Priority::CustomerFire => "CustomerFire",
+            Priority::Fire => "Fire",
         }
     }
-    pub const VALUES: [Self; 5] = [
-        Self::Normal,
-        Self::Rfs,
-        Self::Qc,
-        Self::Express,
-        Self::CustomerFire,
-    ];
+    pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::Fire];
 }
 
 impl Status {

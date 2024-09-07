@@ -16,7 +16,7 @@ use database::{
 };
 use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use eframe::{
-    egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Ui, WidgetText},
+    egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId, Ui, Vec2, WidgetText},
     CreationContext,
 };
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
@@ -458,8 +458,9 @@ impl MtechServerContext {
                 let task_name = task_modal.task.task_name.clone();
                 self.task_modal_handler.ui(
                     ctx,
-                    || Modal::new(&task_name).default_height(600.0),
+                    || Modal::new(&task_name).default_height(600.0).min_width(680.),
                     move |ui, open, page_state| {
+                        ui.set_max_width(500.);
                         let action = task_modal.display(ui, page_state.to_owned());
                         if let Some(action) = action {
                             if let ModalAction::Close = action {
@@ -480,6 +481,7 @@ impl MtechServerContext {
                             self.tur_channel.0.clone(),
                         )
                         .default_height(600.0)
+                        .min_width(680.)
                     },
                     |ui, open, page_state| {
                         let action = create_task_modal.display(ui, page_state.to_owned());
@@ -498,8 +500,12 @@ impl MtechServerContext {
             ModalType::ChatView(chat_modal) => {
                 self.chat_modal_handler.ui(
                     ctx,
-                    || Modal::new("Chats").default_height(600.0),
+                    || Modal::new("Chats"),
                     move |ui, _stay_open, _page_state| {
+                        // ui.set_min_size(Vec2::new(600., 600.));
+                        // ui.set_max_size(Vec2::new(800., 800.));
+                        ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
+
                         if let Some(_new_message) = chat_modal.ui(ui) {
                             spawn_local(async move {});
                         }
@@ -623,7 +629,7 @@ fn setup_custom_fonts(ctx: &Context) {
 
     fonts.font_data.insert(
         "Monaspace".to_owned(),
-        FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Light.otf")),
+        FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf")),
     ); // .ttf and .otf supported
 
     // Put my font first (highest priority):
