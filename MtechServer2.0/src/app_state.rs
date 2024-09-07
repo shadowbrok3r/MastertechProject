@@ -1,8 +1,9 @@
 use crate::{
     pages::{account_settings_page::AccountMod, downloads_page::GithubRelease},
     tabs::{ai_playground::AiPlayground, github_issue::GithubIssue, logger::logger_ui},
-    utilities::displays::modals::{
-        create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler,
+    utilities::{
+        displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
+        ModalTypes,
     },
 };
 use crossbeam::channel::{self, Receiver, Sender};
@@ -478,6 +479,7 @@ impl MtechServerContext {
                             self.store_users.clone(),
                             self.tur_channel.0.clone(),
                         )
+                        .default_height(600.0)
                     },
                     |ui, open, page_state| {
                         let action = create_task_modal.display(ui, page_state.to_owned());

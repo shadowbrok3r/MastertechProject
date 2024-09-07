@@ -101,7 +101,7 @@ impl ModalTypes for CreateTaskModal {
 impl DisplayModal for CreateTaskModal {
     fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction> {
         let mut response: Option<ModalAction> = None;
-        let avail_size = Vec2::new(680., 500.);
+        let avail_size = Vec2::new(680., 600.);
 
         StripBuilder::new(ui)
             .cell_layout(Layout::top_down_justified(Align::Center))
@@ -110,10 +110,16 @@ impl DisplayModal for CreateTaskModal {
             .size(Size::relative(0.8))
             .vertical(|mut strip| {
                 strip.strip(|strip| {
+                    let size = if let ModalAction::ImportTask = response {
+                        Size::exact(avail_size.x / 3.0)
+                    } else {
+                        Size::exact(avail_size.x / 3.0)
+                    };
+
                     strip
-                        .size(Size::exact(avail_size.x / 3.0))
+                        .size(size)
                         .size(Size::remainder())
-                        .size(Size::exact(avail_size.x / 3.0))
+                        .size(size)
                         .cell_layout(Layout::top_down_justified(Align::Center))
                         .cell_layout(Layout::left_to_right(Align::Center))
                         .cell_layout(Layout::top_down_justified(Align::Center))
@@ -157,8 +163,15 @@ impl DisplayModal for CreateTaskModal {
                         .size(Size::exact(avail_size.x))
                         .horizontal(|mut strip| {
                             strip.strip(|s| {
+                                let size = if let ModalAction::ImportTask = Some(current_page_state)
+                                {
+                                    Size::exact(avail_size.x)
+                                } else {
+                                    Size::exact(avail_size.x / 2.0)
+                                };
+
                                 s.size(Size::remainder())
-                                    .size(Size::exact(avail_size.x / 2.0))
+                                    .size(size)
                                     .size(Size::remainder())
                                     .cell_layout(Layout::top_down(Align::Center))
                                     .cell_layout(Layout::top_down(Align::Center))
@@ -168,17 +181,15 @@ impl DisplayModal for CreateTaskModal {
                                         s.cell(|ui| {
                                             ui.style_mut().override_font_id =
                                                 Some(FontId::proportional(13.0));
-                                            response = match current_page_state {
+                                            match current_page_state {
                                                 ModalAction::TicketInfoPage => {
                                                     if let Some(tx) = self.prestashop_api_tx.clone()
                                                     {
-                                                        Some(self.create_task(
+                                                        self.create_task(
                                                             ui,
                                                             avail_size,
                                                             tx.clone(),
-                                                        ))
-                                                    } else {
-                                                        None
+                                                        );
                                                     }
                                                 }
                                                 ModalAction::ImportTask => {
@@ -187,7 +198,6 @@ impl DisplayModal for CreateTaskModal {
                                                         &mut self.tur.task_data,
                                                         avail_size,
                                                     );
-                                                    None
                                                 }
                                                 _ => {
                                                     if let Some(tx) = self.prestashop_api_tx.clone()
@@ -195,12 +205,8 @@ impl DisplayModal for CreateTaskModal {
                                                         if let ModalAction::Close = self
                                                             .create_task(ui, avail_size, tx.clone())
                                                         {
-                                                            Some(ModalAction::Close)
-                                                        } else {
-                                                            None
+                                                            response = Some(ModalAction::Close)
                                                         }
-                                                    } else {
-                                                        None
                                                     }
                                                 }
                                             };
@@ -537,4 +543,3 @@ impl Tur {
         }
     }
 }
-

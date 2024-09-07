@@ -2,8 +2,8 @@ use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
     schema::{
         utilities::{get_connected_clients, get_store_users, get_tasks},
-        TaskNotePayload, TicketId, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
-        TICKET_TABLE,
+        TaskNotePayload, TaskPayload, TicketId, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE,
+        TASK_TABLE, TICKET_TABLE,
     },
     DATABASE,
 };
@@ -242,6 +242,7 @@ impl MtechServer {
         }
 
         if let Ok(presta_data) = self.context.tur_channel.1.try_recv() {
+            self.context.tur.data = presta_data.clone();
             info!("Self.Data: {:?}", self.context.tur.data.clone());
             let customer = &mut self.context.tur.customer_data;
             let ticket = &mut self.context.tur.ticket_data;
@@ -307,7 +308,13 @@ impl MtechServer {
             if let ModalType::CreateTaskModal(ref mut create_task_modal) =
                 self.context.current_modal
             {
+                info!("Updating modal data");
                 create_task_modal.tur.data = presta_data.clone();
+                create_task_modal.tur.task_data.service_ticket = Some(ticket.clone().into());
+
+                if let Some(service) = create_task_modal.tur.task_data.service_ticket.as_mut() {
+                    service.customer = Some(customer.clone());
+                }
             }
         }
 
@@ -317,4 +324,3 @@ impl MtechServer {
         }
     }
 }
-
