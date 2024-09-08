@@ -242,7 +242,7 @@ impl MtechServer {
 
         if let Ok(presta_data) = self.context.tur_channel.1.try_recv() {
             self.context.tur.data = presta_data.clone();
-            info!("Self.Data: {:?}", self.context.tur.data.clone());
+            info!("{:?}", self.context.tur.data.clone());
             let customer = &mut self.context.tur.customer_data;
             let ticket = &mut self.context.tur.ticket_data;
             let _task = &mut self.context.tur.task_data;
@@ -326,12 +326,11 @@ impl MtechServer {
                 info!("Updating modal data");
                 create_task_modal.tur.data = presta_data.clone();
                 create_task_modal.tur.task_data.service_ticket = Some(ticket.clone());
-                info!(
-                    "Ticket: {:?}\nCustomer: {:?}\nTask Notes: {:?}",
-                    ticket.clone(),
-                    customer.clone(),
-                    task_notes.clone()
-                );
+
+                info!("{:?}", ticket.clone());
+                info!("{:?}", customer.clone());
+                info!("{:?}", task_notes.clone());
+
                 if let Some(service) = create_task_modal.tur.task_data.service_ticket.as_mut() {
                     service.customer = Some(customer.clone());
                 }
