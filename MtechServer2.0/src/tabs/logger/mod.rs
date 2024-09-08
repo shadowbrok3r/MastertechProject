@@ -1,6 +1,8 @@
 use eframe::egui::{widgets, Align, Color32, Layout, RichText, ScrollArea, Ui};
+use egui_json_tree::JsonTree;
 use logging::{GlobalLog, LEVELS, LOG};
 use regex::{Regex, RegexBuilder};
+use serde_json::Value;
 use std::sync::Mutex;
 pub mod logging;
 
@@ -212,38 +214,44 @@ impl LoggerUi {
                                     ui.label(target);
                                 }
                                 response.highlight();
-                                let string_format = format!("[{}]: {}", level, string);
 
-                                // the vertical layout is because otherwise text spacing gets weird
-                                ui.vertical(|ui| {
-                                    match level {
-                                        log::Level::Warn => ui.label(
-                                            RichText::new(string_format)
-                                                .monospace()
-                                                .color(Color32::LIGHT_YELLOW),
-                                        ),
-                                        log::Level::Error => ui.label(
-                                            RichText::new(string_format)
-                                                .monospace()
-                                                .color(Color32::from_rgb(255, 51, 153)),
-                                        ),
-                                        log::Level::Info => ui.label(
-                                            RichText::new(string_format)
-                                                .monospace()
-                                                .color(Color32::from_rgb(51, 255, 189)),
-                                        ),
-                                        _ => ui.label(
-                                            RichText::new(string_format)
-                                                .monospace()
-                                                .color(Color32::LIGHT_BLUE),
-                                        ),
-                                    };
-                                });
-
-                                if ui.button("Copy").clicked() {
-                                    ui.output_mut(|o| {
-                                        o.copied_text = string.to_string();
+                                if let Ok(string) = serde_json::from_str::<Value>(string) {
+                                    JsonTree::new("Serializable", &string).show(ui);
+                                } else {
+                                    let string_format = format!("[{}]: {}", level, string);
+                                    // the vertical layout is because otherwise text spacing gets weird
+                                    ui.vertical(|ui| {
+                                        match level {
+                                            log::Level::Warn => ui.label(
+                                                RichText::new(string_format)
+                                                    .monospace()
+                                                    .color(Color32::LIGHT_YELLOW),
+                                            ),
+                                            log::Level::Error => ui.label(
+                                                RichText::new(string_format)
+                                                    .monospace()
+                                                    .color(Color32::from_rgb(255, 51, 153)),
+                                            ),
+                                            log::Level::Info => ui.label(
+                                                RichText::new(string_format)
+                                                    .monospace()
+                                                    .color(Color32::from_rgb(51, 255, 189)),
+                                            ),
+                                            _ => ui.label(
+                                                RichText::new(string_format)
+                                                    .monospace()
+                                                    .color(Color32::LIGHT_BLUE),
+                                            ),
+                                        };
                                     });
+
+                                    if ui.button("Copy").clicked() {
+                                        ui.output_mut(|o| {
+                                            o.copied_text = string.to_string();
+                                        });
+                                    }
+
+                                    // if ui.button("Scroll to Bottom").clicked() {}
                                 }
                             });
                         }
@@ -300,4 +308,3 @@ impl LoggerUi {
 pub fn logger_ui() -> LoggerUi {
     LoggerUi::default()
 }
-

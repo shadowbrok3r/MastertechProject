@@ -1,15 +1,15 @@
 use crate::{
     app_state::{AppState, MtechServer},
     pages::downloads_page::get_github_releases,
-    utilities::{displays::modals::create_task_modal::CreateTaskModal, ModalType},
+    utilities::ModalType,
 };
 use database::STORAGE_URL;
 use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
     schema::{
         utilities::{get_connected_clients, get_store_users, get_tasks},
-        TaskNotePayload, TaskPayload, TicketId, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE,
-        TASK_TABLE, TICKET_TABLE,
+        TaskNotePayload, TicketId, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
+        TICKET_TABLE,
     },
     DATABASE,
 };
@@ -289,6 +289,11 @@ impl MtechServer {
 
             ticket.salesman = email_split_rep;
             ticket.tech = email.clone();
+            info!(
+                "Salesman: {:?}\nTech: {:?}",
+                ticket.salesman.clone(),
+                ticket.tech.clone()
+            );
             ticket.customer = Some(customer.clone());
             ticket.checkin_rep = email;
             ticket.terms = presta_data.order.payment.clone();
@@ -322,8 +327,10 @@ impl MtechServer {
                 create_task_modal.tur.data = presta_data.clone();
                 create_task_modal.tur.task_data.service_ticket = Some(ticket.clone());
                 info!(
-                    "CreateTaskModal Tur Data: {:?}",
-                    create_task_modal.tur.data.clone()
+                    "Ticket: {:?}\nCustomer: {:?}\nTask Notes: {:?}",
+                    ticket.clone(),
+                    customer.clone(),
+                    task_notes.clone()
                 );
                 if let Some(service) = create_task_modal.tur.task_data.service_ticket.as_mut() {
                     service.customer = Some(customer.clone());
