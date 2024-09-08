@@ -393,20 +393,26 @@ impl CreateTaskModal {
                                                     ..Default::default()
                                                 };
 
-                                                match send_payload(
-                                                    ticket_data,
-                                                    payload.customer_data.clone(),
-                                                    ComputerData::default(),
-                                                    live_task_payload.clone(),
-                                                    payload.task_notes,
-                                                    false,
-                                                )
-                                                .await
+                                                if let Some(cust) =
+                                                    payload.ticket_data.customer.clone()
                                                 {
-                                                    Ok(records) => {
-                                                        info!("Created Records: {records:?}")
+                                                    match send_payload(
+                                                        ticket_data,
+                                                        cust,
+                                                        ComputerData::default(),
+                                                        live_task_payload.clone(),
+                                                        payload.task_notes,
+                                                        false,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(records) => {
+                                                            info!("Created Records: {records:?}")
+                                                        }
+                                                        Err(e) => {
+                                                            info!("Error sending payload: {e:?}")
+                                                        }
                                                     }
-                                                    Err(e) => info!("Error sending payload: {e:?}"),
                                                 }
                                             } else {
                                                 let email = format!("{assignee}@pclaptops.com");
@@ -643,28 +649,31 @@ pub async fn send_payload(
     task_data.everest_initials = queried_salesman.everest_initials;
     task_data.assignee = queried_salesman.id;
 
+    info!("Customer: {:?}", customer_data);
     if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await? {
         let update_cust_record: Option<Record> = DATABASE
             .update(cust.id)
             .content(customer_data.clone())
             .await?;
         info!("Customer updated: {update_cust_record:?}");
-
-        if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await? {
-            if send_specs {
+        if send_specs {
+            if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await?
+            {
                 let create_computer_record: Option<Record> = DATABASE
                     .update(computer_record.id)
                     .content(computer_data)
                     .await?;
                 info!("create_computer_record: {create_computer_record:?}");
+            } else {
+                let create_computer_record: Vec<Record> = DATABASE
+                    .create(COMPUTER_TABLE)
+                    .content(computer_data)
+                    .await?;
+                info!("create_computer_record: {create_computer_record:?}");
             }
-        } else {
-            let create_computer_record: Vec<Record> = DATABASE
-                .create(COMPUTER_TABLE)
-                .content(computer_data)
-                .await?;
-            info!("create_computer_record: {create_computer_record:?}");
         }
+        info!("Ticket: {:?}", ticket_data);
+
         if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await? {
             let service_ticket_record: Option<Record> =
                 DATABASE.update(ticket.id).content(ticket_data).await?;
@@ -700,6 +709,8 @@ pub async fn send_payload(
             Err(e) => error!("Error with create_ticket_record: {e:?}"),
         }
     }
+
+    info!("Task: {:?}", task_data);
 
     let create_task_record: Vec<Record> = DATABASE.create(TASK_TABLE).content(task_data).await?;
     info!("create_task_record: {create_task_record:?}");
