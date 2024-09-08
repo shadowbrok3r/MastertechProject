@@ -1,3 +1,9 @@
+use crate::{
+    app_state::{AppState, MtechServer},
+    pages::downloads_page::get_github_releases,
+    utilities::{displays::modals::create_task_modal::CreateTaskModal, ModalType},
+};
+use database::STORAGE_URL;
 use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
     schema::{
@@ -9,13 +15,6 @@ use database::{
 };
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::egui::{Color32, RichText};
-// use crate::utilities::get_data::get_customer_data;
-use crate::{
-    app_state::{AppState, MtechServer},
-    pages::downloads_page::get_github_releases,
-    utilities::{displays::modals::create_task_modal::CreateTaskModal, ModalType},
-};
-use database::STORAGE_URL;
 use log::info;
 use log::{debug, error};
 use mtechserver::webworker::Input;
@@ -322,7 +321,10 @@ impl MtechServer {
                 info!("Updating modal data");
                 create_task_modal.tur.data = presta_data.clone();
                 create_task_modal.tur.task_data.service_ticket = Some(ticket.clone());
-
+                info!(
+                    "CreateTaskModal Tur Data: {:?}",
+                    create_task_modal.tur.data.clone()
+                );
                 if let Some(service) = create_task_modal.tur.task_data.service_ticket.as_mut() {
                     service.customer = Some(customer.clone());
                 }

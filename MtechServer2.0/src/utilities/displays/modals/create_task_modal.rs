@@ -8,8 +8,10 @@ use database::{
             Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop,
             PrestashopPayload,
         },
-        CustomerData, CustomerId, Priority, Record, Status, TaskNotePayload, TaskPayload,
-        TicketPayload, User, CUSTOMER_TABLE, TASK_TABLE,
+        utilities::{query_id, query_user_from_email},
+        ComputerData, CustomerData, CustomerId, LiveTaskPayload, Priority, Record, Status,
+        TaskNoteId, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, COMPUTER_TABLE,
+        CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE,
     },
     DATABASE,
 };
@@ -241,19 +243,21 @@ impl CreateTaskModal {
                             s.cell(|ui| {
                                 let service_num = self.tur.ticket_data.service_number.clone();
 
-                                if !service_num.is_empty() {
+                                let edit = TextEdit::singleline(&mut self.task_name)
+                                    .hint_text("Task Name")
+                                    .margin(Margin::symmetric(6.0, 4.0))
+                                    .desired_width(200.0)
+                                    .ui(ui);
+
+                                let name = self.tur.customer_data.name.clone();
+                                if !service_num.is_empty() && edit.lost_focus() && !name.is_empty()
+                                {
                                     self.task_name = format!(
                                         "{} - {}",
                                         self.tur.customer_data.name,
                                         self.tur.ticket_data.service_number
                                     );
                                 }
-
-                                TextEdit::singleline(&mut self.task_name)
-                                    .hint_text("Task Name")
-                                    .margin(Margin::symmetric(6.0, 4.0))
-                                    .desired_width(200.0)
-                                    .ui(ui);
 
                                 ui.add_space(15.0);
                                 let mut inputs = BTreeSet::new();
@@ -332,18 +336,29 @@ impl CreateTaskModal {
 
                                         let assignee = self.assignee.clone();
 
-                                        let mut task_payload = TaskPayload {
+                                        // This needs to be TicketData
+
+                                        let mut task_payload = LiveTaskPayload {
                                             task_name: self.task_name.clone(),
                                             task_description: self.description.clone(),
                                             due_date: y,
                                             priority: self.task_priority.clone(),
-                                            task_note: self.tur.task_notes.clone(),
+                                            // task_note: self
+                                            //     .tur
+                                            //     .task_notes
+                                            //     .iter()
+                                            //     .map(|note| note.id.clone().unwrap())
+                                            //     .collect::<Vec<TaskNoteId>>(),
                                             completed: false,
                                             status: Status::Todo,
                                             service_number,
-                                            service_ticket: Some(self.tur.ticket_data.clone()),
+                                            service_ticket: Some(
+                                                self.tur.ticket_data.id.clone().unwrap(),
+                                            ),
                                             ..Default::default()
                                         };
+
+                                        let payload = self.tur.clone();
 
                                         spawn_local(async move {
                                             let email = format!("{assignee}@pclaptops.com");
@@ -353,12 +368,57 @@ impl CreateTaskModal {
                                                         task_payload.assignee = usr.id;
                                                         task_payload.everest_initials =
                                                             usr.everest_initials;
-                                                    }
-                                                    let _: Vec<Record> = DATABASE
-                                                        .create(TASK_TABLE)
-                                                        .content(task_payload)
+
+                                                        let ticket_data = TicketData {
+                                                            customer: payload
+                                                                .customer_data
+                                                                .id
+                                                                .clone(),
+                                                            computer: None,
+                                                            service_number: payload
+                                                                .ticket_data
+                                                                .service_number,
+                                                            checkin_rep: payload
+                                                                .ticket_data
+                                                                .checkin_notes
+                                                                .clone(),
+                                                            sales_rep: payload
+                                                                .ticket_data
+                                                                .sales_rep,
+                                                            checkin_notes: payload
+                                                                .ticket_data
+                                                                .checkin_notes
+                                                                .clone(),
+                                                            tech: payload.ticket_data.tech,
+                                                            salesman: payload.ticket_data.salesman,
+                                                            terms: payload.ticket_data.terms,
+                                                            ticket_total: payload
+                                                                .ticket_data
+                                                                .ticket_total,
+                                                            doc_alias: payload
+                                                                .ticket_data
+                                                                .doc_alias,
+                                                            ..Default::default()
+                                                        };
+
+                                                        match send_payload(
+                                                            ticket_data,
+                                                            payload.customer_data.clone(),
+                                                            ComputerData::default(),
+                                                            task_payload.clone(),
+                                                            payload.task_notes,
+                                                            true,
+                                                        )
                                                         .await
-                                                        .unwrap();
+                                                        {
+                                                            Ok(records) => info!(
+                                                                "Created Records: {records:?}"
+                                                            ),
+                                                            Err(e) => info!(
+                                                                "Error sending payload: {e:?}"
+                                                            ),
+                                                        }
+                                                    }
                                                 }
                                                 Err(e) => error!("Error getting user: {e:?}"),
                                             }
@@ -548,4 +608,122 @@ impl Tur {
             });
         }
     }
+}
+
+pub async fn send_payload(
+    ticket_data: TicketData,
+    customer_data: CustomerData,
+    computer_data: ComputerData,
+    mut task_data: LiveTaskPayload,
+    task_notes: Vec<TaskNotePayload>,
+    send_specs: bool,
+) -> anyhow::Result<Vec<Record>, anyhow::Error> {
+    info!("Send_Payload");
+    let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
+    let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
+
+    let task_id = task_data.id.clone();
+    let ticket_id = ticket_data.id.clone();
+    let customer_id = customer_data.id.clone();
+    let computer_id = computer_data.id.clone();
+
+    task_data.task_name = format!(
+        "{} - {}",
+        &customer_data.name,
+        ticket_data.service_number.clone()
+    );
+    task_data.service_ticket = ticket_id.clone();
+    task_data.service_number = Some(ticket_data.service_number.clone());
+    task_data.priority = Priority::Normal;
+    task_data.everest_initials = queried_salesman.everest_initials;
+    task_data.assignee = queried_salesman.id;
+
+    if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await? {
+        let update_cust_record: Option<Record> = DATABASE
+            .update(cust.id)
+            .content(customer_data.clone())
+            .await?;
+        info!("Customer updated: {update_cust_record:?}");
+
+        if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await? {
+            if send_specs {
+                let create_computer_record: Option<Record> = DATABASE
+                    .update(computer_record.id)
+                    .content(computer_data)
+                    .await?;
+                info!("create_computer_record: {create_computer_record:?}");
+            }
+        } else {
+            let create_computer_record: Vec<Record> = DATABASE
+                .create(COMPUTER_TABLE)
+                .content(computer_data)
+                .await?;
+            info!("create_computer_record: {create_computer_record:?}");
+        }
+        if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await? {
+            let service_ticket_record: Option<Record> =
+                DATABASE.update(ticket.id).content(ticket_data).await?;
+            info!("service_ticket_record: {service_ticket_record:?}");
+        } else {
+            let service_ticket_record: Vec<Record> =
+                DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
+            info!("service_ticket_record: {service_ticket_record:?}");
+        }
+    } else {
+        match DATABASE
+            .create::<Vec<Record>>(CUSTOMER_TABLE)
+            .content(customer_data.clone())
+            .await
+        {
+            Ok(create_cust_record) => info!("Created Record: {create_cust_record:?}"),
+            Err(e) => error!("Error with create_cust_record: {e:?}"),
+        }
+        match DATABASE
+            .create::<Vec<Record>>(COMPUTER_TABLE)
+            .content(computer_data)
+            .await
+        {
+            Ok(create_computer_record) => info!("Created Record: {create_computer_record:?}"),
+            Err(e) => error!("Error with create_computer_record: {e:?}"),
+        }
+        match DATABASE
+            .create::<Vec<Record>>(TICKET_TABLE)
+            .content(ticket_data)
+            .await
+        {
+            Ok(create_ticket_record) => info!("Created Record: {create_ticket_record:?}"),
+            Err(e) => error!("Error with create_ticket_record: {e:?}"),
+        }
+    }
+
+    let create_task_record: Vec<Record> = DATABASE.create(TASK_TABLE).content(task_data).await?;
+    info!("create_task_record: {create_task_record:?}");
+
+    if task_notes.len() > 0 {
+        info!("Task Notes: {:?}", task_notes);
+        let mut note_ids = Vec::new();
+
+        for mut note in task_notes {
+            note.task_id = task_id.clone();
+            let create_task_note_record: Vec<Record> =
+                DATABASE.create(TASK_NOTE_TABLE).content(note).await?;
+            info!("create_task_note_record: {:?}", create_task_note_record);
+            if let Some(note_record) = create_task_note_record.get(0) {
+                note_ids.push(note_record.id.clone());
+            }
+        }
+
+        if let Some(record) = create_task_record.get(0) {
+            let update_task: Option<Record> = DATABASE
+                .query("UPDATE $task SET task_note += $notes")
+                .bind(("task", record.id.clone()))
+                .bind(("notes", note_ids))
+                .await?
+                .take(0)?;
+
+            info!("Update_task with notes: {update_task:?}");
+        }
+    }
+
+    Ok(create_task_record)
 }
