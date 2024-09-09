@@ -371,31 +371,9 @@ impl CreateTaskModal {
                                                 let mut ticket_data: TicketData = payload.ticket_data.into();
                                                 info!("=====> POST CONVERTED: {:?}\n\n", ticket_data.clone());
 
-
-                                                // ticket_data
-                                                // {
-                                                //     customer: payload.customer_data.id.clone(),
-                                                //     computer: None,
-                                                //     service_number: payload
-                                                //         .ticket_data
-                                                //         .service_number,
-                                                //     checkin_rep: payload
-                                                //         .ticket_data
-                                                //         .checkin_notes
-                                                //         .clone(),
-                                                //     sales_rep: payload.ticket_data.sales_rep,
-                                                //     checkin_notes: payload
-                                                //         .ticket_data
-                                                //         .checkin_notes
-                                                //         .clone(),
-                                                //     tech: payload.ticket_data.tech,
-                                                //     salesman: assignee,
-                                                //     terms: payload.ticket_data.terms,
-                                                //     ticket_total: payload.ticket_data.ticket_total,
-                                                //     doc_alias: payload.ticket_data.doc_alias,
-                                                //     id: payload.task_data.service_ticket .clone(),
-                                                //     ..Default::default()                                                    
-                                                // };
+                                                if ticket_data.salesman.is_empty() {
+                                                    ticket_data.salesman = assignee.clone();
+                                                } 
 
                                                 info!("TicketData: {:?}", ticket_data.clone());
 

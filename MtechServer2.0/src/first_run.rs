@@ -287,6 +287,7 @@ impl MtechServer {
             customer.name = presta_data.customer.name.clone();
             customer.phone_number = presta_data.customer.phone_number.clone();
             ticket.salesman = email_split_rep;
+            ticket.sales_rep = email.clone();
             ticket.tech = email.clone();
             info!(
                 "Salesman: {:?}\nTech: {:?}",
