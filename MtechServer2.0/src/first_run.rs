@@ -245,7 +245,7 @@ impl MtechServer {
             info!("{:?}", self.context.tur.data.clone());
             let customer = &mut self.context.tur.customer_data;
             let ticket = &mut self.context.tur.ticket_data;
-            let _task = &mut self.context.tur.task_data;
+            let task = &mut self.context.tur.task_data;
             let task_notes = &mut self.context.tur.task_notes;
 
             let service_details = presta_data.order.associations.order_service.clone();
@@ -286,7 +286,6 @@ impl MtechServer {
             customer.email = presta_data.customer.email.clone();
             customer.name = presta_data.customer.name.clone();
             customer.phone_number = presta_data.customer.phone_number.clone();
-
             ticket.salesman = email_split_rep;
             ticket.tech = email.clone();
             info!(
@@ -320,20 +319,16 @@ impl MtechServer {
                 }
             }
 
+            task.service_ticket = Some(ticket.clone());
+
             if let ModalType::CreateTaskModal(ref mut create_task_modal) =
                 self.context.current_modal
             {
                 info!("Updating modal data");
-                create_task_modal.tur.data = presta_data.clone();
-                create_task_modal.tur.task_data.service_ticket = Some(ticket.clone());
-
                 info!("{:?}", ticket.clone());
                 info!("{:?}", customer.clone());
                 info!("{:?}", task_notes.clone());
-
-                if let Some(service) = create_task_modal.tur.task_data.service_ticket.as_mut() {
-                    service.customer = Some(customer.clone());
-                }
+                create_task_modal.tur = self.context.tur.clone();
             }
         }
 
