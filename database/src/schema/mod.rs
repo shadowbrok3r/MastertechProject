@@ -198,6 +198,28 @@ impl From<TicketData> for TicketPayload {
     }
 }
 
+impl From<TicketPayload> for TicketData {
+    fn from(ticket: TicketPayload) -> Self {
+        Self {
+            id: ticket.id,
+            created_at: ticket.created_at,
+            service_number: ticket.service_number,
+            checkin_rep: ticket.checkin_rep,
+            sales_rep: ticket.sales_rep,
+            checkin_notes: ticket.checkin_notes,
+            tech: ticket.tech,
+            salesman: ticket.salesman,
+            terms: ticket.terms,
+            ticket_total: ticket.ticket_total,
+            doc_alias: ticket.doc_alias,
+            current_antivirus: ticket.current_antivirus,
+            hardware_test_results: ticket.hardware_test_results,
+            customer: ticket.customer.unwrap_or_default().id,
+            computer: ticket.computer.unwrap_or_default().id,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct CustomerData {
     pub id: Option<CustomerId>,

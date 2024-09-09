@@ -318,12 +318,16 @@ impl CreateTaskModal {
                                         .ui(ui);
 
                                     ui.add_space(15.0);
-                                    if Button::new("Submit")
+                                    let btn = Button::new("Submit")
                                         .min_size(Vec2::new(130.0, 30.0))
                                         .fill(Color32::from_rgb(30, 30, 35))
-                                        .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)))
-                                        .ui(ui)
-                                        .clicked()
+                                        .stroke(Stroke::new(2.0, Color32::from_rgb(30, 3, 28)));
+                                    let pulling_ticket = self.tur.ticket_data.service_number.len() == 7;
+                                    let check = !self.task_name.is_empty() && !self.description.is_empty() && !self.assignee.is_empty();
+
+                                    let enabled = if (pulling_ticket && check) || (check) { true } else { false };
+
+                                    if ui.add_enabled(enabled, btn).clicked()
                                     {
                                         info!("ASSIGNEE: {:?}", self.assignee.clone());
                                         let time =
@@ -335,99 +339,104 @@ impl CreateTaskModal {
                                             if !so.is_empty() { Some(so) } else { None };
 
                                         let assignee = self.assignee.clone();
-
-                                        // This needs to be TicketData
-
+                                        let mut payload = self.tur.clone();                                        
+                                        payload.task_data.priority = self.task_priority.clone();
+                                        payload.task_data.due_date = y.clone();
+                                        payload.task_data.completed = false;
+                                        payload.task_data.status = Status::Todo;
+                                        payload.task_data.task_name = self.task_name.clone();
+                                        payload.task_data.task_description = self.description.clone();
+                                        
                                         let live_task_payload = LiveTaskPayload {
                                             task_name: self.task_name.clone(),
                                             task_description: self.description.clone(),
                                             due_date: y.clone(),
                                             priority: self.task_priority.clone(),
-                                            // task_note: self
-                                            //     .tur
-                                            //     .task_notes
-                                            //     .iter()
-                                            //     .map(|note| note.id.clone().unwrap())
-                                            //     .collect::<Vec<TaskNoteId>>(),
                                             completed: false,
                                             status: Status::Todo,
                                             service_number: service_number.clone(),
+                                            service_ticket: self.tur.ticket_data.id.clone(),
                                             ..Default::default()
                                         };
+                                        
+                                        info!("--> SELF.TUR: {:#?}\n--> LIVE TASK PAYLOAD: {:#?}\n--> TASK PAYLOAD: {:#?}", 
+                                            payload.clone(), 
+                                            live_task_payload.clone(),
+                                            payload.task_data.clone()
+                                        );
 
-                                        let payload = self.tur.clone();
-                                        let notes: Vec<TaskNotePayload> = Vec::new();
-                                        let mut task_payload = TaskPayload {
-                                            task_name: self.task_name.clone(),
-                                            task_description: self.description.clone(),
-                                            due_date: y.clone(),
-                                            priority: self.task_priority.clone(),
-                                            task_note: notes,
-                                            completed: false,
-                                            status: Status::Todo,
-                                            service_number: service_number.clone(),
-                                            ..Default::default()
-                                        };
                                         spawn_local(async move {
                                             if !payload.ticket_data.service_number.is_empty() {
-                                                let ticket_data = TicketData {
-                                                    customer: payload.customer_data.id.clone(),
-                                                    computer: None,
-                                                    service_number: payload
-                                                        .ticket_data
-                                                        .service_number,
-                                                    checkin_rep: payload
-                                                        .ticket_data
-                                                        .checkin_notes
-                                                        .clone(),
-                                                    sales_rep: payload.ticket_data.sales_rep,
-                                                    checkin_notes: payload
-                                                        .ticket_data
-                                                        .checkin_notes
-                                                        .clone(),
-                                                    tech: payload.ticket_data.tech,
-                                                    salesman: assignee,
-                                                    terms: payload.ticket_data.terms,
-                                                    ticket_total: payload.ticket_data.ticket_total,
-                                                    doc_alias: payload.ticket_data.doc_alias,
-                                                    ..Default::default()
-                                                };
+                                                info!("Submitting Ticket\n=====> PRE CONVERTED: {:?}\n\n", payload.ticket_data.clone());
+                                                let mut ticket_data: TicketData = payload.ticket_data.into();
+                                                info!("=====> POST CONVERTED: {:?}\n\n", ticket_data.clone());
 
-                                                if let Some(cust) =
-                                                    payload.ticket_data.customer.clone()
+
+                                                // ticket_data
+                                                // {
+                                                //     customer: payload.customer_data.id.clone(),
+                                                //     computer: None,
+                                                //     service_number: payload
+                                                //         .ticket_data
+                                                //         .service_number,
+                                                //     checkin_rep: payload
+                                                //         .ticket_data
+                                                //         .checkin_notes
+                                                //         .clone(),
+                                                //     sales_rep: payload.ticket_data.sales_rep,
+                                                //     checkin_notes: payload
+                                                //         .ticket_data
+                                                //         .checkin_notes
+                                                //         .clone(),
+                                                //     tech: payload.ticket_data.tech,
+                                                //     salesman: assignee,
+                                                //     terms: payload.ticket_data.terms,
+                                                //     ticket_total: payload.ticket_data.ticket_total,
+                                                //     doc_alias: payload.ticket_data.doc_alias,
+                                                //     id: payload.task_data.service_ticket .clone(),
+                                                //     ..Default::default()                                                    
+                                                // };
+
+                                                info!("TicketData: {:?}", ticket_data.clone());
+
+                                                info!("Attaching Customer with Ticket: {:?}", &payload.customer_data.name);
+                                                match send_payload(
+                                                    ticket_data,
+                                                    payload.customer_data.clone(),
+                                                    ComputerData::default(),
+                                                    live_task_payload.clone(),
+                                                    payload.task_notes,
+                                                    false,
+                                                )
+                                                .await
                                                 {
-                                                    match send_payload(
-                                                        ticket_data,
-                                                        cust,
-                                                        ComputerData::default(),
-                                                        live_task_payload.clone(),
-                                                        payload.task_notes,
-                                                        false,
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(records) => {
-                                                            info!("Created Records: {records:?}")
-                                                        }
-                                                        Err(e) => {
-                                                            info!("Error sending payload: {e:?}")
-                                                        }
+                                                    Ok(records) => {
+                                                        info!("Created Records: {records:?}")
+                                                    }
+                                                    Err(e) => {
+                                                        info!("Error sending payload: {e:?}")
                                                     }
                                                 }
                                             } else {
+                                                info!("Creating Regular Task");
                                                 let email = format!("{assignee}@pclaptops.com");
+
                                                 match get_user_from_email(email).await {
                                                     Ok(user) => {
                                                         if let Some(usr) = user {
-                                                            task_payload.assignee = usr.id;
-                                                            task_payload.everest_initials =
+
+                                                            payload.task_data.assignee = usr.id;
+                                                            payload.task_data.everest_initials =
                                                                 usr.everest_initials;
 
-                                                            let _: Vec<Record> = DATABASE
-                                                                .create(TASK_TABLE)
-                                                                .content(task_payload)
-                                                                .await
-                                                                .unwrap();
+                                                            match DATABASE
+                                                                .create::<Vec<Record>>(TASK_TABLE)
+                                                                .content(payload.task_data)
+                                                                .await {
+                                                                    Ok(created_task) => info!("Created Task: {created_task:?}"),
+                                                                    Err(e) => info!("Error creating task: {e:?}")
+                                                                }
+                                                                
                                                         }
                                                     }
                                                     Err(e) => info!("Error getting user: {e:?}"),
