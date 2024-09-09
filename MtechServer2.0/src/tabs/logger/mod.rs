@@ -203,6 +203,9 @@ impl LoggerUi {
                                 ui.colored_label(Color32::from_rgb(255, 51, 153), string_format)
                             }
                             log::Level::Info => {
+                                if let Ok(string) = serde_json::from_str::<Value>(string) {
+                                    JsonTree::new("Serializable", &string).show(ui);
+                                }
                                 ui.colored_label(Color32::from_rgb(51, 255, 189), string_format)
                             }
                             _ => ui.colored_label(Color32::LIGHT_BLUE, string_format),

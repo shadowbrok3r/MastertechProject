@@ -25,7 +25,7 @@ use eframe::egui::{
     Widget,
 };
 use egui_extras::{DatePickerButton, Size, StripBuilder};
-use log::{error, info};
+use log::{error, info, warn};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use surrealdb::sql::Thing;
@@ -359,7 +359,7 @@ impl CreateTaskModal {
                                             ..Default::default()
                                         };
                                         
-                                        info!("--> SELF.TUR: {:#?}\n--> LIVE TASK PAYLOAD: {:#?}\n--> TASK PAYLOAD: {:#?}", 
+                                        warn!("--> SELF.TUR: {:#?}\n--> LIVE TASK PAYLOAD: {:#?}\n--> TASK PAYLOAD: {:#?}", 
                                             payload.clone(), 
                                             live_task_payload.clone(),
                                             payload.task_data.clone()
@@ -367,12 +367,17 @@ impl CreateTaskModal {
 
                                         spawn_local(async move {
                                             if !payload.ticket_data.service_number.is_empty() {
-                                                info!("Submitting Ticket\n=====> PRE CONVERTED: {:?}\n\n", payload.ticket_data.clone());
+                                                warn!("Submitting Ticket\n=====> PRE CONVERTED: {:?}\n\n", payload.ticket_data.clone());
                                                 let mut ticket_data: TicketData = payload.ticket_data.into();
-                                                info!("=====> POST CONVERTED: {:?}\n\n", ticket_data.clone());
+                                                warn!("=====> POST CONVERTED: {:?}\n\n", ticket_data.clone());
 
                                                 if ticket_data.salesman.is_empty() {
+                                                    info!("Salesman was empty, assigning current user");
                                                     ticket_data.salesman = assignee.clone();
+                                                    info!("TicketData.Salesman: {:?}\nAssignee: {:?}", 
+                                                        ticket_data.salesman.clone(), 
+                                                        assignee.clone()
+                                                    );
                                                 } 
 
                                                 info!("TicketData: {:?}", ticket_data.clone());
@@ -392,7 +397,7 @@ impl CreateTaskModal {
                                                         info!("Created Records: {records:?}")
                                                     }
                                                     Err(e) => {
-                                                        info!("Error sending payload: {e:?}")
+                                                        error!("Error sending payload: {e:?}")
                                                     }
                                                 }
                                             } else {
@@ -412,12 +417,12 @@ impl CreateTaskModal {
                                                                 .content(payload.task_data)
                                                                 .await {
                                                                     Ok(created_task) => info!("Created Task: {created_task:?}"),
-                                                                    Err(e) => info!("Error creating task: {e:?}")
+                                                                    Err(e) => error!("Error creating task: {e:?}")
                                                                 }
                                                                 
                                                         }
                                                     }
-                                                    Err(e) => info!("Error getting user: {e:?}"),
+                                                    Err(e) => error!("Error getting user: {e:?}"),
                                                 }
                                             }
                                         });
