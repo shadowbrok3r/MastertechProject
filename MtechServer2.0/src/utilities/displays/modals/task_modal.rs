@@ -138,7 +138,13 @@ impl DisplayModal for TaskModal {
                                     ModalAction::ComputerInfoPage => computer_info_page = true,
                                     ModalAction::TaskNotePage => task_note_page = true,
                                     ModalAction::TaskPage => task_page = true,
-                                    _ => ticket_page = true,
+                                    _ => {
+                                        if self.task.service_ticket.is_some() {
+                                            ticket_page = true;
+                                        } else {
+                                            task_page = true;
+                                        }
+                                    }
                                 };
 
                                 let delete_btn = Button::new(
