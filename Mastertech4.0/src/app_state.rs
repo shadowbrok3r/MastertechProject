@@ -1,32 +1,60 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ClientId, ComputerData, ConnectedClient, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData, User}, Database};
-use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText};
-use displays::{channel_manager::ChannelManager, ui_tools::{mention_handler::MentionHandler, toasts::Toasts}, virtual_filesystem::FileSystem};
-use std::{collections::{HashMap, HashSet}, path::PathBuf, sync::{atomic::AtomicBool, Arc, Mutex}}; 
-use egui_dock::{Node, NodeIndex, SurfaceIndex, DockState, TabViewer};
 use crossbeam::channel::{Receiver, Sender};
+use database::{
+    schema::{
+        prestashop_schema::PrestashopPayload, ClientId, ComputerData, ConnectedClient,
+        CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload,
+        TicketData, User,
+    },
+    Database,
+};
+use displays::{
+    channel_manager::ChannelManager,
+    ui_tools::{mention_handler::MentionHandler, toasts::Toasts},
+    virtual_filesystem::FileSystem,
+};
+use eframe::egui::{
+    Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText,
+};
+use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::{atomic::AtomicBool, Arc, Mutex},
+};
 // use egui_ratatui::RataguiBackend;
+use anyhow::Error;
 use chrono::{DateTime, Utc};
 use egui_file::FileDialog;
-use serde_json::Value;
-use anyhow::Error;
 use log::info;
+use serde_json::Value;
+
+#[cfg(target_os = "windows")]
+use crate::tabs::minidump::MiniDumpApp;
 
 use crate::{
-    pages::login_page::Login, 
+    pages::login_page::Login,
     tabs::{
-        file_browser::FileBrowser, github::self_updater::GithubRelease, logger::logger_ui, minidump::MiniDumpApp, scripts::Scripts, tur_sheet::{get_ticket::SendRequest, 
-            scaffold::{self, HardwareTest}}, websockets::WebConsoleFrontend
-    }, 
+        file_browser::FileBrowser,
+        github::self_updater::GithubRelease,
+        logger::logger_ui,
+        scripts::Scripts,
+        tur_sheet::{
+            get_ticket::SendRequest,
+            scaffold::{self, HardwareTest},
+        },
+        websockets::WebConsoleFrontend,
+    },
     utilities::{
         displays::{
-            chats::ChatView, 
-            modals::{create_task_modal::CreateTaskModal, task_modal::SpecialPartOrder, ChatModalHandler, Modal, ModalHandler, TaskModalHandler}, 
-            tasks::task_layout::TaskLayout
-        }, 
-        DisplayModal, 
-        ModalType, 
-        TaskUiActions
-    }
+            chats::ChatView,
+            modals::{
+                create_task_modal::CreateTaskModal, task_modal::SpecialPartOrder, ChatModalHandler,
+                Modal, ModalHandler, TaskModalHandler,
+            },
+            tasks::task_layout::TaskLayout,
+        },
+        DisplayModal, ModalType, TaskUiActions,
+    },
 };
 
 pub struct MasterTechApp {
@@ -37,7 +65,7 @@ pub struct MasterTechApp {
 }
 
 #[derive(Default, Debug, PartialEq)]
-pub enum MainPages{
+pub enum MainPages {
     #[default]
     Tasks,
     Downloads,
@@ -45,20 +73,20 @@ pub enum MainPages{
 }
 
 #[derive(Debug, PartialEq)]
-pub enum AppState{
+pub enum AppState {
     Authenticated(MainPages),
     CreateAccount,
     NoAuth(String),
-    Login
+    Login,
 }
 
-impl Default for AppState{
+impl Default for AppState {
     fn default() -> Self {
         Self::NoAuth("Not Authenticated".to_string())
     }
 }
 
-pub struct MastertechContext { 
+pub struct MastertechContext {
     pub app_state_tx: Sender<AppState>,
     pub app_state_rx: Receiver<AppState>,
 
@@ -66,16 +94,17 @@ pub struct MastertechContext {
     pub url: Option<String>,
     pub error: String,
     pub frontend: Option<WebConsoleFrontend>,
+
+    #[cfg(target_os = "windows")]
     pub minidump_app: MiniDumpApp,
     pub file_browser: Arc<Mutex<FileBrowser>>,
     // pub terminal_frontend: Option<TerminalFrontend>,
     // pub terminal: Terminal<RataguiBackend>,
-
     pub keys: GetKeysResponse,
     pub client: reqwest::Client,
     /// Sends requests and retrieves data from scaffold
     pub scaffold_request: SendRequest,
-    
+
     pub current_antivirus: String,
     pub seb_info: Option<LocalSebData>,
     pub opened_file: Option<PathBuf>,
@@ -94,7 +123,7 @@ pub struct MastertechContext {
     pub open_tabs: HashSet<String>,
 
     pub date: Option<DateTime<Utc>>,
-    
+
     pub reader_bytes: u32,
 
     pub toasts: Toasts,
@@ -106,7 +135,7 @@ pub struct MastertechContext {
     pub get_specs: bool,
     pub send_specs: bool,
     pub spinner: bool,
-    
+
     pub style: Option<egui_dock::Style>,
     pub text_color: Color32,
     pub border_stroke_color: Stroke,
@@ -141,12 +170,12 @@ pub struct MastertechContext {
     pub github_issue_descript: String,
 
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
-    
+
     // pub presta_data: PrestaDataChannel<T>,
     pub db_data_receiver: Receiver<Vec<TaskPayload>>,
     pub db_data_sender: Sender<Vec<TaskPayload>>,
     pub prestashop_api_rx: Receiver<PrestashopPayload>,
-    pub prestashop_api_tx: Sender<PrestashopPayload>, 
+    pub prestashop_api_tx: Sender<PrestashopPayload>,
     pub computer_specs_tx: Sender<ComputerData>,
     pub computer_specs_rx: Receiver<ComputerData>,
 
@@ -172,7 +201,7 @@ pub struct MastertechContext {
     pub special_part_order: SpecialPartOrder,
     pub toolbox: FileSystem,
     pub minio_files: (Sender<Vec<String>>, Receiver<Vec<String>>),
-    pub copied_items_tx: Sender<String>, 
+    pub copied_items_tx: Sender<String>,
     pub copied_items_rx: Receiver<String>,
     pub github_releases: Vec<GithubRelease>,
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
@@ -183,24 +212,46 @@ impl MasterTechApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
 
-        let mut tree = DockState::new(
-            vec!["TUR Sheet".to_owned(), "Tasks".to_owned(), "Part Order".to_owned(), "Minidump Analysis".to_owned(), "Downloads".to_owned()]
-        );
+        let mut tree = DockState::new(vec![
+            "TUR Sheet".to_owned(),
+            "Tasks".to_owned(),
+            "Part Order".to_owned(),
+            "Minidump Analysis".to_owned(),
+            "Downloads".to_owned(),
+        ]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
-        let [_a, _b] = tree.main_surface_mut()
-            .split_left(NodeIndex::root(),0.30, vec!["File Browser 📂".to_owned(),]);
-        let [_a, b] = tree.main_surface_mut()
-            .split_below(NodeIndex::root(),0.65, vec!["Console".to_owned(), "Logs".to_owned(), "Websockets".to_owned()]);
-        let [_, _] = tree.main_surface_mut()
-            .split_left(b, 0.45, vec!["SysInfo".to_owned(),"Bug Tracker".to_owned()]);
-        let [_, _] = tree.main_surface_mut()
-            .split_left(b,0.20,vec!["Scripts".to_owned(), "ToolBox".to_owned()]);
+        let [_a, _b] = tree.main_surface_mut().split_left(
+            NodeIndex::root(),
+            0.30,
+            vec!["File Browser 📂".to_owned()],
+        );
+        let [_a, b] = tree.main_surface_mut().split_below(
+            NodeIndex::root(),
+            0.65,
+            vec![
+                "Console".to_owned(),
+                "Logs".to_owned(),
+                "Websockets".to_owned(),
+            ],
+        );
+        let [_, _] = tree.main_surface_mut().split_left(
+            b,
+            0.45,
+            vec!["SysInfo".to_owned(), "Bug Tracker".to_owned()],
+        );
+        let [_, _] = tree.main_surface_mut().split_left(
+            b,
+            0.20,
+            vec!["Scripts".to_owned(), "ToolBox".to_owned()],
+        );
 
         let mut open_tabs = HashSet::new();
         for node in tree[SurfaceIndex::main()].iter() {
             if let Node::Leaf { tabs, .. } = node {
-                for tab in tabs {open_tabs.insert(tab.clone());}
+                for tab in tabs {
+                    open_tabs.insert(tab.clone());
+                }
             }
         }
 
@@ -215,16 +266,19 @@ impl MasterTechApp {
 
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
-        let (db_data_sender, db_data_receiver) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
+        let (db_data_sender, db_data_receiver) =
+            crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (prestashop_api_tx, prestashop_api_rx) = crossbeam::channel::unbounded();
         let (computer_specs_tx, computer_specs_rx) = crossbeam::channel::unbounded();
         let (db_tx, db_rx) = crossbeam::channel::unbounded();
-        let (cps_keys_tx,cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
-        let (app_state_tx,app_state_rx) = crossbeam::channel::unbounded::<AppState>();
-        let (connected_clients_tx, connected_clients_rx) = crossbeam::channel::unbounded::<Vec<ConnectedClient>>();
+        let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
+        let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
+        let (connected_clients_tx, connected_clients_rx) =
+            crossbeam::channel::unbounded::<Vec<ConnectedClient>>();
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
-        let (store_users_tx,store_users_rx) = crossbeam::channel::unbounded::<Vec<User>>();
-        let (initial_tasks_tx, initial_tasks_rx) = crossbeam::channel::unbounded::<Vec<TaskPayload>>();
+        let (store_users_tx, store_users_rx) = crossbeam::channel::unbounded::<Vec<User>>();
+        let (initial_tasks_tx, initial_tasks_rx) =
+            crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let minio_files = <Vec<String>>::create_unbounded_channel();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
@@ -235,14 +289,13 @@ impl MasterTechApp {
             current_user: None,
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
-
             url: None,
             error: Default::default(),
             frontend: None,
 
-            keys: GetKeysResponse { 
-                webroot_key: "Webroot Key".to_string(), 
-                superanti_key: "SuperAnti Key".to_string() 
+            keys: GetKeysResponse {
+                webroot_key: "Webroot Key".to_string(),
+                superanti_key: "SuperAnti Key".to_string(),
             },
 
             task_payload: None,
@@ -262,7 +315,7 @@ impl MasterTechApp {
             disks: Value::Array(vec![]),
             disk_num: 0,
             store_users: None,
-            scaffold_request: SendRequest{ tx: tx_scaffold },
+            scaffold_request: SendRequest { tx: tx_scaffold },
             client: reqwest::Client::new(),
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
             current_antivirus: "".to_string(),
@@ -271,10 +324,11 @@ impl MasterTechApp {
             mention_handler: MentionHandler::default(),
 
             database: None,
-            
+
             ram_test_cbox: scaffold::HardwareTest::RamNotTested,
             hdd_test_cbox: scaffold::HardwareTest::HddNotTested,
             ssd_test_cbox: scaffold::HardwareTest::SsdNotTested,
+            #[cfg(target_os = "windows")]
             minidump_app: MiniDumpApp::default(),
             output_text: "".to_string(),
 
@@ -282,7 +336,8 @@ impl MasterTechApp {
             rx,
 
             task_layouts: HashMap::new(),
-            ui_actions_tx, ui_actions_rx,
+            ui_actions_tx,
+            ui_actions_rx,
             task_map: HashMap::new(),
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -291,7 +346,7 @@ impl MasterTechApp {
             ctx: Context::default(),
             widget_size: 135.0,
             open_tabs,
-    
+
             date: None,
             animate_progress_bar: false,
             reader_bytes: 0,
@@ -312,28 +367,39 @@ impl MasterTechApp {
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             show_ws_viewport: Arc::new(AtomicBool::new(false)),
-            
+
             added_nodes: Vec::new(),
-            
+
             current_modal: ModalType::Null,
             task_modal_handler: TaskModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
             chat_modal: None,
             chat_modal_handler: ChatModalHandler::default(),
 
-            db_data_receiver,  db_data_sender,
-            prestashop_api_tx, prestashop_api_rx,
-            computer_specs_tx, computer_specs_rx,
-            app_state_tx, app_state_rx,
-            connected_clients_tx, connected_clients_rx,
-            bytes_tx, bytes_rx,
-            db_tx, db_rx,
-            cps_keys_tx, cps_keys_rx,
-            copied_items_tx, copied_items_rx,
+            db_data_receiver,
+            db_data_sender,
+            prestashop_api_tx,
+            prestashop_api_rx,
+            computer_specs_tx,
+            computer_specs_rx,
+            app_state_tx,
+            app_state_rx,
+            connected_clients_tx,
+            connected_clients_rx,
+            bytes_tx,
+            bytes_rx,
+            db_tx,
+            db_rx,
+            cps_keys_tx,
+            cps_keys_rx,
+            copied_items_tx,
+            copied_items_rx,
             github_releases_channel,
-            
-            store_users_tx, store_users_rx,
-            initial_tasks_tx,  initial_tasks_rx,
+
+            store_users_tx,
+            store_users_rx,
+            initial_tasks_tx,
+            initial_tasks_rx,
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
             scripts: Scripts::default(),
@@ -346,21 +412,26 @@ impl MasterTechApp {
         };
         let context = mastertech_context;
 
-        Self { context, tree, login: Login::default(), state: AppState::default() }
+        Self {
+            context,
+            tree,
+            login: Login::default(),
+            state: AppState::default(),
+        }
     }
 }
 
 impl MastertechContext {
-    pub fn handle_modals(&mut self, ctx: &Context){
+    pub fn handle_modals(&mut self, ctx: &Context) {
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
                 let task_name = task_modal.task.task_name.clone();
                 if !task_modal.task.task_note.is_empty() {
                     // info!("Notes: {:?}", notes);
                 }
-                
+
                 self.task_modal_handler.ui(
-                    ctx, 
+                    ctx,
                     || Modal::new(&task_name).default_height(600.0),
                     move |ui, _stay_open, page_state| {
                         let action = task_modal.display(ui, page_state.to_owned());
@@ -368,51 +439,54 @@ impl MastertechContext {
                         // if let Some(notes) = &task_modal.task.task_note{
                         //     info!("Notes: {:?}", notes);
                         // }
-                        if let Some(action) = action{
+                        if let Some(action) = action {
                             *page_state = action;
                         }
-                    });
-            },
+                    },
+                );
+            }
             ModalType::CreateTaskModal(create_task_modal) => {
                 let response = self.create_task_modal_handler.ui(
-                    ctx, 
+                    ctx,
                     || CreateTaskModal::new("Create Task", self.store_users.clone()),
-                    |ui, _stay_open, page_state| create_task_modal.display(ui, page_state.to_owned()));
+                    |ui, _stay_open, page_state| {
+                        create_task_modal.display(ui, page_state.to_owned())
+                    },
+                );
 
-                if let Some(response) = response{
-                    if let Some(_action) = response{
+                if let Some(response) = response {
+                    if let Some(_action) = response {
                         // create_task_modal.set_state(action);
                     }
                 }
-            },
+            }
             ModalType::ChatView(chat_modal) => {
                 info!("opening chat");
                 self.chat_modal_handler.ui(
-                    ctx, 
+                    ctx,
                     || Modal::new("Chats").default_height(600.0),
                     move |ui, _stay_open, _page_state| {
-                        if let Some(_new_message) = chat_modal.ui(ui){
+                        if let Some(_new_message) = chat_modal.ui(ui) {
                             // spawn(async move { });
                             // let _ = update_task_notes(new_message).await;
-                            
                         } // task_modal.chat_view.insert_note(payload.1);
-                    });
+                    },
+                );
             }
-            _ => {},
+            _ => {}
         }
     }
 }
 /// Private method to access login state only within NoAuth context
-impl MasterTechApp{
+impl MasterTechApp {
     pub fn login_mut(&mut self) -> Option<&mut Login> {
-        match self.state{
+        match self.state {
             AppState::Login => Some(&mut self.login),
             AppState::Authenticated(MainPages::Tasks) => None,
-            _ => None
+            _ => None,
         }
     }
 }
-
 
 impl TabViewer for MastertechContext {
     type Tab = String;
@@ -426,6 +500,7 @@ impl TabViewer for MastertechContext {
             "ToolBox" => self.toolbox(ui),
             "File Browser 📂" => self.file_browse(ui),
             "SysInfo" => self.system_information(ui),
+            #[cfg(target_os = "windows")]
             "Minidump Analysis" => self.mini_dump(ui),
             "QC ☑️" => self.quality_check(ui),
             "Tasks" => self.mastertech_website(ui),
@@ -435,8 +510,8 @@ impl TabViewer for MastertechContext {
             "Logs" => logger_ui().show(ui),
             _ => {
                 let sysinfo_tab = &"SysInfo".to_string();
-                if ui.label(tab.as_str()).clicked(){
-                    if tab.as_str() == sysinfo_tab{
+                if ui.label(tab.as_str()).clicked() {
+                    if tab.as_str() == sysinfo_tab {
                         self.specs_first_run = true;
                     }
                 };
@@ -444,7 +519,13 @@ impl TabViewer for MastertechContext {
         }
     }
 
-    fn context_menu(&mut self, ui: &mut Ui, tab: &mut Self::Tab, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+    fn context_menu(
+        &mut self,
+        ui: &mut Ui,
+        tab: &mut Self::Tab,
+        _surface_index: SurfaceIndex,
+        _node_index: NodeIndex,
+    ) {
         match tab.as_str() {
             "TUR Sheet" => self.simple_demo_menu(ui),
             "Websockets" => self.websocket_menu(ui),
@@ -455,32 +536,35 @@ impl TabViewer for MastertechContext {
             }
         }
     }
-    
+
     fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
         tab.as_str().into()
     }
-    
+
     fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
         self.open_tabs.remove(tab);
         true
     }
-    
+
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
         self.added_nodes.push((surface_index, node_index));
     }
-
 }
-
 
 fn setup_custom_fonts(ctx: &Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = FontDefinitions::default();
 
-    fonts.font_data.insert("Monaspace".to_owned(),
-    FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Light.otf"))); // .ttf and .otf supported
+    fonts.font_data.insert(
+        "Monaspace".to_owned(),
+        FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Light.otf")),
+    ); // .ttf and .otf supported
 
     // Put my font first (highest priority):
-    fonts.families.get_mut(&FontFamily::Proportional).unwrap()
+    fonts
+        .families
+        .get_mut(&FontFamily::Proportional)
+        .unwrap()
         .insert(0, "Monaspace".to_owned());
 
     fonts.font_data.insert(
@@ -495,11 +579,11 @@ fn setup_custom_fonts(ctx: &Context) {
         "Bold".to_owned(),
         FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Bold.otf")),
     );
-    fonts.families.insert(
-        FontFamily::Name("Bold".into()),
-        vec!["Bold".to_owned()],
-    );
+    fonts
+        .families
+        .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
 
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
 }
+
