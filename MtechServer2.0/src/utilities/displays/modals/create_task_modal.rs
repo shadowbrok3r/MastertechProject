@@ -523,7 +523,7 @@ impl Tur {
 
                 info!("order: {order:#?}");
 
-                let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0") {
+                let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0") && !order.id_employee_sales_rep.is_empty() {
                     let employee: Employee = api_call
                         .request_subresources_by_id_wasm(
                             "employees",
@@ -538,7 +538,8 @@ impl Tur {
                 } else {
                     None
                 };
-                let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0") {
+
+                let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0") && !order.id_employee_split_rep.is_empty() {
                     let employee_2: Employee = api_call
                         .request_subresources_by_id_wasm(
                             "employees",
@@ -570,14 +571,8 @@ impl Tur {
                     .await
                     .unwrap_or_default();
 
-                // let notes: CustomerThread = api_call.request_subresources_by_id(
-                //     "customer_threads",
-                //     "customer_thread",
-                //     &order.id_address_delivery
-                // ).await.unwrap();
 
                 info!("address: {address:#?}");
-                // 2059728
                 let customer = CustomerData {
                     id: Some(CustomerId(Thing::from((
                         CUSTOMER_TABLE.to_string(),

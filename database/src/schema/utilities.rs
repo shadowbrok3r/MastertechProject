@@ -157,7 +157,7 @@ pub async fn get_associated_task_notes(
     debug!("get_associated_task_notes");
     DATABASE.set("id", note_id).await?;
     let note: Option<TaskNotePayload> = DATABASE
-        .query(format!("SELECT * FROM task_note WHERE id == $id"))
+        .query("SELECT * FROM task_note WHERE id == $id")
         .await?
         .take(0)?;
     debug!("note: {:?}", note);
@@ -502,4 +502,3 @@ pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> Result<(), E
 //     //     });
 //     // }
 // }
-

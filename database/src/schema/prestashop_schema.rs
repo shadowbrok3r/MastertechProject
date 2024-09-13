@@ -1,16 +1,14 @@
 use super::{deserializer::deserialize_to_string, CustomerData};
 use log::info;
 use reqwest::{
-    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE},
+    header::{ACCEPT, CONTENT_TYPE},
     Client,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{from_value, Value};
 use std::collections::HashMap;
-// const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
 const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
-// const PRESTASHOP_API_URL_DEV: &str = "https://localhost:9001/api";
 
 pub struct Prestashop<'a> {
     client: Client,
@@ -156,7 +154,6 @@ impl<'a> Prestashop<'a> {
             .get(url.clone())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
-            // .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .json()
@@ -184,7 +181,6 @@ impl<'a> Prestashop<'a> {
             .get(url.clone())
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
-            // .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .json()
@@ -213,7 +209,6 @@ impl<'a> Prestashop<'a> {
         let response: Value = self
             .client
             .get(self.query_args(resource_name, url_params))
-            // .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .json()
@@ -242,7 +237,6 @@ impl<'a> Prestashop<'a> {
         let response: Value = self
             .client
             .get(self.query_args_wasm(resource_name, url_params))
-            // .header(AUTHORIZATION, AUTH_TOKEN)
             .send()
             .await?
             .json()
@@ -250,6 +244,34 @@ impl<'a> Prestashop<'a> {
 
         info!("response: {:#?}", response);
         let x: Vec<T> = from_value(response[resource_name].clone())?;
+        info!("x: {x:#?}");
+
+        Ok(x)
+    }
+
+    pub async fn find_resource_wasm<T>(
+        &self,
+        resource_name: &str,
+        url_params: HashMap<&str, &str>,
+    ) -> anyhow::Result<T, anyhow::Error>
+    where
+        T: for<'de> Deserialize<'de> + std::fmt::Debug,
+    {
+        info!(
+            "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
+            self.query_args_wasm(resource_name, url_params.clone())
+        );
+
+        let response: Value = self
+            .client
+            .get(self.query_args_wasm(resource_name, url_params))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        info!("response: {:#?}", response);
+        let x: T = from_value(response[resource_name].clone())?;
         info!("x: {x:#?}");
 
         Ok(x)
@@ -287,6 +309,7 @@ pub struct Employee {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
     /// ✔️	isName
+    pub id_store: String,
     pub lastname: String,
     /// ✔️	isName
     pub firstname: String,
