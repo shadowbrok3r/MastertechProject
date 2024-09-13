@@ -1,0 +1,7 @@
+{
+  "rust-analyzer": {
+    "workspace": {
+      "ignoredFolders": ["$HOME", "$HOME/.cargo/**", "$HOME/.rustup/**"]
+    }
+  }
+}

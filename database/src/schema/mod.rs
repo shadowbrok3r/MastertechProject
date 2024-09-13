@@ -31,14 +31,15 @@ pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 
 #[async_trait]
-impl<D> GetAssociatedDataFromId<D> for Thing
-where
-    Thing: IntoResource<S: Sized>,
-{
-    async fn get_associated_data<Thing>(&mut self) -> Result<D, Error> {
+impl<D> GetAssociatedDataFromId<D> for Thing {
+    async fn get_associated_data<Thing>(&mut self) -> Result<D, Error>
+    where
+        D: for<'de> Deserialize<'de>,
+    {
         let id = self.clone();
 
-        Ok(DATABASE.select::<D>(id).await?.unwrap())
+        let data: D = DATABASE.select(id).await?.unwrap();
+        Ok(data)
     }
 }
 
