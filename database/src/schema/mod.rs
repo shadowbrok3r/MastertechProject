@@ -1,13 +1,19 @@
+use anyhow::Error;
+use async_trait::async_trait;
+use helper_traits::GetAssociatedDataFromId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use structdiff::{Difference, StructDiff};
 use surrealdb::{
-    opt::RecordId,
+    opt::{IntoResource, RecordId},
     sql::{Id, Thing},
 };
 
+use crate::DATABASE;
+
 pub mod buckets;
 pub mod deserializer;
+pub mod helper_traits;
 pub mod prestashop_schema;
 pub mod utilities;
 
@@ -23,6 +29,18 @@ pub const SEB_TABLE: &str = "seb_data";
 pub const USER_TABLE: &str = "user";
 pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
+
+#[async_trait]
+impl<D> GetAssociatedDataFromId<D> for Thing
+where
+    Thing: IntoResource<S: Sized>,
+{
+    async fn get_associated_data<Thing>(&mut self) -> Result<D, Error> {
+        let id = self.clone();
+
+        Ok(DATABASE.select::<D>(id).await?.unwrap())
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Record {
@@ -246,6 +264,7 @@ pub struct ComputerData {
     pub ram: String,
     pub drives: Vec<DriveData>,
 }
+
 impl ComputerData {
     pub fn new() -> Self {
         ComputerData {
@@ -321,25 +340,8 @@ pub struct TaskNotePayload {
     pub everest_initials: String,
     pub created_at: String,
     pub note: String,
-}
-
-// I will probably end up merging ModifyTask and TaskPayload since they contain most of the exact same data
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ModifyTask {
-    /// unique id for tasks
-    pub task_id: TaskId,
-    /// change priority
-    pub priority: Option<Priority>,
-    /// change which status task is part of
-    pub status: Option<Status>,
-    /// change completed / incomplete
-    pub completed: Option<bool>,
-    /// update due_date
-    pub due_date: Option<String>,
-    /// update task name
-    pub task_name: Option<String>,
-    /// modify description of task
-    pub task_description: Option<String>,
+    // pub id_customer_thread: Option<String>,
+    // pub id_employee: i32
 }
 
 #[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq, Difference)]

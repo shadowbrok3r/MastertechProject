@@ -372,14 +372,10 @@ pub struct Customer {
 pub struct CustomerMessage {
     pub id_employee: String,        //  isUnsignedId   ❌ 		Employee ID
     pub id_customer_thread: String, //	               ❌ 		Customer Thread ID
-    pub ip_address: String,         //  isIp2Long      ❌ 	    15
     pub message: String,            //  isCleanHtml    ✔️ 	     16777216
     pub file_name: String,          //		           ❌
-    pub user_agent: String,         //	               ❌
     pub private: String,            //  isBool 	       ❌
     pub date_add: String,           // 	isDate 	       ❌
-    pub date_upd: String,           // 	isDate 	       ❌
-    pub read: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -444,10 +440,6 @@ pub struct Resources {
     pub attachments_file: String,
     /// 	Customer’s carts
     pub carts: String,
-    /// 	The product categories
-    pub categories: String,
-    /// 	The product combinations
-    pub combinations: String,
     /// 	Customer services messages
     pub customer_messages: String,
     /// 	Customer services threads
@@ -456,38 +448,16 @@ pub struct Resources {
     pub customers: String,
     /// 	The Employees
     pub employees: Employee,
-    /// 	The guests (customers not logged in)
-    pub guests: String,
-    /// 	The product manufacturers
-    pub manufacturers: String,
     /// 	The customers messages
     pub messages: String,
-    /// 	The order carriers
-    pub order_carriers: String,
     /// 	Details of an order
     pub order_details: String,
     /// 	The Order histories
     pub order_histories: String,
     /// 	The Order invoices
     pub order_invoices: String,
-    /// 	The Order payments
-    pub order_payments: String,
-    /// 	The Order states (Waiting for transfer, Payment accepted, …)
-    pub order_states: String,
     /// 	The Customers orders
     pub orders: String,
-    /// 	The Product customization fields
-    pub product_customization_fields: String,
-    /// 	The product feature values (Ceramic, Polyester, … - Removable cover, Short sleeves, …)
-    pub product_feature_values: String,
-    /// 	The product features (Composition, Property, …)
-    pub product_features: String,
-    /// 	The product options value (S, M, L, … - White, Camel, …)
-    pub product_option_values: String,
-    /// 	The product options (Size, Color, …)
-    pub product_options: String,
-    /// 	Product Suppliers
-    pub product_suppliers: String,
     /// 	The products
     pub products: String,
     /// 	Search
@@ -498,8 +468,6 @@ pub struct Resources {
     pub stocks: String,
     /// 	The stores
     pub stores: String,
-    /// 	The Products tags
-    pub tags: String,
 }
 
 pub trait SubResource {
