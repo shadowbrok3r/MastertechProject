@@ -13,7 +13,7 @@ const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
 pub struct Prestashop<'a> {
     client: Client,
     /// [field1,field2 …] or 'full'
-    display: &'a str,
+    pub display: &'a str,
     /// &schema=synopsis for tests
     schema: Option<&'a str>,
     /**
@@ -27,7 +27,6 @@ pub struct Prestashop<'a> {
     filter: Option<&'a str>,
     /// number, or starting index (limit from number to the index)
     limit: Option<(i32, i32)>,
-    // data_channel: PrestaDataChannel
 }
 
 impl<'a> Default for Prestashop<'a> {
@@ -420,6 +419,14 @@ pub struct CustMessageAssociation {
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct CustMessage {
     pub id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct OrderDetails {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
+
+    pub id_order: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]

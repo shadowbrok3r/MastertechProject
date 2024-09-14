@@ -14,7 +14,7 @@ use std::{collections::HashMap, fmt::Debug};
 /// Macro to implement GetDataFromId for structs with an 'id' field
 macro_rules! _get_id {
     ($struct_name:ident) => {
-        #[async_trait]
+        #[async_trait(?Send)]
         impl GetDataFromId for $struct_name {
             async fn get_id(&self) -> &RecordId {
                 &self.id
@@ -24,7 +24,7 @@ macro_rules! _get_id {
 }
 
 /// A trait for assisting with operations involving the Employee struct
-#[async_trait]
+#[async_trait(?Send)]
 pub trait EmployeeHelper {
     /// Find a User based on Employee info -> id_employee
     async fn find_user(&mut self) -> Result<User, Error>;
@@ -32,17 +32,23 @@ pub trait EmployeeHelper {
     async fn get_my_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Get all orders in my store given Employee info -> id_location
     async fn get_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
+    /// Get all Orders of which are my Return For Service's
+    async fn get_my_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
+    /// Get all Return For Service's in my store
+    async fn get_my_store_return_for_services(
+        &mut self,
+    ) -> Result<Vec<prestashop_schema::Order>, Error>;
 }
 
 /// A trait for assisting with operations involving the User struct
-#[async_trait]
+#[async_trait(?Send)]
 pub trait UserHelper {
     /// Get Employee record from User info
     async fn find_employee(&mut self) -> Result<prestashop_schema::Employee, Error>;
 }
 
 /// A trait for assisting with operations involving the ComputerData struct
-#[async_trait]
+#[async_trait(?Send)]
 pub trait ComputerDataHelper {
     /// Associate a ComputerData record to a ServiceOrder
     async fn associate_to_service(&mut self) -> Result<prestashop_schema::ServiceOrder, Error>;
@@ -63,32 +69,35 @@ pub trait ComputerDataHelper {
 }
 
 /// A trait for assisting with operations involving Customer Records
-#[async_trait]
+#[async_trait(?Send)]
 pub trait CustomerHelper {
     async fn find_associated_addr(&mut self) -> Result<prestashop_schema::Address, Error>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait TaskNotePayloadHelper {}
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait CustomerThreadHelper {
     async fn create_task_note_payload(&mut self) -> Result<(), Error>;
 }
-#[async_trait]
+
+#[async_trait(?Send)]
 pub trait CustomerDataHelper {
     async fn find_part_orders(&mut self) -> Result<Vec<SpecialPartOrder>, Error>;
     async fn find_prestashop_customer(&mut self) -> Result<prestashop_schema::Customer, Error>;
     async fn get_seb_data(&mut self) -> Result<ExtendedSeb, Error>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait OrderHelper {
     async fn convert_to_task_payload(&mut self) -> Result<TaskPayload, Error>;
     async fn convert_to_ticket_payload(&mut self) -> Result<TicketPayload, Error>;
+    async fn get_all_return_for_services(&mut self)
+        -> Result<Vec<prestashop_schema::Order>, Error>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait GetAssociatedDataFromId<D> {
     async fn get_associated_data<T>(&mut self) -> Result<D, Error>
     where
@@ -102,7 +111,7 @@ pub trait GetAssociatedDataFromId<D> {
             + for<'de> Deserialize<'de>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl EmployeeHelper for Employee {
     async fn find_user(&mut self) -> Result<User, Error> {
         DATABASE.set("email", self.email.clone()).await?;
@@ -147,9 +156,88 @@ impl EmployeeHelper for Employee {
             .await?;
         Ok(orders)
     }
+
+    async fn get_my_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error> {
+        let mut api_call = Prestashop::default();
+        api_call.display = "";
+        let mut query: HashMap<&str, &str> = HashMap::new();
+
+        query.insert("filter[product_reference]", "SRVC/RETURN");
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", "5");
+        query.insert("output_format", "JSON");
+
+        let order_details: Vec<prestashop_schema::OrderDetails> = api_call
+            .request_resources_wasm("order_details", query.clone())
+            .await?;
+
+        let mut orders_vec = Vec::new();
+
+        for order in order_details.iter() {
+            let order_details: prestashop_schema::OrderDetails = api_call
+                .request_subresources_by_id_wasm("order_details", "order_detail", &order.id)
+                .await?;
+
+            if let Some(id) = order_details.id_order {
+                let mut order_query: HashMap<&str, &str> = HashMap::new();
+
+                order_query.insert("sort", "[id_DESC]");
+                order_query.insert("output_format", "JSON");
+
+                let order: prestashop_schema::Order = api_call
+                    .request_subresources_by_id_wasm("orders", "order", &id)
+                    .await?;
+
+                orders_vec.push(order);
+            }
+        }
+
+        Ok(orders_vec)
+    }
+
+    async fn get_my_store_return_for_services(
+        &mut self,
+    ) -> Result<Vec<prestashop_schema::Order>, Error> {
+        let api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+
+        query.insert("filter[product_reference]", "SRVC/RETURN");
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", "5");
+        query.insert("output_format", "JSON");
+
+        let order_details: Vec<prestashop_schema::OrderDetails> = api_call
+            .request_resources_wasm("order_details", query.clone())
+            .await?;
+
+        let mut orders_vec = Vec::new();
+
+        for order in order_details.iter() {
+            let order_details: prestashop_schema::OrderDetails = api_call
+                .request_subresources_by_id_wasm("order_details", "order_detail", &order.id)
+                .await?;
+
+            if let Some(id) = order_details.id_order {
+                let mut order_query: HashMap<&str, &str> = HashMap::new();
+
+                order_query.insert("sort", "[id_DESC]");
+                order_query.insert("output_format", "JSON");
+                order_query.insert("filter[id_store]", &self.id_store);
+                order_query.insert("filter[id_order_type]", "2");
+
+                let order: prestashop_schema::Order = api_call
+                    .request_subresources_by_id_wasm("orders", "order", &id)
+                    .await?;
+
+                orders_vec.push(order);
+            }
+        }
+
+        Ok(orders_vec)
+    }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl UserHelper for User {
     async fn find_employee(&mut self) -> Result<prestashop_schema::Employee, Error> {
         let api_call = Prestashop::default();
@@ -165,7 +253,7 @@ impl UserHelper for User {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl ComputerDataHelper for ComputerData {
     async fn associate_to_service(&mut self) -> Result<prestashop_schema::ServiceOrder, Error> {
         todo!()
