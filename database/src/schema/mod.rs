@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use structdiff::{Difference, StructDiff};
 use surrealdb::{
-    opt::{IntoResource, RecordId},
+    opt::RecordId,
     sql::{Id, Thing},
 };
 
@@ -30,7 +30,7 @@ pub const USER_TABLE: &str = "user";
 pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<D> GetAssociatedDataFromId<D> for Thing {
     async fn get_associated_data<Thing>(&mut self) -> Result<D, Error>
     where

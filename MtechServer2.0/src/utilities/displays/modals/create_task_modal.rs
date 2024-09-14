@@ -7,14 +7,10 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use crossbeam::channel::Sender;
 use database::{
     schema::{
-        prestashop_schema::{
+        helper_traits::EmployeeHelper, prestashop_schema::{
             Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop,
             PrestashopPayload,
-        },
-        utilities::{query_id, query_user_from_email},
-        ComputerData, CustomerData, CustomerId, LiveTaskPayload, Priority, Record, Status,
-        TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, COMPUTER_TABLE,
-        CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE,
+        }, utilities::{query_id, query_user_from_email}, ComputerData, CustomerData, CustomerId, LiveTaskPayload, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
     },
     DATABASE,
 };
@@ -524,7 +520,7 @@ impl Tur {
                 info!("order: {order:#?}");
 
                 let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0") && !order.id_employee_sales_rep.is_empty() {
-                    let employee: Employee = api_call
+                    let mut employee: Employee = api_call
                         .request_subresources_by_id_wasm(
                             "employees",
                             "employee",
@@ -534,6 +530,10 @@ impl Tur {
                         .unwrap_or_default();
 
                     info!("employee: {employee:#?}");
+
+
+                    let my_returns = employee.get_my_return_for_services().await;
+                    error!("RETURN FOR SERVICES: {:?}", my_returns);
                     Some(employee)
                 } else {
                     None
