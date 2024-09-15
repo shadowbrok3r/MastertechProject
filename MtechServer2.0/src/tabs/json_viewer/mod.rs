@@ -1,4 +1,5 @@
 use crate::app_state::MtechServerContext;
+use anyhow::{Error, Result};
 use core::f32;
 use eframe::egui::{
     text::{CCursor, CCursorRange},
@@ -14,8 +15,10 @@ use egui_json_tree::{
     },
     DefaultExpand, JsonTree, JsonTreeStyle,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
+use structdiff::StructDiff;
 
 pub enum JsonEditorState {
     SettingsPage,
@@ -24,9 +27,10 @@ pub enum JsonEditorState {
     ComputersPage,
 }
 
+pub struct UserSettings {}
+
 impl MtechServerContext {
     pub fn json_viewer(&mut self, ui: &mut Ui) {
-        let value = serde_json::to_value(&self.tur).unwrap();
         SidePanel::left("left-panel").show_inside(ui, |ui| {
             ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
                 let settings = ui.button("Settings");
@@ -34,12 +38,19 @@ impl MtechServerContext {
                 let customers = ui.button("Customers");
                 let computers = ui.button("Computers");
 
+                let value = serde_json::to_value(&self.tur).unwrap();
+                // let customers = &self.data_output.customers;
+                // let computers = &self.data_output.computers;
+                // let services = &self.data_output.tickets;
+
                 if settings.clicked() {
                     self.json_editor_state = JsonEditorState::SettingsPage;
+                    self.json_editor.value = value;
                 }
 
                 if task.clicked() {
                     self.json_editor_state = JsonEditorState::TasksPage;
+                    self.json_editor.set_value(self.tasks.clone()).unwrap();
                 }
 
                 if customers.clicked() {
@@ -48,6 +59,7 @@ impl MtechServerContext {
 
                 if computers.clicked() {
                     self.json_editor_state = JsonEditorState::ComputersPage;
+                    self.json_editor.set_value(self.tasks.clone()).unwrap();
                 }
             });
         });
@@ -59,24 +71,28 @@ impl MtechServerContext {
             ScrollArea::new([false, true])
                 .max_width(f32::INFINITY)
                 .auto_shrink(false)
-                .show(ui, |ui| {
-                    match self.json_editor_state {
-                        JsonEditorState::SettingsPage => {
-                            self.json_editor.value = value;
+                .show_rows(
+                    ui,
+                    row_height,
+                    total_rows | ui,
+                    row_range | {
+                        match self.json_editor_state {
+                            JsonEditorState::SettingsPage => {
+                                self.json_editor.show(ui);
+                            }
+                            JsonEditorState::TasksPage => {
+                                self.json_editor.show(ui);
+                            }
+                            JsonEditorState::CustomersPage => {
+                                // self.json_editor.set_value(self.).unwrap();
+                                self.json_editor.show(ui);
+                            }
+                            JsonEditorState::ComputersPage => {
+                                self.json_editor.show(ui);
+                            }
                         }
-                        JsonEditorState::TasksPage => {
-                            self.json_editor.value = value;
-                        }
-                        JsonEditorState::CustomersPage => {
-                            self.json_editor.value = value;
-                        }
-                        JsonEditorState::ComputersPage => {
-                            self.json_editor.value = value;
-                        }
-                    }
-
-                    self.json_editor.show(ui);
-                });
+                    },
+                );
         });
     }
 }
@@ -84,27 +100,6 @@ impl MtechServerContext {
 trait Show {
     fn title(&self) -> &'static str;
     fn show(&mut self, ui: &mut Ui);
-}
-
-struct Example {
-    title: &'static str,
-    value: Value,
-}
-
-impl Example {
-    fn new(title: &'static str, value: Value) -> Self {
-        Self { title, value }
-    }
-}
-
-impl Show for Example {
-    fn title(&self) -> &'static str {
-        self.title
-    }
-
-    fn show(&mut self, ui: &mut Ui) {
-        JsonTree::new(self.title, &self.value).show(ui);
-    }
 }
 
 #[derive(Default)]
@@ -119,6 +114,14 @@ impl JsonEditor {
             value,
             editor: Default::default(),
         }
+    }
+
+    fn set_value<T: Serialize + for<'de> Deserialize<'de>>(
+        &mut self,
+        data: T,
+    ) -> Result<(), Error> {
+        self.value = serde_json::to_value(data)?;
+        Ok(())
     }
 }
 
