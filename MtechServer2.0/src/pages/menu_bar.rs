@@ -27,7 +27,7 @@ impl MtechServer {
                             &"Completed Tasks".to_string(),
                             &"Bug Report".to_string(),
                             &"Ai Playground".to_string(),
-                            // &"Bug Report".to_string()
+                            &"Json Viewer".to_string(),
                         ] {
                             if ui
                                 .selectable_label(self.context.open_tabs.contains(*tab), *tab)

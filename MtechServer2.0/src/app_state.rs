@@ -16,10 +16,10 @@ use database::{
 };
 use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
 use eframe::{
-    egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId, Ui, Vec2, WidgetText},
+    egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId},
     CreationContext,
 };
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
+use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use gloo_worker::Spawnable;
 use mtechserver::{
     live_worker::{LiveOutput, LiveWorker},
@@ -257,6 +257,7 @@ impl MtechServer {
             "Completed Tasks".to_owned(), //"Quote Fullfilled".to_owned(), "Aging Tasks".to_owned(),
             "Web Console".to_owned(),
             "Customers".to_owned(),
+            "Json Viewer".to_owned(),
         ]);
         let [_a, b] = tree.main_surface_mut().split_below(
             NodeIndex::root(),
@@ -544,83 +545,6 @@ pub fn check_authentication(
     }
     info!("State // user   {:?} // {:?}", state, current_user);
     Ok((state, current_user))
-}
-
-impl TabViewer for MtechServerContext {
-    type Tab = String;
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        match tab.as_str() {
-            "Lil menu" => self.simple_demo_menu(ui),
-            "Terminal" => self.terminal(ui),
-            "My Tools" => self.toolbox(ui),
-            "Store Tasks" => self.store_tasks(ui),
-            "My Tasks" => self.my_tasks(ui),
-            "Ai Playground" => self.ai_playground(ui),
-            "Web Console" => self.web_console(ui),
-            "Completed Tasks" => self.completed_tasks(ui),
-            "Bug Report" => self.github(ui),
-            "Customers" => self.customer_view(ui),
-            "Logs" => logger_ui().show(ui),
-            _ => {}
-        }
-    }
-
-    fn context_menu(
-        &mut self,
-        ui: &mut Ui,
-        tab: &mut Self::Tab,
-        _surface_index: SurfaceIndex,
-        _node_index: NodeIndex,
-    ) {
-        match tab.as_str() {
-            "My Tasks" => self.simple_demo_menu(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
-    }
-
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
-    }
-
-    fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
-        self.added_nodes.push((surface_index, node_index));
-    }
-
-    fn add_popup(&mut self, ui: &mut Ui, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
-        ui.set_width(100.0);
-        let tabs = &[
-            &"Bug Report".to_string(),
-            &"Terminal".to_string(),
-            &"My Tools".to_string(),
-            &"Web Console".to_string(),
-            &"Store Tasks".to_string(),
-            &"My Tasks".to_string(),
-            &"Ai Playground".to_string(),
-            &"Completed Tasks".to_string(),
-            &"Customers".to_string(),
-            &"Logs".to_string(),
-        ];
-
-        for tab in tabs {
-            if ui
-                .selectable_label(self.open_tabs.contains(*tab), *tab)
-                .clicked()
-            {
-                if !self.open_tabs.contains(*tab) {
-                    self.on_add(SurfaceIndex::main(), NodeIndex::root());
-                }
-            }
-        }
-    }
 }
 
 fn setup_custom_fonts(ctx: &Context) {
