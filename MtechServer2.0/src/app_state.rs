@@ -1,6 +1,11 @@
 use crate::{
     pages::{account_settings_page::AccountMod, downloads_page::GithubRelease},
-    tabs::{ai_playground::AiPlayground, github_issue::GithubIssue, logger::logger_ui},
+    tabs::{
+        ai_playground::AiPlayground,
+        github_issue::GithubIssue,
+        json_viewer::{JsonEditor, JsonEditorState},
+        logger::logger_ui,
+    },
     utilities::{
         displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
         ModalTypes,
@@ -245,6 +250,10 @@ pub struct MtechServerContext {
     pub read_notifications: bool,
     pub total_download_size: f32,
     pub download_progress: f32,
+    #[serde(skip)]
+    pub json_editor: JsonEditor,
+    #[serde(skip)]
+    pub json_editor_state: JsonEditorState,
 }
 
 impl MtechServer {
@@ -417,6 +426,8 @@ impl MtechServer {
             read_notifications: false,
             total_download_size: 0.0,
             download_progress: 0.0,
+            json_editor: JsonEditor::default(),
+            json_editor_state: JsonEditorState::SettingsPage,
         };
 
         Self {
