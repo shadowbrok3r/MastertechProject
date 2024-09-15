@@ -1,20 +1,23 @@
-pub mod terminal;
-pub mod web_console;
-pub mod store_tasks;
-pub mod my_tasks;
-pub mod completed_tasks;
 pub mod aging_tasks;
-pub mod quote_fulfilled_tasks;
-pub mod github_issue;
-pub mod toolbox;
 pub mod ai_playground;
-pub mod customer; 
+pub mod completed_tasks;
+pub mod customer;
+pub mod github_issue;
+pub mod json_viewer;
 pub mod logger;
+pub mod my_tasks;
+pub mod quote_fulfilled_tasks;
+pub mod store_tasks;
+pub mod terminal;
+pub mod toolbox;
+pub mod web_console;
 
-use eframe::egui::Ui;
 use super::app_state::MtechServerContext;
+use eframe::egui::{Ui, WidgetText};
+use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
+use logger::logger_ui;
 
-impl MtechServerContext{
+impl MtechServerContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
         if ui.button("Open...").clicked() {
             ui.close_menu();
@@ -47,5 +50,84 @@ impl MtechServerContext{
             }
         });
         let _ = ui.button("Very long text for this item");
+    }
+}
+
+impl TabViewer for MtechServerContext {
+    type Tab = String;
+
+    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
+        match tab.as_str() {
+            "Lil menu" => self.simple_demo_menu(ui),
+            "Terminal" => self.terminal(ui),
+            "My Tools" => self.toolbox(ui),
+            "Store Tasks" => self.store_tasks(ui),
+            "My Tasks" => self.my_tasks(ui),
+            "Ai Playground" => self.ai_playground(ui),
+            "Web Console" => self.web_console(ui),
+            "Completed Tasks" => self.completed_tasks(ui),
+            "Bug Report" => self.github(ui),
+            "Customers" => self.customer_view(ui),
+            "Logs" => logger_ui().show(ui),
+            "Json Viewer" => self.json_viewer(ui),
+            _ => {}
+        }
+    }
+
+    fn context_menu(
+        &mut self,
+        ui: &mut Ui,
+        tab: &mut Self::Tab,
+        _surface_index: SurfaceIndex,
+        _node_index: NodeIndex,
+    ) {
+        match tab.as_str() {
+            "My Tasks" => self.simple_demo_menu(ui),
+            _ => {
+                ui.label(tab.to_string());
+                ui.label("This is a context menu");
+            }
+        }
+    }
+
+    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
+        tab.as_str().into()
+    }
+
+    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
+        self.open_tabs.remove(tab);
+        true
+    }
+
+    fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
+        self.added_nodes.push((surface_index, node_index));
+    }
+
+    fn add_popup(&mut self, ui: &mut Ui, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+        ui.set_width(100.0);
+        let tabs = &[
+            &"Bug Report".to_string(),
+            &"Terminal".to_string(),
+            &"My Tools".to_string(),
+            &"Web Console".to_string(),
+            &"Store Tasks".to_string(),
+            &"My Tasks".to_string(),
+            &"Ai Playground".to_string(),
+            &"Completed Tasks".to_string(),
+            &"Customers".to_string(),
+            &"Logs".to_string(),
+            &"Json Viewer".to_string(),
+        ];
+
+        for tab in tabs {
+            if ui
+                .selectable_label(self.open_tabs.contains(*tab), *tab)
+                .clicked()
+            {
+                if !self.open_tabs.contains(*tab) {
+                    self.on_add(SurfaceIndex::main(), NodeIndex::root());
+                }
+            }
+        }
     }
 }
