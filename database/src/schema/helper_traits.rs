@@ -2,12 +2,12 @@ use crate::DATABASE;
 
 use super::{
     prestashop_schema::{self, Employee, Prestashop},
-    ComputerData, ConnectedClient, CustomerData, ExtendedSeb, SpecialPartOrder, TaskPayload,
-    TicketData, TicketPayload, User,
+    ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Record, SpecialPartOrder,
+    TaskPayload, TicketData, TicketPayload, User, UserSettings,
 };
 use anyhow::{Error, Result};
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, info};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 
@@ -45,6 +45,8 @@ pub trait EmployeeHelper {
 pub trait UserHelper {
     /// Get Employee record from User info
     async fn find_employee(&mut self) -> Result<prestashop_schema::Employee, Error>;
+
+    async fn save_user_settings(&mut self) -> Result<(), Error>;
 }
 
 /// A trait for assisting with operations involving the ComputerData struct
@@ -250,6 +252,27 @@ impl UserHelper for User {
             .find_resource_wasm("employees", query.clone())
             .await?;
         Ok(employee)
+    }
+    async fn save_user_settings(&mut self) -> Result<(), Error> {
+        let user_settings = serde_json::to_value(self.user_settings.clone())?;
+
+        info!(
+            "User Settings to apply: {user_settings:?}\nTo User: {:?}",
+            self.id.0.clone()
+        );
+
+        match DATABASE
+            .query("UPDATE user SET user_settings = $settings WHERE id == $id")
+            .bind(("settings", user_settings))
+            .bind(("user", self.id.0.clone()))
+            .await
+        {
+            Ok(res) => {
+                info!("Result: {res:?}");
+            }
+            Err(e) => info!("Error updating User Settings: {e:?}"),
+        }
+        Ok(())
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "mtechserver"
-version = "2.0.5"
+version = "2.0.6"
 edition = "2021"
 
 [dependencies]
@@ -12,7 +12,7 @@ wasm-cookies = { version= "0.2" }
 ewebsock = "0.6"
 egui_plot = "0.28"
 rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] } # default-features = false
-async-openai-wasm = { version = "0.23" }
+async-openai-wasm = { version = "0.24" }
 derive_more = {version = "1", features = ["from"]}
 rpc-router = "0.1"
 schemars = "0.8"
