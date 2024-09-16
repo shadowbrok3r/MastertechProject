@@ -632,7 +632,7 @@ pub struct User {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, PartialOrd, Ord)]
 pub struct UserSettings {
-    pub color_scheme: Option<ColorSchemes>, // ui.color_edit_button_srgba(color)
+    pub color_scheme: ColorSchemes, // ui.color_edit_button_srgba(color)
     pub startup_tabs: String,
     pub my_column_layout: String,
     pub opened_tabs: String,

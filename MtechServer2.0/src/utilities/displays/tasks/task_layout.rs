@@ -107,26 +107,27 @@ impl TaskLayout {
                 if self.column_names.len() > 0 {
                     strip.strip(|strip| 
                     {
-                        strip.sizes(column_width, self.column_names.len()).horizontal( |strip| self.headers(strip));
+                        strip.sizes(column_width, self.column_names.len())
+                            .horizontal(
+                                |strip| self.headers(strip)
+                            );
                     });
 
                     strip.empty();
 
                     strip.strip(|strip| 
                     {
-                        strip.sizes(column_width, self.column_names.len()).horizontal( |mut strip| 
-                        {
-                            // for (name, tasks) in self.task_map.iter_mut() {
-                                self.columns(strip.borrow_mut());
-                            // }
-                        });
+                        strip.sizes(column_width, self.column_names.len())
+                            .horizontal(
+                                |mut strip| self.columns(strip.borrow_mut())
+                            );
                     });
                 }
             });
         });
     }
 
-    pub fn begin_edit(&mut self, task_id: &Id) -> Option<&mut TaskPayload>{
+pub fn begin_edit(&mut self, task_id: &Id) -> Option<&mut TaskPayload>{
         info!("Finding ID: {task_id:?}");
         // Search for the task by ID
         for (_, tasks) in self.task_map.iter_mut(){

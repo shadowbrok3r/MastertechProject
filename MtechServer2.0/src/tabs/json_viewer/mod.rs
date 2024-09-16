@@ -1,9 +1,10 @@
 use crate::app_state::MtechServerContext;
 use anyhow::{Error, Result};
 use core::f32;
+use database::{schema::helper_traits::UserHelper, DATABASE};
 use eframe::egui::{
     text::{CCursor, CCursorRange},
-    vec2, Align, CentralPanel, Color32, CursorIcon, Layout, Margin, ScrollArea, SidePanel,
+    vec2, Align, CentralPanel, Color32, CursorIcon, Frame, Layout, Margin, ScrollArea, SidePanel,
     TextEdit, TextStyle, TopBottomPanel, Ui,
 };
 use egui_json_tree::{
@@ -15,11 +16,15 @@ use egui_json_tree::{
     },
     DefaultExpand, JsonTree, JsonTreeStyle,
 };
+use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
+use wasm_bindgen_futures::spawn_local;
 
+#[derive(Default)]
 pub enum JsonEditorState {
+    #[default]
     SettingsPage,
     TasksPage,
     CustomersPage,
@@ -28,67 +33,94 @@ pub enum JsonEditorState {
 
 impl MtechServerContext {
     pub fn json_viewer(&mut self, ui: &mut Ui) {
-        SidePanel::left("left-panel").show_inside(ui, |ui| {
-            ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
-                let settings = ui.button("Settings");
-                let task = ui.button("Tasks");
-                let customers = ui.button("Customers");
-                let computers = ui.button("Computers");
+        let s_frame = Frame::default();
+        s_frame.inner_margin(Margin::same(20.));
+        s_frame.outer_margin(Margin::same(10.));
+        SidePanel::left("left-panel")
+            .frame(s_frame)
+            .max_width(130.)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.add_space(5.);
+                    let settings = ui.button("Settings");
+                    ui.add_space(5.);
+                    let task = ui.button("Tasks");
+                    ui.add_space(5.);
+                    let customers = ui.button("Customers");
+                    ui.add_space(5.);
+                    let computers = ui.button("Computers");
 
-                // let customers = &self.data_output.customers;
-                // let computers = &self.data_output.computers;
-                // let services = &self.data_output.tickets;
+                    ui.add_space(ui.available_height() - 30.);
+                    let submit = ui.button("Submit");
 
-                if settings.clicked() {
-                    self.json_editor_state = JsonEditorState::SettingsPage;
-                    self.json_editor.value = serde_json::to_value(&self.user_settings).unwrap();
-                }
+                    // let customers = &self.data_output.customers;
+                    // let computers = &self.data_output.computers;
+                    // let services = &self.data_output.tickets;
 
-                if task.clicked() {
-                    self.json_editor_state = JsonEditorState::TasksPage;
-                    // self.json_editor.set_value(self.).unwrap();
-                }
+                    if settings.clicked() {
+                        self.json_editor_state = JsonEditorState::SettingsPage;
+                        self.json_editor
+                            .set_value(self.user_settings.clone())
+                            .unwrap();
+                    }
 
-                if customers.clicked() {
-                    self.json_editor_state = JsonEditorState::CustomersPage;
-                }
+                    if task.clicked() {
+                        self.json_editor_state = JsonEditorState::TasksPage;
+                        // self.json_editor.set_value(self.).unwrap();
+                    }
 
-                if computers.clicked() {
-                    self.json_editor_state = JsonEditorState::ComputersPage;
-                    // self.json_editor.set_value(self.tasks.clone()).unwrap();
-                }
+                    if customers.clicked() {
+                        self.json_editor_state = JsonEditorState::CustomersPage;
+                    }
+
+                    if computers.clicked() {
+                        self.json_editor_state = JsonEditorState::ComputersPage;
+                        // self.json_editor.set_value(self.tasks.clone()).unwrap();
+                    }
+
+                    if submit.clicked() {
+                        self.user_settings = serde_json::from_value(self.json_editor.value.clone())
+                            .unwrap_or_default();
+
+                        if let Some(mut usr) = self.current_user.clone() {
+                            usr.user_settings = Some(self.user_settings.clone());
+                            spawn_local(async move {
+                                match usr.save_user_settings().await {
+                                    Ok(_) => info!("Updated User Settings"),
+                                    Err(e) => info!("Error updating User Settings: {e:?}"),
+                                }
+                            });
+                        }
+                    }
+
+                    if self.json_editor.value.is_null() {
+                        self.json_editor.set_value(self.user_settings.clone());
+                    }
+                });
             });
-        });
 
         TopBottomPanel::top("top-panel").show_inside(ui, |ui| {
             ui.vertical_centered(|ui| ui.heading("Json Editor"));
         });
-        CentralPanel::default().show_inside(ui, |ui| {
-            let available_height = ui.available_height();
-            let font_id = TextStyle::Body.resolve(ui.style());
-            let row_height = ui.fonts(|f| f.row_height(&font_id)) + ui.spacing().item_spacing.y;
-            let total_rows = (available_height / row_height).floor() as usize;
-            ScrollArea::new([false, true])
-                .max_width(f32::INFINITY)
-                .auto_shrink(false)
-                .show_rows(ui, row_height, total_rows, |ui, _row_range| {
-                    match self.json_editor_state {
-                        JsonEditorState::SettingsPage => {
-                            self.json_editor.show(ui);
-                        }
-                        JsonEditorState::TasksPage => {
-                            self.json_editor.show(ui);
-                        }
-                        JsonEditorState::CustomersPage => {
-                            // self.json_editor.set_value(self.).unwrap();
-                            self.json_editor.show(ui);
-                        }
-                        JsonEditorState::ComputersPage => {
-                            self.json_editor.show(ui);
-                        }
-                    }
-                });
-        });
+
+        let c_frame = Frame::default();
+        c_frame.inner_margin(Margin::same(10.));
+
+        CentralPanel::default()
+            .frame(c_frame)
+            .show_inside(ui, |ui| {
+                let available_height = ui.available_height();
+                let font_id = TextStyle::Body.resolve(ui.style());
+                let row_height = ui.fonts(|f| f.row_height(&font_id)) + ui.spacing().item_spacing.y;
+                let total_rows = (available_height / row_height).floor() as usize;
+                ScrollArea::new([false, true])
+                    .max_width(f32::INFINITY)
+                    .auto_shrink(false)
+                    .show_rows(ui, row_height, total_rows, |ui, _row_range| {
+                        self.json_editor.show(ui);
+                    });
+            });
     }
 }
 
@@ -435,7 +467,7 @@ impl Editor {
                             new_key = format!("new_key_{counter}");
                         }
 
-                        obj.insert(new_key.clone(), Value::Null);
+                        obj.insert(new_key.clone(), Value::String(String::new()));
 
                         self.state = Some(EditState::EditObjectKey(EditObjectKeyState {
                             key: new_key.clone(),
@@ -451,7 +483,7 @@ impl Editor {
                         .pointer_mut(&pointer)
                         .and_then(|value| value.as_array_mut())
                     {
-                        arr.push(Value::Null);
+                        arr.push(Value::String(String::new()));
                     }
                 }
                 EditEvent::SaveValueEdit => {
