@@ -627,6 +627,22 @@ pub struct User {
     // pub notifications: Option<Vec<NotificationId>>,
     pub minio_access_key: Option<String>,
     pub minio_secret_key: Option<String>,
+    pub user_settings: Option<UserSettings>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, PartialOrd, Ord)]
+pub struct UserSettings {
+    pub color_scheme: Option<ColorSchemes>, // ui.color_edit_button_srgba(color)
+    pub startup_tabs: String,
+    pub my_column_layout: String,
+    pub opened_tabs: String,
+    pub filters: String,
+    pub saved_queries: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, PartialOrd, Ord)]
+pub struct ColorSchemes {
+    pub visuals: String,
 }
 
 impl Priority {

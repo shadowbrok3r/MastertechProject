@@ -3,7 +3,6 @@ resolver = "2"
 members = [ "MtechServer2.0", "database" , "displays", "Mastertech4.0", "websocket_server", "websocket_server2"] #  
 
 [workspace.dependencies]
-# displays = { path = "displays" }
 database = { path = "database" }
 eframe = { version="0.28", features=["persistence", "serde", "wgpu", "default_fonts"] } # wgpu
 egui_extras = { version = "0.28", features = ["datepicker", "syntect"]}

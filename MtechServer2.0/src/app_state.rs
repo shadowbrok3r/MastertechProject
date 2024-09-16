@@ -15,7 +15,7 @@ use crossbeam::channel::{self, Receiver, Sender};
 use database::{
     schema::{
         prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification,
-        TaskNotePayload, TaskPayload, TicketPayload, User,
+        TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings,
     },
     Database,
 };
@@ -254,6 +254,7 @@ pub struct MtechServerContext {
     pub json_editor: JsonEditor,
     #[serde(skip)]
     pub json_editor_state: JsonEditorState,
+    pub user_settings: UserSettings,
 }
 
 impl MtechServer {
@@ -428,6 +429,7 @@ impl MtechServer {
             download_progress: 0.0,
             json_editor: JsonEditor::default(),
             json_editor_state: JsonEditorState::SettingsPage,
+            user_settings: UserSettings::default(),
         };
 
         Self {
