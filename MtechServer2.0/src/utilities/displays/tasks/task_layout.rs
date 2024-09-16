@@ -293,20 +293,34 @@ impl TaskLayout {
             s.cell(|ui| {
                 column_frame.show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
-                        ScrollArea::vertical()
-                            .auto_shrink(false)
-                            .show(ui, |ui| {
+                        let row_height = 140.;
+                        let total_rows = tasks.len(); 
+                        let scroll_area = ScrollArea::vertical().auto_shrink(false);
+                        ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
+
+                        scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+                            // ui.scroll_with_delta(Vec2::new(0.0, 300.));
+                            // Retrieve search input for the current context, or default to an empty string.
                             let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
-                            if !search_input.is_empty(){
-                                for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
+
+                            // Filter tasks based on search input.
+                            let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
+                                tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
+                            } else {
+                                tasks.iter().cloned().collect()
+                            };
+
+                            // Iterate only over the rows in the current viewport range.
+                            for row in row_range {
+                                if !search_input.is_empty() {
+                                    ui.scroll_to_cursor(Some(Align::BOTTOM));
+                                }
+                                if let Some(task) = filtered_tasks.get_mut(row) {
                                     task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
                                 }
-                            }else{
-                                for task in &mut *tasks {
-                                    task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                }
-                            }
+                            }                        
                         });
+                        
                     });
                 });
             });

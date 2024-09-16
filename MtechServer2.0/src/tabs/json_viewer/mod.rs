@@ -4,7 +4,7 @@ use core::f32;
 use eframe::egui::{
     text::{CCursor, CCursorRange},
     vec2, Align, CentralPanel, Color32, CursorIcon, Layout, Margin, ScrollArea, SidePanel,
-    TextEdit, TopBottomPanel, Ui,
+    TextEdit, TextStyle, TopBottomPanel, Ui,
 };
 use egui_json_tree::{
     delimiters::ExpandableDelimiter,
@@ -18,7 +18,6 @@ use egui_json_tree::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
-use structdiff::StructDiff;
 
 pub enum JsonEditorState {
     SettingsPage,
@@ -26,8 +25,6 @@ pub enum JsonEditorState {
     CustomersPage,
     ComputersPage,
 }
-
-pub struct UserSettings {}
 
 impl MtechServerContext {
     pub fn json_viewer(&mut self, ui: &mut Ui) {
@@ -38,19 +35,18 @@ impl MtechServerContext {
                 let customers = ui.button("Customers");
                 let computers = ui.button("Computers");
 
-                let value = serde_json::to_value(&self.tur).unwrap();
                 // let customers = &self.data_output.customers;
                 // let computers = &self.data_output.computers;
                 // let services = &self.data_output.tickets;
 
                 if settings.clicked() {
                     self.json_editor_state = JsonEditorState::SettingsPage;
-                    self.json_editor.value = value;
+                    self.json_editor.value = serde_json::to_value(&self.user_settings).unwrap();
                 }
 
                 if task.clicked() {
                     self.json_editor_state = JsonEditorState::TasksPage;
-                    self.json_editor.set_value(self.tasks.clone()).unwrap();
+                    // self.json_editor.set_value(self.).unwrap();
                 }
 
                 if customers.clicked() {
@@ -59,7 +55,7 @@ impl MtechServerContext {
 
                 if computers.clicked() {
                     self.json_editor_state = JsonEditorState::ComputersPage;
-                    self.json_editor.set_value(self.tasks.clone()).unwrap();
+                    // self.json_editor.set_value(self.tasks.clone()).unwrap();
                 }
             });
         });
@@ -68,31 +64,30 @@ impl MtechServerContext {
             ui.vertical_centered(|ui| ui.heading("Json Editor"));
         });
         CentralPanel::default().show_inside(ui, |ui| {
+            let available_height = ui.available_height();
+            let font_id = TextStyle::Body.resolve(ui.style());
+            let row_height = ui.fonts(|f| f.row_height(&font_id)) + ui.spacing().item_spacing.y;
+            let total_rows = (available_height / row_height).floor() as usize;
             ScrollArea::new([false, true])
                 .max_width(f32::INFINITY)
                 .auto_shrink(false)
-                .show_rows(
-                    ui,
-                    row_height,
-                    total_rows | ui,
-                    row_range | {
-                        match self.json_editor_state {
-                            JsonEditorState::SettingsPage => {
-                                self.json_editor.show(ui);
-                            }
-                            JsonEditorState::TasksPage => {
-                                self.json_editor.show(ui);
-                            }
-                            JsonEditorState::CustomersPage => {
-                                // self.json_editor.set_value(self.).unwrap();
-                                self.json_editor.show(ui);
-                            }
-                            JsonEditorState::ComputersPage => {
-                                self.json_editor.show(ui);
-                            }
+                .show_rows(ui, row_height, total_rows, |ui, _row_range| {
+                    match self.json_editor_state {
+                        JsonEditorState::SettingsPage => {
+                            self.json_editor.show(ui);
                         }
-                    },
-                );
+                        JsonEditorState::TasksPage => {
+                            self.json_editor.show(ui);
+                        }
+                        JsonEditorState::CustomersPage => {
+                            // self.json_editor.set_value(self.).unwrap();
+                            self.json_editor.show(ui);
+                        }
+                        JsonEditorState::ComputersPage => {
+                            self.json_editor.show(ui);
+                        }
+                    }
+                });
         });
     }
 }
@@ -120,7 +115,7 @@ impl JsonEditor {
         &mut self,
         data: T,
     ) -> Result<(), Error> {
-        self.value = serde_json::to_value(data)?;
+        self.value = serde_json::to_value(&data)?;
         Ok(())
     }
 }

@@ -5,7 +5,6 @@ use database::live_data::{
 use displays::ui_tools::{
     carl_dark::{Aesthetix, CarlDark},
     toasts::{Toast, ToastKind, ToastOptions},
-    // tokyo_dark::TokyoNight,
 };
 use eframe::egui::{
     style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets},
@@ -27,9 +26,6 @@ use utilities::{
     ModalType, TaskUiActions,
 };
 use wasm_bindgen_futures::spawn_local;
-
-#[cfg(target_arch = "wasm32")]
-use app_state::check_authentication;
 
 pub mod app_state;
 pub mod first_run;
@@ -459,7 +455,6 @@ fn main() {
             .expect("failed to start eframe");
     });
 }
-
 
 fn set_style() -> Arc<Style> {
     let theme = CarlDark;

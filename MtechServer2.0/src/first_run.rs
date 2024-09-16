@@ -66,7 +66,7 @@ impl MtechServer {
         let notes_tx = self.context.notes_tx.clone();
         let github_releases_tx = self.context.github_releases_channel.0.clone();
         // let notification_tx = self.context.notification_tx.clone();
-        // let live_output = self.context.live_output_tx.clone();
+        let live_output = self.context.live_output_tx.clone();
 
         if let Some(usr) = self.context.current_user.as_ref() {
             info!("Getting Initial data");
@@ -128,7 +128,11 @@ impl MtechServer {
             }
 
             // let live_bridge = &self.context.live_bridge;
-            // if let Some(live_bridge) = live_bridge{live_bridge.send(LiveInput { url: "fuck if i know".to_string() });}
+            // if let Some(live_bridge) = live_bridge {
+            //     live_bridge.send(LiveInput {
+            //         url: "fuck if i know".to_string(),
+            //     });
+            // }
 
             let toast = &mut self.context.toasts;
             let auth_toast = Toast {
@@ -163,10 +167,10 @@ impl MtechServer {
         //     self.context.notifications = notifications;
         // }
 
-        // if let Ok(live_output) = self.context.live_output_rx.try_recv() {
-        //     info!("Customers: {live_output:?}");
-        //     self.context.data_output = live_output;
-        // }
+        if let Ok(live_output) = self.context.live_output_rx.try_recv() {
+            info!("Customers: {live_output:?}");
+            self.context.data_output = live_output;
+        }
 
         if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv() {
             info!("new_client: {action:?} // {new_client:?}");
