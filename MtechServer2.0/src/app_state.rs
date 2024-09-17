@@ -255,6 +255,8 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub json_editor_state: JsonEditorState,
     pub user_settings: UserSettings,
+    pub update_settings: bool,
+    pub get_settings: bool,
 }
 
 impl MtechServer {
@@ -295,6 +297,17 @@ impl MtechServer {
             if let Node::Leaf { tabs, .. } = node {
                 for tab in tabs {
                     open_tabs.insert(tab.clone());
+                }
+            }
+        }
+
+        if let Some(existing_dock_state) = cc.storage {
+            if let Some(settings) = existing_dock_state.get_string("user_settings") {
+                if let Ok(user_settings) = serde_json::from_str::<UserSettings>(&settings) {
+                    let startup_tabs = user_settings.startup_tabs;
+                    if let Ok(state) = serde_json::from_value::<DockState<String>>(startup_tabs) {
+                        tree = state;
+                    }
                 }
             }
         }
@@ -435,6 +448,8 @@ impl MtechServer {
             json_editor: JsonEditor::default(),
             json_editor_state: JsonEditorState::SettingsPage,
             user_settings: UserSettings::default(),
+            update_settings: false,
+            get_settings: false,
         };
 
         Self {

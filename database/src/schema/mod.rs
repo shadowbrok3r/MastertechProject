@@ -2,6 +2,7 @@ use anyhow::Error;
 use async_trait::async_trait;
 use helper_traits::GetAssociatedDataFromId;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use structdiff::{Difference, StructDiff};
 use surrealdb::{
@@ -617,7 +618,7 @@ impl Store {
     ];
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, PartialOrd, Ord)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct User {
     pub id: UserId,
     pub name: String,
@@ -630,12 +631,12 @@ pub struct User {
     pub user_settings: Option<UserSettings>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq, PartialOrd, Ord)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct UserSettings {
     pub color_scheme: ColorSchemes, // ui.color_edit_button_srgba(color)
-    pub startup_tabs: String,
+    pub startup_tabs: Value,
     pub my_column_layout: String,
-    pub opened_tabs: String,
+    pub opened_tabs: Value,
     pub filters: String,
     pub saved_queries: String,
 }

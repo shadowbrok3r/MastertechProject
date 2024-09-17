@@ -14,7 +14,11 @@ use database::{
     DATABASE,
 };
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
-use eframe::egui::{Color32, RichText};
+use eframe::{
+    egui::{Color32, RichText},
+    Frame,
+};
+use egui_dock::DockState;
 use log::info;
 use log::{debug, error};
 use mtechserver::webworker::Input;
@@ -28,8 +32,29 @@ use {
 };
 
 impl MtechServer {
-    pub fn first_run(&mut self) {
+    pub fn first_run(&mut self, frame: &mut Frame) {
         self.context.first_run = false;
+
+        if let Some(storage) = frame.storage_mut() {
+            if let Some(settings) = storage.get_string("user_settings") {
+                self.context.user_settings =
+                    serde_json::from_str(settings.as_str()).unwrap_or_default();
+
+                let mut startup_tabs = self.context.user_settings.startup_tabs.clone();
+                if let Ok(state) = serde_json::from_value::<DockState<String>>(startup_tabs) {
+                    self.tree = state;
+                } else {
+                    info!("Setting startup tabs: {:?}", self.tree);
+                    startup_tabs = serde_json::to_value(&self.tree).unwrap_or_default();
+                    self.context.user_settings.startup_tabs = startup_tabs;
+                    storage.set_string(
+                        "user_settings",
+                        serde_json::to_string(&self.context.user_settings).unwrap_or_default(),
+                    );
+                }
+            }
+        }
+
         // #[cfg(target_arch="wasm32")]
         match check_authentication(self.context.db_tx.clone()) {
             Ok(d) => {
@@ -55,7 +80,7 @@ impl MtechServer {
         };
     }
 
-    pub fn load_data(&mut self) {
+    pub fn load_data(&mut self, frame: &mut Frame) {
         // get all of our channel Senders from crossbeam to get user/store/completed tasks,
         // as well as store users and live task notifications
         let live_tasks_tx = self.context.live_tasks_tx.clone();
@@ -146,7 +171,7 @@ impl MtechServer {
         } else {
             info!("4");
             self.context.first_run = true;
-            self.first_run();
+            self.first_run(frame);
             self.state = AppState::NoAuth("No user detected".to_string());
         }
     }
