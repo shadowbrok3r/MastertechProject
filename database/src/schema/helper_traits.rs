@@ -262,7 +262,7 @@ impl UserHelper for User {
         );
 
         match DATABASE
-            .query("UPDATE user SET user_settings = $settings WHERE id == $id")
+            .query("UPDATE user SET user_settings = $settings WHERE id == $user")
             .bind(("settings", user_settings))
             .bind(("user", self.id.0.clone()))
             .await
