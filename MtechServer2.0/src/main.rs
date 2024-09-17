@@ -36,6 +36,7 @@ pub mod webworker;
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // _frame.storage_mut().unwrap().set_string(key, value)
         // most important part of the whole app.. setting up our styling
         // let arc_style = set_style();
         let arc_style = set_darker_style();
@@ -416,7 +417,9 @@ impl eframe::App for MtechServer {
         true
     }
 
-    fn save(&mut self, _storage: &mut dyn eframe::Storage) {}
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, eframe::APP_KEY, self)
+    }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         if let Some(window) = web_sys::window() {
