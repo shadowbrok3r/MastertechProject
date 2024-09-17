@@ -6,6 +6,7 @@ pub mod github_issue;
 pub mod json_viewer;
 pub mod logger;
 pub mod my_tasks;
+pub mod query_builder;
 pub mod quote_fulfilled_tasks;
 pub mod store_tasks;
 pub mod terminal;
@@ -69,6 +70,7 @@ impl TabViewer for MtechServerContext {
             "Bug Report" => self.github(ui),
             "Customers" => self.customer_view(ui),
             "Logs" => logger_ui().show(ui),
+            "Query Builder" => self.query_builder(ui),
             "Json Viewer" => self.json_viewer(ui),
             _ => {}
         }
@@ -117,6 +119,7 @@ impl TabViewer for MtechServerContext {
             &"Customers".to_string(),
             &"Logs".to_string(),
             &"Json Viewer".to_string(),
+            &"Query Builder".to_string(),
         ];
 
         for tab in tabs {
