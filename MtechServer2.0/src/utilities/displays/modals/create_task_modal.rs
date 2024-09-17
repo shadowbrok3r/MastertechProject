@@ -532,8 +532,8 @@ impl Tur {
                     info!("employee: {employee:#?}");
 
 
-                    let my_returns = employee.get_my_return_for_services().await;
-                    error!("RETURN FOR SERVICES: {:?}", my_returns);
+                    // let my_returns = employee.get_my_return_for_services().await;
+                    // error!("RETURN FOR SERVICES: {:?}", my_returns);
                     Some(employee)
                 } else {
                     None

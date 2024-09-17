@@ -35,8 +35,7 @@ pub mod utilities;
 pub mod webworker;
 
 impl eframe::App for MtechServer {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        // _frame.storage_mut().unwrap().set_string(key, value)
+    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         // most important part of the whole app.. setting up our styling
         // let arc_style = set_style();
         let arc_style = set_darker_style();
@@ -55,7 +54,7 @@ impl eframe::App for MtechServer {
 
         // do some initial setting up
         if self.context.first_run {
-            self.first_run();
+            self.first_run(frame);
         }
 
         // Retrieve our database connection, and 2. Requesting some task data
@@ -63,13 +62,13 @@ impl eframe::App for MtechServer {
             match db {
                 Ok(_db) => {
                     info!("3");
-                    self.load_data();
+                    self.load_data(frame);
                 }
                 Err(e) => {
                     info!("6");
                     if e.to_string().contains("Already connected") {
                         info!("7");
-                        self.load_data();
+                        self.load_data(frame);
                         self.state = AppState::Authenticated(MainPages::Tasks);
                         let toast = &mut self.context.toasts;
                         let auth_toast = Toast {
@@ -241,43 +240,6 @@ impl eframe::App for MtechServer {
             }
         }
 
-        // if let Ok(channel) = self.context.new_ticket_rx.try_recv(){
-        //     info!("New Ticket Update ");
-        //     for (_, layout) in self.context.task_layouts.iter_mut() {
-        //         for (_, tasks) in layout.task_map.iter_mut(){
-        //             for task in tasks.iter_mut(){
-        //                 if task.id.clone().unwrap().0.id == channel.new_task.1.id.clone().unwrap().0.id {
-        //                     info!("\nReplacing {:?}\n with \n{:?}\n", task.task_name.clone(), channel.new_task.1.task_name.clone());
-        //                     match update_or_insert_layout(
-        //                         &mut self.context.tasks,
-        //                         channel.new_task.1.clone(),
-        //                     Some(channel.new_ticket.clone()),
-        //                     task
-        //                     ){
-        //                         Ok(_) => {
-        //                             self.context.rerun_filtering_my_tasks = true;
-        //                             self.context.rerun_filtering_store_tasks = true;
-        //                             self.context.rerun_filtering_completed = true;
-        //                             info!("Updated existing task");
-        //                         },
-        //                         Err(e) => error!("Error updating existing task: {e:?}"),
-        //                     }
-        //                 } else {
-        //                     match update_or_insert(&mut self.context.tasks, channel.new_task.1.clone(), Some(channel.new_ticket.clone())){
-        //                         Ok(_) => {
-        //                             self.context.rerun_filtering_my_tasks = true;
-        //                             self.context.rerun_filtering_store_tasks = true;
-        //                             self.context.rerun_filtering_completed = true;
-        //                             info!("Updated existing task")
-        //                         },
-        //                         Err(e) => error!("Error updating existing task: {e:?}"),
-        //                     }
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
-
         if let Ok(mut payload) = self.context.notes_rx.try_recv() {
             info!("{:?}", payload);
             self.context.new_note = true;
@@ -378,6 +340,20 @@ impl eframe::App for MtechServer {
         self.context.handle_modals(ctx);
         self.context.toasts.show(ctx);
 
+        if self.context.get_settings {
+            if let Some(storage) = frame.storage() {
+                if let Some(settings) = storage.get_string("user_settings") {}
+            }
+        }
+
+        if self.context.update_settings {
+            self.context.update_settings = false;
+            info!("Saving settings: {:?}", self.context.user_settings.clone());
+            frame.storage_mut().unwrap().set_string(
+                "user_settings",
+                serde_json::to_string(&self.context.user_settings).unwrap(),
+            );
+        }
         match &self.state {
             // Always checking authentication
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
@@ -396,10 +372,10 @@ impl eframe::App for MtechServer {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
                     if self.context.current_user.is_some() {
-                        self.load_data();
+                        self.load_data(frame);
                     } else {
                         self.context.first_run = true;
-                        self.first_run()
+                        self.first_run(frame)
                     }
                     self.state = AppState::Authenticated(MainPages::Tasks);
                 } else {

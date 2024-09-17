@@ -85,6 +85,7 @@ impl MtechServerContext {
 
                         if let Some(mut usr) = self.current_user.clone() {
                             usr.user_settings = Some(self.user_settings.clone());
+                            self.update_settings = true;
                             spawn_local(async move {
                                 match usr.save_user_settings().await {
                                     Ok(_) => info!("Updated User Settings"),
@@ -555,7 +556,7 @@ impl Show for JsonEditor {
     fn show(&mut self, ui: &mut Ui) {
         JsonTree::new(self.title(), &self.value)
             .abbreviate_root(true)
-            .default_expand(DefaultExpand::All)
+            .default_expand(DefaultExpand::ToLevel(2))
             .on_render(|ui, context| self.editor.show(ui, &self.value, context))
             .style(JsonTreeStyle {
                 bool_color: Color32::LIGHT_BLUE,
