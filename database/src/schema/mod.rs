@@ -14,6 +14,7 @@ use crate::DATABASE;
 
 pub mod buckets;
 pub mod deserializer;
+pub mod get_data;
 pub mod helper_traits;
 pub mod prestashop_schema;
 pub mod utilities;

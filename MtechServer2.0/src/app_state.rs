@@ -270,6 +270,7 @@ impl MtechServer {
             // "Web Console".to_owned(),
             // "Customers".to_owned(),
             "Json Viewer".to_owned(),
+            "Query Builder".to_owned(),
         ]);
         let [_a, b] = tree.main_surface_mut().split_below(
             NodeIndex::root(),

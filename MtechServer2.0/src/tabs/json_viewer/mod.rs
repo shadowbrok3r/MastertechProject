@@ -1,11 +1,11 @@
 use crate::app_state::MtechServerContext;
 use anyhow::{Error, Result};
 use core::f32;
-use database::{schema::helper_traits::UserHelper, DATABASE};
+use database::schema::helper_traits::UserHelper;
 use eframe::egui::{
     text::{CCursor, CCursorRange},
-    vec2, Align, CentralPanel, Color32, CursorIcon, Frame, Layout, Margin, ScrollArea, SidePanel,
-    TextEdit, TextStyle, TopBottomPanel, Ui,
+    vec2, CentralPanel, Color32, CursorIcon, Frame, Margin, ScrollArea, SidePanel, TextEdit,
+    TextStyle, TopBottomPanel, Ui,
 };
 use egui_json_tree::{
     delimiters::ExpandableDelimiter,

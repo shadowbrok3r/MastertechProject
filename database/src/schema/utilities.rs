@@ -23,7 +23,7 @@ pub trait FilterTasks {
     fn filter_by_my_store(&self, assignees: &Vec<User>, current_user: &User) -> Vec<TaskPayload>;
     /// Filters a list of tasks by their name based on a fuzzy search input.
     /// # Parameters
-    /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.
+    /// - `name`: An iterator over items of type `S` where `S` can be referenced as a string slice.
     /// - `search_input`: A string representing the search input to filter tasks by.
     ///
     /// # Returns

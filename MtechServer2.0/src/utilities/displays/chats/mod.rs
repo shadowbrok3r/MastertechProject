@@ -3,9 +3,8 @@ use std::collections::BTreeSet;
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
-use database::{live_data::handle_live_delete, schema::{Record, TaskId, TaskNotePayload, User}, DATABASE};
+use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, Record, TaskId, TaskNotePayload, User}, DATABASE};
 use displays::{markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER}, ui_tools::mention_handler::MentionHandler};
-use crate::utilities::get_data::TaskNoteMod;
 use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local};
 use eframe::emath::Vec2;

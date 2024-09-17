@@ -28,6 +28,7 @@ impl MtechServer {
                             &"Bug Report".to_string(),
                             &"Ai Playground".to_string(),
                             &"Json Viewer".to_string(),
+                            &"Query Builder".to_string(),
                         ] {
                             if ui
                                 .selectable_label(self.context.open_tabs.contains(*tab), *tab)
