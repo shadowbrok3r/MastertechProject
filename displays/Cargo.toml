@@ -14,6 +14,7 @@ ewebsock = "0.6"
 zstd = "0.13"
 reqwest = { version = "0.12", features = ["stream", "json"] }
 rfd = "0.14"
+egui-data-table = { workspace = true }
 web-time = { workspace=true, optional = true }
 wasm-bindgen = { workspace=true, optional = true }
 wasm-bindgen-futures = { workspace=true, optional = true }

@@ -3,7 +3,7 @@ use crate::{
     tabs::{
         ai_playground::AiPlayground,
         github_issue::GithubIssue,
-        json_viewer::{JsonEditor, JsonEditorState}
+        json_viewer::{JsonEditor, JsonEditorState},
     },
     utilities::{
         displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
@@ -271,42 +271,22 @@ impl MtechServer {
             "Json Viewer".to_owned(),
             "Query Builder".to_owned(),
         ]);
-        let [_a, b] = tree.main_surface_mut().split_below(
-            NodeIndex::root(),
-            0.65,
-            vec!["My Tools".to_owned()],
-        );
 
-        let [_, _] = tree
-            .main_surface_mut()
-            .split_right(b, 0.5, vec!["Bug Report".to_owned()]);
-
-        //"Terminal".to_owned(),
-        let [_, _] = tree.main_surface_mut().split_left(
-            b,
-            0.6,
-            vec![
-                "My Tasks".to_owned(),
-                // "Ai Playground".to_owned(),
-                "Logs".to_owned(),
-            ],
-        );
-        tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
-        let mut open_tabs = HashSet::new();
-        for node in tree[SurfaceIndex::main()].iter() {
-            if let Node::Leaf { tabs, .. } = node {
-                for tab in tabs {
-                    open_tabs.insert(tab.clone());
-                }
-            }
-        }
+        let open_tabs = HashSet::new();
 
         if let Some(existing_dock_state) = cc.storage {
             if let Some(settings) = existing_dock_state.get_string("user_settings") {
                 if let Ok(user_settings) = serde_json::from_str::<UserSettings>(&settings) {
+                    info!("Got user settings");
                     let startup_tabs = user_settings.startup_tabs;
                     if let Ok(state) = serde_json::from_value::<DockState<String>>(startup_tabs) {
+                        info!("Got DockState");
+                        for x in state.iter_all_nodes() {
+                            info!("All Tabs: {:?}, {:?}", x.1, x.0);
+                        }
                         tree = state;
+                    } else {
+                        tree = default_tree(open_tabs.clone());
                     }
                 }
             }
@@ -483,6 +463,47 @@ impl MtechServer {
             _ => None,
         }
     }
+}
+
+pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
+    let mut tree = DockState::new(vec![
+        "Store Tasks".to_owned(),
+        "Completed Tasks".to_owned(), //"Quote Fullfilled".to_owned(), "Aging Tasks".to_owned(),
+        // "Web Console".to_owned(),
+        // "Customers".to_owned(),
+        "Json Viewer".to_owned(),
+        "Query Builder".to_owned(),
+    ]);
+
+    let [_a, b] =
+        tree.main_surface_mut()
+            .split_below(NodeIndex::root(), 0.65, vec!["My Tools".to_owned()]);
+
+    let [_, _] = tree
+        .main_surface_mut()
+        .split_right(b, 0.5, vec!["Bug Report".to_owned()]);
+
+    //"Terminal".to_owned(),
+    let [_, _] = tree.main_surface_mut().split_left(
+        b,
+        0.6,
+        vec![
+            "My Tasks".to_owned(),
+            // "Ai Playground".to_owned(),
+            "Logs".to_owned(),
+        ],
+    );
+    tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+
+    for node in tree[SurfaceIndex::main()].iter() {
+        if let Node::Leaf { tabs, .. } = node {
+            for tab in tabs {
+                open_tabs.insert(tab.clone());
+            }
+        }
+    }
+
+    tree
 }
 
 impl MtechServerContext {

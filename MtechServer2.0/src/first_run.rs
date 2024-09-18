@@ -8,8 +8,7 @@ use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
     schema::{
         utilities::{get_connected_clients, get_store_users, get_tasks},
-        TaskNotePayload, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
-        TICKET_TABLE,
+        TaskNotePayload, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE,
     },
     DATABASE,
 };
@@ -42,6 +41,9 @@ impl MtechServer {
 
                 let mut startup_tabs = self.context.user_settings.startup_tabs.clone();
                 if let Ok(state) = serde_json::from_value::<DockState<String>>(startup_tabs) {
+                    for x in state.iter_all_tabs() {
+                        info!("All Tabs: {:?}, {:?}, {:?}", x.1, x.0 .0, x.0 .1);
+                    }
                     self.tree = state;
                 } else {
                     info!("Setting startup tabs: {:?}", self.tree);
