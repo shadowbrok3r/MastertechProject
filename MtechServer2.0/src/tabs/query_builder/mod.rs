@@ -1,8 +1,9 @@
 use crate::app_state::MtechServerContext;
 // use anyhow::{Error, Result};
 use core::f32;
-use eframe::egui::{CentralPanel, Color32, ComboBox, Frame, Margin, ScrollArea,
-    SidePanel, TextStyle, TopBottomPanel, Ui,
+use eframe::egui::{
+    CentralPanel, Color32, ComboBox, Frame, Margin, ScrollArea, SidePanel, TextStyle,
+    TopBottomPanel, Ui,
 };
 
 #[derive(Default, PartialEq)]
@@ -21,7 +22,7 @@ impl MtechServerContext {
         let s_frame = Frame::default();
         s_frame.inner_margin(Margin::same(20.));
         s_frame.outer_margin(Margin::same(10.));
-        SidePanel::left("left-panel")
+        SidePanel::left("left-panel-query-builder")
             .frame(s_frame)
             .max_width(130.)
             .resizable(false)
@@ -29,7 +30,7 @@ impl MtechServerContext {
                 ui.vertical_centered_justified(|_ui| {});
             });
 
-        TopBottomPanel::top("top-panel").show_inside(ui, |ui| {
+        TopBottomPanel::top("top-panel-query-builder").show_inside(ui, |ui| {
             ui.vertical_centered(|ui| ui.heading("Query Builder"));
         });
 

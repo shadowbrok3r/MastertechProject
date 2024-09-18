@@ -347,6 +347,13 @@ impl eframe::App for MtechServer {
         }
 
         if self.context.update_settings {
+            // info!(
+            //     "tree: {:?}\n\n\nSettings: {:?}",
+            //     self.tree, self.context.user_settings.startup_tabs
+            // );
+            self.context.user_settings.startup_tabs =
+                serde_json::to_value(self.tree.clone()).unwrap();
+
             self.context.update_settings = false;
             info!("Saving settings: {:?}", self.context.user_settings.clone());
             frame.storage_mut().unwrap().set_string(
