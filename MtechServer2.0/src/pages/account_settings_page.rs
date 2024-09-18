@@ -1,7 +1,7 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use database::{schema::Store, set_db_selection, DatabaseSelection, DATABASE};
 use crate::app_state::{AppState, MainPages, MtechServer};
-use surrealdb::{sql::Id, Response};
+use surrealdb::Response;
 use egui_extras::{Size, StripBuilder};
 use wasm_bindgen_futures::spawn_local;
 use crossbeam::channel::Sender;
@@ -18,7 +18,7 @@ pub struct AccountMod {
 }
 
 impl AccountMod{
-    pub fn mod_account(&self, _appstate_tx: Sender<AppState>, user_id: Id){
+    pub fn mod_account(&self, _appstate_tx: Sender<AppState>, user_id: String){
         let acc_mod: AccountMod = Self {
             name: self.name.clone(),
             email: self.email.clone(),
@@ -37,7 +37,7 @@ impl AccountMod{
         });
     }
 
-    pub fn change_password(&self, user_id: Id){
+    pub fn change_password(&self, user_id: String){
         let password = self.password.clone();
         spawn_local(async move {
             let x: Result<surrealdb::Response, surrealdb::Error> = DATABASE
@@ -164,7 +164,7 @@ impl MtechServer{
                                                 };
 
                                                 info!("Account Mod: {:?}", acc_mod);
-                                                acc_mod.mod_account(appstate_tx.clone(), usr.id.0.id.clone());
+                                                acc_mod.mod_account(appstate_tx.clone(), usr.id.key().to_string().clone());
                                                 match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
                                                     Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                                     Err(e) => error!("Error {e:?}"),
@@ -179,7 +179,7 @@ impl MtechServer{
                                             let enabled_button = ui.add_enabled(if acc_mod.password.len() > 0 { true } else { false }, button);
 
                                             if enabled_button.clicked() {
-                                                acc_mod.change_password(usr.id.0.id.clone());
+                                                acc_mod.change_password(usr.id.key().to_string().clone());
                                                 match appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)){
                                                     Ok(_) => info!("Sent appstate"), // drop(appstate_tx)
                                                     Err(e) => error!("Error {e:?}"),

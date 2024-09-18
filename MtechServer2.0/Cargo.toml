@@ -27,7 +27,7 @@ web-time = { workspace=true }
 wasm-bindgen = { workspace=true }
 
 database = { workspace=true }
-surrealdb-alpha = { workspace=true }
+surrealdb = { workspace=true }
 mime_guess = { workspace=true }
 structdiff = { workspace=true }
 once_cell = { workspace=true }

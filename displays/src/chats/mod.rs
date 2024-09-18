@@ -23,7 +23,7 @@ pub struct ChatView{
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
     pub current_user: Option<User>,
-    pub task_id: Option<TaskId>,
+    pub task_id: Option<RecordId>,
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
 }
@@ -61,7 +61,7 @@ impl ChatView {
         info!("X {x} // Y {y} // Z {z}");
         if self.messages.iter().any(|note| {
             if let (Some(new_id), Some(existing_id)) = (new_note.id.as_ref(), note.id.as_ref()) {
-                new_id.0.id != existing_id.0.id && !x && !y && !z
+                new_id.key().to_string() != existing_id.key().to_string() && !x && !y && !z
             } else { false }
         }) {
             info!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);

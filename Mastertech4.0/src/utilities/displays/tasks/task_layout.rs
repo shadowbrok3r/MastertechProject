@@ -129,12 +129,12 @@ impl TaskLayout {
         });
     }
 
-    pub fn begin_edit(&mut self, task_id: &Id) -> Option<&mut TaskPayload>{
+    pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
         info!("Finding ID: {task_id:?}");
         // Search for the task by ID
         for (_, tasks) in self.task_map.iter_mut(){
             for task in tasks.iter_mut(){
-                if task.id.as_ref().unwrap().0.id == *task_id{
+                if task.id.as_ref().unwrap().key().to_string() == *task_id{
                     info!("Got a match");
                     return Some(task);
                 }
@@ -204,7 +204,7 @@ impl TaskLayout {
                             if let Some(action) = res{
                                 match action{
                                     TaskActions::MarkComplete => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id.to_string()).collect::<Vec<String>>();
+                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().key().to_string().to_string()).collect::<Vec<String>>();
                                         
                                         info!("ids: {:?}", id);
                                         spawn(async move {
@@ -215,7 +215,7 @@ impl TaskLayout {
                                         });
                                     },
                                     TaskActions::MarkIncomplete => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
+                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().key().to_string()).collect::<Vec<String>>();
                                         
                                         spawn(async move {
                                             let _x: Vec<Record> = DATABASE.query("fn::mark_all_completion($ids, $completion)")
@@ -225,7 +225,7 @@ impl TaskLayout {
                                         });
                                     },
                                     TaskActions::MarkDueToday => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().0.id).collect::<Vec<Id>>();
+                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().key().to_string()).collect::<Vec<String>>();
                                         
                                         spawn(async move {
                                             let query = "fn::mark_all_completion($ids, $completion)";

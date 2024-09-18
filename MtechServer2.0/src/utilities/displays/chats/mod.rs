@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
-use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, Record, TaskId, TaskNotePayload, User}, DATABASE};
+use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, Record, TaskNotePayload, User}, DATABASE};
 use displays::{markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER}, ui_tools::mention_handler::MentionHandler};
+use surrealdb::RecordId;
 use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local};
 use eframe::emath::Vec2;
@@ -19,7 +20,7 @@ pub struct ChatView{
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
     pub current_user: Option<User>,
-    pub task_id: Option<TaskId>,
+    pub task_id: Option<RecordId>,
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
     pub delete: Option<TaskNotePayload>,
@@ -42,7 +43,7 @@ impl Default for ChatView{
 }
 
 impl ChatView {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: TaskId, users: Vec<User>) -> Self {
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: RecordId, users: Vec<User>) -> Self {
         // info!("Before messages: {messages:?}");
         let mut users_set = BTreeSet::new();
         for user in users {

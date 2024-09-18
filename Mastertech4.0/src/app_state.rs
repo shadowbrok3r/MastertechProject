@@ -1,7 +1,7 @@
 use crossbeam::channel::{Receiver, Sender};
 use database::{
     schema::{
-        prestashop_schema::PrestashopPayload, ClientId, ComputerData, ConnectedClient,
+        prestashop_schema::PrestashopPayload, ComputerData, ConnectedClient,
         CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload,
         TicketData, User,
     },
@@ -16,6 +16,7 @@ use eframe::egui::{
     Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText,
 };
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
+use surrealdb::RecordId;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -162,7 +163,7 @@ pub struct MastertechContext {
     pub rerun_filtering_store_tasks: bool,
     pub rerun_filtering_completed: bool,
 
-    pub client_uuid: Option<ClientId>,
+    pub client_uuid: Option<RecordId>,
     pub disks: Value,
     pub disk_num: usize,
 

@@ -1,8 +1,9 @@
 use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
+use surrealdb::RecordId;
 use tokio::spawn;
-use database::{DATABASE, schema::{Record, TaskId, TaskNotePayload, User}};
+use database::{DATABASE, schema::{Record, TaskNotePayload, User}};
 use displays::markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
 // use crate::utilities::get_data::TaskNoteMod;
 use chrono::{DateTime, Local};
@@ -18,7 +19,7 @@ pub struct ChatView{
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
     pub current_user: Option<User>,
-    pub task_id: Option<TaskId>,
+    pub task_id: Option<RecordId>,
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
 }
@@ -37,7 +38,7 @@ impl Default for ChatView{
 }
 
 impl ChatView {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: TaskId) -> Self {
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: RecordId) -> Self {
         // info!("Before messages: {messages:?}");
         ChatView {
             current_user: Some(current_user),
@@ -56,7 +57,7 @@ impl ChatView {
         info!("X {x} // Y {y} // Z {z}");
         if self.messages.iter().any(|note| {
             if let (Some(new_id), Some(existing_id)) = (new_note.id.as_ref(), note.id.as_ref()) {
-                new_id.0.id != existing_id.0.id && !x && !y && !z
+                new_id.key().to_string() != existing_id.key().to_string() && !x && !y && !z
             } else { false }
         }) {
             info!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);

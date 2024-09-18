@@ -61,7 +61,7 @@ impl Interaction for TaskPayload {
         ui.style_mut().visuals.widgets.hovered.bg_stroke = Stroke::new(0.5, frame_color);
         let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
         
-        let id = self.id.clone().unwrap().0.id.to_string();
+        let id = self.id.clone().unwrap().key().to_string();
         let date_picker = DatePickerButton::new(&mut due_date)
             .format("%m/%d/%y")
             .id_source(id.as_str())
@@ -101,7 +101,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_status(&mut self, ui: &mut Ui) -> Response {
-        ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+        ComboBox::new(Id::new(&self.id.clone().unwrap().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
             .width(ui.available_width() - 15.0)
             .height(ui.available_height())
@@ -117,7 +117,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_priority(&mut self, ui: &mut Ui) -> Response {
-        ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+        ComboBox::new(Id::new(&self.id.clone().unwrap().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
             .width(ui.available_width() - 15.0)
             .height(ui.available_height() - 2.0)
@@ -133,7 +133,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response {
-        ComboBox::new(Id::new(&self.id.clone().unwrap().0.id), "")
+        ComboBox::new(Id::new(&self.id.clone().unwrap().key().to_string()), "")
             .selected_text(RichText::new(&self.everest_initials).small())
             .width(ui.available_width() / 1.3)
             .height(ui.available_height() - 2.0)

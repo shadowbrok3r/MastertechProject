@@ -128,7 +128,7 @@ impl TaskLayout {
         // Search for the task by ID
         for (_, tasks) in self.task_map.iter_mut(){
             for task in tasks.iter_mut(){
-                if task.id.as_ref().unwrap().0.id == *task_id{
+                if task.id.as_ref().unwrap().id == *task_id{
                     info!("Got a match");
                     return Some(task);
                 }
@@ -196,7 +196,7 @@ impl TaskLayout {
                             });
 
                             if let Some(action) = res{
-                                let ids = tasks.iter().map(|t| t.id.clone().unwrap().0).collect::<Vec<Thing>>();
+                                let ids = tasks.iter().map(|t| t.id.clone().unwrap().0).collect::<Vec<RecordId>>();
                                 match action{
                                     TaskActions::MarkComplete => {
                                         spawn_local(async move {

@@ -11,7 +11,7 @@ use futures::StreamExt;
 use gloo_net::http::Request;
 use log::{debug, info};
 use reqwest::{
-    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
+    header::{ACCEPT, CONTENT_TYPE, USER_AGENT},
     Client,
 };
 use serde::{Deserialize, Serialize};

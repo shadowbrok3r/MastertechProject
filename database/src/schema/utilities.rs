@@ -1,7 +1,7 @@
 use super::{Notification, TicketPayload};
 use crate::{
     schema::{
-        ClientId, Cmd, ConnectedClient, Priority, Record, Status, Store, SystemInformation, TaskId,
+        ClientId, Cmd, ConnectedClient, Priority, Record, Status, Store, SystemInformation,
         TaskNotePayload, TaskPayload, User, TASK_NOTE_TABLE, TASK_TABLE,
     },
     DATABASE,
@@ -12,7 +12,7 @@ use crossbeam::channel::Sender;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use surrealdb::sql::{Id, Thing};
+use surrealdb::{sql::Id, RecordId};
 
 pub trait FilterTasks {
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
@@ -99,13 +99,13 @@ pub async fn query_user_from_email(email: String) -> Result<User, Error> {
     user.clone().context("No User Found") // Ok(user.unwrap())
 }
 
-pub async fn query_id<T>(table: String, id: T) -> Result<Option<Record>, Error>
+pub async fn query_id<T>(table: String, id: T) -> Result<Option<RecordId>, Error>
 where
     T: Serialize + Debug + Clone + 'static,
 {
     DATABASE.set("id", id).await?;
     DATABASE.set("table", table).await?;
-    let record: Option<Record> = DATABASE
+    let record: Option<RecordId> = DATABASE
         .query("SELECT * FROM $table WHERE id == $id")
         .await?
         .take(0)?;
@@ -182,7 +182,7 @@ pub async fn get_connected_clients(
     user_id: User,
 ) -> Result<(), Error> {
     debug!("get_connected_clients");
-    DATABASE.set("id", user_id.id.0).await?;
+    DATABASE.set("id", user_id.id).await?;
     let query: Vec<ConnectedClient> = DATABASE
         .query("SELECT * FROM connected_client WHERE assigned_user == $id")
         .await?
@@ -192,7 +192,7 @@ pub async fn get_connected_clients(
 }
 
 pub async fn disconnect_client(tx: Sender<Vec<ClientId>>, id: ClientId) -> Result<(), Error> {
-    DATABASE.set("id", id.0.id).await?;
+    DATABASE.set("id", id.0.key().to_string()).await?;
     let query: Vec<ClientId> = DATABASE
         .update("UPDATE connected_client SET connected = false WHERE id == $id")
         .await?;
@@ -205,7 +205,7 @@ pub async fn modify_connected_client(
     tx: Sender<Vec<ConnectedClient>>,
     user_id: User,
 ) -> Result<(), Error> {
-    DATABASE.set("id", user_id.id.0).await?;
+    DATABASE.set("id", user_id.id).await?;
     let query: Vec<ConnectedClient> = DATABASE
         .query("SELECT * FROM connected_client WHERE assigned_user == $id")
         .await?
@@ -214,17 +214,17 @@ pub async fn modify_connected_client(
     Ok(())
 }
 
-pub async fn delete_task(id: Thing) -> Result<(), Error> {
+pub async fn delete_task(id: RecordId) -> Result<(), Error> {
     let id = id.clone();
     info!("deleting id: {id:?}");
-    DATABASE.set("id", id.id.clone()).await?;
-    let _y: Option<TaskPayload> = DATABASE.delete((TASK_TABLE, id.id)).await?;
+    DATABASE.set("id", id.key().to_string().clone()).await?;
+    let _y: Option<TaskPayload> = DATABASE.delete((TASK_TABLE, id.key().to_string())).await?;
     Ok(())
 }
 
 pub async fn get_notifications(
     tx: Sender<Vec<Notification>>,
-    id: Thing,
+    id: RecordId,
 ) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_notifications");
     DATABASE.set("id", id).await?;
@@ -260,15 +260,15 @@ impl TaskNoteMod for TaskNotePayload {
         let id = self.id.clone();
         if let Some(id) = id {
             info!("deleting id: {:?}", id.clone());
-            DATABASE.set("id", id.0.id.clone()).await?;
-            let y: Option<Record> = DATABASE.delete((TASK_NOTE_TABLE, id.0.id)).await?;
+            DATABASE.set("id", id.key().to_string().clone()).await?;
+            let y: Option<Record> = DATABASE.delete((TASK_NOTE_TABLE, id.key().to_string())).await?;
             info!("Deleted note: {:?}", y);
         }
         Ok(())
     }
 }
 
-pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> Result<(), Error> {
+pub async fn update_task_notes(new_msg: String, task_id: RecordId) -> Result<(), Error> {
     let id = task_id.clone();
     let task_note = TaskNotePayload {
         task_id: Some(id),

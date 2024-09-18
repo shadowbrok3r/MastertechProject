@@ -1,4 +1,4 @@
-use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, ClientId, Cmd, ComputerId, ConnectedClient, Record, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, Cmd, ConnectedClient, Record, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use log::error;
@@ -10,7 +10,7 @@ use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
 use crossbeam::channel::{Receiver, Sender};
 use anyhow::{Result, Error};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 use bincode::serialize;
 use tracing::info;
 
@@ -72,17 +72,13 @@ impl MastertechContext{
         );
 
         let computer_id = &self.computer_data.id.clone().unwrap_or(
-            ComputerId(
-                Thing::from(
+                RecordId::from(
                     (COMPUTER_TABLE,  url_string.clone().as_str())
-                )
             )
         );
         
         self.client_uuid = Some(
-            ClientId(
-                Thing::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.0.id.clone()))
-            )
+                RecordId::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.key().to_string().clone()))
         );
         
 
@@ -99,7 +95,7 @@ impl MastertechContext{
         let uuid = self.client_uuid.clone();
         spawn(async move {
             if let Some(uuid) = uuid {
-                match query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.0.id.clone()).await {
+                match query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.key().to_string().clone()).await {
                     Ok(id) => {
                         if let Some(id) = id {
                             info!("Client: {id:?} already exists");
@@ -124,7 +120,7 @@ impl MastertechContext{
                                 Err(e) => {
                                     error!("Error Creating Client: {e:?}");
                                     let res: Option<Record> = DATABASE
-                                        .upsert(uuid.0.clone())
+                                        .upsert(uuid.clone())
                                         .merge(connected_client)
                                         .await?.take();
                                     info!("last ditch effort: {:?}", res);
@@ -135,11 +131,11 @@ impl MastertechContext{
                     Err(e) => {
 
                         if e.to_string().contains("already exists") {
-                            info!("Client: {:?} already exists", uuid.0.id.clone());
+                            info!("Client: {:?} already exists", uuid.key().to_string().clone());
                     
                             let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
                                 .query("UPDATE $id SET connected = true")
-                                .bind(("id", uuid.0.id.clone().clone()))
+                                .bind(("id", uuid.key().to_string().clone().clone()))
                                 .await?.take(0);
         
                             match res{

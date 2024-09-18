@@ -5,8 +5,7 @@ use database::{
     schema::{
         buckets::list_buckets,
         utilities::{get_store_users, get_tasks},
-        ComputerData, ComputerId, GetKeysResponse, HardwareTests, Record, TaskNotePayload,
-        TicketId, TICKET_TABLE,
+        ComputerData, GetKeysResponse, HardwareTests, Record, TaskNotePayload,TICKET_TABLE,
     },
     Database, DATABASE, STORAGE_URL,
 };
@@ -21,7 +20,7 @@ use filesystem::system_info::ComputerInfo;
 use log::{debug, error, info};
 use pages::login_page::HASH;
 use std::sync::{atomic::Ordering, Arc, Condvar, Mutex};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 use tabs::{
     github::get_github_releases, logger::logging::builder, tur_sheet::scaffold::AsanaResponse,
 };
@@ -263,8 +262,8 @@ impl eframe::App for MasterTechApp {
             let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
 
             let service_details = data.order.associations.order_service;
-            let mut owned_computers: Vec<ComputerId> = Vec::new();
-            let mut services: Vec<TicketId> = Vec::new();
+            let mut owned_computers: Vec<RecordId> = Vec::new();
+            let mut services: Vec<RecordId> = Vec::new();
 
             #[cfg(target_os = "windows")]
             {
@@ -327,10 +326,10 @@ impl eframe::App for MasterTechApp {
             };
             ticket.doc_alias = data.order.order_type_name.unwrap_or(String::new());
 
-            ticket.id = Some(TicketId(Thing::from((
+            ticket.id = Some(RecordId::from((
                 TICKET_TABLE.to_string(),
                 ticket.service_number.clone(),
-            ))));
+            )));
             if let Some(computer_id) = computer.id.clone() {
                 owned_computers.push(computer_id);
             }

@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window};
-use database::schema::{Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload, User};
+use database::schema::{Priority, Status, Store, TaskNotePayload, TaskPayload, TicketPayload, User};
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Id as SurrealId;
 use crossbeam::channel::Sender;
 use egui_extras::Strip;
+use surrealdb::RecordId;
 use std::fmt::Debug;
 
 use displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::{ModalAction, TaskModal}, ModalResponse, ModalState}};
@@ -19,10 +19,10 @@ pub mod update_tasks;
 pub enum TaskUiActions{
     OpenTaskModal(TaskPayload),
     CreateTaskModal,
-    OpenChatModal((TaskId, Vec<TaskNotePayload>)),
+    OpenChatModal((RecordId, Vec<TaskNotePayload>)),
     Response(Response),
-    Editing(SurrealId),
-    CommitChanges(SurrealId),
+    Editing(String),
+    CommitChanges(String),
     None
 }
 

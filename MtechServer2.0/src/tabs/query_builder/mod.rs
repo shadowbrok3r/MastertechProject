@@ -1,10 +1,8 @@
 use crate::app_state::MtechServerContext;
 // use anyhow::{Error, Result};
 use core::f32;
-use eframe::egui::{
-    text::{CCursor, CCursorRange},
-    vec2, Align, CentralPanel, Color32, ComboBox, CursorIcon, Frame, Layout, Margin, ScrollArea,
-    SidePanel, TextEdit, TextStyle, TopBottomPanel, Ui,
+use eframe::egui::{CentralPanel, Color32, ComboBox, Frame, Margin, ScrollArea,
+    SidePanel, TextStyle, TopBottomPanel, Ui,
 };
 
 #[derive(Default, PartialEq)]
@@ -28,7 +26,7 @@ impl MtechServerContext {
             .max_width(130.)
             .resizable(false)
             .show_inside(ui, |ui| {
-                ui.vertical_centered_justified(|ui| {});
+                ui.vertical_centered_justified(|_ui| {});
             });
 
         TopBottomPanel::top("top-panel").show_inside(ui, |ui| {

@@ -75,7 +75,7 @@ impl MasterTechApp {
                     ui.add_space(20.0);
 
                     if let Some(sys_id) = &self.context.computer_data.id{
-                        ui.colored_label(Color32::LIGHT_RED, sys_id.0.id.to_raw());
+                        ui.colored_label(Color32::LIGHT_RED, sys_id.key().to_string());
                         ui.colored_label(Color32::WHITE, "Client ID: ");
                     }
 
