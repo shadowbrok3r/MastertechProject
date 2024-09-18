@@ -545,7 +545,7 @@ impl Tur {
             ticket.tech = email;
             ticket.customer = customer.id.clone();
 
-            ticket.id = Some(TicketId(Thing::from((
+            ticket.id = Some(TicketId(RecordId::from((
                 TICKET_TABLE.to_string(),
                 ticket.service_number.clone(),
             ))));
@@ -669,7 +669,7 @@ impl Tur {
                 info!("address: {address:#?}");
                 // 2059728
                 let customer = CustomerData {
-                    id: Some(CustomerId(Thing::from((
+                    id: Some(CustomerId(RecordId::from((
                         CUSTOMER_TABLE.to_string(),
                         order.id_customer.clone(),
                     )))),

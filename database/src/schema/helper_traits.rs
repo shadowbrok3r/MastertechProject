@@ -2,8 +2,8 @@ use crate::DATABASE;
 
 use super::{
     prestashop_schema::{self, Employee, Prestashop},
-    ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Record, SpecialPartOrder,
-    TaskPayload, TicketData, TicketPayload, User, UserSettings,
+    ComputerData, ConnectedClient, CustomerData, ExtendedSeb, SpecialPartOrder,
+    TaskPayload, TicketData, TicketPayload, User,
 };
 use anyhow::{Error, Result};
 use async_trait::async_trait;
@@ -258,13 +258,13 @@ impl UserHelper for User {
 
         info!(
             "User Settings to apply: {user_settings:?}\nTo User: {:?}",
-            self.id.0.clone()
+            self.id.clone()
         );
 
         match DATABASE
             .query("UPDATE user SET user_settings = $settings WHERE id == $user")
             .bind(("settings", user_settings))
-            .bind(("user", self.id.0.clone()))
+            .bind(("user", self.id.clone()))
             .await
         {
             Ok(res) => {

@@ -3,7 +3,7 @@ use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key
 use database::schema::{CustomerData, Priority, SpecialPartOrder, TaskId, TaskNotePayload, TaskPayload, TicketData, User};
 use modal_types::ModalTypes;
 use crate::markdown_editor::EasyMarkEditor;
-use surrealdb::sql::Id as SurrealId;
+use surrealdb::{sql::Id as SurrealId, RecordId};
 use serde::Serialize;
 use chrono::NaiveDate;
 
@@ -45,7 +45,7 @@ pub struct ChatView{
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
     pub current_user: Option<User>,
-    pub task_id: Option<TaskId>,
+    pub task_id: Option<RecordId>,
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
 }

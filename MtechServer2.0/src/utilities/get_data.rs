@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use database::{
     schema::{
-        ComputerData, CustomerData, LiveTaskPayload, Record, TaskId, TaskNotePayload, TaskPayload,
+        ComputerData, CustomerData, LiveTaskPayload, Record, TaskNotePayload, TaskPayload,
         TicketData, TicketPayload, User, TASK_NOTE_TABLE,
     },
     DATABASE,
@@ -13,8 +13,8 @@ use log::{debug, info};
 use mtechserver::live_worker::LiveOutput;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use surrealdb::opt::RecordId;
 use surrealdb::Action;
+use surrealdb::RecordId;
 
 use super::Task;
 
@@ -76,15 +76,15 @@ impl TaskNoteMod for TaskNotePayload {
         let id = self.id.clone();
         if let Some(id) = id {
             info!("deleting id: {:?}", id.clone());
-            DATABASE.set("id", id.0.id.clone()).await?;
-            let y: Option<Record> = DATABASE.delete((TASK_NOTE_TABLE, id.0.id)).await?;
+            DATABASE.set("id", id.key().to_string().clone()).await?;
+            let y: Option<Record> = DATABASE.delete((TASK_NOTE_TABLE, id.key().to_string())).await?;
             info!("Deleted note: {:?}", y);
         }
         Ok(())
     }
 }
 
-pub async fn update_task_notes(new_msg: String, task_id: TaskId) -> Result<(), Error> {
+pub async fn update_task_notes(new_msg: String, task_id: RecordId) -> Result<(), Error> {
     let id = task_id.clone();
     let task_note = TaskNotePayload {
         task_id: Some(id),
@@ -105,7 +105,7 @@ impl Task for TaskPayload {
     async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> Result<Option<T>, Error> {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         let query = format!(
             "SELECT service_ticket.computer FROM task WHERE id={id} FETCH service_ticket.computer"
         );
@@ -117,7 +117,7 @@ impl Task for TaskPayload {
     async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> Result<Option<T>, Error> {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         let query = format!(
             "SELECT service_ticket.customer FROM task WHERE id={id} FETCH service_ticket.customer"
         );
@@ -129,7 +129,7 @@ impl Task for TaskPayload {
     async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> Result<Option<T>, Error> {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         let query = format!("SELECT * FROM task_note WHERE id={id}");
         let get_data: Option<T> = DATABASE.query(query).await.unwrap().take(0).unwrap();
         debug!("get_data: {get_data:#?}");
@@ -139,7 +139,7 @@ impl Task for TaskPayload {
     async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> Result<Option<T>, Error> {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
 
         let get_data: Option<T> = DATABASE
                 .query(format!("SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id={id}"))

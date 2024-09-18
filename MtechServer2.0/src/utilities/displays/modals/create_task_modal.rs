@@ -7,10 +7,10 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use crossbeam::channel::Sender;
 use database::{
     schema::{
-        helper_traits::EmployeeHelper, prestashop_schema::{
+        prestashop_schema::{
             Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop,
             PrestashopPayload,
-        }, utilities::{query_id, query_user_from_email}, ComputerData, CustomerData, CustomerId, LiveTaskPayload, Priority, Record, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
+        }, utilities::{query_id, query_user_from_email}, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
     },
     DATABASE,
 };
@@ -24,7 +24,7 @@ use egui_extras::{DatePickerButton, Size, StripBuilder};
 use log::{error, info, warn};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 use wasm_bindgen_futures::spawn_local;
 
 #[derive(Serialize, Default, Debug, Clone)]
@@ -409,7 +409,7 @@ impl CreateTaskModal {
                                                                 usr.everest_initials;
 
                                                             match DATABASE
-                                                                .create::<Vec<Record>>(TASK_TABLE)
+                                                                .create::<Option<RecordId>>(TASK_TABLE)
                                                                 .content(payload.task_data)
                                                                 .await {
                                                                     Ok(created_task) => info!("Created Task: {created_task:?}"),
@@ -520,7 +520,7 @@ impl Tur {
                 info!("order: {order:#?}");
 
                 let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0") && !order.id_employee_sales_rep.is_empty() {
-                    let mut employee: Employee = api_call
+                    let employee: Employee = api_call
                         .request_subresources_by_id_wasm(
                             "employees",
                             "employee",
@@ -574,10 +574,10 @@ impl Tur {
 
                 info!("address: {address:#?}");
                 let customer = CustomerData {
-                    id: Some(CustomerId(Thing::from((
+                    id: Some(RecordId::from((
                         CUSTOMER_TABLE.to_string(),
                         order.id_customer.clone(),
-                    )))),
+                    ))),
                     cust_code: order.id_customer.clone(),
                     name: format!("{} {}", &cust.firstname, &cust.lastname),
                     phone_number: address.phone.clone().to_string(),
@@ -615,7 +615,7 @@ pub async fn send_payload(
     mut task_data: LiveTaskPayload,
     task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
-) -> anyhow::Result<Vec<Record>, anyhow::Error> {
+) -> anyhow::Result<Option<RecordId>, anyhow::Error> {
     info!("Send_Payload");
     let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
     // let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
@@ -638,21 +638,21 @@ pub async fn send_payload(
 
     info!("Customer: {:?}", customer_data);
     if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await? {
-        let update_cust_record: Option<Record> = DATABASE
-            .update(cust.id)
+        let update_cust_record: Vec<RecordId> = DATABASE
+            .update(cust.key().to_string())
             .content(customer_data.clone())
             .await?;
         info!("Customer updated: {update_cust_record:?}");
         if send_specs {
             if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await?
             {
-                let create_computer_record: Option<Record> = DATABASE
-                    .update(computer_record.id)
+                let create_computer_record: Vec<RecordId> = DATABASE
+                    .update(computer_record.key().to_string())
                     .content(computer_data)
                     .await?;
                 info!("create_computer_record: {create_computer_record:?}");
             } else {
-                let create_computer_record: Vec<Record> = DATABASE
+                let create_computer_record: Option<RecordId> = DATABASE
                     .create(COMPUTER_TABLE)
                     .content(computer_data)
                     .await?;
@@ -662,44 +662,44 @@ pub async fn send_payload(
         info!("Ticket: {:?}", ticket_data);
 
         if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await? {
-            let service_ticket_record: Option<Record> =
-                DATABASE.update(ticket.id).content(ticket_data).await?;
+            let service_ticket_record: Vec<RecordId> =
+                DATABASE.update(ticket.key().to_string()).content(ticket_data).await?;
             info!("service_ticket_record: {service_ticket_record:?}");
         } else {
-            let service_ticket_record: Vec<Record> =
+            let service_ticket_record: Option<RecordId> =
                 DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
             info!("service_ticket_record: {service_ticket_record:?}");
         }
     } else {
         match DATABASE
-            .create::<Vec<Record>>(CUSTOMER_TABLE)
+            .create::<Option<RecordId>>(CUSTOMER_TABLE)
             .content(customer_data.clone())
             .await
         {
-            Ok(create_cust_record) => info!("Created Record: {create_cust_record:?}"),
+            Ok(create_cust_record) => info!("Created RecordId: {create_cust_record:?}"),
             Err(e) => error!("Error with create_cust_record: {e:?}"),
         }
         match DATABASE
-            .create::<Vec<Record>>(COMPUTER_TABLE)
+            .create::<Option<RecordId>>(COMPUTER_TABLE)
             .content(computer_data)
             .await
         {
-            Ok(create_computer_record) => info!("Created Record: {create_computer_record:?}"),
+            Ok(create_computer_record) => info!("Created RecordId: {create_computer_record:?}"),
             Err(e) => error!("Error with create_computer_record: {e:?}"),
         }
         match DATABASE
-            .create::<Vec<Record>>(TICKET_TABLE)
+            .create::<Option<RecordId>>(TICKET_TABLE)
             .content(ticket_data)
             .await
         {
-            Ok(create_ticket_record) => info!("Created Record: {create_ticket_record:?}"),
+            Ok(create_ticket_record) => info!("Created RecordId: {create_ticket_record:?}"),
             Err(e) => error!("Error with create_ticket_record: {e:?}"),
         }
     }
 
     info!("Task: {:?}", task_data);
 
-    let create_task_record: Vec<Record> = DATABASE.create(TASK_TABLE).content(task_data).await?;
+    let create_task_record: Option<RecordId> = DATABASE.create(TASK_TABLE).content(task_data).await?;
     info!("create_task_record: {create_task_record:?}");
 
     if task_notes.len() > 0 {
@@ -708,18 +708,18 @@ pub async fn send_payload(
 
         for mut note in task_notes {
             note.task_id = task_id.clone();
-            let create_task_note_record: Vec<Record> =
+            let create_task_note_record: Option<RecordId> =
                 DATABASE.create(TASK_NOTE_TABLE).content(note).await?;
             info!("create_task_note_record: {:?}", create_task_note_record);
-            if let Some(note_record) = create_task_note_record.get(0) {
-                note_ids.push(note_record.id.clone());
+            if let Some(note_record) = create_task_note_record {
+                note_ids.push(note_record.key().to_string().clone());
             }
         }
 
-        if let Some(record) = create_task_record.get(0) {
-            let update_task: Option<Record> = DATABASE
+        if let Some(ref record) = create_task_record {
+            let update_task: Option<RecordId> = DATABASE
                 .query("UPDATE $task SET task_note += $notes")
-                .bind(("task", record.id.clone()))
+                .bind(("task", record.key().to_string().clone()))
                 .bind(("notes", note_ids))
                 .await?
                 .take(0)?;

@@ -4,7 +4,7 @@ use database::schema::{
         Address, Customer, CustomerMessage, CustomerThread, Employee, Order, PrestashopPayload,
         SubResource,
     },
-    CustomerData, CustomerId, CUSTOMER_TABLE,
+    CustomerData, CUSTOMER_TABLE,
 };
 use log::{error, info};
 use reqwest::{
@@ -14,7 +14,7 @@ use reqwest::{
 use serde::Deserialize;
 use serde_json::{from_value, Value};
 use std::collections::HashMap;
-use surrealdb::sql::Thing;
+use surrealdb::RecordId;
 
 const AUTH_TOKEN: &str = "Basic SVAxUlE2UkZSTUZXQjZCOFdIUVY4RFpQV1ZOTDIxWE06";
 
@@ -120,10 +120,10 @@ impl MastertechContext {
                 info!("address: {address:#?}");
 
                 let customer = CustomerData {
-                    id: Some(CustomerId(Thing::from((
+                    id: Some(RecordId::from((
                         CUSTOMER_TABLE.to_string(),
                         order.id_customer.clone(),
-                    )))),
+                    ))),
                     cust_code: order.id_customer.clone(),
                     name: format!("{} {}", &cust.firstname, &cust.lastname),
                     phone_number: address.phone.clone().to_string(),

@@ -8,7 +8,7 @@ use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
     schema::{
         utilities::{get_connected_clients, get_store_users, get_tasks},
-        TaskNotePayload, TicketId, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
+        TaskNotePayload, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
         TICKET_TABLE,
     },
     DATABASE,
@@ -22,7 +22,7 @@ use egui_dock::DockState;
 use log::info;
 use log::{debug, error};
 use mtechserver::webworker::Input;
-use surrealdb::{sql::Thing, Action};
+use surrealdb::{Action, RecordId};
 use wasm_bindgen_futures::spawn_local;
 
 // #[cfg(target_arch="wasm32")]
@@ -91,7 +91,7 @@ impl MtechServer {
         let notes_tx = self.context.notes_tx.clone();
         let github_releases_tx = self.context.github_releases_channel.0.clone();
         // let notification_tx = self.context.notification_tx.clone();
-        let live_output = self.context.live_output_tx.clone();
+        // let live_output = self.context.live_output_tx.clone();
 
         if let Some(usr) = self.context.current_user.as_ref() {
             info!("Getting Initial data");
@@ -278,7 +278,7 @@ impl MtechServer {
             let task_notes = &mut self.context.tur.task_notes;
 
             let service_details = presta_data.order.associations.order_service.clone();
-            let mut services: Vec<TicketId> = Vec::new();
+            let mut services: Vec<RecordId> = Vec::new();
 
             let sales_rep = presta_data.sales_rep.clone().unwrap_or_default();
             let split_rep = presta_data.split_rep.clone().unwrap_or_default();
@@ -329,10 +329,10 @@ impl MtechServer {
             ticket.ticket_total = presta_data.order.total_products_wt.clone();
             ticket.doc_alias = presta_data.order.order_type.clone();
             ticket.service_number = presta_data.order.id.clone();
-            ticket.id = Some(TicketId(Thing::from((
+            ticket.id = Some(RecordId::from((
                 TICKET_TABLE.to_string(),
                 ticket.service_number.clone(),
-            ))));
+            )));
 
             if let Some(ticket_id) = &ticket.id {
                 services.push(ticket_id.clone());

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use database::schema::{
-    ConnectedClient, Priority, Status, Store, TaskId, TaskNotePayload, TaskPayload, TicketPayload,
+    ConnectedClient, Priority, Status, Store, TaskNotePayload, TaskPayload, TicketPayload,
     User,
 };
 use displays::{
@@ -17,12 +17,12 @@ use eframe::egui::{
     Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Widget, Window,
 };
 use egui_extras::Strip;
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+// use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use serde::{Deserialize, Serialize};
-use std::cmp::Reverse;
+// use std::cmp::Reverse;
 use std::fmt::Debug;
-use structdiff::StructDiff;
-use surrealdb::sql::Id as SurrealId;
+// use structdiff::StructDiff;
+use surrealdb::RecordId;
 
 pub mod ai;
 pub mod displays;
@@ -36,10 +36,10 @@ pub mod update_tasks;
 pub enum TaskUiActions {
     OpenTaskModal(TaskPayload),
     CreateTaskModal,
-    OpenChatModal((TaskId, Vec<TaskNotePayload>)),
+    OpenChatModal((RecordId, Vec<TaskNotePayload>)),
     Response(Response),
-    Editing(SurrealId),
-    CommitChanges(SurrealId),
+    Editing(RecordId),
+    CommitChanges(RecordId),
     None,
 }
 

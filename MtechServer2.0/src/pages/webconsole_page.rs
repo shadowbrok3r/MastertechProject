@@ -7,10 +7,7 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use database::schema::{utilities::get_connected_clients, ConnectedClient};
-use displays::ui_tools::{
-    autocomplete::AutoCompleteTextEdit,
-    toasts::{Toast, ToastKind, ToastOptions},
-};
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::egui::{
     text::LayoutJob, Align, Button, CentralPanel, CollapsingHeader, Color32, Context, FontFamily,
     FontId, Frame, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, TextEdit, TextFormat,
@@ -272,7 +269,7 @@ impl MtechServer {
                     let clients = self.context.clients.clone();
                     let mut client_vec = Vec::new();
                     if !search_input.is_empty() {
-                        for mut client in
+                        for client in
                             clients.filter_by_client(inputs.clone(), search_input.clone())
                         {
                             client_vec.push(client);

@@ -2,7 +2,7 @@
 
 use database::{schema::{Priority, Record, Status, Store, TaskNotePayload, TaskPayload}, DATABASE};
 use log::info;
-use surrealdb::opt::RecordId;
+use surrealdb::RecordId;
 use tokio::spawn;
 
 use super::Updatable;
@@ -10,7 +10,7 @@ use super::Updatable;
 impl Updatable for TaskPayload {
     fn update_completed(&self, completed: bool) {
         // self.completed = completed;
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         spawn(async move {
             let query = format!("UPDATE task SET completed=$completed, status=$status WHERE id=$id");
             DATABASE.set("id", id).await.unwrap();
@@ -32,7 +32,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_due_date(&self, due_date: String) {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         spawn(async move {
             let query = format!("UPDATE task SET due_date=$date WHERE id=$id");
 
@@ -49,7 +49,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_assignee_initials(&self, initials: String) {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         spawn(async move {
             let user_query = format!("SELECT id FROM user WHERE everest_initials=$initials");
 
@@ -79,7 +79,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_task_name(&self, name: String) {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         spawn(async move {
             let query = format!("UPDATE task SET task_name=$name WHERE id=$id");
 
@@ -96,7 +96,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_status(&self, status: Status) {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         spawn(async move {
             let mut _query = String::new();
 
@@ -127,7 +127,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_dep(&self, dep: Store) {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         spawn(async move {
             let query = format!("UPDATE task SET dep=$dep WHERE id=$id");
 
@@ -144,7 +144,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_priority(&self, priority: Option<Priority>) {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         spawn(async move {
             let query = format!("UPDATE task SET priority=$priority WHERE id=$id");
 
@@ -161,7 +161,7 @@ impl Updatable for TaskPayload {
     }
 
     fn update_task_description(&self, description: String) {
-        let id: RecordId = self.id.clone().unwrap().0;
+        let id: RecordId = self.id.clone().unwrap();
         spawn(async move {
             let query = format!("UPDATE task SET task_description=$description WHERE id=$id");
 
@@ -179,7 +179,7 @@ impl Updatable for TaskPayload {
     
     fn update_checkin_notes(&self, checkin_notes: Option<String>) {
         let id = self.service_ticket.as_ref();
-        let x = id.unwrap().id.clone().unwrap().0;
+        let x = id.unwrap().id.clone().unwrap();
         spawn(async move {
             let query = format!("UPDATE service_order SET checkin_notes=$notes WHERE id=$id");
 

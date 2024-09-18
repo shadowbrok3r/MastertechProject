@@ -15,7 +15,7 @@ use crossbeam::channel::Sender;
 use anyhow::{anyhow, Context};
 use futures_util::FutureExt;
 use sha2::{Digest, Sha256};
-use surrealdb::sql::Thing;
+use surrealdb::{sql::Thing, RecordId};
 use log::{debug, error, info};
 use serde_json::Value;
 use serde_json::json;
@@ -125,7 +125,7 @@ impl ComputerInfo for ComputerData{
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
 
-        self.id = Some(ComputerId(Thing::from((COMPUTER_TABLE,  id.clone().as_str()))));
+        self.id = Some(RecordId::from((COMPUTER_TABLE,  id.clone().as_str())));
         Ok(self.to_owned())
     }
 

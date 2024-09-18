@@ -43,7 +43,7 @@ impl FilterTasks for Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| {
                 assignees.into_iter().any(|user| {
-                    user.store == current_user.store && task.assignee.0.id == user.id.0.id
+                    user.store == current_user.store && task.assignee.key().to_string() == user.id.key().to_string()
                 })
             })
             .cloned()

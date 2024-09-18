@@ -3,8 +3,7 @@ use crate::{
     tabs::{
         ai_playground::AiPlayground,
         github_issue::GithubIssue,
-        json_viewer::{JsonEditor, JsonEditorState},
-        logger::logger_ui,
+        json_viewer::{JsonEditor, JsonEditorState}
     },
     utilities::{
         displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},

@@ -115,7 +115,7 @@ pub fn update_or_insert_notes(new_note: TaskNotePayload, task: &mut TaskPayload)
                 let notes = &mut task.task_note;
                 
                 if let Some(existing_note) = notes.iter_mut().find(|note| {
-                    note.id.as_ref().unwrap().0.id == new_note.id.as_ref().unwrap().0.id
+                    note.id.as_ref().unwrap().key().to_string() == new_note.id.as_ref().unwrap().key().to_string()
                 }) {
                     // Apply diffs to the existing note
                     let diffs = existing_note.diff(&new_note);

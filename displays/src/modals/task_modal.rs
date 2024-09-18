@@ -142,7 +142,7 @@ impl DisplayModal for TaskModal {
 
                             if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
                                 let mut ids = Vec::new();
-                                let _task_id = self.task.id.as_ref().unwrap().0.clone();
+                                let _task_id = self.task.id.as_ref().unwrap().clone();
                                 let _ticket_id = if let Some(ticket) = &self.task.service_ticket{
                                     Some(ticket.id.clone().unwrap())
                                 } else{ None };
@@ -152,7 +152,7 @@ impl DisplayModal for TaskModal {
                                         ids.push(id.0.clone());
                                     }
                                 };
-                                let task_id = self.task.id.as_ref().unwrap().0.clone();
+                                let task_id = self.task.id.as_ref().unwrap().clone();
 
                                 let id = task_id.clone();
                                 spawn_local(async move {
@@ -357,7 +357,7 @@ fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
                                         // ui.end_row();
 
                                         ui.colored_label(Color32::LIGHT_RED, "ID:");
-                                        ui.label(format!("{}", customer.id.as_ref().unwrap().0.id));
+                                        ui.label(format!("{}", customer.id.as_ref().unwrap().id));
                                         ui.end_row();
 
                                         ui.colored_label(Color32::LIGHT_RED, "Name:");

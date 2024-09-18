@@ -17,7 +17,7 @@ inline = []
 [dependencies]
 eframe = { workspace=true, optional = true }
 database = { workspace=true }
-surrealdb-alpha = { workspace=true }
+surrealdb = { workspace=true }
 tokio = { workspace=true }
 serde_json = { workspace=true }
 serde = { workspace=true }

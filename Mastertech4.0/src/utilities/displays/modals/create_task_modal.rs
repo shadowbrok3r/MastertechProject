@@ -168,7 +168,7 @@ impl DisplayModal for CreateTaskModal {
                 };
 
                 spawn(async move{
-                        let _: Vec<Record> = DATABASE
+                        let _: Option<Record> = DATABASE
                         .create(TASK_TABLE)
                         .content(task_payload)
                         .await

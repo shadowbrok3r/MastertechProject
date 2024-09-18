@@ -395,7 +395,7 @@ pub trait Aesthetix {
             // override the text styles here: Option<TextStyle>
             override_text_style: None,
 
-            // override the font id here: Option<FontId>
+            // override the font id here: Option<RecordId>
             override_font_id: None,
 
             // set your text styles here:

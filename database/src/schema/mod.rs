@@ -6,8 +6,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use structdiff::{Difference, StructDiff};
 use surrealdb::{
-    opt::RecordId,
-    sql::{Id, Thing},
+    // opt::Resource::RecordId,
+    sql::Thing,
+    RecordId,
 };
 
 use crate::DATABASE;
@@ -33,8 +34,8 @@ pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
 
 #[async_trait(?Send)]
-impl<D> GetAssociatedDataFromId<D> for Thing {
-    async fn get_associated_data<Thing>(&mut self) -> Result<D, Error>
+impl<D> GetAssociatedDataFromId<D> for RecordId {
+    async fn get_associated_data<RecordId>(&mut self) -> Result<D, Error>
     where
         D: for<'de> Deserialize<'de>,
     {
@@ -63,7 +64,7 @@ pub struct CustomerId(pub RecordId);
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TicketId(pub RecordId);
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd)]
 pub struct UserId(pub RecordId);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -84,6 +85,19 @@ pub struct RecordResult {
     pub record: Option<String>,
 }
 
+// Implement Eq and Ord for ClientId using the inner RecordId's string representation
+impl Eq for UserId {}
+impl PartialEq for UserId {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+impl Ord for UserId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.to_string().cmp(&other.0.to_string())
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecordSuccess {
     pub success: bool,
@@ -91,24 +105,24 @@ pub struct RecordSuccess {
 
 impl Default for UserId {
     fn default() -> Self {
-        UserId(Thing::from((String::new(), Id::String(String::new()))).clone())
+        UserId(RecordId::from((String::new(), String::new())).clone())
     }
 }
 
 impl Default for TaskId {
     fn default() -> Self {
-        TaskId(Thing::from((String::new(), Id::String(String::new()))).clone())
+        TaskId(RecordId::from((String::new(), String::new())).clone())
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TaskPayload {
-    pub id: Option<TaskId>,
+    pub id: Option<RecordId>,
     pub task_name: String,
     pub service_ticket: Option<TicketPayload>,
     pub everest_initials: String,
     pub task_description: String,
-    pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
+    pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
@@ -118,15 +132,34 @@ pub struct TaskPayload {
     pub status: Status,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
+impl Default for TaskPayload {
+    fn default() -> Self {
+        Self {
+            id: None,
+            task_name: String::new(),
+            service_ticket: None,
+            everest_initials: String::new(),
+            task_description: String::new(),
+            assignee: RecordId::from((USER_TABLE, "")),
+            service_number: None,
+            due_date: String::new(),
+            priority: Priority::Normal,
+            task_note: Vec::new(),
+            completed: false,
+            status: Status::Todo,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct LiveTaskPayload {
-    pub id: Option<TaskId>,
+    pub id: Option<RecordId>,
     pub task_name: String,
-    pub service_ticket: Option<TicketId>,
+    pub service_ticket: Option<RecordId>,
     // #[serde(skip)]
     pub everest_initials: String,
     pub task_description: String,
-    pub assignee: UserId, // should i use a user id here or will email and name be enough for tracking?
+    pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
@@ -134,6 +167,25 @@ pub struct LiveTaskPayload {
     pub task_note: Vec<TaskNoteId>,
     pub completed: bool,
     pub status: Status,
+}
+
+impl Default for LiveTaskPayload {
+    fn default() -> Self {
+        Self {
+            id: None,
+            task_name: String::new(),
+            service_ticket: None,
+            everest_initials: String::new(),
+            task_description: String::new(),
+            assignee: RecordId::from((USER_TABLE, "")),
+            service_number: None,
+            due_date: String::new(),
+            priority: Priority::Normal,
+            task_note: Vec::new(),
+            completed: false,
+            status: Status::Todo,
+        }
+    }
 }
 
 impl From<LiveTaskPayload> for TaskPayload {
@@ -156,11 +208,11 @@ impl From<LiveTaskPayload> for TaskPayload {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct TicketPayload {
-    pub id: Option<TicketId>,
+    pub id: Option<RecordId>,
     pub created_at: Option<String>,
     pub customer: Option<CustomerData>,
     pub computer: Option<ComputerData>,
-    pub service_ticket: Option<TaskId>,
+    pub service_ticket: Option<RecordId>,
     pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
@@ -179,10 +231,10 @@ pub struct TicketPayload {
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Difference)]
 pub struct TicketData {
     // Live Ticket Payload
-    pub id: Option<TicketId>,
+    pub id: Option<RecordId>,
     pub created_at: Option<String>,
-    pub customer: Option<CustomerId>,
-    pub computer: Option<ComputerId>,
+    pub customer: Option<RecordId>,
+    pub computer: Option<RecordId>,
     pub service_number: String,
     /// Person that checked computer in
     pub checkin_rep: String,
@@ -243,7 +295,7 @@ impl From<TicketPayload> for TicketData {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct CustomerData {
-    pub id: Option<CustomerId>,
+    pub id: Option<RecordId>,
     pub cust_code: String,
     pub part_order_links: Option<Vec<String>>,
     pub name: String,
@@ -257,8 +309,8 @@ pub struct CustomerData {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct ComputerData {
-    pub id: Option<ComputerId>,
-    pub customer: Option<CustomerId>,
+    pub id: Option<RecordId>,
+    pub customer: Option<RecordId>,
     pub seb_info: Option<LocalSebData>,
     pub hostname: String,
     pub operating_system: String,
@@ -285,7 +337,7 @@ impl ComputerData {
 #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 #[serde(rename = "xml")]
 pub struct LocalSebData {
-    // pub id: Option<SebId>,
+    // pub id: Option<RecordId>,
     pub InstalledDeviceId: String,
     pub InstallInstanceId: String,
     pub HasIssues: String,
@@ -338,8 +390,8 @@ pub struct HardwareTests {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
 pub struct TaskNotePayload {
-    pub id: Option<TaskNoteId>,
-    pub task_id: Option<TaskId>,
+    pub id: Option<RecordId>,
+    pub task_id: Option<RecordId>,
     pub everest_initials: String,
     pub created_at: String,
     pub note: String,
@@ -349,14 +401,14 @@ pub struct TaskNotePayload {
 
 #[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq, Difference)]
 pub struct ConnectedClient {
-    pub id: Option<ClientId>,
-    pub assigned_user: Option<UserId>,
+    pub id: Option<RecordId>,
+    pub assigned_user: Option<RecordId>,
     pub client_hash: String,
     pub connection_string: String,
     pub command_history: Option<Vec<String>>,
     pub connected: bool,
     pub friendly_name: Option<String>,
-    pub customer: Option<CustomerId>,
+    pub customer: Option<RecordId>,
     pub last_update: Option<String>,
 }
 
@@ -619,9 +671,9 @@ impl Store {
     ];
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct User {
-    pub id: UserId,
+    pub id: RecordId,
     pub name: String,
     pub everest_initials: String,
     pub email: String,
@@ -630,6 +682,24 @@ pub struct User {
     pub minio_access_key: Option<String>,
     pub minio_secret_key: Option<String>,
     pub user_settings: Option<UserSettings>,
+}
+impl Default for User {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((USER_TABLE, "")),
+            name: String::new(),
+            everest_initials: String::new(),
+            email: String::new(),
+            store: Store::default(),
+            minio_access_key: None,
+            minio_secret_key: None,
+            user_settings: None,
+        }
+    }
+}
+
+impl Eq for User {
+
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]

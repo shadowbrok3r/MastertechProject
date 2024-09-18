@@ -4,7 +4,7 @@ use database::{self, DATABASE};
 use database::schema::{Priority, Record, TaskPayload, User};
 use log::info;
 use structdiff::Difference;
-use surrealdb::sql::{Id, Thing};
+use surrealdb::RecordId;
 use wasm_bindgen_futures::spawn_local;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
@@ -36,7 +36,7 @@ pub struct TaskLayout{
     pub open_menu: bool,
     #[difference(skip)]
     pub action: TaskUiActions,
-    pub task: Option<Id>,
+    pub task: Option<String>,
     #[difference(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
 }
@@ -127,12 +127,12 @@ impl TaskLayout {
         });
     }
 
-pub fn begin_edit(&mut self, task_id: &Id) -> Option<&mut TaskPayload>{
+pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
         info!("Finding ID: {task_id:?}");
         // Search for the task by ID
         for (_, tasks) in self.task_map.iter_mut(){
             for task in tasks.iter_mut(){
-                if task.id.as_ref().unwrap().0.id == *task_id{
+                if task.id.as_ref().unwrap().key().to_string() == *task_id{
                     info!("Got a match");
                     return Some(task);
                 }
@@ -200,7 +200,7 @@ pub fn begin_edit(&mut self, task_id: &Id) -> Option<&mut TaskPayload>{
                             });
 
                             if let Some(action) = res{
-                                let ids = tasks.iter().map(|t| t.id.clone().unwrap().0).collect::<Vec<Thing>>();
+                                let ids = tasks.iter().map(|t| t.id.clone().unwrap()).collect::<Vec<RecordId>>();
                                 match action{
                                     TaskActions::MarkComplete => {
                                         spawn_local(async move {

@@ -1,34 +1,38 @@
-use surrealdb::{engine::remote::ws::{Client as WsClient, Wss}, opt::auth::{Jwt, Record as SurrealRec}, Error, Surreal}; 
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
-use lazy_static::lazy_static;
-use once_cell::sync::Lazy;
-use std::{fmt::Debug, sync::RwLock};
-use schema::User;
-use log::info;
 use self::schema::Record;
-pub mod schema;
+use lazy_static::lazy_static;
+use log::info;
+use once_cell::sync::Lazy;
+use schema::User;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::{fmt::Debug, sync::RwLock};
+use surrealdb::{
+    engine::remote::ws::{Client as WsClient, Wss},
+    opt::auth::{Jwt, Record as SurrealRec},
+    Error, Surreal,
+};
 pub mod live_data;
+pub mod schema;
 
 #[derive(Clone, Debug, Default)]
-pub struct Database{
+pub struct Database {
     // pub database: Surreal<WsClient>,
     pub jwt: Option<Jwt>,
-    pub user: Option<User>
+    pub user: Option<User>,
 }
 #[derive(Serialize, Deserialize)]
-pub struct DataSuccess{
-    success: bool
+pub struct DataSuccess {
+    success: bool,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Data{
+pub struct Data {
     import_path: Option<String>,
     export_path: Option<String>,
 }
 
 #[derive(Serialize)]
-pub struct DataResult{
-    pub result: Result<DataSuccess, Error>
+pub struct DataResult {
+    pub result: Result<DataSuccess, Error>,
 }
 
 #[derive(Serialize)]
@@ -41,7 +45,7 @@ pub struct Auth {
 pub enum DatabaseSelection {
     #[default]
     Stable,
-    Beta
+    Beta,
 }
 
 lazy_static! {
@@ -65,8 +69,8 @@ pub fn set_db_selection(selection: DatabaseSelection) {
 pub fn get_db_url() -> String {
     let db_selection = DB_SELECTION.read();
     match *db_selection.unwrap() {
-        DatabaseSelection::Stable => DB_URL.to_string(), 
-        DatabaseSelection::Beta => DB_URL_DEV.to_string(), 
+        DatabaseSelection::Stable => DB_URL.to_string(),
+        DatabaseSelection::Beta => DB_URL_DEV.to_string(),
     }
 }
 /*
@@ -79,77 +83,95 @@ pub fn get_db_url() -> String {
     }
 */
 
-impl Database{
-    pub async fn new(username: String, password: String, jwt: Option<String>) -> anyhow::Result<Self, anyhow::Error> {
-
-        DATABASE.connect::<Wss>(DB_URL_DEV).await?; //(&get_db_url()).await?;
+impl Database {
+    pub async fn new(
+        username: String,
+        password: String,
+        jwt: Option<String>,
+    ) -> anyhow::Result<Self, anyhow::Error> {
+        DATABASE.connect::<Wss>(DB_URL).await?; //(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
-        match jwt{
+        match jwt {
             Some(jwt) => {
                 info!("Have a JWT, attempting token auth");
                 let auth = DATABASE.authenticate(jwt.clone()).await;
-                match auth{
+                match auth {
                     Ok(_) => {
                         info!("Auth not ok");
-                        Ok(Self { jwt: Some(jwt.into()), user: None })
-                    },
+                        Ok(Self {
+                            jwt: Some(jwt.into()),
+                            user: None,
+                        })
+                    }
                     Err(e) => Err(e.into()),
                 }
-            },
+            }
             None => {
                 info!("No JWT, sigining in: {:?}", username.clone());
 
                 // Select a specific namespace / database
-                let jwt = DATABASE.signin(
-                    SurrealRec { 
-                        namespace: NS, 
-                        database: DB, 
+                let jwt = DATABASE
+                    .signin(SurrealRec {
+                        namespace: NS,
+                        database: DB,
                         access: USER_SCOPE,
-                        params: 
-                            Auth{
-                                email: username.clone(), 
-                                password
-                            }
-                    }
-                ).await?;
+                        params: Auth {
+                            email: username.clone(),
+                            password,
+                        },
+                    })
+                    .await?;
 
-                DATABASE.set("email", username.clone().to_lowercase()).await?;
-                
+                DATABASE
+                    .set("email", username.clone().to_lowercase())
+                    .await?;
+
                 let user: Option<User> = DATABASE
                     .query("SELECT * FROM user WHERE email == $email")
                     .await?
                     .take(0)?;
-                Ok(Self {jwt: Some(jwt), user })
-            },
+                Ok(Self {
+                    jwt: Some(jwt),
+                    user,
+                })
+            }
         }
     }
 
-    
-    pub async fn signup<T: Serialize + Debug + Clone>(signup: T, email: String) -> anyhow::Result<Self, anyhow::Error> {
+    pub async fn signup<T: Serialize + Debug + Clone>(
+        signup: T,
+        email: String,
+    ) -> anyhow::Result<Self, anyhow::Error> {
         // let db_url = get_db_url();
-        DATABASE.connect::<Wss>(DB_URL_DEV).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Wss>(DB_URL).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
-        let jwt = DATABASE.signup(
-            SurrealRec { 
-                namespace: NS, database: DB, access: USER_SCOPE,
-                params: signup.clone()
-            }
-        ).await?;
+        let jwt = DATABASE
+            .signup(SurrealRec {
+                namespace: NS,
+                database: DB,
+                access: USER_SCOPE,
+                params: signup.clone(),
+            })
+            .await?;
 
         info!("signup: {:?}", signup);
         let query = "SELECT * FROM user WHERE email == $email";
         DATABASE.set("email", email).await?;
         let user: Option<User> = DATABASE.query(query).await?.take(0)?;
-        Ok(Self { jwt: Some(jwt), user })
+        Ok(Self {
+            jwt: Some(jwt),
+            user,
+        })
     }
 
-    pub async fn insert<T: Serialize + 'static>(&self, table: &str, record: T) -> Result<Vec<Record>, Error> {
-        let created: Vec<Record> = DATABASE
-            .create(table)
-            .content(record)
-            .await?;
+    pub async fn insert<T: Serialize + 'static>(
+        &self,
+        table: &str,
+        record: T,
+    ) -> Result<Option<Record>, Error> {
+        let created: Option<Record> = DATABASE.create(table).content(record).await?;
         Ok(created)
     }
 
@@ -157,20 +179,15 @@ impl Database{
         let result: Vec<T> = DATABASE.select(table).await?;
         Ok(result)
     }
-    
+
     pub async fn sql<T: DeserializeOwned>(&self, sql_query: &str) -> Result<Vec<T>, Error> {
-        let query: Vec<T> = DATABASE
-            .query(sql_query)
-            .await?
-            .take(0)?;
+        let query: Vec<T> = DATABASE.query(sql_query).await?.take(0)?;
 
         Ok(query)
     }
 
     pub async fn delete(&self, table: &str, id: &str) -> Result<Option<Record>, Error> {
-        let result: Option<Record> = DATABASE
-            .delete((table, id))
-            .await.unwrap();
+        let result: Option<Record> = DATABASE.delete((table, id)).await.unwrap();
         Ok(result)
     }
 }
