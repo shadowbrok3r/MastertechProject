@@ -223,9 +223,8 @@ pub trait RowViewer<R>: 'static {
 
     /// If you want to keep UI state on storage(i.e. persist over sessions), return true from this
     /// function.
-    #[cfg(feature = "persistency")]
     fn persist_ui_state(&self) -> bool {
-        false
+        true
     }
 }
 
