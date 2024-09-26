@@ -41,6 +41,13 @@ pub fn deserialize_to_string<'de, D: Deserializer<'de>>(
             Ok(value.to_string())
         }
 
+        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(value.to_string())
+        }
+
         fn visit_unit<E>(self) -> Result<Self::Value, E>
         where
             E: de::Error,

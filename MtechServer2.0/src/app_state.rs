@@ -4,6 +4,7 @@ use crate::{
         ai_playground::AiPlayground,
         github_issue::GithubIssue,
         json_viewer::{JsonEditor, JsonEditorState},
+        stock::{MyRowData, MyRowViewer, RawStockData, StockData},
     },
     utilities::{
         displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
@@ -18,7 +19,9 @@ use database::{
     },
     Database,
 };
-use displays::{ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{
+    egui_data_table::DataTable, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem,
+};
 use eframe::{
     egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId},
     CreationContext,
@@ -256,6 +259,14 @@ pub struct MtechServerContext {
     pub user_settings: UserSettings,
     pub update_settings: bool,
     pub get_settings: bool,
+    #[serde(skip)]
+    pub data_viewer: MyRowViewer,
+    #[serde(skip)]
+    pub data_table: DataTable<MyRowData>,
+    #[serde(skip)]
+    pub stock_data: RawStockData,
+    #[serde(skip)]
+    pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
 }
 
 impl MtechServer {
@@ -330,6 +341,7 @@ impl MtechServer {
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
+        let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
 
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
@@ -430,6 +442,10 @@ impl MtechServer {
             user_settings: UserSettings::default(),
             update_settings: false,
             get_settings: false,
+            data_table: DataTable::<MyRowData>::default(),
+            data_viewer: MyRowViewer::default(),
+            stock_data: RawStockData::default(),
+            stock_channel,
         };
 
         Self {
