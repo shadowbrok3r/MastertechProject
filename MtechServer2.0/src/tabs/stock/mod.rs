@@ -13,7 +13,7 @@ use eframe::egui::{
 use log::info;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
-
+// https://github.com/rerun-io/egui_table/blob/main/egui_table/src/table.rs
 impl MtechServerContext {
     pub fn stock_viewer(&mut self, ui: &mut Ui) {
         SidePanel::right("Hotkeys")
