@@ -16,7 +16,7 @@ use wasm_bindgen_futures::spawn_local;
 
 impl MtechServerContext {
     pub fn stock_viewer(&mut self, ui: &mut Ui) {
-        SidePanel::left("Hotkeys")
+        SidePanel::right("Hotkeys")
             .default_width(500.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered_justified(|ui| {
