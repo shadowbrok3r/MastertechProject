@@ -1,6 +1,7 @@
 use crate::{
     app_state::{AppState, MtechServer},
     pages::downloads_page::get_github_releases,
+    tabs::stock::{get_stock, MyRowData},
     utilities::ModalType,
 };
 use database::STORAGE_URL;
@@ -12,7 +13,10 @@ use database::{
     },
     DATABASE,
 };
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use displays::{
+    egui_data_table::{DataTable, RowViewer},
+    ui_tools::toasts::{Toast, ToastKind, ToastOptions},
+};
 use eframe::{
     egui::{Color32, RichText},
     Frame,
@@ -92,6 +96,7 @@ impl MtechServer {
         let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
         let github_releases_tx = self.context.github_releases_channel.0.clone();
+        let stock_tx = self.context.stock_channel.0.clone();
         // let notification_tx = self.context.notification_tx.clone();
         // let live_output = self.context.live_output_tx.clone();
 
@@ -143,6 +148,7 @@ impl MtechServer {
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                     let get_connected_clients = get_connected_clients(tx, user.clone()).await;
                     let get_releases = get_github_releases(github_releases_tx).await;
+                    let _stock = get_stock(stock_tx.clone()).await;
                     // let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
                     // let get_custs = get_customer_data(live_output).await;
                     info!("get_connected_clients: {get_connected_clients:?}");
@@ -269,6 +275,22 @@ impl MtechServer {
         if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
             debug!("Releases: {releases:?}");
             self.context.github_releases = releases;
+        }
+
+        if let Ok(stock_data) = self.context.stock_channel.1.try_recv() {
+            let data: Vec<MyRowData> = stock_data
+                .iter()
+                .map(|stock_data| {
+                    MyRowData(
+                        stock_data.product_id.clone().1.clone(),
+                        stock_data.lot_id.clone().1.parse::<String>().unwrap(),
+                        "Riverdale".to_string(),
+                        "".to_string(),
+                        false,
+                    )
+                })
+                .collect();
+            self.context.data_table.replace(data);
         }
 
         if let Ok(presta_data) = self.context.tur_channel.1.try_recv() {

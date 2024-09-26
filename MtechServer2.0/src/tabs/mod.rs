@@ -8,6 +8,7 @@ pub mod logger;
 pub mod my_tasks;
 pub mod query_builder;
 pub mod quote_fulfilled_tasks;
+pub mod stock;
 pub mod store_tasks;
 pub mod terminal;
 pub mod toolbox;
@@ -72,6 +73,7 @@ impl TabViewer for MtechServerContext {
             "Logs" => logger_ui().show(ui),
             "Query Builder" => self.query_builder(ui),
             "Json Viewer" => self.json_viewer(ui),
+            "Stock" => self.stock_viewer(ui),
             _ => {}
         }
     }
@@ -120,6 +122,7 @@ impl TabViewer for MtechServerContext {
             &"Logs".to_string(),
             &"Json Viewer".to_string(),
             &"Query Builder".to_string(),
+            &"Stock".to_string(),
         ];
 
         for tab in tabs {

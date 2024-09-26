@@ -25,7 +25,6 @@ displays = { path="../displays", features = ["wasm"]}
 wasm-bindgen-futures = { workspace=true }
 web-time = { workspace=true }
 wasm-bindgen = { workspace=true }
-egui-data-table = { workspace = true }
 database = { workspace=true }
 surrealdb = { workspace=true }
 mime_guess = { workspace=true }

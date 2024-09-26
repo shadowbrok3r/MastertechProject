@@ -2,7 +2,7 @@ use crate::utilities::{displays::chats::ChatView, DisplayModal, ModalTypes};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use core::f32;
-use database::schema::{utilities::delete_task, TaskPayload};
+use database::schema::{utilities::delete_task, Store, TaskPayload};
 use eframe::egui::{
     scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid,
     Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget,
@@ -95,7 +95,7 @@ impl ModalTypes for TaskModal {
 pub struct SpecialPartOrder {
     customer_name: String,              //  "kathleen Hoffmon",
     customer_phone_number: String,      //  "801-888-8888",
-    notes: String,                      //  "These are some notes",
+    application_comment: String,        //  "These are some notes",
     system_order_number: String,        //  "123456",
     id_location: String,                //  "Riverdale",
     request_type: String,               //  "Any",
@@ -255,9 +255,17 @@ impl DisplayModal for TaskModal {
                                                             avail_size,
                                                         )
                                                     }
-                                                    ModalAction::PartOrderPage => self
-                                                        .spo
-                                                        .display_part_order_page(ui, avail_size),
+                                                    ModalAction::PartOrderPage => {
+                                                        self.spo.display_part_order_page(
+                                                            ui,
+                                                            avail_size,
+                                                            self.chat_view
+                                                                .current_user
+                                                                .clone()
+                                                                .unwrap_or_default()
+                                                                .store,
+                                                        )
+                                                    }
                                                     ModalAction::TaskNotePage => {
                                                         ui.set_width(avail_size.x);
                                                         if let Some(_new_message) =
@@ -736,9 +744,9 @@ impl Default for SpecialPartOrder {
         Self {
             customer_name: String::new(),
             customer_phone_number: String::new(),
-            notes: String::new(),
+            application_comment: String::new(),
             system_order_number: String::new(),
-            id_location: "0".to_string(),
+            id_location: "1".to_string(),
             request_type: String::new(),
             shipping_method: "2 - 2-3 Day Express".to_string(),
             part_manufacturer: Manufacturer::Pclaptops,
@@ -799,7 +807,7 @@ impl SpecialPartOrder {
         self.system_order_number = system_order_number;
     }
 
-    fn display_part_order_page(&mut self, ui: &mut Ui, avail_size: Vec2) {
+    fn display_part_order_page(&mut self, ui: &mut Ui, avail_size: Vec2, location: Store) {
         StripBuilder::new(ui)
             .cell_layout(Layout::from_main_dir_and_cross_align(
                 Direction::TopDown,
@@ -880,7 +888,7 @@ impl SpecialPartOrder {
 
                                     ui.add_space(15.0);
 
-                                    TextEdit::multiline(&mut self.notes)
+                                    TextEdit::multiline(&mut self.application_comment)
                                         .hint_text("Notes".to_string())
                                         .margin(Margin::same(5.0))
                                         .desired_rows(3)
@@ -917,16 +925,28 @@ impl SpecialPartOrder {
                                             .ui(ui)
                                             .clicked()
                                         {
+                                            let location = match location {
+                                                Store::RIV => "1".to_string(),
+                                                Store::LTN => "2".to_string(),
+                                                Store::MUR => "4".to_string(),
+                                                Store::AF => "7".to_string(),
+                                                Store::WJ => "5".to_string(),
+                                                Store::ORE => "8".to_string(),
+                                                Store::SAN => "6".to_string(),
+                                            };
+
                                             let spo = SpecialPartOrder {
                                                 customer_name: self.customer_name.clone(),
                                                 customer_phone_number: self
                                                     .customer_phone_number
                                                     .clone(),
-                                                notes: self.notes.clone(),
+                                                application_comment: self
+                                                    .application_comment
+                                                    .clone(),
                                                 system_order_number: self
                                                     .system_order_number
                                                     .clone(),
-                                                id_location: self.id_location.clone(),
+                                                id_location: location,
                                                 request_type: self.request_type.clone(),
                                                 shipping_method: self.shipping_method.clone(),
                                                 part_manufacturer: self.part_manufacturer.clone(),
@@ -994,3 +1014,14 @@ impl SpecialPartOrder {
             });
     }
 }
+
+/*
+ * 1 Riverdale [RIV]
+ * 2 Layton [LTN]
+ * 3 Salt Lake City [SLC]
+ * 4 Murray [MUR]
+ * 5 West Jordan [WJ]
+ * 6 Sandy [SAN]
+ * 7 American Fork [AF]
+ * 8 Orem [ORE]
+*/
