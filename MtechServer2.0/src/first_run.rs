@@ -4,6 +4,7 @@ use crate::{
     tabs::stock::{get_stock, MyRowData},
     utilities::ModalType,
 };
+use anyhow::{Error, Result};
 use database::STORAGE_URL;
 use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
@@ -25,6 +26,7 @@ use egui_dock::DockState;
 use log::info;
 use log::{debug, error};
 use mtechserver::webworker::Input;
+use reqwest::Client;
 use surrealdb::{Action, RecordId};
 use wasm_bindgen_futures::spawn_local;
 
@@ -148,7 +150,13 @@ impl MtechServer {
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                     let get_connected_clients = get_connected_clients(tx, user.clone()).await;
                     let get_releases = get_github_releases(github_releases_tx).await;
-                    let _stock = get_stock(stock_tx.clone()).await;
+                    // let login_odoo = odoo_auth().await;
+                    // if let Ok(cookie) = login_odoo {
+                    odoo_auth().await.unwrap();
+                    let stock = get_stock(stock_tx.clone()).await;
+                    info!("Stock call: {stock:?}");
+                    // }
+
                     // let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
                     // let get_custs = get_customer_data(live_output).await;
                     info!("get_connected_clients: {get_connected_clients:?}");
@@ -391,4 +399,35 @@ impl MtechServer {
             self.state = state
         }
     }
+}
+
+pub async fn odoo_auth() -> Result<(), Error> {
+    let client = Client::builder().build()?;
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert("Content-Type", "application/json".parse()?);
+
+    let data = r#"{
+        "jsonrpc": "2.0",
+        "params": {
+            "db": "pcl_live",
+            "login": "logan.lees@pclaptops.com",
+            "password": "7!BEZSssMOkwV$6W"
+        }
+    }"#;
+
+    let json: serde_json::Value = serde_json::from_str(&data)?;
+
+    let request = client
+        .request(
+            reqwest::Method::POST,
+            "https://odoo.master-tech.app/web/session/authenticate",
+        )
+        .headers(headers)
+        .json(&json);
+
+    let response = request.send().await?;
+
+    info!("Response: {:?}", response.text().await?);
+    Ok(())
 }

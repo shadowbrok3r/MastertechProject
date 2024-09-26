@@ -1,7 +1,7 @@
 use crate::app_state::MtechServerContext;
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
-use database::{schema::deserializer::deserialize_to_string, DATABASE};
+use database::DATABASE;
 use displays::egui_data_table::{
     viewer::{default_hotkeys, UiActionContext},
     Renderer, RowViewer, UiAction,
@@ -45,7 +45,11 @@ impl MtechServerContext {
             if Button::new("Refresh").ui(ui).clicked() {
                 let stock_tx = self.stock_channel.0.clone();
                 spawn_local(async move {
-                    get_stock(stock_tx).await.unwrap();
+                    // let login_odoo = odoo_auth().await;
+                    // if let Ok(cookie) = login_odoo {
+                    let stock = get_stock(stock_tx.clone()).await;
+                    info!("Stock call: {stock:?}");
+                    // }
                 });
             }
 
@@ -225,7 +229,8 @@ impl RowViewer<MyRowData> for MyRowViewer {
 
 pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>) -> Result<(), Error> {
     let res: Option<StockData> = DATABASE
-        .query("RETURN fn::store_stock('fc79a4a00626452b6be0342d5222a056addb94ee', 76, 500)")
+        .query("RETURN fn::store_stock(76, 500)")
+        // .bind(("cookie", cookie))
         .await?
         .take(0)?;
 
