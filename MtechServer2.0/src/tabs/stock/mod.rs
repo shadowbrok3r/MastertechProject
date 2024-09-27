@@ -3,16 +3,19 @@ use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
 use database::DATABASE;
 use displays::egui_data_table::{
-    viewer::{default_hotkeys, UiActionContext},
+    viewer::{default_hotkeys, TrivialConfig, UiActionContext},
     Renderer, RowViewer, UiAction,
 };
 use eframe::egui::{
-    Button, CentralPanel, KeyboardShortcut, Response, SidePanel, TextEdit, Ui, Widget,
+    Button, CentralPanel, Color32, KeyboardShortcut, Response, RichText, SidePanel, TextEdit, Ui,
+    Widget,
 };
 
+use egui_extras::Column as TableColumnConfig;
 use log::info;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
+
 // https://github.com/rerun-io/egui_table/blob/main/egui_table/src/table.rs
 impl MtechServerContext {
     pub fn stock_viewer(&mut self, ui: &mut Ui) {
@@ -99,14 +102,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        [
-            "Item Code",
-            "Serial Number",
-            "Location",
-            "Attached",
-            "Pushed to Odoo",
-        ][column]
-            .into()
+        ["Item Code", "Serial Number", "Attached", "Location", ""][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
@@ -128,16 +124,77 @@ impl RowViewer<MyRowData> for MyRowViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut Ui, row: &MyRowData, column: usize) {
-        ui.vertical_centered_justified(|ui| {
-            let _ = match column {
-                0 => ui.label(format!("{}", row.0)),
-                1 => ui.label(&row.1),
-                2 => ui.label(&row.2),
-                3 => Button::new(row.3.clone()).ui(ui),
-                4 => ui.checkbox(&mut { row.4 }, ""),
-                _ => unreachable!(),
-            };
-        });
+        let _ = match column {
+            0 => {
+                ui.horizontal_centered(|ui| {
+                    if let Some(splt) = row.0.split_once(']') {
+                        // ui.label("[");
+
+                        let strings = splt.0.split_terminator('/').collect::<Vec<&str>>();
+
+                        if strings.len() == 2 {
+                            if let Some(s) = strings.get(0) {
+                                ui.colored_label(Color32::LIGHT_GREEN, s.to_string() + "/");
+                            }
+                            if let Some(s) = strings.get(1) {
+                                ui.colored_label(
+                                    Color32::from_rgb(42, 195, 222),
+                                    s.to_string() + "]",
+                                );
+                            }
+                        } else if strings.len() == 3 {
+                            if let Some(s) = strings.get(0) {
+                                ui.colored_label(Color32::LIGHT_GREEN, s.to_string() + "/");
+                            }
+
+                            if let Some(s) = strings.get(1) {
+                                ui.colored_label(Color32::LIGHT_BLUE, s.to_string() + "/");
+                            }
+
+                            if let Some(s) = strings.get(2) {
+                                ui.colored_label(
+                                    Color32::from_rgb(42, 195, 222),
+                                    s.to_string() + "]",
+                                );
+                            }
+                        } else {
+                            if let Some(s) = strings.get(0) {
+                                ui.colored_label(
+                                    Color32::from_rgb(42, 195, 222),
+                                    s.to_string() + "]",
+                                );
+                            }
+                        }
+                        ui.add_space(10.);
+                        ui.label(splt.1)
+
+                        // ui.label(text)
+                    } else {
+                        ui.label(&row.0)
+                    }
+                })
+                .inner
+            }
+            1 => {
+                ui.horizontal_centered(|ui| {
+                    ui.colored_label(Color32::from_rgb(42, 195, 222), &row.1)
+                })
+                .inner
+            }
+            3 => ui.vertical_centered(|ui| ui.label(&row.3)).inner,
+            2 => {
+                ui.vertical_centered_justified(|ui| {
+                    Button::new(RichText::new("S/N Info ⮫").color(Color32::from_rgb(155, 50, 227)))
+                        .ui(ui)
+                })
+                .inner
+            }
+            4 => {
+                ui.vertical_centered_justified(|ui| ui.checkbox(&mut { row.4 }, ""))
+                    .inner
+            }
+            _ => unreachable!(),
+        };
     }
 
     fn show_cell_editor(
@@ -162,13 +219,14 @@ impl RowViewer<MyRowData> for MyRowViewer {
                         .show(ui)
                         .response
                 }
-                2 => {
-                    TextEdit::multiline(&mut row.2)
+                3 => {
+                    TextEdit::multiline(&mut row.3)
                         .desired_rows(1)
                         .code_editor()
                         .show(ui)
                         .response
                 }
+                2 => Button::new("S/N Info ⮫").ui(ui),
                 4 => ui.checkbox(&mut row.4, ""),
                 _ => unreachable!(),
             }
@@ -217,9 +275,24 @@ impl RowViewer<MyRowData> for MyRowViewer {
         )
     }
 
-    // fn clone_row(&mut self, src: &MyRowData) -> MyRowData
-    // ^^ Overriding this method is optional. In default, it'll utilize `set_cell_value` which
-    //    would be less performant during huge duplication of lines.
+    fn column_render_config(&mut self, column: usize) -> TableColumnConfig {
+        let col_config = TableColumnConfig::auto();
+        match column {
+            0 => col_config.resizable(true).at_least(400.).at_most(550.),
+            1 => col_config.resizable(true).at_least(200.).at_most(250.),
+            3 => col_config.resizable(false).at_least(50.).at_most(50.),
+            2 => col_config.resizable(false).at_least(150.).at_most(150.),
+            4 => col_config.resizable(false).at_most(50.),
+            _ => col_config,
+        }
+    }
+
+    fn trivial_config(&mut self) -> TrivialConfig {
+        TrivialConfig {
+            table_row_height: Some(20.),
+            ..Default::default()
+        }
+    }
 }
 
 pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>) -> Result<(), Error> {

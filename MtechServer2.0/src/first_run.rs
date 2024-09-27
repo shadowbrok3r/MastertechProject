@@ -292,8 +292,8 @@ impl MtechServer {
                     MyRowData(
                         stock_data.product_id.clone().1.clone(),
                         stock_data.lot_id.clone().1.parse::<String>().unwrap(),
-                        "Riverdale".to_string(),
                         "".to_string(),
+                        "RIV".to_string(),
                         false,
                     )
                 })
