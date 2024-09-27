@@ -1,14 +1,14 @@
 use crate::app_state::MtechServerContext;
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
-use database::DATABASE;
+use database::{schema::Store, DATABASE};
 use displays::egui_data_table::{
     viewer::{default_hotkeys, TrivialConfig, UiActionContext},
     Renderer, RowViewer, UiAction,
 };
 use eframe::egui::{
-    Button, CentralPanel, Color32, KeyboardShortcut, Response, RichText, SidePanel, TextEdit, Ui,
-    Widget,
+    Button, CentralPanel, Color32, ComboBox, KeyboardShortcut, Response, RichText, SidePanel,
+    TextEdit, Ui, Widget,
 };
 
 use egui_extras::Column as TableColumnConfig;
@@ -30,8 +30,6 @@ impl MtechServerContext {
                     for (k, a) in &self.data_viewer.hotkeys {
                         Button::new(format!("{a:?}"))
                             .shortcut_text(ui.ctx().format_shortcut(k))
-                            // .wrap_mode(TextWrapMode::Wrap)
-                            // .sense(Sense::hover())
                             .ui(ui);
                         ui.add_space(10.);
                     }
@@ -40,17 +38,66 @@ impl MtechServerContext {
 
         CentralPanel::default().show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                if Button::new("Refresh").ui(ui).clicked() {
+                TextEdit::singleline(&mut self.data_viewer.filter).ui(ui);
+
+                ui.add_space(10.);
+
+                let selected = &mut self.store_selection;
+                let selected_text = match selected {
+                    76 => Store::RIV.as_str(),
+                    73 => Store::LTN.as_str(),
+                    74 => Store::MUR.as_str(),
+                    78 => Store::WJ.as_str(),
+                    75 => Store::ORE.as_str(),
+                    72 => Store::AF.as_str(),
+                    77 => Store::SAN.as_str(),
+                    _ => Store::RIV.as_str(),
+                };
+
+                let store = ComboBox::new("Store_Selection", "")
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(selected, 76, "RIV");
+                        ui.selectable_value(selected, 73, "LTN");
+                        ui.selectable_value(selected, 74, "MUR");
+                        ui.selectable_value(selected, 78, "WJ");
+                        ui.selectable_value(selected, 75, "ORE");
+                        ui.selectable_value(selected, 72, "AF");
+                        ui.selectable_value(selected, 77, "SAN");
+                    })
+                    .response;
+
+                if store.lost_focus() {
                     let stock_tx = self.stock_channel.0.clone();
+                    let store_selection = self.store_selection;
                     spawn_local(async move {
-                        // let login_odoo = odoo_auth().await;
-                        // if let Ok(cookie) = login_odoo {
-                        let stock = get_stock(stock_tx.clone()).await;
+                        info!("Store: {:?}", store_selection);
+                        // let login_odoo = odoo_auth().await; if let Ok(cookie) = login_odoo {
+                        let stock = get_stock(stock_tx.clone(), store_selection).await;
                         info!("Stock call: {stock:?}");
                     });
                 }
 
-                TextEdit::singleline(&mut self.data_viewer.filter).ui(ui);
+                ui.add_space(10.);
+
+                if Button::new("Refresh").ui(ui).clicked() {
+                    let stock_tx = self.stock_channel.0.clone();
+                    let store_selection = self.store_selection;
+                    spawn_local(async move {
+                        let stock = get_stock(stock_tx.clone(), store_selection).await;
+                        info!("Stock call: {stock:?}");
+                    });
+                }
+                ui.add_space(10.);
+
+                if Button::new("Refresh All").ui(ui).clicked() {
+                    let tx = self.serial_channel.0.clone();
+                    let data_table = self.data_table.iter();
+                    let sns = data_table.map(|r| r.1.clone()).collect::<Vec<String>>();
+                    spawn_local(async move {
+                        let res = find_attached_serials(sns, tx.clone()).await;
+                    });
+                }
             });
 
             ui.add(Renderer::new(&mut self.data_table, &mut self.data_viewer));
@@ -60,7 +107,21 @@ impl MtechServerContext {
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct StockData {
-    result: Vec<RawStockData>,
+    pub result: Vec<RawStockData>,
+}
+
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct SerialData {
+    pub result: Vec<SerialInfo>,
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+pub struct SerialInfo {
+    pub id: u64,
+    pub bs_prest_ref: BoolOrString,
+    // pub bs_sale_line_id: BoolOrString,
+    pub product_id: ProductID,
+    pub name: String,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
@@ -69,9 +130,7 @@ pub struct RawStockData {
     pub id: u64,
     pub inventory_diff_quantity: f32,
     pub inventory_quantity: f32,
-    // #[serde(deserialize_with = "deserialize_to_lot_id")]
     pub lot_id: LotID,
-    // #[serde(deserialize_with = "deserialize_to_product_id")]
     pub product_id: ProductID,
     pub quantity: f32,
     pub reserved_quantity: f32,
@@ -84,7 +143,7 @@ pub struct LotID(pub i32, pub String);
 pub struct ProductID(pub i32, pub String);
 
 // Don't need to implement any trait on row data itself.
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Clone)]
 pub struct MyRowData(pub String, pub String, pub String, pub String, pub bool);
 
 /// Every logic is defined in `Viewer`
@@ -93,6 +152,8 @@ pub struct MyRowViewer {
     filter: String,
     row_protection: bool,
     hotkeys: Vec<(KeyboardShortcut, UiAction)>,
+    #[serde(skip)]
+    pub stock_tx: Option<Sender<SerialData>>,
 }
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
@@ -128,10 +189,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
             0 => {
                 ui.horizontal_centered(|ui| {
                     if let Some(splt) = row.0.split_once(']') {
-                        // ui.label("[");
-
                         let strings = splt.0.split_terminator('/').collect::<Vec<&str>>();
-
                         if strings.len() == 2 {
                             if let Some(s) = strings.get(0) {
                                 ui.colored_label(Color32::LIGHT_GREEN, s.to_string() + "/");
@@ -167,8 +225,6 @@ impl RowViewer<MyRowData> for MyRowViewer {
                         }
                         ui.add_space(10.);
                         ui.label(splt.1)
-
-                        // ui.label(text)
                     } else {
                         ui.label(&row.0)
                     }
@@ -177,6 +233,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
             }
             1 => {
                 ui.horizontal_centered(|ui| {
+                    ui.add_space(5.);
                     ui.colored_label(Color32::from_rgb(42, 195, 222), &row.1)
                 })
                 .inner
@@ -184,8 +241,14 @@ impl RowViewer<MyRowData> for MyRowViewer {
             3 => ui.vertical_centered(|ui| ui.label(&row.3)).inner,
             2 => {
                 ui.vertical_centered_justified(|ui| {
-                    Button::new(RichText::new("S/N Info ⮫").color(Color32::from_rgb(155, 50, 227)))
-                        .ui(ui)
+                    let color = if &row.2 == "Not Attached" {
+                        Color32::LIGHT_RED
+                    } else if &row.2 == "S/N Info ⮫" {
+                        Color32::from_rgb(191, 33, 101)
+                    } else {
+                        Color32::from_rgb(51, 255, 189)
+                    };
+                    Button::new(RichText::new(&row.2).color(color)).ui(ui)
                 })
                 .inner
             }
@@ -226,7 +289,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
                         .show(ui)
                         .response
                 }
-                2 => Button::new("S/N Info ⮫").ui(ui),
+                2 => Button::new(&row.2).ui(ui),
                 4 => ui.checkbox(&mut row.4, ""),
                 _ => unreachable!(),
             }
@@ -235,14 +298,50 @@ impl RowViewer<MyRowData> for MyRowViewer {
         .inner
     }
 
+    fn on_highlight_cell(&mut self, row: &MyRowData, column: usize) {
+        match column {
+            2 => {
+                info!("Col 3 highlighted: {:?}", row.3);
+            }
+            _ => (),
+        }
+    }
+
+    fn on_cell_view_response(
+        &mut self,
+        row: &MyRowData,
+        column: usize,
+        resp: &eframe::egui::Response,
+    ) -> Option<Box<MyRowData>> {
+        match column {
+            2 => {
+                if resp.clicked() {
+                    info!("Clicked Col 2: {:?}", row.1);
+                    if let Some(tx) = self.stock_tx.clone() {
+                        let sn = row.1.clone();
+                        spawn_local(async move {
+                            let res = find_attached_serial(sn, tx.clone()).await;
+                            info!("find_attached_serial: {res:?}");
+                        });
+                    }
+
+                    Some(Box::new(row.clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn set_cell_value(&mut self, src: &MyRowData, dst: &mut MyRowData, column: usize) {
+        info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
         match column {
             0 => dst.0 = src.0.clone(),
             1 => dst.1 = src.1.clone(),
             2 => dst.2 = src.2.clone(),
             3 => dst.3 = src.3.clone(),
             4 => dst.4 = src.4,
-
             _ => unreachable!(),
         }
     }
@@ -295,14 +394,14 @@ impl RowViewer<MyRowData> for MyRowViewer {
     }
 }
 
-pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>) -> Result<(), Error> {
+pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>, location: u64) -> Result<(), Error> {
     let res: Option<StockData> = DATABASE
-        .query("RETURN fn::store_stock('session_id=d3c1efd52d94f1cd185eba423f1835cc60f09473', 76, 1000)")
-        // .bind(("cookie", cookie))
+        .query("RETURN fn::store_stock('session_id=2d51285a95f62dedf7ec15f0bab71c6dcf13e58e', $location, 1000)")
+        .bind(("location", location))
         .await?
         .take(0)?;
 
-    info!("Result: {res:?}");
+    // info!("Result: {res:?}");
 
     stock_tx.try_send(res.unwrap().result)?;
     Ok(())
@@ -310,11 +409,29 @@ pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>) -> Result<(), Error>
 
 pub async fn find_attached_serial(
     serial: String,
-    stock_tx: Sender<StockData>,
+    stock_tx: Sender<SerialData>,
 ) -> Result<(), Error> {
-    let res: Option<StockData> = DATABASE
-        .query("RETURN fn::find_attached_serial('session_id=d3c1efd52d94f1cd185eba423f1835cc60f09473', $serial)")
+    info!("Finding S/N info: {serial}");
+    let res: Option<SerialData> = DATABASE
+        .query("RETURN fn::find_attached_serial('session_id=2d51285a95f62dedf7ec15f0bab71c6dcf13e58e', $serial)")
         .bind(("serial", serial))
+        .await?
+        .take(0)?;
+
+    info!("Result: {res:?}");
+
+    stock_tx.try_send(res.unwrap())?;
+    Ok(())
+}
+
+pub async fn find_attached_serials(
+    serials: Vec<String>,
+    stock_tx: Sender<SerialData>,
+) -> Result<(), Error> {
+    // info!("Finding S/N info: {serials}");
+    let res: Option<SerialData> = DATABASE
+        .query("RETURN fn::find_attached_serials('session_id=2d51285a95f62dedf7ec15f0bab71c6dcf13e58e', $serials)")
+        .bind(("serials", serials))
         .await?
         .take(0)?;
 
@@ -334,8 +451,60 @@ pub async fn find_products_by_name(
         .await?
         .take(0)?;
 
-    info!("Result: {res:?}");
+    // info!("Result: {res:?}");
 
     stock_tx.try_send(res.unwrap())?;
     Ok(())
+}
+
+use serde::de::Deserializer;
+use std::fmt;
+
+#[derive(Debug, Serialize, Clone)]
+pub enum BoolOrString {
+    Bool(bool),
+    String(String),
+}
+
+impl Default for BoolOrString {
+    fn default() -> Self {
+        BoolOrString::Bool(false)
+    }
+}
+
+impl<'de> Deserialize<'de> for BoolOrString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct BoolOrStringVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for BoolOrStringVisitor {
+            type Value = BoolOrString;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a bool or a string")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(BoolOrString::Bool(value))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(BoolOrString::String(value.to_string()))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(BoolOrString::String(value))
+            }
+        }
+
+        deserializer.deserialize_any(BoolOrStringVisitor)
+    }
 }

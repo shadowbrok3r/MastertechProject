@@ -4,7 +4,7 @@ use crate::{
         ai_playground::AiPlayground,
         github_issue::GithubIssue,
         json_viewer::{JsonEditor, JsonEditorState},
-        stock::{MyRowData, MyRowViewer, RawStockData, StockData},
+        stock::{MyRowData, MyRowViewer, RawStockData, SerialData, StockData},
     },
     utilities::{
         displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
@@ -15,7 +15,7 @@ use crossbeam::channel::{self, Receiver, Sender};
 use database::{
     schema::{
         prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification,
-        TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings,
+        Store, TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings,
     },
     Database,
 };
@@ -267,6 +267,9 @@ pub struct MtechServerContext {
     pub stock_data: RawStockData,
     #[serde(skip)]
     pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
+    #[serde(skip)]
+    pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
+    pub store_selection: u64,
 }
 
 impl MtechServer {
@@ -341,6 +344,10 @@ impl MtechServer {
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
         let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
+        let serial_channel = <SerialData>::create_unbounded_channel();
+
+        let mut data_viewer = MyRowViewer::default();
+        data_viewer.stock_tx = Some(serial_channel.0.clone());
 
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
@@ -442,9 +449,11 @@ impl MtechServer {
             update_settings: false,
             get_settings: false,
             data_table: DataTable::<MyRowData>::default(),
-            data_viewer: MyRowViewer::default(),
+            data_viewer,
             stock_data: RawStockData::default(),
             stock_channel,
+            serial_channel,
+            store_selection: 76,
         };
 
         Self {
