@@ -1,11 +1,10 @@
 use crate::{
     app_state::{AppState, MtechServer},
     pages::downloads_page::get_github_releases,
-    tabs::stock::{get_stock, MyRowData},
+    tabs::stock::{get_stock, BoolOrString, MyRowData},
     utilities::ModalType,
 };
 use anyhow::{Error, Result};
-use database::STORAGE_URL;
 use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
     schema::{
@@ -14,8 +13,9 @@ use database::{
     },
     DATABASE,
 };
+use database::{schema::Store, STORAGE_URL};
 use displays::{
-    egui_data_table::{DataTable, RowViewer},
+    egui_data_table::RowViewer,
     ui_tools::toasts::{Toast, ToastKind, ToastOptions},
 };
 use eframe::{
@@ -145,6 +145,7 @@ impl MtechServer {
 
             // spawn_local(async move { let listen_data = listen_notifications(notification_tx.clone()).await; info!("listen_notifications: {listen_notifications:?}"); });
             if self.context.tasks.is_empty() || self.context.store_users.is_empty() {
+                let store_selection = self.context.store_selection;
                 spawn_local(async move {
                     let get_tasks = get_tasks(initial_tasks_tx).await;
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
@@ -153,7 +154,7 @@ impl MtechServer {
                     // let login_odoo = odoo_auth().await;
                     // if let Ok(cookie) = login_odoo {
                     odoo_auth().await.unwrap();
-                    let stock = get_stock(stock_tx.clone()).await;
+                    let stock = get_stock(stock_tx.clone(), store_selection).await;
                     info!("Stock call: {stock:?}");
                     // }
 
@@ -286,19 +287,59 @@ impl MtechServer {
         }
 
         if let Ok(stock_data) = self.context.stock_channel.1.try_recv() {
+            let store = match self.context.store_selection {
+                76 => Store::RIV.as_str(),
+                73 => Store::LTN.as_str(),
+                74 => Store::MUR.as_str(),
+                78 => Store::WJ.as_str(),
+                75 => Store::ORE.as_str(),
+                72 => Store::AF.as_str(),
+                77 => Store::SAN.as_str(),
+                _ => Store::RIV.as_str(),
+            };
+
             let data: Vec<MyRowData> = stock_data
                 .iter()
                 .map(|stock_data| {
                     MyRowData(
                         stock_data.product_id.clone().1.clone(),
                         stock_data.lot_id.clone().1.parse::<String>().unwrap(),
-                        "".to_string(),
-                        "RIV".to_string(),
+                        "S/N Info ⮫".to_string(),
+                        store.to_string(),
                         false,
                     )
                 })
                 .collect();
             self.context.data_table.replace(data);
+        }
+
+        if let Ok(serial_data) = self.context.serial_channel.1.try_recv() {
+            info!("Serial Data: {:?}", serial_data);
+            let mut data_table = self.context.data_table.take();
+            for data in data_table.iter_mut() {
+                for serial_info in serial_data.result.iter() {
+                    if data.1 == serial_info.name {
+                        info!("S/N Matches");
+
+                        match serial_info.clone().bs_prest_ref {
+                            BoolOrString::Bool(_) => {
+                                data.2 = "Not Attached".to_string();
+                                data.4 = false;
+                            }
+                            BoolOrString::String(order_num) => {
+                                if !order_num.is_empty() {
+                                    data.2 = order_num;
+                                    data.4 = true;
+                                } else {
+                                    data.2 = "Not Attached".to_string();
+                                    data.4 = false;
+                                }
+                            }
+                        };
+                    }
+                }
+            }
+            self.context.data_table.replace(data_table);
         }
 
         if let Ok(presta_data) = self.context.tur_channel.1.try_recv() {

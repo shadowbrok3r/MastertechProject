@@ -568,8 +568,8 @@ fn set_darker_style() -> Arc<Style> {
             },
         },
         selection: Selection {
-            bg_fill: Color32::from_rgba_premultiplied(81, 92, 126, 64), // Selection background
-            stroke: Stroke::new(1.0, Color32::from_rgb(81, 92, 126)),   // Selection border
+            bg_fill: Color32::from_rgba_premultiplied(90, 55, 88, 90), // Selection background
+            stroke: Stroke::new(1.0, Color32::from_rgba_premultiplied(81, 92, 126, 50)), // Selection border
         },
         hyperlink_color: link_color,                   // Hyperlink color
         faint_bg_color: Color32::from_rgb(20, 20, 25), // Subtle background elements
