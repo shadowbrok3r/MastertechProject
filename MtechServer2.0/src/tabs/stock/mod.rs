@@ -36,22 +36,19 @@ impl MtechServerContext {
             });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            // ui.horizontal(|ui| {
-            //     for _row in [0..self.data_table.len()] {
-            TextEdit::singleline(&mut self.data_viewer.filter).ui(ui);
-            //     }
-            // });
+            ui.horizontal(|ui| {
+                if Button::new("Refresh").ui(ui).clicked() {
+                    let stock_tx = self.stock_channel.0.clone();
+                    spawn_local(async move {
+                        // let login_odoo = odoo_auth().await;
+                        // if let Ok(cookie) = login_odoo {
+                        let stock = get_stock(stock_tx.clone()).await;
+                        info!("Stock call: {stock:?}");
+                    });
+                }
 
-            if Button::new("Refresh").ui(ui).clicked() {
-                let stock_tx = self.stock_channel.0.clone();
-                spawn_local(async move {
-                    // let login_odoo = odoo_auth().await;
-                    // if let Ok(cookie) = login_odoo {
-                    let stock = get_stock(stock_tx.clone()).await;
-                    info!("Stock call: {stock:?}");
-                    // }
-                });
-            }
+                TextEdit::singleline(&mut self.data_viewer.filter).ui(ui);
+            });
 
             ui.add(Renderer::new(&mut self.data_table, &mut self.data_viewer));
         });
@@ -131,14 +128,16 @@ impl RowViewer<MyRowData> for MyRowViewer {
     }
 
     fn show_cell_view(&mut self, ui: &mut Ui, row: &MyRowData, column: usize) {
-        let _ = match column {
-            0 => ui.label(format!("{}", row.0)),
-            1 => ui.label(&row.1),
-            2 => ui.label(&row.2),
-            3 => ui.label(&row.3),
-            4 => ui.checkbox(&mut { row.4 }, ""),
-            _ => unreachable!(),
-        };
+        ui.vertical_centered_justified(|ui| {
+            let _ = match column {
+                0 => ui.label(format!("{}", row.0)),
+                1 => ui.label(&row.1),
+                2 => ui.label(&row.2),
+                3 => Button::new(row.3.clone()).ui(ui),
+                4 => ui.checkbox(&mut { row.4 }, ""),
+                _ => unreachable!(),
+            };
+        });
     }
 
     fn show_cell_editor(
@@ -147,39 +146,35 @@ impl RowViewer<MyRowData> for MyRowViewer {
         row: &mut MyRowData,
         column: usize,
     ) -> Option<Response> {
-        match column {
-            0 => {
-                TextEdit::multiline(&mut row.0)
-                    .desired_rows(1)
-                    .code_editor()
-                    .show(ui)
-                    .response
+        ui.vertical_centered_justified(|ui| {
+            match column {
+                0 => {
+                    TextEdit::multiline(&mut row.0)
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
+                1 => {
+                    TextEdit::multiline(&mut row.1)
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
+                2 => {
+                    TextEdit::multiline(&mut row.2)
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
+                4 => ui.checkbox(&mut row.4, ""),
+                _ => unreachable!(),
             }
-            1 => {
-                TextEdit::multiline(&mut row.1)
-                    .desired_rows(1)
-                    .code_editor()
-                    .show(ui)
-                    .response
-            }
-            2 => {
-                TextEdit::multiline(&mut row.2)
-                    .desired_rows(1)
-                    .code_editor()
-                    .show(ui)
-                    .response
-            }
-            3 => {
-                TextEdit::multiline(&mut row.3)
-                    .desired_rows(1)
-                    .code_editor()
-                    .show(ui)
-                    .response
-            }
-            4 => ui.checkbox(&mut row.4, ""),
-            _ => unreachable!(),
-        }
-        .into() // To make focusing work correctly, valid response must be returned.
+            .into() // To make focusing work correctly, valid response must be returned.
+        })
+        .inner
     }
 
     fn set_cell_value(&mut self, src: &MyRowData, dst: &mut MyRowData, column: usize) {
@@ -229,7 +224,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
 
 pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>) -> Result<(), Error> {
     let res: Option<StockData> = DATABASE
-        .query("RETURN fn::store_stock(76, 500)")
+        .query("RETURN fn::store_stock('session_id=d3c1efd52d94f1cd185eba423f1835cc60f09473', 76, 1000)")
         // .bind(("cookie", cookie))
         .await?
         .take(0)?;
@@ -240,87 +235,34 @@ pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>) -> Result<(), Error>
     Ok(())
 }
 
-// use serde::de::{self, Deserializer};
-// use std::fmt;
-//
-// pub fn deserialize_to_lot_id<'de, D: Deserializer<'de>>(
-//     deserializer: D,
-// ) -> Result<LotID, D::Error> {
-//     struct StringOrIntVisitor(pub i32, pub String);
-//
-//     impl<'de> de::Visitor<'de> for StringOrIntVisitor {
-//         type Value = LotID;
-//
-//         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-//             formatter.write_str("a string or an integer")
-//         }
-//
-//         fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
-//         where
-//             E: de::Error,
-//         {
-//             Ok(LotID(0, value.to_string()))
-//         }
-//
-//         fn visit_unit<E>(self) -> Result<Self::Value, E>
-//         where
-//             E: de::Error,
-//         {
-//             // Handle `null` as an empty string
-//             Ok(LotID::default())
-//         }
-//
-//         fn visit_newtype_struct<D>(
-//             self,
-//             deserializer: D,
-//         ) -> std::result::Result<Self::Value, D::Error>
-//         where
-//             D: Deserializer<'de>,
-//         {
-//             deserializer.deserialize_tuple_struct("lot_id", 2, self)
-//         }
-//     }
-//
-//     deserializer.deserialize_any(StringOrIntVisitor)
-// }
-//
-// pub fn deserialize_to_product_id<'de, D: Deserializer<'de>>(
-//     deserializer: D,
-// ) -> Result<ProductID, D::Error> {
-//     struct StringOrIntVisitor;
-//
-//     impl<'de> de::Visitor<'de> for StringOrIntVisitor {
-//         type Value = ProductID;
-//
-//         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-//             formatter.write_str("a string or an integer")
-//         }
-//
-//         fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
-//         where
-//             E: de::Error,
-//         {
-//             Ok(ProductID(0, value.to_string()))
-//         }
-//
-//         fn visit_unit<E>(self) -> Result<Self::Value, E>
-//         where
-//             E: de::Error,
-//         {
-//             // Handle `null` as an empty string
-//             Ok(ProductID::default())
-//         }
-//
-//         fn visit_newtype_struct<D>(
-//             self,
-//             deserializer: D,
-//         ) -> std::result::Result<Self::Value, D::Error>
-//         where
-//             D: Deserializer<'de>,
-//         {
-//             deserializer.deserialize_tuple_struct("product_id", 2, self)
-//         }
-//     }
-//
-//     deserializer.deserialize_any(StringOrIntVisitor)
-// }
+pub async fn find_attached_serial(
+    serial: String,
+    stock_tx: Sender<StockData>,
+) -> Result<(), Error> {
+    let res: Option<StockData> = DATABASE
+        .query("RETURN fn::find_attached_serial('session_id=d3c1efd52d94f1cd185eba423f1835cc60f09473', $serial)")
+        .bind(("serial", serial))
+        .await?
+        .take(0)?;
+
+    info!("Result: {res:?}");
+
+    stock_tx.try_send(res.unwrap())?;
+    Ok(())
+}
+
+pub async fn find_products_by_name(
+    serial: String,
+    stock_tx: Sender<StockData>,
+) -> Result<(), Error> {
+    let res: Option<StockData> = DATABASE
+        .query("RETURN fn::search_stock('session_id=d3c1efd52d94f1cd185eba423f1835cc60f09473', $serial)")
+        .bind(("serial", serial))
+        .await?
+        .take(0)?;
+
+    info!("Result: {res:?}");
+
+    stock_tx.try_send(res.unwrap())?;
+    Ok(())
+}
