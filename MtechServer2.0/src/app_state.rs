@@ -276,9 +276,8 @@ impl MtechServer {
 
         let mut tree = DockState::new(vec![
             "Store Tasks".to_owned(),
-            "Completed Tasks".to_owned(), //"Quote Fullfilled".to_owned(), "Aging Tasks".to_owned(),
-            // "Web Console".to_owned(),
-            // "Customers".to_owned(),
+            "Completed Tasks".to_owned(),
+            "Customers".to_owned(),
             "Json Viewer".to_owned(),
             "Query Builder".to_owned(),
         ]);
@@ -484,11 +483,11 @@ impl MtechServer {
 pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
     let mut tree = DockState::new(vec![
         "Store Tasks".to_owned(),
-        "Completed Tasks".to_owned(), //"Quote Fullfilled".to_owned(), "Aging Tasks".to_owned(),
-        // "Web Console".to_owned(),
-        // "Customers".to_owned(),
+        "Completed Tasks".to_owned(),
+        "Customers".to_owned(),
         "Json Viewer".to_owned(),
         "Query Builder".to_owned(),
+        "Stock".to_owned(),
     ]);
 
     let [_a, b] =
@@ -499,16 +498,19 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
         .main_surface_mut()
         .split_right(b, 0.5, vec!["Bug Report".to_owned()]);
 
-    //"Terminal".to_owned(),
+    // "Terminal".to_owned(),
+
     let [_, _] = tree.main_surface_mut().split_left(
         b,
         0.6,
         vec![
             "My Tasks".to_owned(),
+            "Task Audit".to_owned(),
             // "Ai Playground".to_owned(),
             "Logs".to_owned(),
         ],
     );
+
     tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
     for node in tree[SurfaceIndex::main()].iter() {

@@ -498,9 +498,9 @@ fn set_darker_style() -> Arc<Style> {
     let active_bg_color = Color32::from_rgb(28, 28, 28); // Background for active widgets
     let border_color = Color32::from_rgb(16, 16, 23); // Border color for windows and panels
     let text_color = Color32::from_rgb(199, 202, 245); // Default text color
-    let error_color = Color32::from_rgb(187, 97, 107); // Error text color
-    let warn_color = Color32::from_rgb(227, 175, 104); // Warning text color
-    let link_color = Color32::from_rgb(113, 156, 202); // Hyperlink color
+    let error_color = Color32::from_rgb(227, 104, 176); // Error text color
+    let warn_color = Color32::from_rgb(155, 104, 227); // Warning text color
+    let link_color = Color32::from_rgb(155, 104, 227); // Hyperlink color
 
     let theme = CarlDark; // Assuming a theme object or struct
     let mut custom_style: Style = theme.custom_style();

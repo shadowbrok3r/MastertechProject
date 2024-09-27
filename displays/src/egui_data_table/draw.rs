@@ -316,7 +316,6 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
         }
 
         // Validate persistency state.
-        #[cfg(feature = "persistency")]
         if viewer.persist_ui_state() {
             s.validate_persistency(ctx, ui_id, viewer);
         }
