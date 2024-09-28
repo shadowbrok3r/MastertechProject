@@ -396,7 +396,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
 
 pub async fn get_stock(stock_tx: Sender<Vec<RawStockData>>, location: u64) -> Result<(), Error> {
     let res: Option<StockData> = DATABASE
-        .query("RETURN fn::store_stock('session_id=2d51285a95f62dedf7ec15f0bab71c6dcf13e58e', $location, 1000)")
+        .query("RETURN fn::store_stock($location, 1000)")
         .bind(("location", location))
         .await?
         .take(0)?;
