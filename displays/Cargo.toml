@@ -17,7 +17,6 @@ rfd = "0.14"
 tap = "1"
 itertools = "0.13"
 thiserror = "1"
-egui-data-table = { workspace = true }
 web-time = { workspace=true, optional = true }
 wasm-bindgen = { workspace=true, optional = true }
 wasm-bindgen-futures = { workspace=true, optional = true }
