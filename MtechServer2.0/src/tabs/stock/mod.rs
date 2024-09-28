@@ -43,6 +43,8 @@ impl MtechServerContext {
                 ui.add_space(10.);
 
                 let selected = &mut self.store_selection;
+                let current = selected.clone();
+
                 let selected_text = match selected {
                     76 => Store::RIV.as_str(),
                     73 => Store::LTN.as_str(),
@@ -54,7 +56,7 @@ impl MtechServerContext {
                     _ => Store::RIV.as_str(),
                 };
 
-                let store = ComboBox::new("Store_Selection", "")
+                ComboBox::new("Store_Selection", "")
                     .selected_text(selected_text)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(selected, 76, "RIV");
@@ -64,10 +66,9 @@ impl MtechServerContext {
                         ui.selectable_value(selected, 75, "ORE");
                         ui.selectable_value(selected, 72, "AF");
                         ui.selectable_value(selected, 77, "SAN");
-                    })
-                    .response;
+                    });
 
-                if store.lost_focus() {
+                if *selected != current {
                     let stock_tx = self.stock_channel.0.clone();
                     let store_selection = self.store_selection;
                     spawn_local(async move {
@@ -77,7 +78,6 @@ impl MtechServerContext {
                         info!("Stock call: {stock:?}");
                     });
                 }
-
                 ui.add_space(10.);
 
                 if Button::new("Refresh").ui(ui).clicked() {
@@ -90,12 +90,12 @@ impl MtechServerContext {
                 }
                 ui.add_space(10.);
 
-                if Button::new("Refresh All").ui(ui).clicked() {
+                if Button::new("Refresh S/N Info").ui(ui).clicked() {
                     let tx = self.serial_channel.0.clone();
                     let data_table = self.data_table.iter();
                     let sns = data_table.map(|r| r.1.clone()).collect::<Vec<String>>();
                     spawn_local(async move {
-                        let res = find_attached_serials(sns, tx.clone()).await;
+                        let _res = find_attached_serials(sns, tx.clone()).await;
                     });
                 }
             });
@@ -163,7 +163,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Item Code", "Serial Number", "Attached", "Location", ""][column].into()
+        ["Item Code", "Serial Number", "Attached", "Location", "  "][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
@@ -298,41 +298,21 @@ impl RowViewer<MyRowData> for MyRowViewer {
         .inner
     }
 
-    fn on_highlight_cell(&mut self, row: &MyRowData, column: usize) {
-        match column {
-            2 => {
-                info!("Col 3 highlighted: {:?}", row.3);
-            }
-            _ => (),
-        }
-    }
-
-    fn on_cell_view_response(
-        &mut self,
-        row: &MyRowData,
-        column: usize,
-        resp: &eframe::egui::Response,
-    ) -> Option<Box<MyRowData>> {
-        match column {
-            2 => {
-                if resp.clicked() {
-                    info!("Clicked Col 2: {:?}", row.1);
-                    if let Some(tx) = self.stock_tx.clone() {
-                        let sn = row.1.clone();
-                        spawn_local(async move {
-                            let res = find_attached_serial(sn, tx.clone()).await;
-                            info!("find_attached_serial: {res:?}");
-                        });
-                    }
-
-                    Some(Box::new(row.clone()))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
+    // fn on_cell_view_response(
+    //     &mut self,
+    //     row: &MyRowData,
+    //     column: usize,
+    //     resp: &eframe::egui::Response,
+    // ) -> Option<Box<MyRowData>> {
+    //     match column {
+    //         2 => {
+    //             // if resp.clicked() {
+    //             // Some(Box::new(row.clone()))
+    //             None
+    //         }
+    //         _ => None,
+    //     }
+    // }
 
     fn set_cell_value(&mut self, src: &MyRowData, dst: &mut MyRowData, column: usize) {
         info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
@@ -379,7 +359,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
         match column {
             0 => col_config.resizable(true).at_least(400.).at_most(550.),
             1 => col_config.resizable(true).at_least(200.).at_most(250.),
-            3 => col_config.resizable(false).at_least(50.).at_most(50.),
+            3 => col_config.resizable(false).at_least(60.).at_most(60.),
             2 => col_config.resizable(false).at_least(150.).at_most(150.),
             4 => col_config.resizable(false).at_most(50.),
             _ => col_config,
@@ -411,14 +391,14 @@ pub async fn find_attached_serial(
     serial: String,
     stock_tx: Sender<SerialData>,
 ) -> Result<(), Error> {
-    info!("Finding S/N info: {serial}");
+    // info!("Finding S/N info: {serial}");
     let res: Option<SerialData> = DATABASE
-        .query("RETURN fn::find_attached_serial('session_id=2d51285a95f62dedf7ec15f0bab71c6dcf13e58e', $serial)")
+        .query("RETURN fn::find_attached_serial($serial)")
         .bind(("serial", serial))
         .await?
         .take(0)?;
 
-    info!("Result: {res:?}");
+    // info!("Result: {res:?}");
 
     stock_tx.try_send(res.unwrap())?;
     Ok(())
@@ -428,14 +408,14 @@ pub async fn find_attached_serials(
     serials: Vec<String>,
     stock_tx: Sender<SerialData>,
 ) -> Result<(), Error> {
-    // info!("Finding S/N info: {serials}");
+    // info!("Finding S/N info: {serials:?}");
     let res: Option<SerialData> = DATABASE
-        .query("RETURN fn::find_attached_serials('session_id=2d51285a95f62dedf7ec15f0bab71c6dcf13e58e', $serials)")
+        .query("RETURN fn::find_attached_serials($serials)")
         .bind(("serials", serials))
         .await?
         .take(0)?;
 
-    info!("Result: {res:?}");
+    // info!("Result: {res:?}");
 
     stock_tx.try_send(res.unwrap())?;
     Ok(())
@@ -446,7 +426,7 @@ pub async fn find_products_by_name(
     stock_tx: Sender<StockData>,
 ) -> Result<(), Error> {
     let res: Option<StockData> = DATABASE
-        .query("RETURN fn::search_stock('session_id=d3c1efd52d94f1cd185eba423f1835cc60f09473', $serial)")
+        .query("RETURN fn::search_stock($serial)")
         .bind(("serial", serial))
         .await?
         .take(0)?;

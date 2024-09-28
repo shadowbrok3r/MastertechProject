@@ -1,10 +1,9 @@
 use crate::{
     app_state::{AppState, MtechServer},
     pages::downloads_page::get_github_releases,
-    tabs::stock::{get_stock, BoolOrString, MyRowData},
+    tabs::stock::{find_attached_serials, get_stock, BoolOrString, MyRowData},
     utilities::ModalType,
 };
-use anyhow::{Error, Result};
 use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
     schema::{
@@ -14,10 +13,7 @@ use database::{
     DATABASE,
 };
 use database::{schema::Store, STORAGE_URL};
-use displays::{
-    egui_data_table::RowViewer,
-    ui_tools::toasts::{Toast, ToastKind, ToastOptions},
-};
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::{
     egui::{Color32, RichText},
     Frame,
@@ -26,7 +22,6 @@ use egui_dock::DockState;
 use log::info;
 use log::{debug, error};
 use mtechserver::webworker::Input;
-use reqwest::Client;
 use surrealdb::{Action, RecordId};
 use wasm_bindgen_futures::spawn_local;
 
@@ -151,9 +146,6 @@ impl MtechServer {
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                     let get_connected_clients = get_connected_clients(tx, user.clone()).await;
                     let get_releases = get_github_releases(github_releases_tx).await;
-                    // let login_odoo = odoo_auth().await;
-                    // if let Ok(cookie) = login_odoo {
-                    odoo_auth().await.unwrap();
                     let stock = get_stock(stock_tx.clone(), store_selection).await;
                     info!("Stock call: {stock:?}");
                     // }
@@ -310,17 +302,24 @@ impl MtechServer {
                     )
                 })
                 .collect();
+
+            let tx = self.context.serial_channel.0.clone();
+
+            let sns = data.iter().map(|r| r.1.clone()).collect::<Vec<String>>();
+
+            spawn_local(async move {
+                let _res = find_attached_serials(sns, tx.clone()).await;
+            });
+
             self.context.data_table.replace(data);
         }
 
         if let Ok(serial_data) = self.context.serial_channel.1.try_recv() {
-            info!("Serial Data: {:?}", serial_data);
+            debug!("Serial Data: {:?}", serial_data);
             let mut data_table = self.context.data_table.take();
             for data in data_table.iter_mut() {
                 for serial_info in serial_data.result.iter() {
                     if data.1 == serial_info.name {
-                        info!("S/N Matches");
-
                         match serial_info.clone().bs_prest_ref {
                             BoolOrString::Bool(_) => {
                                 data.2 = "Not Attached".to_string();
@@ -440,35 +439,4 @@ impl MtechServer {
             self.state = state
         }
     }
-}
-
-pub async fn odoo_auth() -> Result<(), Error> {
-    let client = Client::builder().build()?;
-
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("Content-Type", "application/json".parse()?);
-
-    let data = r#"{
-        "jsonrpc": "2.0",
-        "params": {
-            "db": "pcl_live",
-            "login": "logan.lees@pclaptops.com",
-            "password": "7!BEZSssMOkwV$6W"
-        }
-    }"#;
-
-    let json: serde_json::Value = serde_json::from_str(&data)?;
-
-    let request = client
-        .request(
-            reqwest::Method::POST,
-            "https://odoo.master-tech.app/web/session/authenticate",
-        )
-        .headers(headers)
-        .json(&json);
-
-    let response = request.send().await?;
-
-    info!("Response: {:?}", response.text().await?);
-    Ok(())
 }

@@ -433,7 +433,7 @@ impl WebSocketClient{
         ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
             let id = Id::new(format!("scroll_area-{:?}", self.client.client_hash));
             ScrollArea::vertical()
-                .id_source(id)
+                .id_salt(id)
                 .animated(true)
                 .max_width(f32::INFINITY)
                 .max_height(400.)
@@ -562,7 +562,7 @@ impl WebSocketClient{
                                             ui.set_width(ui.available_width());
                                             let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
                                                 let mut layout_job: eframe::egui::text::LayoutJob =
-                                                    highlight(ui.ctx(), &CodeTheme::dark(), string, "bash".into()); // || "zsh".into()
+                                                    highlight(ui.ctx(), ui.style(), &CodeTheme::dark(12.), string, "bash".into()); // || "zsh".into()
                                                 layout_job.wrap.max_width = wrap_width;
                                                 ui.fonts(|f| f.layout_job(layout_job))
                                             };
@@ -607,7 +607,7 @@ impl WebSocketClient{
             });
             // ui.add_space(avail_size.y);
             ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
-                let mut theme = CodeTheme::from_memory(ui.ctx());
+                let mut theme = CodeTheme::from_memory(ui.ctx(), ui.style());
                 ui.collapsing(format!("Theme-{:?}", self.client.client_hash), |ui| {
                     ui.group(|ui| {
                         theme.ui(ui);
@@ -617,7 +617,7 @@ impl WebSocketClient{
                 
                 let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
                     let mut layout_job =
-                        highlight(ui.ctx(), &theme, string, "bash".into()); // || "zsh".into()
+                        highlight(ui.ctx(), ui.style(), &theme, string, "bash".into()); // || "zsh".into()
                     layout_job.wrap.max_width = wrap_width;
                     ui.fonts(|f| f.layout_job(layout_job))
                 };
