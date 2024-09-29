@@ -54,7 +54,9 @@ impl MtechServerContext {
                     _ => Store::RIV.as_str(),
                 };
 
-                let store = ComboBox::new("Store_Selection", "")
+                let current_selection = selected.clone();
+
+                ComboBox::new("Store_Selection", "")
                     .selected_text(selected_text)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(selected, 76, "RIV");
@@ -67,7 +69,7 @@ impl MtechServerContext {
                     })
                     .response;
 
-                if store.lost_focus() {
+                if current_selection != *selected {
                     let stock_tx = self.stock_channel.0.clone();
                     let store_selection = self.store_selection;
                     spawn_local(async move {
@@ -96,6 +98,7 @@ impl MtechServerContext {
                     let sns = data_table.map(|r| r.1.clone()).collect::<Vec<String>>();
                     spawn_local(async move {
                         let res = find_attached_serials(sns, tx.clone()).await;
+                        info!("Finding attached S/N's: {res:?}");
                     });
                 }
             });
@@ -413,7 +416,7 @@ pub async fn find_attached_serial(
 ) -> Result<(), Error> {
     info!("Finding S/N info: {serial}");
     let res: Option<SerialData> = DATABASE
-        .query("RETURN fn::find_attached_serial('session_id=2d51285a95f62dedf7ec15f0bab71c6dcf13e58e', $serial)")
+        .query("RETURN fn::find_attached_serial($serial)")
         .bind(("serial", serial))
         .await?
         .take(0)?;
@@ -430,7 +433,7 @@ pub async fn find_attached_serials(
 ) -> Result<(), Error> {
     // info!("Finding S/N info: {serials}");
     let res: Option<SerialData> = DATABASE
-        .query("RETURN fn::find_attached_serials('session_id=2d51285a95f62dedf7ec15f0bab71c6dcf13e58e', $serials)")
+        .query("RETURN fn::find_attached_serials($serials)")
         .bind(("serials", serials))
         .await?
         .take(0)?;
@@ -446,7 +449,7 @@ pub async fn find_products_by_name(
     stock_tx: Sender<StockData>,
 ) -> Result<(), Error> {
     let res: Option<StockData> = DATABASE
-        .query("RETURN fn::search_stock('session_id=d3c1efd52d94f1cd185eba423f1835cc60f09473', $serial)")
+        .query("RETURN fn::search_stock($serial)")
         .bind(("serial", serial))
         .await?
         .take(0)?;
