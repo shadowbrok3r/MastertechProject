@@ -4,7 +4,7 @@ use crate::{
         ai_playground::AiPlayground,
         github_issue::GithubIssue,
         json_viewer::{JsonEditor, JsonEditorState},
-        stock::{MyRowData, MyRowViewer, RawStockData, SerialData, StockData},
+        stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
     },
     utilities::{
         displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
@@ -15,7 +15,7 @@ use crossbeam::channel::{self, Receiver, Sender};
 use database::{
     schema::{
         prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification,
-        Store, TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings,
+        TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings,
     },
     Database,
 };

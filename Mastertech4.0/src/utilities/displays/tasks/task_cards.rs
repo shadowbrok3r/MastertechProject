@@ -185,7 +185,7 @@ impl Displayable for TaskPayload{
                         s.cell(|ui|
                         {
                             let task_descrip_header = ui.make_persistent_id(format!("task_description {:?}", self.id.as_ref().unwrap().key().to_string()));
-                            let task_descrip_head = CollapsingHeader::new("Task Description").id_source(task_descrip_header);
+                            let task_descrip_head = CollapsingHeader::new("Task Description").id_salt(task_descrip_header);
                             task_descrip_head.show_unindented(ui, |ui| {
                                 let response = self.interact_task_description(ui);
                                 if response.changed() {

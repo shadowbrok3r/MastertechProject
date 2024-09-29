@@ -567,7 +567,7 @@ impl WebSocketClient{
                                                 ui.fonts(|f| f.layout_job(layout_job))
                                             };
                                             TextEdit::singleline(&mut txt.text())
-                                                .id_source(format!("TextEdit-{:?}-{:?}-{:?}", self.client.client_hash, count, item.clone()))
+                                                .id_salt(format!("TextEdit-{:?}-{:?}-{:?}", self.client.client_hash, count, item.clone()))
                                                 .layouter(&mut layouter)
                                                 .min_size(Vec2::new(ui.available_size_before_wrap().x / 1.1, 30.))
                                                 .ui(ui);

@@ -138,7 +138,7 @@ impl FileSystem {
     pub fn display(&mut self, ui: &mut Ui){
         let size = ui.available_size_before_wrap();
         ScrollArea::vertical()
-            .id_source(self.scroll_id)
+            .id_salt(self.scroll_id)
             .max_width(size.x)
             .max_height(size.y)
             .auto_shrink(false)

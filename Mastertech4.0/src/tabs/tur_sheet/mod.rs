@@ -313,7 +313,7 @@ impl MastertechContext {
                                     .show(ui, |ui| {
                                                             /*     ROW 1     */
                                         ui.vertical_centered(|ui|  {
-                                            ComboBox::from_id_source("ssd_cbox").width(self.widget_size - 5.0)
+                                            ComboBox::from_id_salt("ssd_cbox").width(self.widget_size - 5.0)
                                             .selected_text(format!("{}", self.ssd_test_cbox.as_str()))
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut self.ssd_test_cbox, SsdFail, "SSD Fail");
@@ -327,7 +327,7 @@ impl MastertechContext {
                                         ui.end_row();
                                                             /*     ROW 2     */
                                         ui.vertical_centered(|ui|  {
-                                            ComboBox::from_id_source("hdd_cbox").width(self.widget_size - 5.0)
+                                            ComboBox::from_id_salt("hdd_cbox").width(self.widget_size - 5.0)
                                             .selected_text(format!("{}", self.hdd_test_cbox.as_str()))
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut self.hdd_test_cbox, HddFail, "HDD Fail");
@@ -340,7 +340,7 @@ impl MastertechContext {
                                         ui.end_row();
 
                                         ui.vertical_centered(|ui|  {
-                                            ComboBox::from_id_source("ram_cbox").width(self.widget_size - 5.0)
+                                            ComboBox::from_id_salt("ram_cbox").width(self.widget_size - 5.0)
                                             .selected_text(format!("{}", self.ram_test_cbox.as_str()))
                                             .show_ui(ui, |ui| {
                                                 ui.selectable_value(&mut self.ram_test_cbox, RamFail, "RAM Fail");
@@ -477,7 +477,7 @@ impl MastertechContext {
                         .cell(|ui|
                         {
                             ScrollArea::new([false, true])
-                            .id_source("checkin_notes_scroll")
+                            .id_salt("checkin_notes_scroll")
                             .show(ui, |ui|{
                                 ui.add_sized(
                                     vec2(ui.available_width()-4.0, ui.available_height() - 80.0),
@@ -493,7 +493,7 @@ impl MastertechContext {
                         strip.cell(|ui|
                         {
                             ScrollArea::new([false, true])
-                            .id_source("recomendations_scroll")
+                            .id_salt("recomendations_scroll")
                             .show(ui, |ui|{
                                 ui.add_sized(
                                     vec2(ui.available_width()-4.0, ui.available_height() - 80.0), 

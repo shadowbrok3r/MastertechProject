@@ -249,7 +249,7 @@ impl Displayable for TaskPayload {
                                         ));
                                         let task_descrip_head =
                                             CollapsingHeader::new("Task Description")
-                                                .id_source(task_descrip_header);
+                                                .id_salt(task_descrip_header);
                                         task_descrip_head.show_unindented(ui, |ui| {
                                             let response = self.interact_task_description(ui);
                                             if response.changed() {

@@ -336,7 +336,7 @@ impl CreateTaskModal {
         }
 
         ScrollArea::new([false, true])
-        .id_source("checkin_notes_scroll")
+        .id_salt("checkin_notes_scroll")
         .show(ui, |_ui|{
             let _ = TextEdit::multiline(&mut self.ticket_data.checkin_notes)
             .hint_text(RichText::new("Checkin Notes").weak())
@@ -344,7 +344,7 @@ impl CreateTaskModal {
             .desired_rows(4);
         });
         ScrollArea::new([false, true])
-        .id_source("recomendations_scroll")
+        .id_salt("recomendations_scroll")
         .show(ui, |_ui|{
             let _ = TextEdit::multiline(&mut self.task_data.task_description)
             .hint_text(RichText::new("Recommendations").weak())

@@ -77,7 +77,7 @@ impl Interaction for TaskPayload {
         let id = self.id.clone().unwrap().key().to_string().to_string();
         let date_picker = DatePickerButton::new(&mut due_date)
             .format("%m/%d")
-            .id_source(id.as_str())
+            .id_salt(id.as_str())
             .show_icon(false)
             .ui(ui);
 
