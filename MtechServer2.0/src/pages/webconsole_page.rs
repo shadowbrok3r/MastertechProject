@@ -307,7 +307,7 @@ impl MtechServer {
                                 if client.connected {
                                     ScrollArea::vertical()
                                         .max_height(f32::INFINITY)
-                                        .id_source(format!(
+                                        .id_salt(format!(
                                             "connected-{:?}",
                                             connection_string.clone()
                                         ))
@@ -370,7 +370,7 @@ impl MtechServer {
                                     let formatted_text = WidgetText::from(job);
 
                                     ScrollArea::vertical()
-                                        .id_source(format!(
+                                        .id_salt(format!(
                                             "disconnected-{:?}",
                                             connection_string.clone()
                                         ))

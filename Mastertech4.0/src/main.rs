@@ -241,14 +241,15 @@ impl eframe::App for MasterTechApp {
                 self.context.spinner = false;
             }
         }
-
-        if let Some(dialog) = &mut self.context.open_file_dialog {
-            if dialog.show(&ctx).selected() {
-                if let Some(file) = dialog.path() {
-                    self.context.opened_file = Some(file.to_path_buf());
-                }
-            }
-        }
+        // TODO 
+        // Fix this, egui_file doesnt support 0.29 egui yet
+        // if let Some(dialog) = &mut self.context.open_file_dialog {
+        //     if dialog.show(&ctx).selected() {
+        //         if let Some(file) = dialog.path() {
+        //             self.context.opened_file = Some(file.to_path_buf());
+        //         }
+        //     }
+        // }
 
         if let Ok(data) = self.context.prestashop_api_rx.try_recv() {
             let customer = &mut self.context.customer_data;

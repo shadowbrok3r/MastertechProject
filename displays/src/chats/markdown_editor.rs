@@ -56,10 +56,10 @@ impl EasyMarkEditor {
             ui.columns(2, |columns| {
                 ScrollArea::vertical()
                     .max_height(f32::INFINITY)
-                    .id_source("source")
+                    .id_salt("source")
                     .show(&mut columns[0], |ui| self.editor_ui(ui));
                 ScrollArea::vertical()
-                    .id_source("rendered")
+                    .id_salt("rendered")
                     .max_height(f32::INFINITY)
                     .show(&mut columns[1], |ui| {
                         // TODO(emilk): we can save some more CPU by caching the rendered output.
@@ -68,7 +68,7 @@ impl EasyMarkEditor {
             });
         } else {
             ScrollArea::vertical()
-                .id_source("source")
+                .id_salt("source")
                 .show(ui, |ui| self.editor_ui(ui));
         }
         ui.separator();

@@ -478,7 +478,7 @@ impl WebConsoleFrontend {
         ui.vertical_centered(|ui | ui.heading("Received events:"));
         ui.separator();
         self.connected = self.handle_events();
-        let theme = CodeTheme::dark();
+        let theme = CodeTheme::dark(12.);
         ScrollArea::vertical()
             .animated(true)
             .max_height(ui.available_height() - 5.0)
@@ -606,12 +606,12 @@ impl WebConsoleFrontend {
                                         ui.set_width(ui.available_width());
                                         let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
                                             let mut layout_job: eframe::egui::text::LayoutJob =
-                                                highlight(ui.ctx(), &CodeTheme::dark(), string, "bash".into()); // || "zsh".into()
+                                                highlight(ui.ctx(), ui.style(), &CodeTheme::dark(12.), string, "bash".into()); // || "zsh".into()
                                             layout_job.wrap.max_width = wrap_width;
                                             ui.fonts(|f| f.layout_job(layout_job))
                                         };
                                         TextEdit::singleline(&mut txt.text())
-                                            .id_source(Id::new(format!("{item:?}-{count:?}")))
+                                            .id_salt(Id::new(format!("{item:?}-{count:?}")))
                                             .layouter(&mut layouter)
                                             .min_size(Vec2::new(ui.available_size_before_wrap().x / 1.1, 30.))
                                             .ui(ui);
@@ -661,7 +661,7 @@ impl WebConsoleFrontend {
             
             let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
                 let mut layout_job =
-                    highlight(ui.ctx(), &theme, string, "bash".into()); // || "zsh".into()
+                    highlight(ui.ctx(), ui.style(), &theme, string, "bash".into()); // || "zsh".into()
                 layout_job.wrap.max_width = wrap_width;
                 ui.fonts(|f| f.layout_job(layout_job))
             };

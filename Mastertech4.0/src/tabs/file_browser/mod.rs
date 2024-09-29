@@ -188,7 +188,7 @@ impl FileBrowser{
             }
             
             ScrollArea::new([false, true])
-            .id_source("file_browser_scroll")
+            .id_salt("file_browser_scroll")
             .max_width(f32::INFINITY)
             .auto_shrink([false, false])
             .show_rows(ui,

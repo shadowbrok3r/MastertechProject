@@ -477,7 +477,7 @@ impl Tur {
         }
 
         ScrollArea::new([false, true])
-            .id_source("checkin_notes_scroll")
+            .id_salt("checkin_notes_scroll")
             .show(ui, |ui| {
                 let _ = TextEdit::multiline(&mut self.ticket_data.checkin_notes)
                     .hint_text(RichText::new("Checkin Notes").weak())
@@ -486,7 +486,7 @@ impl Tur {
                     .ui(ui);
             });
         ScrollArea::new([false, true])
-            .id_source("recomendations_scroll")
+            .id_salt("recomendations_scroll")
             .show(ui, |ui| {
                 let _ = TextEdit::multiline(&mut self.task_data.task_description)
                     .hint_text(RichText::new("Recommendations").weak())
@@ -496,7 +496,7 @@ impl Tur {
             });
 
         ScrollArea::new([false, true])
-            .id_source("data_scroll")
+            .id_salt("data_scroll")
             .show(ui, |ui| {
                 TextEdit::multiline(&mut format!("{:?}", self.data)).ui(ui);
             });
