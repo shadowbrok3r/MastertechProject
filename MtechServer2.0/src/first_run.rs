@@ -1,10 +1,9 @@
 use crate::{
     app_state::{AppState, MtechServer},
     pages::downloads_page::get_github_releases,
-    tabs::stock::{get_stock, BoolOrString, MyRowData},
+    tabs::stock::{find_attached_serials, get_stock, BoolOrString, MyRowData},
     utilities::ModalType,
 };
-use anyhow::{Error, Result};
 use database::{
     live_data::{handle_live_delete, listen_data, update_or_insert_anything},
     schema::{
@@ -14,10 +13,7 @@ use database::{
     DATABASE,
 };
 use database::{schema::Store, STORAGE_URL};
-use displays::{
-    egui_data_table::RowViewer,
-    ui_tools::toasts::{Toast, ToastKind, ToastOptions},
-};
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::{
     egui::{Color32, RichText},
     Frame,
@@ -26,7 +22,6 @@ use egui_dock::DockState;
 use log::info;
 use log::{debug, error};
 use mtechserver::webworker::Input;
-use reqwest::Client;
 use surrealdb::{Action, RecordId};
 use wasm_bindgen_futures::spawn_local;
 
@@ -153,7 +148,6 @@ impl MtechServer {
                     let get_releases = get_github_releases(github_releases_tx).await;
                     // let login_odoo = odoo_auth().await;
                     // if let Ok(cookie) = login_odoo {
-                    odoo_auth().await.unwrap();
                     let stock = get_stock(stock_tx.clone(), store_selection).await;
                     info!("Stock call: {stock:?}");
                     // }
@@ -310,6 +304,13 @@ impl MtechServer {
                     )
                 })
                 .collect();
+
+            let serials = data.iter().map(|r| r.1.clone()).collect::<Vec<String>>();
+            let tx = self.context.serial_channel.0.clone();
+            spawn_local(async move {
+                let serials = find_attached_serials(serials.clone(), tx).await;
+                info!("Getting serials: {serials:?}");
+            });
             self.context.data_table.replace(data);
         }
 
@@ -440,35 +441,4 @@ impl MtechServer {
             self.state = state
         }
     }
-}
-
-pub async fn odoo_auth() -> Result<(), Error> {
-    let client = Client::builder().build()?;
-
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("Content-Type", "application/json".parse()?);
-
-    let data = r#"{
-        "jsonrpc": "2.0",
-        "params": {
-            "db": "pcl_live",
-            "login": "logan.lees@pclaptops.com",
-            "password": "7!BEZSssMOkwV$6W"
-        }
-    }"#;
-
-    let json: serde_json::Value = serde_json::from_str(&data)?;
-
-    let request = client
-        .request(
-            reqwest::Method::POST,
-            "https://odoo.master-tech.app/web/session/authenticate",
-        )
-        .headers(headers)
-        .json(&json);
-
-    let response = request.send().await?;
-
-    info!("Response: {:?}", response.text().await?);
-    Ok(())
 }
