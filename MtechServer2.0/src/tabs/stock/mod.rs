@@ -310,32 +310,32 @@ impl RowViewer<MyRowData> for MyRowViewer {
         }
     }
 
-    fn on_cell_view_response(
-        &mut self,
-        row: &MyRowData,
-        column: usize,
-        resp: &eframe::egui::Response,
-    ) -> Option<Box<MyRowData>> {
-        match column {
-            2 => {
-                if resp.clicked() {
-                    info!("Clicked Col 2: {:?}", row.1);
-                    if let Some(tx) = self.stock_tx.clone() {
-                        let sn = row.1.clone();
-                        spawn_local(async move {
-                            let res = find_attached_serial(sn, tx.clone()).await;
-                            info!("find_attached_serial: {res:?}");
-                        });
-                    }
-
-                    Some(Box::new(row.clone()))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
+    // fn on_cell_view_response(
+    //     &mut self,
+    //     row: &MyRowData,
+    //     column: usize,
+    //     resp: &eframe::egui::Response,
+    // ) -> Option<Box<MyRowData>> {
+    //     match column {
+    //         2 => {
+    //             if resp.clicked() {
+    //                 info!("Clicked Col 2: {:?}", row.1);
+    //                 if let Some(tx) = self.stock_tx.clone() {
+    //                     let sn = row.1.clone();
+    //                     spawn_local(async move {
+    //                         let res = find_attached_serial(sn, tx.clone()).await;
+    //                         info!("find_attached_serial: {res:?}");
+    //                     });
+    //                 }
+    //
+    //                 Some(Box::new(row.clone()))
+    //             } else {
+    //                 None
+    //             }
+    //         }
+    //         _ => None,
+    //     }
+    // }
 
     fn set_cell_value(&mut self, src: &MyRowData, dst: &mut MyRowData, column: usize) {
         info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
