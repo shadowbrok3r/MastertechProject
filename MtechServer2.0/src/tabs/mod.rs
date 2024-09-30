@@ -75,7 +75,7 @@ impl TabViewer for MtechServerContext {
             "Query Builder" => self.query_builder(ui),
             "Json Viewer" => self.json_viewer(ui),
             "Stock" => self.stock_viewer(ui),
-            "Task Audit" => self.stock_viewer(ui),
+            "Task Audit" => self.task_table_viewer(ui),
             _ => {}
         }
     }
