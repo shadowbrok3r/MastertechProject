@@ -1,15 +1,18 @@
-use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
-use crate::utilities::{FilterTasks, Sortable, TaskUiActions, Displayable};
-use database::{DATABASE, schema::{Priority, Record, TaskPayload, User}};
 use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
-use tokio::spawn;
+use database::{self, DATABASE};
+use database::schema::{Priority, Record, TaskPayload, User};
 use log::info;
-use surrealdb::sql::Id;
+use structdiff::Difference;
+use surrealdb::RecordId;
+use tokio::spawn;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
+use crate::utilities::{FilterTasks, Sortable, TaskUiActions, Displayable};
+use structdiff::StructDiff;
 
 // use super::sub_menu::sub_menu;
 
@@ -21,17 +24,20 @@ pub struct SortTasks{
 }
 
 
-// #[derive(Serialize)]
+#[derive(Difference)]
 pub struct TaskLayout{
+    #[difference(skip)]
     pub search_inputs: HashMap<String, String>,
+    #[difference(collection_strategy = "unordered_map_like", map_equality = "key_and_value")]
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
+    #[difference(collection_strategy="ordered_array_like")]
     pub column_names: Vec<String>,
     pub assignees: Vec<User>,
     pub open_menu: bool,
-
+    #[difference(skip)]
     pub action: TaskUiActions,
-    pub task: Option<Id>,
-    // #[serde(skip)]
+    pub task: Option<String>,
+    #[difference(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
 }
 
@@ -55,34 +61,23 @@ impl TaskLayout {
         self
     }
 
-    pub fn update_tasks(&mut self, new_map: BTreeMap<String, Vec<TaskPayload>>)  -> &mut Self{
+    pub fn update_tasks(&mut self, new_map: BTreeMap<String, Vec<TaskPayload>>) -> &mut Self {
         for (key, new_payloads) in new_map.into_iter() {
             if let Some(existing_payloads) = self.task_map.get_mut(&key) {
+                // Ensure we have the same length of vectors, or handle mismatches
                 for (existing, new) in existing_payloads.iter_mut().zip(new_payloads.iter()) {
-                    // Update only non-UI bound fields or compare changes before updating
-                    if existing.assignee != new.assignee {
-                        existing.assignee = new.assignee.clone();
-                    }
-                    if existing.due_date != new.due_date {
-                        existing.due_date = new.due_date.clone();
-                    }
-                    if existing.everest_initials != new.everest_initials {
-                        existing.everest_initials = new.everest_initials.clone();
-                    }
-                    if existing.priority != new.priority {
-                        existing.priority = new.priority.clone();
-                    }
-                    if existing.status != new.status {
-                        existing.status = new.status.clone();
-                    }
-
-                    // In the update logic, check this flag
-                    // if !existing.is_editing {
-                    //     existing.service_name = new.service_name;
-                    // }
+                    // Compute the diffs between the existing and new payloads
+                    let diffs = existing.diff(&new);
+                    // Apply the diffs to the existing payload
+                    existing.apply_mut(diffs);
+                }
+                
+                // If new_payloads has more items than existing_payloads, add them
+                if new_payloads.len() > existing_payloads.len() {
+                    existing_payloads.extend(new_payloads[existing_payloads.len()..].iter().cloned());
                 }
             } else {
-                // Insert new key if it does not exist
+                // Insert new key and its associated task payloads if it does not exist
                 self.task_map.insert(key, new_payloads);
             }
         }
@@ -97,11 +92,11 @@ impl TaskLayout {
     pub fn layout_cols(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
-        
+        let x: f32 = ui.available_height() - 40.0;
         ScrollArea::horizontal()
             .show_viewport(ui, |ui, _|
         {
-            let x: f32 = ui.available_height() - 40.0;
+            
             StripBuilder::new(ui)
                 .cell_layout(Layout::top_down_justified(Align::Center))
                 .size(Size::exact(30.0))
@@ -109,27 +104,30 @@ impl TaskLayout {
                 .size(Size::exact(x))
                 .vertical(|mut strip| 
             {
-                strip.strip(|strip| 
-                {
-                    strip.sizes(column_width, self.column_names.len()).horizontal( |strip| self.headers(strip));
-                });
-                
-                strip.empty();
-                
-                strip.strip(|strip| 
-                {
-                    strip.sizes(column_width, self.column_names.len()).horizontal( |mut strip| 
+                if self.column_names.len() > 0 {
+                    strip.strip(|strip| 
                     {
-                        // for (name, tasks) in self.task_map.iter_mut() {
-                            self.columns(strip.borrow_mut());
-                        // }
+                        strip.sizes(column_width, self.column_names.len())
+                            .horizontal(
+                                |strip| self.headers(strip)
+                            );
                     });
-                });
+
+                    strip.empty();
+
+                    strip.strip(|strip| 
+                    {
+                        strip.sizes(column_width, self.column_names.len())
+                            .horizontal(
+                                |mut strip| self.columns(strip.borrow_mut())
+                            );
+                    });
+                }
             });
         });
     }
 
-    pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
+pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
         info!("Finding ID: {task_id:?}");
         // Search for the task by ID
         for (_, tasks) in self.task_map.iter_mut(){
@@ -147,9 +145,9 @@ impl TaskLayout {
         let header_frame = Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
-            .outer_margin(Margin::symmetric(4.0, 1.0))
+            .outer_margin(Margin::symmetric(8.0, 1.0))
             .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(0.4, Color32::WHITE));
+            .stroke(Stroke::new(0.4, Color32::from_rgb(42, 195, 222)));
 
         for (name, tasks) in self.task_map.iter(){
             s.cell(|ui|{
@@ -202,37 +200,38 @@ impl TaskLayout {
                             });
 
                             if let Some(action) = res{
+                                let ids = tasks.iter().map(|t| t.id.clone().unwrap()).collect::<Vec<RecordId>>();
                                 match action{
                                     TaskActions::MarkComplete => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().key().to_string().to_string()).collect::<Vec<String>>();
-                                        
-                                        info!("ids: {:?}", id);
                                         spawn(async move {
-                                            let _x: Vec<Record> = DATABASE.query("fn::mark_all_completion($ids, $completion)")
-                                                .bind(("ids", id))
-                                                .bind(("completion", true))
-                                                .await.unwrap().take(0).unwrap();
+                                            for id in ids{
+                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                    .bind(("record", id.clone()))
+                                                    .bind(("completion", true))
+                                                    .await.unwrap().take(0).unwrap();
+                                            }
                                         });
                                     },
                                     TaskActions::MarkIncomplete => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().key().to_string()).collect::<Vec<String>>();
                                         
                                         spawn(async move {
-                                            let _x: Vec<Record> = DATABASE.query("fn::mark_all_completion($ids, $completion)")
-                                                .bind(("ids", id))
-                                                .bind(("completion", false))
-                                                .await.unwrap().take(0).unwrap();
+                                            for id in ids{
+                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                    .bind(("record", id.clone()))
+                                                    .bind(("completion", false))
+                                                    .await.unwrap().take(0).unwrap();
+                                            }
+
                                         });
                                     },
                                     TaskActions::MarkDueToday => {
-                                        let id = tasks.iter().map(|t| t.id.clone().unwrap().key().to_string()).collect::<Vec<String>>();
-                                        
                                         spawn(async move {
-                                            let query = "fn::mark_all_completion($ids, $completion)";
-                                            let _ = DATABASE.set("ids", id);
-                                            let _ = DATABASE.set("completion", true);
-
-                                            let _x: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+                                            for id in ids{
+                                                let query = "fn::mark_all_due_today($id)";
+                                                info!("ID: {:?}", id.clone());
+                                                let _ = DATABASE.set("id", id).await.unwrap();
+                                                let _x: Option<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+                                            }
                                         });
                                     }, _ => {}
                                 }
@@ -280,9 +279,9 @@ impl TaskLayout {
     fn columns(&mut self, s: &mut Strip) {
         let column_frame = Frame::default()
             .fill(Color32::from_rgb(12, 12, 14))
-            .inner_margin(Margin::same(8.0))
+            .inner_margin(Margin::same(6.0))
             .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(70)));
+            .stroke(Stroke::new(1.0,  Color32::from_additive_luminance(100)));
 
         let mut inputs = BTreeSet::new();
 
@@ -296,32 +295,34 @@ impl TaskLayout {
             s.cell(|ui| {
                 column_frame.show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
-                        ScrollArea::vertical()
-                            .auto_shrink(false)
-                            .show_viewport(ui, |ui, _| 
-                        {
+                        let row_height = 140.;
+                        let total_rows = tasks.len(); 
+                        let scroll_area = ScrollArea::vertical().auto_shrink(false);
+                        ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
+
+                        scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+                            // ui.scroll_with_delta(Vec2::new(0.0, 300.));
+                            // Retrieve search input for the current context, or default to an empty string.
                             let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
-                            if !search_input.is_empty(){
-                                for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
-                                    task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                    // if let Some(action) = action{
-                                    //     self.action = action.clone();
-                                    //     self.ui_actions_tx.try_send(action).unwrap();
-                                    // }
+
+                            // Filter tasks based on search input.
+                            let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
+                                tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
+                            } else {
+                                tasks.iter().cloned().collect()
+                            };
+
+                            // Iterate only over the rows in the current viewport range.
+                            for row in row_range {
+                                if !search_input.is_empty() {
+                                    ui.scroll_to_cursor(Some(Align::BOTTOM));
                                 }
-                            }else{
-                                for task in tasks {
+                                if let Some(task) = filtered_tasks.get_mut(row) {
                                     task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                    // if let Some(action) = action{
-                                    //     // if !TaskUiActions::None = action{
-                                    //         self.action = action.clone();
-                                    //         info!("self.action {:?}", self.action.clone());
-                                    //         self.ui_actions_tx.try_send(action).unwrap();
-                                    //     // }
-                                    // }
                                 }
-                            }
+                            }                        
                         });
+                        
                     });
                 });
             });

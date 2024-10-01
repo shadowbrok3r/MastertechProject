@@ -8,11 +8,8 @@ use displays::ui_tools::{
 };
 use eframe::egui::{
     style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets},
-    FontFamily, Visuals,
-};
-use eframe::egui::{
-    Color32, Context, CursorIcon, FontId, Frame, Margin, Rounding, Shadow, Stroke, Style, Vec2,
-    Window,
+    Color32, Context, CursorIcon, FontFamily, FontId, Frame, Margin, Rounding, Shadow, Stroke,
+    Style, Vec2, Visuals, Window,
 };
 use log::{debug, error, info};
 use std::sync::Arc;
@@ -26,7 +23,6 @@ use utilities::{
     ModalType, TaskUiActions,
 };
 use wasm_bindgen_futures::spawn_local;
-use web_sys::HtmlCanvasElement;
 
 pub mod app_state;
 pub mod first_run;
@@ -450,6 +446,7 @@ fn main() {
     use log::LevelFilter;
     use tabs::logger::logging::builder;
     use wasm_bindgen::prelude::*;
+    use web_sys::HtmlCanvasElement;
     builder().init().unwrap();
 
     // Redirect `log` message to `console.log` and friends:
