@@ -226,7 +226,11 @@ impl Displayable for TaskPayload {
                                                 {
                                                     let _ = tx.try_send(
                                                         TaskUiActions::OpenChatModal((
-                                                            self.id.as_ref().unwrap().clone().clone(),
+                                                            self.id
+                                                                .as_ref()
+                                                                .unwrap()
+                                                                .clone()
+                                                                .clone(),
                                                             self.task_note.clone(),
                                                         )),
                                                     );

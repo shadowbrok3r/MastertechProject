@@ -277,33 +277,40 @@ impl MtechServer {
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
         setup_custom_fonts(&cc.egui_ctx);
 
-        let mut tree = DockState::new(vec![
-            "Store Tasks".to_owned(),
-            "Completed Tasks".to_owned(),
-            "Customers".to_owned(),
-            "Json Viewer".to_owned(),
-            "Query Builder".to_owned(),
-        ]);
+        // let mut tree = DockState::new(vec![
+        //     "Store Tasks".to_owned(),
+        //     "Completed Tasks".to_owned(),
+        //     "Customers".to_owned(),
+        //     "Json Viewer".to_owned(),
+        //     "Query Builder".to_owned(),
+        // ]);
 
         let open_tabs = HashSet::new();
+        let tree = default_tree(open_tabs.clone());
 
-        if let Some(existing_dock_state) = cc.storage {
-            if let Some(settings) = existing_dock_state.get_string("user_settings") {
-                if let Ok(user_settings) = serde_json::from_str::<UserSettings>(&settings) {
-                    info!("Got user settings");
-                    let startup_tabs = user_settings.startup_tabs;
-                    if let Ok(state) = serde_json::from_value::<DockState<String>>(startup_tabs) {
-                        info!("Got DockState");
-                        for x in state.iter_all_nodes() {
-                            info!("All Tabs: {:?}, {:?}", x.1, x.0);
-                        }
-                        tree = state;
-                    } else {
-                        tree = default_tree(open_tabs.clone());
-                    }
-                }
-            }
-        }
+        // if let Some(existing_dock_state) = cc.storage {
+        //     if let Some(settings) = existing_dock_state.get_string("user_settings") {
+        //         if let Ok(user_settings) = serde_json::from_str::<UserSettings>(&settings) {
+        //             info!("Got user settings");
+        //             let startup_tabs = user_settings.startup_tabs;
+        //             if let Ok(state) = serde_json::from_value::<DockState<String>>(startup_tabs) {
+        //                 info!("Got DockState");
+        //                 for x in state.iter_all_nodes() {
+        //                     info!("All Tabs: {:?}, {:?}", x.1, x.0);
+        //                 }
+        //                 tree = state;
+        //             } else {
+        //                 tree = default_tree(open_tabs.clone());
+        //             }
+        //         } else {
+        //             info!("No user settings, using default UI layout");
+        //             tree = default_tree(open_tabs.clone());
+        //         }
+        //     }
+        // } else {
+        //     info!("No user settings, using default UI layout");
+        //     tree = default_tree(open_tabs.clone());
+        // }
 
         let ctx = cc.egui_ctx.clone();
         let data_update = Rc::new(std::cell::Cell::new(None));
