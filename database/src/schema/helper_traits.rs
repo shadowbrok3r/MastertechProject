@@ -2,8 +2,8 @@ use crate::DATABASE;
 
 use super::{
     prestashop_schema::{self, Employee, Prestashop},
-    ComputerData, ConnectedClient, CustomerData, ExtendedSeb, SpecialPartOrder,
-    TaskPayload, TicketData, TicketPayload, User,
+    ComputerData, ConnectedClient, CustomerData, ExtendedSeb, SpecialPartOrder, Store, TaskPayload,
+    TicketData, TicketPayload, User,
 };
 use anyhow::{Error, Result};
 use async_trait::async_trait;
@@ -47,6 +47,10 @@ pub trait UserHelper {
     async fn find_employee(&mut self) -> Result<prestashop_schema::Employee, Error>;
 
     async fn save_user_settings(&mut self) -> Result<(), Error>;
+
+    fn get_odoo_store_number(&mut self) -> Result<u64, Error>;
+
+    fn get_store_from_odoo_id(&mut self) -> Result<Store, Error>;
 }
 
 /// A trait for assisting with operations involving the ComputerData struct
@@ -273,6 +277,33 @@ impl UserHelper for User {
             Err(e) => info!("Error updating User Settings: {e:?}"),
         }
         Ok(())
+    }
+
+    fn get_odoo_store_number(&mut self) -> Result<u64, Error> {
+        let store = match self.store {
+            Store::RIV => 76,
+            Store::LTN => 73,
+            Store::MUR => 74,
+            Store::AF => 72,
+            Store::WJ => 78,
+            Store::ORE => 75,
+            Store::SAN => 77,
+        };
+        Ok(store)
+    }
+
+    fn get_store_from_odoo_id(&mut self) -> Result<Store, Error> {
+        let store = match self.get_odoo_store_number()? {
+            76 => Store::RIV,
+            73 => Store::LTN,
+            74 => Store::MUR,
+            78 => Store::WJ,
+            75 => Store::ORE,
+            72 => Store::AF,
+            77 => Store::SAN,
+            _ => Store::RIV,
+        };
+        Ok(store)
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::app_state::MtechServerContext;
-use database::schema::Store;
+use database::schema::{helper_traits::UserHelper, Store};
 use displays::egui_data_table::{
     viewer::{default_hotkeys, UiActionContext},
     Renderer, RowViewer, UiAction,
@@ -11,7 +11,7 @@ use wasm_bindgen_futures::spawn_local;
 
 impl MtechServerContext {
     pub fn task_table_viewer(&mut self, ui: &mut Ui) {
-        SidePanel::right("Hotkeys")
+        SidePanel::right("Hotkeys-TaskAudit")
             .default_width(500.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered_justified(|ui| {
@@ -35,21 +35,14 @@ impl MtechServerContext {
                 ui.add_space(10.);
 
                 let selected = &mut self.store_selection;
-                let selected_text = match selected {
-                    76 => Store::RIV.as_str(),
-                    73 => Store::LTN.as_str(),
-                    74 => Store::MUR.as_str(),
-                    78 => Store::WJ.as_str(),
-                    75 => Store::ORE.as_str(),
-                    72 => Store::AF.as_str(),
-                    77 => Store::SAN.as_str(),
-                    _ => Store::RIV.as_str(),
-                };
+
+                let mut usr = self.current_user.clone().unwrap_or_default();
+                let selected_text = usr.get_store_from_odoo_id().unwrap_or_default();
 
                 let current_selection = selected.clone();
 
                 ComboBox::new("Store_Selection", "")
-                    .selected_text(selected_text)
+                    .selected_text(selected_text.as_str())
                     .show_ui(ui, |ui| {
                         ui.selectable_value(selected, 76, "RIV");
                         ui.selectable_value(selected, 73, "LTN");

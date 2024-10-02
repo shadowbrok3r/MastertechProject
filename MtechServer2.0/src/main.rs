@@ -548,7 +548,7 @@ fn set_darker_style() -> Arc<Style> {
     let border_color = Color32::from_rgb(16, 16, 23); // Border color for windows and panels
     let text_color = Color32::from_rgb(199, 202, 245); // Default text color
     let error_color = Color32::from_rgb(227, 104, 176); // Error text color
-    let warn_color = Color32::from_rgb(155, 104, 227); // Warning text color
+    let warn_color = Color32::from_rgb(191, 33, 101); // Warning text color
     let link_color = Color32::from_rgb(155, 104, 227); // Hyperlink color
 
     let theme = CarlDark; // Assuming a theme object or struct
