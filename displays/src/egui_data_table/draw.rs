@@ -441,12 +441,12 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                     // Actual widget rendering happens within this line.
 
                     // ui.set_enabled(false);
-                    ui.style_mut()
-                        .visuals
-                        .widgets
-                        .noninteractive
-                        .fg_stroke
-                        .color = visual.strong_text_color();
+                    // ui.style_mut()
+                    //     .visuals
+                    //     .widgets
+                    //     .noninteractive
+                    //     .fg_stroke
+                    //     .color = visual.strong_text_color();
 
                     // FIXME: After egui 0.27, now the widgets spawned inside this closure
                     // intercepts interactions, which is basically natural behavior(Upper layer
@@ -462,7 +462,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                             no_rounding,
                             Stroke {
                                 width: 1.,
-                                color: visual.weak_text_color(),
+                                color: visual.text_color(),
                             },
                         );
                     }

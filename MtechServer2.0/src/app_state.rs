@@ -500,9 +500,9 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
     let mut tree = DockState::new(vec![
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
-        "Customers".to_owned(),
-        "Json Viewer".to_owned(),
-        "Query Builder".to_owned(),
+        // "Customers".to_owned(),
+        // "Json Viewer".to_owned(),
+        // "Query Builder".to_owned(),
         "Stock".to_owned(),
     ]);
 
@@ -521,7 +521,7 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
         0.6,
         vec![
             "My Tasks".to_owned(),
-            "Task Audit".to_owned(),
+            // "Task Audit".to_owned(),
             // "Ai Playground".to_owned(),
             "Logs".to_owned(),
         ],
