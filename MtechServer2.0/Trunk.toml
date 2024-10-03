@@ -16,6 +16,8 @@ filehash = false
 address = "0.0.0.0"
 # The port to serve on.
 port = 8080
+# Disable auto-reload of the web app.
+no_autoreload = false
 # Additional headers set for responses.
 # headers = {} #{ "Cross-Origin-Embedder-Policy" = "require-corp", "Cross-Origin-Opener-Policy" = "same-origin" }
 # [[proxy]]
