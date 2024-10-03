@@ -492,18 +492,17 @@ impl MastertechContext {
                         strip.empty();
                         strip.cell(|ui|
                         {
-                            ScrollArea::new([false, true])
-                            .id_salt("recomendations_scroll")
-                            .show(ui, |ui|{
-                                ui.add_sized(
-                                    vec2(ui.available_width()-4.0, ui.available_height() - 80.0), 
+                            // ScrollArea::new([false, true])
+                            // .auto_shrink([true, false])
+                            // .id_salt("recomendations_scroll")
+                            // .show(ui, |ui|{
                                     TextEdit::multiline(&mut self.task_data.task_description)
+                                    .min_size(vec2(ui.available_width()-4.0, ui.available_height() - 80.0))
                                     .hint_text(RichText::new("Recommendations").weak())
                                     .font(FontId::proportional(15.0))
-                                    .desired_rows(4)
-                                );
-                            });
-                            ui.shrink_height_to_current(); 
+                                    .desired_rows(4).ui(ui);
+                            // });
+                            // ui.shrink_height_to_current(); 
                         }); // cell
                     }); // strip builder
                 }); // strip.strip

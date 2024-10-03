@@ -288,17 +288,6 @@ impl MtechServer {
         }
 
         if let Ok(stock_data) = self.context.stock_channel.1.try_recv() {
-            // let store = match stock_data.locatio {
-            //     76 => Store::RIV.as_str(),
-            //     73 => Store::LTN.as_str(),
-            //     74 => Store::MUR.as_str(),
-            //     78 => Store::WJ.as_str(),
-            //     75 => Store::ORE.as_str(),
-            //     72 => Store::AF.as_str(),
-            //     77 => Store::SAN.as_str(),
-            //     _ => Store::RIV.as_str(),
-            // };
-
             let data: Vec<MyRowData> = stock_data
                 .iter()
                 .map(|stock_data| {
