@@ -14,19 +14,31 @@ use displays::ui_tools::{
     toasts::{Toast, ToastKind, ToastOptions},
 };
 
-use eframe::egui::{
-    style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets},
-    Color32, Context, CursorIcon, FontFamily, FontId, IconData, Rounding, Shadow, Stroke, Style,
-    Vec2, ViewportBuilder, Visuals,
+use eframe::{
+    egui::{
+        style::{
+            HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets,
+        },
+        Color32, Context, CursorIcon, FontFamily, FontId, IconData, Rounding, Shadow, Stroke,
+        Style, Vec2, ViewportBuilder, ViewportCommand, Visuals,
+    },
+    App,
 };
 
 use filesystem::system_info::ComputerInfo;
 use log::{debug, error, info};
 use pages::login_page::HASH;
-use std::sync::{atomic::Ordering, Arc, Condvar, Mutex};
+use semver::Version;
+use std::{
+    path::Path,
+    sync::{atomic::Ordering, Arc, Condvar, Mutex},
+};
 use surrealdb::RecordId;
 use tabs::{
-    github::get_github_releases,
+    github::{
+        download_release, get_github_releases,
+        self_updater::{run, Asset},
+    },
     logger::logging::builder,
     stock::{find_attached_serials, get_stock, BoolOrString, MyRowData},
     tur_sheet::scaffold::AsanaResponse,
@@ -244,6 +256,31 @@ impl eframe::App for MasterTechApp {
 
         if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
             debug!("Releases: {releases:?}");
+            let assets: Vec<Asset> = releases
+                .iter()
+                .flat_map(|r| r.assets.iter().cloned())
+                .collect();
+
+            for (release, asset) in releases.iter().zip(assets.iter()) {
+                let current_version =
+                    Version::parse(env!("CARGO_PKG_VERSION")).expect("Invalid version format");
+                let github_release_version =
+                    Version::parse(&release.tag_name).expect("Invalid version format");
+                info!("TagName: {:?}", release.tag_name);
+
+                if current_version < github_release_version {
+                    // ctx.send_viewport_cmd(ViewportCommand::Close);
+
+                    let client = self.context.client.clone();
+                    info!("Found a new release! {:?}", &github_release_version);
+                    let asset = asset.clone();
+                    let tx = self.context.bytes_tx.clone();
+                    spawn(async move {
+                        let download = run(client, tx.clone()).await;
+                        info!("Download: {download:?}");
+                    });
+                }
+            }
             self.context.github_releases = releases;
         }
 
@@ -520,7 +557,37 @@ impl eframe::App for MasterTechApp {
 
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {
             // self.context.seb_info = Some(seb);
-            self.context.json_editor.set_value(seb.clone());
+            self.context.json_editor.set_value(seb.clone()).unwrap();
+        }
+
+        while let Ok(res) = self.context.bytes_rx.try_recv() {
+            self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
+            self.context.progress.1 = res.1 as f32;
+            self.context.progress.0 += res.0 as f32;
+            if res.0 == res.1 {
+                self.context.progress = (0.0, 0.0);
+                self.context.output_text += "\nFinished";
+                let current_path = std::env::current_dir().unwrap();
+                // let linux_path = std::env::current_dir().unwrap();
+                let mtech_path = current_path.join("git-MasterTech.exe");
+                // let mtech_linux_path = linux_path.join("git-MasterTech");
+
+                if mtech_path.exists() {
+                    info!("Mastertech does exist at {:?}", mtech_path);
+                    let mut mtech_cmd = std::process::Command::new(mtech_path);
+                    if mtech_cmd.status().is_ok() {
+                        info!("Mtech opened, closing current window");
+                        ctx.send_viewport_cmd(ViewportCommand::Close);
+                    }
+                }
+                // else if mtech_linux_path.exists() {
+                //     let mut mtech_cmd = std::process::Command::new(mtech_linux_path);
+                //     if mtech_cmd.status().is_ok() {
+                //         info!("Mtech opened, closing current window");
+                //         ctx.send_viewport_cmd(ViewportCommand::Close);
+                //     }
+                // }
+            }
         }
 
         match &self.state {
@@ -543,24 +610,24 @@ impl eframe::App for MasterTechApp {
         self.viewport_loader(ctx);
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let id = self.context.client_uuid.clone();
-        if let Some(id) = id {
-            spawn(async move {
-                let res: Option<Record> = DATABASE
-                    .query("UPDATE connected_client SET connected = false WHERE id == $id")
-                    .bind(("id", id.clone()))
-                    .await?
-                    .take(0)?;
-
-                match res {
-                    Some(data) => info!("Disconnected. {data:?}"),
-                    None => error!("Error Disconnecting Client"),
-                }
-                Ok::<(), Error>(())
-            });
-        }
-    }
+    // fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    //     let id = self.context.client_uuid.clone();
+    //     if let Some(id) = id {
+    //         spawn(async move {
+    //             let res: Option<Record> = DATABASE
+    //                 .query("UPDATE connected_client SET connected = false WHERE id == $id")
+    //                 .bind(("id", id.clone()))
+    //                 .await?
+    //                 .take(0)?;
+    //
+    //             match res {
+    //                 Some(data) => info!("Disconnected. {data:?}"),
+    //                 None => error!("Error Disconnecting Client"),
+    //             }
+    //             Ok::<(), Error>(())
+    //         });
+    //     }
+    // }
 }
 
 #[tokio::main]

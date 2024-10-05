@@ -13,10 +13,8 @@ use displays::{
     ui_tools::{mention_handler::MentionHandler, toasts::Toasts},
     virtual_filesystem::FileSystem,
 };
-use eframe::egui::{
-    Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText,
-};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
+use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke};
+use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -36,10 +34,16 @@ use crate::tabs::minidump::MiniDumpApp;
 use crate::{
     pages::login_page::Login,
     tabs::{
-        file_browser::FileBrowser, github::self_updater::GithubRelease, logger::logger_ui, scripts::Scripts, seb_lookup::JsonEditor, stock::{MyRowData, MyRowViewer, RawStockData, SerialData}, tur_sheet::{
+        file_browser::FileBrowser,
+        github::self_updater::GithubRelease,
+        scripts::Scripts,
+        seb_lookup::JsonEditor,
+        stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
+        tur_sheet::{
             get_ticket::SendRequest,
             scaffold::{self, HardwareTest},
-        }, websockets::WebConsoleFrontend
+        },
+        websockets::WebConsoleFrontend,
     },
     utilities::{
         displays::{
@@ -222,7 +226,7 @@ impl MasterTechApp {
             "TUR Sheet".to_owned(),
             "Tasks".to_owned(),
             // "Part Order".to_owned(),
-            "Minidump Analysis".to_owned(),
+            // "Minidump Analysis".to_owned(),
             "SEB Lookup".to_owned(),
             "Downloads".to_owned(),
             "Stock".to_owned(),
