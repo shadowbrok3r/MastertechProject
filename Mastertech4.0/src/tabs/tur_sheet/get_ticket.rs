@@ -189,26 +189,27 @@ pub async fn request_seb_info<T>(
 where
     T: Debug + Serialize + for<'a> Deserialize<'a> + Clone + std::convert::From<LocalSebData>,
 {
-    if let Some(customer_email) = customer_email {
-        let params = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com",
-            "user_password": "Poolparty1",
-            "action": "search",
-            "application": "carbonite",
-            "search": customer_email.as_str()
-        });
+    let mut params: HashMap<&str, &str> = HashMap::new();
+    params.insert("user_email", "logan.lees@pclaptops.com");
+    params.insert("user_password", "Poolparty1");
+    params.insert("application", "carbonite");
+    params.insert("action", "search");
 
+    if let Some(customer_email) = customer_email {
+        params.insert("search", &customer_email);
+        
         let response = client
             .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
             .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json")
-            .json(&params)
+            // .header(ACCEPT, "application/json")
+            .form(&params)
             .send()
-            .await?;
+            .await.unwrap();
 
+        // info!("response: {:?}", response.text().await?);
+        
         let response_json: Vec<T> = response.json().await?;
-
-        info!("response: {:?}", response_json);
+        info!("response_json: {:?}", response_json);
         Ok(response_json.get(0).unwrap().clone())
     } else {
         // supereasybackup.com/downloads/SuperEasyBackup.exe
@@ -220,19 +221,13 @@ where
         // Deserialize the XML content
         let mut result: LocalSebData = from_str(&file_content)?;
 
-        let params = serde_json::json!({
-            "user_email": "logan.lees@pclaptops.com",
-            "user_password": "Poolparty1",
-            "action": "search",
-            "application": "carbonite",
-            "search": result.InstalledDeviceId.as_str()
-        });
+        params.insert("search", &result.InstalledDeviceId);
 
         let response = client
             .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
-            .json(&params)
+            .form(&params)
             .send()
             .await?;
 

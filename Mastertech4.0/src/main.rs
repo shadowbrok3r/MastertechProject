@@ -518,6 +518,11 @@ impl eframe::App for MasterTechApp {
             self.context.data_table.replace(data_table);
         }
 
+        if let Ok(seb) = self.context.seb_channel.1.try_recv() {
+            // self.context.seb_info = Some(seb);
+            self.context.json_editor.set_value(seb.clone());
+        }
+
         match &self.state {
             app_state::AppState::Authenticated(page) => match page {
                 app_state::MainPages::Tasks => self.main_page(ctx),
