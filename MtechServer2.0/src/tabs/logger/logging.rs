@@ -1,4 +1,4 @@
-pub use super::{logger_ui, LoggerUi, try_mut_log};
+pub use super::{logger_ui, try_mut_log, LoggerUi};
 use log::SetLoggerError;
 use std::sync::Mutex;
 
@@ -30,9 +30,7 @@ impl Default for Builder {
 }
 
 impl Builder {
-    /// Returns the Logger.
-    /// Useful if you want to add it to a multi-logger.
-    /// See [here](https://github.com/RegenJacob/egui_logger/blob/main/examples/multi_log.rs) for an example.
+    /// Useful if we want to add it to a multi-logger.
     pub fn build(self) -> EguiLogger {
         EguiLogger
     }
@@ -103,3 +101,4 @@ fn main() -> {
 pub fn builder() -> Builder {
     Builder::default()
 }
+

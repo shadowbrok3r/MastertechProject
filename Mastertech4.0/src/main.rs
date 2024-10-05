@@ -5,7 +5,7 @@ use database::{
     schema::{
         buckets::list_buckets,
         utilities::{get_store_users, get_tasks},
-        ComputerData, GetKeysResponse, HardwareTests, Record, TaskNotePayload, TICKET_TABLE,
+        ComputerData, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TICKET_TABLE,
     },
     Database, DATABASE, STORAGE_URL,
 };
@@ -26,7 +26,10 @@ use pages::login_page::HASH;
 use std::sync::{atomic::Ordering, Arc, Condvar, Mutex};
 use surrealdb::RecordId;
 use tabs::{
-    github::get_github_releases, logger::logging::builder, tur_sheet::scaffold::AsanaResponse,
+    github::get_github_releases,
+    logger::logging::builder,
+    stock::{find_attached_serials, get_stock, BoolOrString, MyRowData},
+    tur_sheet::scaffold::AsanaResponse,
 };
 use tokio::spawn;
 use utilities::{
@@ -187,6 +190,18 @@ impl eframe::App for MasterTechApp {
                                 .clone();
 
                             info!("Getting Minio files");
+
+                            let stock_tx = self.context.stock_channel.0.clone();
+                            let store_selection = match usr.store {
+                                Store::RIV => 76,
+                                Store::LTN => 73,
+                                Store::MUR => 74,
+                                Store::AF => 72,
+                                Store::WJ => 78,
+                                Store::ORE => 75,
+                                Store::SAN => 77,
+                            };
+
                             spawn(async move {
                                 let list_bucket_res = list_buckets(
                                     STORAGE_URL.to_string(),
@@ -203,6 +218,9 @@ impl eframe::App for MasterTechApp {
                                     }
                                     Err(e) => error!("Error getting minio files: {e:?}"),
                                 }
+
+                                let stock = get_stock(stock_tx.clone(), store_selection).await;
+                                info!("Stock call: {stock:?} for Store: {:?}", store_selection);
                             });
                         }
                         let initial_tasks_tx = self.context.initial_tasks_tx.clone();
@@ -436,6 +454,68 @@ impl eframe::App for MasterTechApp {
             // info!("GOT COPIED ITEMS: {copied_items:?}");
             self.context.output_text += &format!("{copied_items}\n");
             // if self.context.output_text.is_empty() {}
+        }
+
+        if let Ok(stock_data) = self.context.stock_channel.1.try_recv() {
+            let data: Vec<MyRowData> = stock_data
+                .iter()
+                .map(|stock_data| {
+                    MyRowData(
+                        stock_data.product_id.clone().1.clone(),
+                        stock_data.lot_id.clone().1.parse::<String>().unwrap(),
+                        "S/N Info ⮫".to_string(),
+                        match stock_data.location_id.0 {
+                            76 => Store::RIV.as_str(),
+                            73 => Store::LTN.as_str(),
+                            74 => Store::MUR.as_str(),
+                            78 => Store::WJ.as_str(),
+                            75 => Store::ORE.as_str(),
+                            72 => Store::AF.as_str(),
+                            77 => Store::SAN.as_str(),
+                            _ => Store::RIV.as_str(),
+                        }
+                        .to_string(),
+                        false,
+                    )
+                })
+                .collect();
+
+            let tx = self.context.serial_channel.0.clone();
+
+            let sns = data.iter().map(|r| r.1.clone()).collect::<Vec<String>>();
+
+            spawn(async move {
+                let _res = find_attached_serials(sns, tx.clone()).await;
+            });
+
+            self.context.data_table.replace(data);
+        }
+
+        if let Ok(serial_data) = self.context.serial_channel.1.try_recv() {
+            debug!("Serial Data: {:?}", serial_data);
+            let mut data_table = self.context.data_table.take();
+            for data in data_table.iter_mut() {
+                for serial_info in serial_data.result.iter() {
+                    if data.1 == serial_info.name {
+                        match serial_info.clone().bs_prest_ref {
+                            BoolOrString::Bool(_) => {
+                                data.2 = "Not Attached".to_string();
+                                data.4 = false;
+                            }
+                            BoolOrString::String(order_num) => {
+                                if !order_num.is_empty() {
+                                    data.2 = order_num;
+                                    data.4 = true;
+                                } else {
+                                    data.2 = "Not Attached".to_string();
+                                    data.4 = false;
+                                }
+                            }
+                        };
+                    }
+                }
+            }
+            self.context.data_table.replace(data_table);
         }
 
         match &self.state {

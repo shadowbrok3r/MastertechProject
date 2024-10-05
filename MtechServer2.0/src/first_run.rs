@@ -35,6 +35,12 @@ impl MtechServer {
     pub fn first_run(&mut self, frame: &mut Frame) {
         self.context.first_run = false;
 
+        let github_releases_tx = self.context.github_releases_channel.0.clone();
+        spawn_local(async move {
+            let get_releases = get_github_releases(github_releases_tx).await;
+            info!("get_releases: {get_releases:?}");
+        });
+
         if let Some(storage) = frame.storage_mut() {
             if let Some(settings) = storage.get_string("user_settings") {
                 self.context.user_settings =
@@ -92,7 +98,7 @@ impl MtechServer {
         let store_users_tx = self.context.store_users_tx.clone();
         let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
-        let github_releases_tx = self.context.github_releases_channel.0.clone();
+        // let github_releases_tx = self.context.github_releases_channel.0.clone();
         let stock_tx = self.context.stock_channel.0.clone();
         // let notification_tx = self.context.notification_tx.clone();
         // let live_output = self.context.live_output_tx.clone();
@@ -154,7 +160,7 @@ impl MtechServer {
                     let get_tasks = get_tasks(initial_tasks_tx).await;
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                     let get_connected_clients = get_connected_clients(tx, user.clone()).await;
-                    let get_releases = get_github_releases(github_releases_tx).await;
+                    // let get_releases = get_github_releases(github_releases_tx).await;
                     let stock = get_stock(stock_tx.clone(), store_selection).await;
                     info!("Stock call: {stock:?} for Store: {:?}", store_selection);
                     // }
@@ -164,7 +170,7 @@ impl MtechServer {
                     info!("get_connected_clients: {get_connected_clients:?}");
                     info!("get_store_users: {get_store_users:?}");
                     info!("get_tasks: {get_tasks:?}");
-                    info!("get_releases: {get_releases:?}");
+                    // info!("get_releases: {get_releases:?}");
                     // info!("get_notifications: {get_notifications:?}");
                     // info!("get_custs: {get_custs:?}");
                 });

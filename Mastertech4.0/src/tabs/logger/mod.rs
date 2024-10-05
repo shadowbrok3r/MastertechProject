@@ -194,9 +194,17 @@ impl LoggerUi {
                         let string_format = format!("[{}]: {}", level, string);
 
                         let response = match level {
-                            log::Level::Warn => ui.colored_label(Color32::LIGHT_YELLOW, string_format),
-                            log::Level::Error => ui.colored_label(Color32::LIGHT_RED, string_format),
-                            log::Level::Info => ui.colored_label(Color32::LIGHT_GREEN, string_format),
+                            log::Level::Warn => {
+                                ui.colored_label(Color32::LIGHT_YELLOW, string_format)
+                            }
+
+                            log::Level::Error => {
+                                ui.colored_label(Color32::from_rgb(255, 51, 153), string_format)
+                            }
+
+                            log::Level::Info => {
+                                ui.colored_label(Color32::from_rgb(51, 255, 189), string_format)
+                            }
                             _ => ui.colored_label(Color32::LIGHT_BLUE, string_format),
                         };
 
@@ -208,8 +216,10 @@ impl LoggerUi {
                                 response.highlight();
                                 let string_format = format!("[{}]: {}", level, string);
 
-                                // the vertical layout is because otherwise text spacing gets weird
                                 ui.vertical(|ui| {
+                                    // temporary workaround to get rid of these annoyingly
+                                    // verbose wgpu logs we shouldnt even be getting
+                                    // if !string_format.contains("waiting for submission index") {
                                     match level {
                                         log::Level::Warn => ui.label(
                                             RichText::new(string_format)
@@ -219,12 +229,12 @@ impl LoggerUi {
                                         log::Level::Error => ui.label(
                                             RichText::new(string_format)
                                                 .monospace()
-                                                .color(Color32::LIGHT_RED),
+                                                .color(Color32::from_rgb(255, 51, 153)),
                                         ),
                                         log::Level::Info => ui.label(
                                             RichText::new(string_format)
                                                 .monospace()
-                                                .color(Color32::LIGHT_GREEN),
+                                                .color(Color32::from_rgb(51, 255, 189)),
                                         ),
                                         _ => ui.label(
                                             RichText::new(string_format)
@@ -232,6 +242,7 @@ impl LoggerUi {
                                                 .color(Color32::LIGHT_BLUE),
                                         ),
                                     };
+                                    // }
                                 });
 
                                 if ui.button("Copy").clicked() {
@@ -294,3 +305,4 @@ impl LoggerUi {
 pub fn logger_ui() -> LoggerUi {
     LoggerUi::default()
 }
+
