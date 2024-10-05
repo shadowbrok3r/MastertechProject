@@ -208,6 +208,7 @@ where
 
         let response_json: Vec<T> = response.json().await?;
 
+        info!("response: {:?}", response_json);
         Ok(response_json.get(0).unwrap().clone())
     } else {
         // supereasybackup.com/downloads/SuperEasyBackup.exe
@@ -237,11 +238,11 @@ where
 
         let response_json: Vec<ExtendedSeb> = response.json().await?; // ExtendedSeb
 
+        info!("response: {:?}", response_json);
         let actual_response = response_json.get(0);
 
         if let Some(extended_seb) = actual_response {
             debug!("Carbonite response: {extended_seb:#?}");
-
             result.ExtendedSeb = Some(extended_seb.clone());
         }
 

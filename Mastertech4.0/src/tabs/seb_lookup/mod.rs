@@ -159,7 +159,7 @@ fn display_seb_page(ui: &mut Ui, seb_info: Option<LocalSebData>) {
                                     } else {
                                         ui.colored_label(
                                             Color32::LIGHT_RED,
-                                            "No SEB information was sent with ticket.",
+                                            "Type in a customer email or run 'Show Local Device SEB Info' to pull SEB Data",
                                         );
                                     }
                                     if let Some(seb_info) = seb_info {
