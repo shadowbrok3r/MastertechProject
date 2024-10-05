@@ -144,7 +144,7 @@ impl JsonEditor {
         }
     }
 
-    fn set_value<T: Serialize + for<'de> Deserialize<'de>>(
+    pub fn set_value<T: Serialize + for<'de> Deserialize<'de>>(
         &mut self,
         data: T,
     ) -> Result<(), Error> {
