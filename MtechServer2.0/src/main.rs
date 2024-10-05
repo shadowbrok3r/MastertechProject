@@ -30,6 +30,7 @@ pub mod pages;
 pub mod tabs;
 pub mod utilities;
 pub mod webworker;
+pub mod data;
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
