@@ -101,32 +101,49 @@ pub struct NewTicketChannel {
 
 #[derive(Serialize)]
 pub struct MtechServerContext {
+    // User and Client Related Fields
+    /// {Currently logged-in user}
     #[serde(skip)]
     pub current_user: Option<User>,
-    pub task_map: BTreeMap<String, Vec<TaskPayload>>,
-    ///Gets data from the first run of the main loop
-    pub first_run: bool,
-    pub clients: Vec<ConnectedClient>,
-    /// All contained task data from database
-    pub live_tasks: Option<LiveTaskPayload>,
-    pub tasks: Vec<TaskPayload>,
-    pub data_output: LiveOutput,
+    /// {Users in the store}
     pub store_users: Vec<User>,
-    /// Receives task data over crossbeam channel
+    /// {Sends users from database}
     #[serde(skip)]
-    pub tasks_tx: Sender<(Action, TaskPayload)>,
+    pub store_users_tx: Sender<Vec<User>>,
+    /// {Receives users from database}
     #[serde(skip)]
-    pub tasks_rx: Receiver<(Action, TaskPayload)>,
-
+    pub store_users_rx: Receiver<Vec<User>>,
+    /// {Connected clients}
+    pub clients: Vec<ConnectedClient>,
+    /// {Transmits connected clients over crossbeam channel}
     #[serde(skip)]
-    pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
+    pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
     #[serde(skip)]
-    pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
-
+    pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
     #[serde(skip)]
     pub live_clients_tx: Sender<(Action, ConnectedClient)>,
     #[serde(skip)]
     pub live_clients_rx: Receiver<(Action, ConnectedClient)>,
+    /// {WebSocket clients by ID}
+    #[serde(skip)]
+    pub ws_clients: HashMap<String, WebSocketClient>,
+
+    // Task Related Fields
+    /// {Map of tasks by key}
+    pub task_map: BTreeMap<String, Vec<TaskPayload>>,
+    /// {Live task payload from database}
+    pub live_tasks: Option<LiveTaskPayload>,
+    /// {All task data}
+    pub tasks: Vec<TaskPayload>,
+    /// {Task transmission channel over crossbeam}
+    #[serde(skip)]
+    pub tasks_tx: Sender<(Action, TaskPayload)>,
+    #[serde(skip)]
+    pub tasks_rx: Receiver<(Action, TaskPayload)>,
+    #[serde(skip)]
+    pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
+    #[serde(skip)]
+    pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
     #[serde(skip)]
     pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
     #[serde(skip)]
@@ -144,92 +161,37 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub new_note_rx: Receiver<TaskNotePayload>,
 
-    #[serde(skip)]
-    pub store_users_tx: Sender<Vec<User>>,
-    #[serde(skip)]
-    pub store_users_rx: Receiver<Vec<User>>,
-
-    #[serde(skip)]
-    pub app_state_tx: Sender<AppState>,
-    #[serde(skip)]
-    pub app_state_rx: Receiver<AppState>,
-
-    /// Receives / Sends Database connection over crossbeam channel
+    // Communication with other Services
+    /// {Database communication channel}
     #[serde(skip)]
     pub db_rx: Receiver<anyhow::Result<Database, Error>>,
     #[serde(skip)]
     pub db_tx: Sender<anyhow::Result<Database, Error>>,
-    #[serde(skip)]
-    pub ui_actions_tx: Sender<TaskUiActions>,
-    #[serde(skip)]
-    pub ui_actions_rx: Receiver<TaskUiActions>,
-    #[serde(skip)]
-    pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
-    #[serde(skip)]
-    pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
-    #[serde(skip)]
-    pub notification_tx: Sender<Vec<Notification>>,
-    #[serde(skip)]
-    pub notification_rx: Receiver<Vec<Notification>>,
-    #[serde(skip)]
-    pub live_output_tx: Sender<LiveOutput>,
-    #[serde(skip)]
-    pub live_output_rx: Receiver<LiveOutput>,
     #[serde(skip)]
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
     #[serde(skip)]
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
+    #[serde(skip)]
+    pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
+    #[serde(skip)]
+    pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
 
-    #[serde(skip)]
-    pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
-    #[serde(skip)]
-    pub live_bridge: Option<gloo_worker::WorkerBridge<LiveWorker>>,
-    #[serde(skip)]
-    pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
-    #[serde(skip)]
-    pub live_data_update: Option<Rc<Cell<Option<LiveOutput>>>>,
-    #[serde(skip)]
-    pub file_system: FileSystem,
-    #[serde(skip)]
-    pub github_issue: GithubIssue,
-
-    pub github_releases: Vec<GithubRelease>,
-    /// Terminal setup for console tab
-    // #[serde(skip)]
-    // pub terminal: Terminal<RataguiBackend>,
-    pub tur: Tur,
-    /// example chart for console tab
-    #[serde(skip)]
-    pub chart_app: App,
-    /// update period for chart
-    pub tick_rate: Duration,
-    /// last tick of example chart
-    #[serde(skip)]
-    pub last_tick: Instant,
-    pub url: String,
-    pub error: String,
-    #[serde(skip)]
-    pub ws_clients: HashMap<String, WebSocketClient>,
-    pub undock_client: HashMap<String, bool>,
-    pub wants_to_undock: bool,
-    #[serde(skip)]
-    pub text_to_send: String,
-
-    /// Widgets / Modals / Ui for portions throughout the app
+    // UI and Application State Fields
+    /// {Widgets / Modals / Ui for portions throughout the app}
     pub new_note: bool,
     pub search_input: String,
     pub client_search_input: String,
     pub client_search_inputs: HashMap<String, String>,
     pub edited_task: TaskPayload,
+    /// {Task layouts for different tabs}
     #[serde(skip)]
     pub task_layouts: HashMap<String, TaskLayout>,
     pub rerun_filtering_my_tasks: bool,
     pub rerun_filtering_store_tasks: bool,
     pub rerun_filtering_completed: bool,
-    #[serde(skip)]
-    pub ai_playground: AiPlayground,
+    /// {Current UI modal}
     #[serde(skip)]
     pub current_modal: ModalType,
     #[serde(skip)]
@@ -239,9 +201,8 @@ pub struct MtechServerContext {
     pub chat_modal_handler: ChatModalHandler,
     #[serde(skip)]
     pub chat_modal: Option<ChatView>,
-    /// collection of all open tabs in ui
+    /// {Open tabs in the UI}
     pub open_tabs: HashSet<String>,
-    /// egui dock styling
     #[serde(skip)]
     pub style: Option<egui_dock::Style>,
     #[serde(skip)]
@@ -250,26 +211,110 @@ pub struct MtechServerContext {
     pub toasts: Toasts,
     pub notifications: Vec<Notification>,
     pub read_notifications: bool,
-    pub total_download_size: f32,
-    pub download_progress: f32,
     #[serde(skip)]
     pub json_editor: JsonEditor,
     #[serde(skip)]
     pub json_editor_state: JsonEditorState,
+    /// generic data viewer (currently used for inventory tab)
+    #[serde(skip)]
+    pub data_viewer: MyRowViewer,
+    /// generic data table (currently used for inventory tab)
+    #[serde(skip)]
+    pub data_table: DataTable<MyRowData>,
+    /// store selection for inventory view
+    pub store_selection: u64,
+
+    // Ui State Management Channels
+    /// {UI actions channel for communication between UI components and main function}
+    #[serde(skip)]
+    pub ui_actions_tx: Sender<TaskUiActions>,
+    #[serde(skip)]
+    pub ui_actions_rx: Receiver<TaskUiActions>,
+
+    // System Data and Settings
     pub user_settings: UserSettings,
     pub update_settings: bool,
     pub get_settings: bool,
+    /// {Output log from live operations}
+
+    // Miscellaneous Fields
+    /// {Gets data from the first run of the main loop}
+    pub first_run: bool,
+    /// tracking for which client we want to undock
+    /// into a floating UI when we click the undock button
+    pub undock_client: HashMap<String, bool>,
+    /// The undock button was clicked for a ConnectedClient
+    pub wants_to_undock: bool,
+    /// URL to use for communication to a ConnectedClient
+    /// via a websocket connection
+    pub url: String,
+    /// Error from our ConnectedClient connection
+    pub error: String,
+    /// When downloading mastertech from the website
+    pub total_download_size: f32,
+    /// progress of downloading mastertech
+    pub download_progress: f32,
+
+    // Virtual File System
+    /// {Virtual file system display}
     #[serde(skip)]
-    pub data_viewer: MyRowViewer,
+    pub file_system: FileSystem,
+
+    // GitHub Issue Management
+    /// {Used to create GitHub issues from the website}
     #[serde(skip)]
-    pub data_table: DataTable<MyRowData>,
+    pub github_issue: GithubIssue,
+    /// The result of querying github for Mastertech releases
+    pub github_releases: Vec<GithubRelease>,
+
+    // Notifications and App State
     #[serde(skip)]
-    pub stock_data: RawStockData,
+    pub notification_tx: Sender<Vec<Notification>>,
     #[serde(skip)]
-    pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
+    pub notification_rx: Receiver<Vec<Notification>>,
     #[serde(skip)]
-    pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
-    pub store_selection: u64,
+    pub app_state_tx: Sender<AppState>,
+    #[serde(skip)]
+    pub app_state_rx: Receiver<AppState>,
+
+    // Webworker Communication
+    /// Data from our Dummy Worker
+    #[serde(skip)]
+    pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
+    /// Data from our Live Update worker
+    /// (Currently not in use until i find something to
+    /// use it for)
+    #[serde(skip)]
+    pub live_data_update: Option<Rc<Cell<Option<LiveOutput>>>>,
+    /// The data structure from Live Update worker
+    pub data_output: LiveOutput,
+    /// Getting / Sending data from our Live Update worker
+    #[serde(skip)]
+    pub live_output_tx: Sender<LiveOutput>,
+    #[serde(skip)]
+    pub live_output_rx: Receiver<LiveOutput>,
+    /// The actual communication bridge to / from our dummy worker
+    #[serde(skip)]
+    pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
+    /// The actual communication bridge to / from our live update web worker    
+    #[serde(skip)]
+    pub live_bridge: Option<gloo_worker::WorkerBridge<LiveWorker>>,
+
+    // Other Components
+    pub tur: Tur,
+    /// This is a test chart
+    /// for running a TUI in egui
+    /// currently not being used
+    #[serde(skip)]
+    pub chart_app: App,
+    /// Tick rate for Chart
+    pub tick_rate: Duration,
+    /// Track last tick for Chart
+    #[serde(skip)]
+    pub last_tick: Instant,
+    /// Just some testing for Ai capabilities
+    #[serde(skip)]
+    pub ai_playground: AiPlayground,
 }
 
 impl MtechServer {
@@ -420,19 +465,16 @@ impl MtechServer {
             file_system: FileSystem::new(),
             github_issue: GithubIssue::new(),
             github_releases: Vec::new(),
-            // TERMINAL STUFF
-            // terminal: Terminal::new(backend).unwrap(),
+
             tick_rate: Duration::from_millis(30),
             chart_app: App::new(),
             last_tick: Instant::now(),
-            // url: format!("{}websocket?room_id=0&role=master", dotenv::var("WS_URL").unwrap()),
             url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_string(),
             ws_clients: HashMap::new(),
             undock_client: HashMap::new(),
             wants_to_undock: false,
             error: Default::default(),
-            // client_layout: None,
-            text_to_send: Default::default(),
+
             // MISC / EVERYTHING ELSE
             bridge: Some(bridge),
             live_bridge: Some(live_bridge),
@@ -457,7 +499,6 @@ impl MtechServer {
             get_settings: false,
             data_table: DataTable::<MyRowData>::default(),
             data_viewer,
-            stock_data: RawStockData::default(),
             stock_channel,
             serial_channel,
             store_selection: 76,
