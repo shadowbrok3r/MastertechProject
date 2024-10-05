@@ -541,6 +541,7 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
     let mut tree = DockState::new(vec![
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
+        "SEB Lookup".to_owned(),
         // "Customers".to_owned(),
         // "Json Viewer".to_owned(),
         // "Query Builder".to_owned(),
