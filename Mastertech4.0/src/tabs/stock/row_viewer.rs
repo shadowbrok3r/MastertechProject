@@ -56,6 +56,8 @@ pub struct MyRowViewer {
     pub filter: String,
     pub row_protection: bool,
     pub hotkeys: Vec<(KeyboardShortcut, UiAction)>,
+    #[serde(skip)]
+    pub stock_tx: Option<Sender<SerialData>>,
 }
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
