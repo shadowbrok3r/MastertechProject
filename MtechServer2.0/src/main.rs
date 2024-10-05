@@ -1,44 +1,33 @@
 use app_state::{AppState, MainPages, MtechServer};
-use database::live_data::{
-    handle_live_data, handle_live_notes, update_or_insert, update_or_insert_layout,
-};
-use displays::ui_tools::{
-    carl_dark::{Aesthetix, CarlDark},
-    toasts::{Toast, ToastKind, ToastOptions},
-};
+use displays::ui_tools::carl_dark::{Aesthetix, CarlDark};
 use eframe::egui::{
     style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets},
     Color32, Context, CursorIcon, FontFamily, FontId, Frame, Margin, Rounding, Shadow, Stroke,
     Style, Vec2, Visuals, Window,
 };
-use log::{debug, error, info};
+use log::{debug, info};
 use std::sync::Arc;
-use surrealdb::Action;
-use utilities::{
-    displays::{
-        chats::ChatView,
-        modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal},
-    },
-    get_data::get_associated_ticket,
-    ModalType, TaskUiActions,
-};
-use wasm_bindgen_futures::spawn_local;
 
 pub mod app_state;
+pub mod data;
 pub mod first_run;
 pub mod pages;
 pub mod tabs;
 pub mod utilities;
 pub mod webworker;
-pub mod data;
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         // most important part of the whole app.. setting up our styling
-        // let arc_style = set_style();
+        // currently this just sets the style of the app, but in the near
+        // future i will be making this the setup to allow user customization
+        // to the style of any part of the app
         let arc_style = set_darker_style();
-        ctx.set_style(arc_style); // let alt_style = set_alternative_style(); ctx.set_style(alt_style);
+        ctx.set_style(arc_style);
 
+        // This is our 'dummy' worker that retrieves Minio bucket storage
+        // contents, then builds our 'virtual' file system ui in the
+        // crate::tabs::toolbox tab
         let data_update = self.context.data_update.as_mut().unwrap();
         if let Some(items) = data_update.take() {
             if !items.is_empty() && self.context.file_system.paths.is_empty() {
@@ -47,249 +36,9 @@ impl eframe::App for MtechServer {
             }
         }
 
-        // let live_data_update = self.context.live_data_update.as_mut().unwrap();
-        // if let Some(items) = live_data_update.take() { info!("live_data_update: {:?}", items); }
-
         // do some initial setting up
         if self.context.first_run {
             self.first_run(frame);
-        }
-
-        // Retrieve our database connection, and 2. Requesting some task data
-        if let Ok(db) = self.context.db_rx.try_recv() {
-            match db {
-                Ok(_db) => {
-                    info!("3");
-                    self.load_data(frame);
-                }
-                Err(e) => {
-                    info!("6");
-                    if e.to_string().contains("Already connected") {
-                        info!("7");
-                        self.load_data(frame);
-                        self.state = AppState::Authenticated(MainPages::Tasks);
-                        let toast = &mut self.context.toasts;
-                        let auth_toast = Toast {
-                            kind: ToastKind::Success,
-                            text: format!("Already Connected").into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(6.0),
-                        };
-                        toast.add(auth_toast);
-                    } else {
-                        info!("8");
-                        info!("{e:?}");
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            wasm_cookies::delete("jwt");
-                            wasm_cookies::delete("user");
-                        }
-                        // eframe::web::storage::local_storage_get(key)
-                        let toast = &mut self.context.toasts;
-                        let auth_toast = Toast {
-                            kind: ToastKind::Error,
-                            text: format!("{e:?} \nYou may need to login again").into(),
-                            options: ToastOptions::default()
-                                .show_progress(true)
-                                .duration_in_seconds(6.0),
-                        };
-                        toast.add(auth_toast);
-                        self.state = AppState::NoAuth("Needs login".to_string());
-                    }
-                }
-            }
-        }
-
-        if let Ok(action) = self.context.ui_actions_rx.try_recv() {
-            match action {
-                TaskUiActions::OpenTaskModal(task) => {
-                    if let (Some(id), Some(usr)) =
-                        (task.id.clone(), self.context.current_user.clone())
-                    {
-                        let task_modal = if !task.task_note.is_empty() {
-                            let chat_modal = ChatView::new(
-                                task.task_note.clone(),
-                                usr,
-                                id,
-                                self.context.store_users.clone(),
-                            );
-                            TaskModal::new(chat_modal, task.clone())
-                        } else {
-                            TaskModal::new(
-                                ChatView::new(
-                                    task.task_note.clone(),
-                                    usr,
-                                    id,
-                                    self.context.store_users.clone(),
-                                ),
-                                task.clone(),
-                            )
-                        };
-                        self.context.current_modal = ModalType::TaskModal(task_modal);
-                        self.context.task_modal_handler.open();
-                    }
-                }
-                TaskUiActions::CreateTaskModal => {
-                    let create_modal = CreateTaskModal::new(
-                        "Create Task",
-                        self.context.store_users.clone(),
-                        self.context.tur_channel.0.clone(),
-                    );
-                    self.context.current_modal = ModalType::CreateTaskModal(create_modal);
-                    self.context.create_task_modal_handler.open();
-                }
-                TaskUiActions::Response(_res) => {}
-                TaskUiActions::OpenChatModal(pld) => {
-                    info!("Got Chat action");
-                    if let Some(current_user) = self.context.current_user.as_ref() {
-                        let chat_modal = ChatView::new(
-                            pld.1.to_owned(),
-                            current_user.clone(),
-                            pld.0.clone(),
-                            self.context.store_users.clone(),
-                        );
-                        self.context.current_modal = ModalType::ChatView(chat_modal);
-                        self.context.chat_modal_handler.open();
-                    } // self.context.chat = ModalType::ChatView(pld);
-                }
-                _ => (),
-            }
-        }
-
-        if let Ok(new_task) = self.context.live_tasks_rx.try_recv() {
-            info!("New Task Update: {:?}", new_task.0);
-            let tx = self.context.new_ticket_tx.clone();
-            if let Some(service_num) = new_task.clone().1.service_number {
-                if !service_num.is_empty() {
-                    let new_task = new_task.clone();
-                    spawn_local(async move {
-                        match get_associated_ticket(tx, new_task.clone()).await {
-                            Ok(_) => {} // info!("Got associated ticket"),
-                            Err(e) => error!("Error getting associated ticket: {e:?}"),
-                        }
-                    });
-                }
-            } else {
-                info!("Inserting Task: {:?}", new_task.0);
-                self.context.rerun_filtering_completed = true;
-                self.context.rerun_filtering_my_tasks = true;
-                self.context.rerun_filtering_store_tasks = true;
-                if let Err(e) = handle_live_data(new_task.to_owned(), &mut self.context.tasks, None)
-                {
-                    error!("Error handling live data: {e:?}");
-                }
-            }
-        }
-
-        if let Ok(channel) = self.context.new_ticket_rx.try_recv() {
-            info!("New Ticket Update");
-
-            let new_task_id = channel.new_task.1.id.clone().unwrap().key().to_string();
-
-            for layout in self.context.task_layouts.values_mut() {
-                for tasks in layout.task_map.values_mut() {
-                    for task in tasks.iter_mut() {
-                        if task.id.as_ref().unwrap().key().to_string() == new_task_id {
-                            info!(
-                                "\nReplacing {:?}\n with \n{:?}\n",
-                                task.task_name.clone(),
-                                channel.new_task.1.task_name.clone()
-                            );
-
-                            if let Err(e) = update_or_insert_layout(
-                                &mut self.context.tasks,
-                                channel.new_task.1.clone(),
-                                Some(channel.new_ticket.clone()),
-                                task,
-                            ) {
-                                error!("Error updating existing task: {e:?}");
-                            } else {
-                                self.context.rerun_filtering_my_tasks = true;
-                                self.context.rerun_filtering_store_tasks = true;
-                                self.context.rerun_filtering_completed = true;
-                                info!("Updated existing task");
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // If no matching task was found in the layouts, add the task to the global context
-            if !self
-                .context
-                .tasks
-                .iter()
-                .any(|task| task.id.as_ref().unwrap().key().to_string() == new_task_id)
-            {
-                if let Err(e) = update_or_insert(
-                    &mut self.context.tasks,
-                    channel.new_task.1.clone(),
-                    Some(channel.new_ticket.clone()),
-                ) {
-                    error!("Error updating existing task: {e:?}");
-                } else {
-                    self.context.rerun_filtering_my_tasks = true;
-                    self.context.rerun_filtering_store_tasks = true;
-                    self.context.rerun_filtering_completed = true;
-                    info!("Inserted new task");
-                }
-            }
-        }
-
-        if let Ok(mut payload) = self.context.notes_rx.try_recv() {
-            info!("{:?}", payload);
-            self.context.new_note = true;
-            if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal {
-                handle_live_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
-
-                if let Action::Delete = payload.0 {
-                    task_modal.chat_view.delete_note(&payload.1);
-                } else {
-                    task_modal.chat_view.insert_note(&mut payload.1);
-                }
-            } else if let ModalType::ChatView(chat_view) = &mut self.context.current_modal {
-                let task = self
-                    .context
-                    .tasks
-                    .iter_mut()
-                    .find(|task| task.id == chat_view.task_id);
-                if let Some(task) = task {
-                    handle_live_notes(payload.clone(), task).unwrap_or(());
-
-                    if let Action::Delete = payload.0 {
-                        chat_view.delete_note(&payload.1);
-                    } else {
-                        chat_view.insert_note(&mut payload.1);
-                    }
-                }
-            }
-            if let Action::Create = payload.0 {
-                if let (Some(id), Some(user)) =
-                    (&payload.1.clone().task_id, &self.context.current_user)
-                {
-                    if let Some(task) = self
-                        .context
-                        .tasks
-                        .iter()
-                        .find(|task| task.id == Some(id.clone()) && task.assignee == user.id)
-                    {
-                        // This should work with ID and not initials
-                        if payload.1.everest_initials != user.everest_initials {
-                            let toast = &mut self.context.toasts;
-                            let new_msg_toast = Toast {
-                                kind: ToastKind::Success,
-                                text: format!("New Message for {}", task.task_name).into(),
-                                options: ToastOptions::default()
-                                    .show_progress(true)
-                                    .duration_in_seconds(6.0),
-                            };
-                            toast.add(new_msg_toast);
-                        }
-                    }
-                }
-            }
         }
 
         if self.context.wants_to_undock {
@@ -333,22 +82,39 @@ impl eframe::App for MtechServer {
             }
         }
 
+        // Branch out all the different crossbeam channels to receive
+        // in their own methods to clean up a lot of boilerplate code
+        // as well as being able to find specific code a lot easier
+        // self.receive() is the same thing but those crossbeam channels
+        // being received have literally one line in them that i dont want to
+        // justify creating a separate file / module for
         self.receive();
+        self.receive_database(frame);
+        self.receive_client();
+        self.receive_inventory();
+        self.receive_ui_action();
+        self.receive_prestashop();
+        self.receive_task();
+        self.receive_ticket();
+        self.receive_notes();
         self.menu_bar(ctx);
         self.context.handle_modals(ctx);
         self.context.toasts.show(ctx);
 
+        // Get User settings from local storage
+        // this bool gets switched via button click
+        // in the crate::tabs::json_viewer module
         if self.context.get_settings {
             if let Some(storage) = frame.storage() {
                 if let Some(_settings) = storage.get_string("user_settings") {}
             }
         }
 
+        // Get User settings from local storage
+        // this bool gets switched via clicking
+        // the submit button in the crate::tabs::json_viewer
+        // module
         if self.context.update_settings {
-            // info!(
-            //     "tree: {:?}\n\n\nSettings: {:?}",
-            //     self.tree, self.context.user_settings.startup_tabs
-            // );
             self.context.user_settings.startup_tabs =
                 serde_json::to_value(self.tree.clone()).unwrap();
 
@@ -359,6 +125,12 @@ impl eframe::App for MtechServer {
                 serde_json::to_string(&self.context.user_settings).unwrap(),
             );
         }
+
+        // Handle changes to state from various places, such as
+        // hitting the login button, clicking the 'home page' button
+        // (which is clicking Mtechserver in the top middle of the page),
+        // if session cookie expires (gets checked in the first_run method),
+        // if manually logged out, etc
         match &self.state {
             // Always checking authentication
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
@@ -413,32 +185,6 @@ impl eframe::App for MtechServer {
         }
     }
 }
-
-// // When compiling to web using trunk:
-// // #[cfg(target_arch = "wasm32")]
-// fn main() {
-//     // use eframe::wgpu::PowerPreference;
-//     // use eframe::wgpu::{Backends, PowerPreference};
-//     use log::LevelFilter;
-//     use tabs::logger::logging::builder;
-//     builder().init().unwrap();
-//     // eframe::WebLogger::init(LevelFilter::Info).ok();
-//     let web_options = eframe::WebOptions::default();
-//     // web_options.wgpu_options.power_preference = PowerPreference::HighPerformance;
-//     // web_options.wgpu_options.supported_backends = Backends::METAL;
-//     // web_options.wgpu_options.supported_backends = eframe::wgpu::Instance::
-//
-//     wasm_bindgen_futures::spawn_local(async {
-//         eframe::WebRunner::new()
-//             .start(
-//                 HtmlCanvasElement:: "mtech_canvas", // hardcode it
-//                 web_options,
-//                 Box::new(|cc| Ok(Box::new(MtechServer::new(cc)))),
-//             )
-//             .await
-//             .expect("failed to start eframe");
-//     });
-// }
 
 // When compiling to web using trunk:
 #[cfg(target_arch = "wasm32")]

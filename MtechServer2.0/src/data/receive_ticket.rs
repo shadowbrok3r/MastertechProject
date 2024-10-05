@@ -1,32 +1,65 @@
-use crate::{
-    app_state::{AppState, MtechServer},
-    pages::downloads_page::get_github_releases,
-    tabs::stock::{find_attached_serials, get_stock, BoolOrString, MyRowData},
-    utilities::ModalType,
-};
-use database::{
-    live_data::{handle_live_delete, listen_data, update_or_insert_anything},
-    schema::{
-        utilities::{get_connected_clients, get_store_users, get_tasks},
-        TaskNotePayload, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE,
-    },
-    DATABASE,
-};
-use database::{schema::Store, STORAGE_URL};
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
-use eframe::{
-    egui::{Color32, RichText},
-    Frame,
-};
-use egui_dock::DockState;
-use log::info;
-use log::{debug, error};
-use mtechserver::webworker::Input;
-use surrealdb::{Action, RecordId};
-use wasm_bindgen_futures::spawn_local;
+use database::live_data::{update_or_insert, update_or_insert_layout};
+use log::{error, info};
 
-// #[cfg(target_arch="wasm32")]
-use {
-    crate::app_state::check_authentication,
-    // mtechserver::live_worker::LiveInput,
-};
+use crate::MtechServer;
+
+impl MtechServer {
+    pub fn receive_ticket(&mut self) {
+        if let Ok(channel) = self.context.new_ticket_rx.try_recv() {
+            info!("New Ticket Update");
+
+            let new_task_id = channel.new_task.1.id.clone().unwrap().key().to_string();
+
+            for layout in self.context.task_layouts.values_mut() {
+                for tasks in layout.task_map.values_mut() {
+                    for task in tasks.iter_mut() {
+                        if task.id.as_ref().unwrap().key().to_string() == new_task_id {
+                            info!(
+                                "\nReplacing {:?}\n with \n{:?}\n",
+                                task.task_name.clone(),
+                                channel.new_task.1.task_name.clone()
+                            );
+
+                            if let Err(e) = update_or_insert_layout(
+                                &mut self.context.tasks,
+                                channel.new_task.1.clone(),
+                                Some(channel.new_ticket.clone()),
+                                task,
+                            ) {
+                                error!("Error updating existing task: {e:?}");
+                            } else {
+                                self.context.rerun_filtering_my_tasks = true;
+                                self.context.rerun_filtering_store_tasks = true;
+                                self.context.rerun_filtering_completed = true;
+                                info!("Updated existing task");
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If no matching task was found in the layouts, add the task to the global context
+            if !self
+                .context
+                .tasks
+                .iter()
+                .any(|task| task.id.as_ref().unwrap().key().to_string() == new_task_id)
+            {
+                if let Err(e) = update_or_insert(
+                    &mut self.context.tasks,
+                    channel.new_task.1.clone(),
+                    Some(channel.new_ticket.clone()),
+                ) {
+                    error!("Error updating existing task: {e:?}");
+                } else {
+                    self.context.rerun_filtering_my_tasks = true;
+                    self.context.rerun_filtering_store_tasks = true;
+                    self.context.rerun_filtering_completed = true;
+                    info!("Inserted new task");
+                }
+            }
+        }
+    }
+}
+
