@@ -36,16 +36,10 @@ use crate::tabs::minidump::MiniDumpApp;
 use crate::{
     pages::login_page::Login,
     tabs::{
-        file_browser::FileBrowser,
-        github::self_updater::GithubRelease,
-        logger::logger_ui,
-        scripts::Scripts,
-        stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
-        tur_sheet::{
+        file_browser::FileBrowser, github::self_updater::GithubRelease, logger::logger_ui, scripts::Scripts, seb_lookup::JsonEditor, stock::{MyRowData, MyRowViewer, RawStockData, SerialData}, tur_sheet::{
             get_ticket::SendRequest,
             scaffold::{self, HardwareTest},
-        },
-        websockets::WebConsoleFrontend,
+        }, websockets::WebConsoleFrontend
     },
     utilities::{
         displays::{
@@ -212,11 +206,12 @@ pub struct MastertechContext {
 
     pub data_viewer: MyRowViewer,
     pub data_table: DataTable<MyRowData>,
-    pub seb_channel: (Sender<LocalSebData>, Receiver<LocalSebData>),
+    pub seb_channel: (Sender<Vec<Value>>, Receiver<Vec<Value>>),
     pub stock_data: RawStockData,
     pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
     pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
     pub store_selection: u64,
+    pub json_editor: JsonEditor,
 }
 
 impl MasterTechApp {
@@ -299,7 +294,7 @@ impl MasterTechApp {
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
         let serial_channel = <SerialData>::create_unbounded_channel();
-        let seb_channel = <LocalSebData>::create_unbounded_channel();
+        let seb_channel = <Vec<Value>>::create_unbounded_channel();
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -437,6 +432,7 @@ impl MasterTechApp {
             serial_channel,
             store_selection: 76,
             seb_channel,
+            json_editor: JsonEditor::default(),
         };
         let context = mastertech_context;
 
