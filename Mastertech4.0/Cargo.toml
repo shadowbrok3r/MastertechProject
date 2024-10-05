@@ -1,6 +1,6 @@
 [package]
 name = "MasterTech"
-version = "4.2.5"
+version = "4.2.6"
 edition = "2021"
 description = "Mastertech"
 build = "build.rs"
@@ -83,6 +83,7 @@ ring = "0.17.8"
 # egui_tracing = "0.2.2"
 rust-s3 = "0.35"
 evtx = "0.8"
+semver = "1.0.23"
 
 
 # egui_ratatui = { workspace=true }

@@ -1,12 +1,18 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Layout, RichText, Stroke, TextEdit, Ui};
-use reqwest::{header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT}, Client};
-use self_updater::{Asset, GithubRelease};
-use egui_extras::{Column, TableBuilder};
+use anyhow::{Error, Result};
+use chrono::DateTime;
 use crossbeam::channel::Sender;
-use anyhow::{Result, Error};
+use eframe::egui::{
+    Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Layout, RichText, Stroke,
+    TextEdit, Ui,
+};
+use egui_extras::{Column, TableBuilder};
 use futures::StreamExt;
 use log::{error, info};
-use chrono::DateTime;
+use reqwest::{
+    header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
+    Client,
+};
+use self_updater::{Asset, GithubRelease};
 use tokio::spawn;
 
 use crate::app_state::MastertechContext;
@@ -14,140 +20,149 @@ use crate::app_state::MastertechContext;
 use self::issues::create_new_issue;
 const TOKEN: &str = "Bearer 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";
 
-
-pub mod self_updater;
 pub mod issues;
+pub mod self_updater;
 
-impl MastertechContext{
+impl MastertechContext {
     pub fn github(&mut self, ui: &mut Ui) {
-        ui.style_mut().visuals.selection.stroke.color =  Color32::BLACK;
+        ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;
         ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        ui.style_mut().visuals.widgets.inactive.fg_stroke =  Stroke::new(1.0, Color32::WHITE);
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill =  Color32::from_rgb(20, 20, 25);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-        ui.style_mut().visuals.widgets.open.bg_fill =  Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.open.weak_bg_fill =  Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.active.weak_bg_fill =  Color32::from_rgb(30,30,30);
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
-        ui.style_mut().visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke =  Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
+        ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
+        ui.style_mut().visuals.widgets.inactive.bg_stroke =
+            Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+        ui.style_mut().visuals.widgets.open.bg_fill = Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.open.weak_bg_fill = Color32::from_black_alpha(50);
+        ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30, 30, 30);
+        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
+        ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 12);
+        ui.style_mut().visuals.widgets.hovered.bg_stroke =
+            Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
 
-        ui.with_layout(Layout::top_down(Align::Center), |ui| {  // vertical_centered(|ui| {
+        ui.with_layout(Layout::top_down(Align::Center), |ui| {
+            // vertical_centered(|ui| {
 
             ui.heading("Mastertech bug report");
             TextEdit::singleline(&mut self.github_issue_title)
                 .hint_text("Issue Title")
                 .show(ui);
 
-            ui.add_space(12.0); 
+            ui.add_space(12.0);
 
             ui.heading("Description");
             TextEdit::multiline(&mut self.github_issue_descript)
                 .hint_text("Explain your issue")
                 .show(ui);
 
-
-            
-
             let submit = ui.add_enabled(
-                !self.github_issue_descript.is_empty() 
-                && !self.github_issue_title.is_empty(), 
-                Button::new("Submit")
+                !self.github_issue_descript.is_empty() && !self.github_issue_title.is_empty(),
+                Button::new("Submit"),
             );
 
-            if submit.clicked(){
+            if submit.clicked() {
                 let github_issue_title = self.github_issue_title.clone();
                 let github_issue_descript = self.github_issue_descript.clone();
                 let client = self.client.clone();
                 spawn(async move {
-                    let create_issue = create_new_issue(github_issue_title, github_issue_descript, client).await;
+                    let create_issue =
+                        create_new_issue(github_issue_title, github_issue_descript, client).await;
 
-                    match create_issue{
+                    match create_issue {
                         Ok(val) => info!("Sent request ok: {val:?}"),
-                        Err(e) => error!("Error creating issue: {e:?}")
+                        Err(e) => error!("Error creating issue: {e:?}"),
                     }
                 });
-                
             }
         });
-    
     }
 
-    pub fn downloads_page(&mut self, ui: &mut Ui){
+    pub fn downloads_page(&mut self, ui: &mut Ui) {
         CentralPanel::default()
-            .frame(Frame::central_panel(&ui.ctx().style()).outer_margin(10.).inner_margin(10.))
-            .show_inside(ui, |ui| 
-        {
-            ui.with_layout(
-                Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), 
-                |ui|
-            {
+            .frame(
+                Frame::central_panel(&ui.ctx().style())
+                    .outer_margin(10.)
+                    .inner_margin(10.),
+            )
+            .show_inside(ui, |ui| {
+                ui.with_layout(
+                    Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center),
+                    |ui| {
+                        ui.style_mut().override_font_id = Some(FontId::proportional(15.0));
+                        let releases = self.github_releases.clone();
 
-                ui.style_mut().override_font_id = Some(FontId::proportional(15.0));
-                let releases = self.github_releases.clone();
+                        TableBuilder::new(ui)
+                            .striped(true)
+                            .cell_layout(Layout::top_down_justified(Align::Min))
+                            .cell_layout(Layout::top_down_justified(Align::Min))
+                            .cell_layout(Layout::top_down_justified(Align::Min))
+                            .column(Column::exact(180.0))
+                            .column(Column::exact(130.0))
+                            .column(Column::remainder().resizable(true))
+                            .header(20.0, |mut header| {
+                                header.col(|ui| {
+                                    ui.heading("Release Name");
+                                });
+                                header.col(|ui| {
+                                    ui.heading("Created At");
+                                });
+                                header.col(|ui| {
+                                    ui.heading("Description");
+                                });
+                            })
+                            .body(|mut body| {
+                                let assets: Vec<Asset> = releases
+                                    .iter()
+                                    .flat_map(|r| r.assets.iter().cloned())
+                                    .collect();
+                                for (release, asset) in releases.iter().zip(assets.iter()) {
+                                    body.row(100.0, |mut row| {
+                                        row.col(|ui| {
+                                            ui.add_space(5.0);
+                                            ui.vertical_centered(|ui| {
+                                                ui.add_space(20.0);
+                                                let link_txt = RichText::new(&release.name)
+                                                    .color(Color32::LIGHT_RED);
+                                                let link =
+                                                    ui.link(link_txt).on_hover_text(&asset.name);
 
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .cell_layout(Layout::top_down_justified(Align::Min))
-                    .cell_layout(Layout::top_down_justified(Align::Min))
-                    .cell_layout(Layout::top_down_justified(Align::Min))
-                    .column(Column::exact(180.0))
-                    .column(Column::exact(130.0))
-                    .column(Column::remainder().resizable(true))
-                    .header(20.0, |mut header| 
-                {
-                    header.col(|ui| {
-                        ui.heading("Release Name");
-                    });
-                    header.col(|ui| {
-                        ui.heading("Created At");
-                    });
-                    header.col(|ui| {
-                        ui.heading("Description");
-                    });
-                })
-                .body(|mut body| {
-                    let assets: Vec<Asset> = releases.iter()
-                        .flat_map(|r| r.assets.iter().cloned())
-                        .collect();
-                    for (release, asset) in releases.iter().zip(assets.iter()) {
-                        body.row(100.0,  |mut row| {
-                            row.col(|ui| {
-                                ui.add_space(5.0);
-                                ui.vertical_centered(|ui| {
-                                    ui.add_space(20.0);
-                                    let link_txt = RichText::new(&release.name).color(Color32::LIGHT_RED);
-                                    let link = ui.link(link_txt).on_hover_text(&asset.name);
-                                    
-                                    if link.clicked() { 
-                                        let asset = asset.clone();
-                                        let tx = self.bytes_channel.0.clone();
-                                        spawn(async move {
-                                            let download_res = download_release(asset, tx, Client::new()).await;
-                                            info!("Download Result: {:?}", download_res);
+                                                if link.clicked() {
+                                                    let asset = asset.clone();
+                                                    let tx = self.bytes_channel.0.clone();
+                                                    spawn(async move {
+                                                        let download_res = download_release(
+                                                            asset,
+                                                            tx,
+                                                            Client::new(),
+                                                        )
+                                                        .await;
+                                                        info!(
+                                                            "Download Result: {:?}",
+                                                            download_res
+                                                        );
+                                                    });
+                                                }
+
+                                                ui.add_space(10.0);
+                                                ui.label(&asset.name);
+                                            });
                                         });
-                                    }
 
-                                    ui.add_space(10.0);
-                                    ui.label(&asset.name);
-                                });
+                                        row.col(|ui| {
+                                            ui.horizontal_centered(|ui| {
+                                                ui.add_space(5.0);
+                                                ui.label(format_date(&release.created_at));
+                                            });
+                                        });
+                                        row.col(|ui| {
+                                            ui.add_space(5.0);
+                                            ui.label(&release.body);
+                                        });
+                                    });
+                                }
                             });
-
-                            row.col(|ui| {
-                                ui.horizontal_centered(|ui| {
-                                    ui.add_space(5.0);
-                                    ui.label(format_date(&release.created_at));
-                                });
-                            });
-                            row.col(|ui| {
-                                ui.add_space(5.0);
-                                ui.label(&release.body);
-                            });
-                        });
-                    }
-                });
+                    },
+                );
             });
-        });
     }
 }
 
@@ -163,61 +178,68 @@ fn _bytes_to_megabytes(bytes: u64) -> f64 {
 
 pub async fn get_github_releases(
     tx: Sender<Vec<GithubRelease>>,
-    client: Client
+    client: Client,
 ) -> Result<(), Error> {
-    let response: Vec<GithubRelease> = client.get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest 
+    let response: Vec<GithubRelease> = client
+        .get("https://api.github.com/repos/shadowbrok3r/MastertechProject/releases") // /latest
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", "shadowbrok3r")
         .header("Authorization", TOKEN)
-        .send().await?
-        .json().await?;
+        .send()
+        .await?
+        .json()
+        .await?;
 
-    info!("response {:?}", response.clone());
     tx.try_send(response.clone())?;
     Ok(())
 }
 
-
-pub async fn download_release(asset: Asset, tx: Sender<(Vec<u8>, u64)>, client: Client) -> Result<(), Error> {
+pub async fn download_release(
+    asset: Asset,
+    tx: Sender<(Vec<u8>, u64)>,
+    client: Client,
+) -> Result<(), Error> {
     let file = rfd::AsyncFileDialog::new()
         .set_file_name(asset.name.clone())
         .save_file()
         .await;
 
-        if !asset.url.is_empty(){
-            // let url = format!("https://corsproxy.io/?{}", &asset.url);
-            let resp = client.get(&asset.url)
-                .header(AUTHORIZATION, TOKEN)
-                .header(ACCEPT, "application/octet-stream")
-                .header(CONTENT_TYPE, "application/octet-stream")
-                .header(USER_AGENT, "shadowbrok3r")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .send().await?;
-        
-            let content_length = resp.content_length().unwrap_or(0);
-            let mut downloaded_bytes: u64 = 0;
-            
-            let mut byte_stream = resp.bytes_stream();
-            info!("Content length: {content_length}");
+    if !asset.url.is_empty() {
+        let resp = client
+            .get(&asset.url)
+            .header(AUTHORIZATION, TOKEN)
+            .header(ACCEPT, "application/octet-stream")
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .header(USER_AGENT, "shadowbrok3r")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .send()
+            .await?;
 
-            let mut byte_vec = Vec::new();
+        let content_length = resp.content_length().unwrap_or(0);
+        let mut downloaded_bytes: u64 = 0;
 
-            while let Some(item) = byte_stream.next().await{
-                let chunk = item?.clone();
-                byte_vec.push(chunk.to_vec());
-                let _ = tx.try_send((chunk.to_vec(), content_length));
-                downloaded_bytes += chunk.len() as u64;
-            }
-        
-            if downloaded_bytes == content_length {
-                info!("Downloaded: {downloaded_bytes}");
-                let x = byte_vec.concat();
-                if let Some(ref file) = file {
-                    file.write(x.as_slice()).await?;
-                }
+        let mut byte_stream = resp.bytes_stream();
+        info!("Content length: {content_length}");
+
+        let mut byte_vec = Vec::new();
+
+        while let Some(item) = byte_stream.next().await {
+            let chunk = item?.clone();
+            byte_vec.push(chunk.to_vec());
+            let _ = tx.try_send((chunk.to_vec(), content_length));
+            downloaded_bytes += chunk.len() as u64;
+        }
+
+        if downloaded_bytes == content_length {
+            info!("Downloaded: {downloaded_bytes}");
+            let x = byte_vec.concat();
+            if let Some(ref file) = file {
+                file.write(x.as_slice()).await?;
             }
         }
+    }
 
     Ok(())
 }
+

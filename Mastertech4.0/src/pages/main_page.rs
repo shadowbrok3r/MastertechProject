@@ -1,6 +1,8 @@
 use crate::app_state::MasterTechApp;
 use crate::tabs::github::self_updater::run;
-use eframe::egui::{Button, Context, FontId, Layout, ProgressBar, RichText, Stroke, Vec2, Widget};
+use eframe::egui::{
+    Button, Context, FontId, Layout, ProgressBar, RichText, Stroke, Vec2, ViewportCommand, Widget,
+};
 use eframe::egui::{CentralPanel, Color32, Frame, TopBottomPanel};
 use egui_dock::{DockArea, Style as DockStyle};
 use tokio::spawn;
@@ -82,17 +84,6 @@ impl MasterTechApp {
                         ui.colored_label(Color32::WHITE, "Client ID: ");
                     }
 
-                    while let Ok(res) = self.context.bytes_rx.try_recv() {
-                        self.context.output_text =
-                            format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
-                        self.context.progress.1 = res.1 as f32;
-                        self.context.progress.0 += res.0 as f32;
-                        if res.0 == res.1 {
-                            self.context.progress = (0.0, 0.0);
-                            self.context.output_text += "\nFinished";
-                        }
-                    }
-
                     let progress = self.context.progress;
 
                     let _ = ProgressBar::new(progress.0 / progress.1)
@@ -134,4 +125,3 @@ impl MasterTechApp {
             });
     }
 }
-

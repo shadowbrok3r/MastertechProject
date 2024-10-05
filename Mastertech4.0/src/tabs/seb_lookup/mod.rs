@@ -4,10 +4,12 @@ use crate::app_state::MastertechContext;
 use anyhow::{Error, Result};
 use database::schema::{ExtendedSeb, LocalSebData};
 use eframe::egui::{
-    text::{CCursor, CCursorRange}, vec2, Button, CentralPanel, Color32, CursorIcon, Frame, Margin, ScrollArea, SidePanel, TextEdit, TextStyle, TopBottomPanel, Ui, Widget
+    text::{CCursor, CCursorRange},
+    vec2, Button, CentralPanel, Color32, CursorIcon, Frame, Margin, ScrollArea, TextEdit,
+    TextStyle, TopBottomPanel, Ui, Widget,
 };
-use egui_extras::{Size, StripBuilder};
-use log::{error, info};
+// use egui_extras::{Size, StripBuilder};
+use log::info;
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,7 +25,7 @@ use egui_json_tree::{
     DefaultExpand, JsonTree, JsonTreeStyle,
 };
 
-use super::tur_sheet::get_ticket::request_seb_info;
+// use super::tur_sheet::get_ticket::request_seb_info;
 
 impl MastertechContext {
     pub fn seb_lookup(&mut self, ui: &mut Ui) {
@@ -33,9 +35,10 @@ impl MastertechContext {
                 ui.horizontal_top(|ui| {
                     ui.heading("SEB Lookup Tool");
 
-                    ui.add_space(ui.available_width()/3.);
-                    
+                    ui.add_space(50.);
+
                     TextEdit::singleline(&mut self.data_viewer.filter)
+                        .desired_width(150.)
                         .hint_text("Search with Email or Device ID")
                         .ui(ui);
 
@@ -46,20 +49,20 @@ impl MastertechContext {
                         let client = self.client.clone();
                         let search_string = self.data_viewer.filter.clone();
                         spawn(async move {
-
                             let mut params: HashMap<&str, &str> = HashMap::new();
                             params.insert("user_email", "logan.lees@pclaptops.com");
                             params.insert("user_password", "Poolparty1");
                             params.insert("application", "carbonite");
                             params.insert("action", "search");
                             params.insert("search", &search_string);
-                            
+
                             let response = client
                                 .post("https://scaffold.pclaptops.com/api/index")
                                 .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
                                 .form(&params)
                                 .send()
-                                .await.unwrap();
+                                .await
+                                .unwrap();
 
                             let response_json: Vec<Value> = response.json().await.unwrap();
                             info!("response_json: {:?}", response_json);
@@ -91,7 +94,7 @@ impl MastertechContext {
                     //         params.insert("application", "carbonite");
                     //         params.insert("action", "search");
                     //         params.insert("search", &search_string);
-                            
+
                     //         let response = client
                     //             .post("https://scaffold.pclaptops.com/api/index")
                     //             .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
@@ -120,10 +123,10 @@ impl MastertechContext {
                 });
             });
 
-            let c_frame = Frame::default();
-            c_frame.inner_margin(Margin::same(10.));
-            
-            CentralPanel::default()
+        let c_frame = Frame::default();
+        c_frame.inner_margin(Margin::same(10.));
+
+        CentralPanel::default()
             .frame(c_frame)
             .show_inside(ui, |ui| {
                 let available_height = ui.available_height();
