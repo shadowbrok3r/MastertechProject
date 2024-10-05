@@ -324,7 +324,7 @@ impl MtechServer {
                         ui.label("Welcome, ");
                     });
                 } else {
-                    ui.vertical_centered(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                         if Button::new("Login").ui(ui).clicked() {
                             self.state = AppState::Authenticated(MainPages::Downloads);
                             match self
@@ -333,6 +333,17 @@ impl MtechServer {
                                 .try_send(AppState::NoAuth("clicked login button".to_string()))
                             {
                                 Ok(_) => info!("Switching to Login Page"),
+                                Err(e) => error!("Error: {e:?}"),
+                            }
+                        }
+                        if ui.add(Button::new("Downloads")).clicked() {
+                            self.state = AppState::Authenticated(MainPages::Downloads);
+                            match self
+                                .context
+                                .app_state_tx
+                                .try_send(AppState::Authenticated(MainPages::Downloads))
+                            {
+                                Ok(_) => info!("Switching to Downloads Page"),
                                 Err(e) => error!("Error: {e:?}"),
                             }
                         }

@@ -79,7 +79,7 @@ linked-hash-map = "0.5"
 ewebsock = { version = "0.6", features = [ "tls" ] }
 hex = "0.4.3"
 ring = "0.17.8"
-egui_tracing = "0.2.2"
+# egui_tracing = "0.2.2"
 rust-s3 = "0.34"
 evtx = "0.8.3"
 egui_json_tree = "0.6.0"

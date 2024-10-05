@@ -1,12 +1,10 @@
-use crate::app_state::MtechServerContext;
+use crate::app_state::MastertechContext;
 use database::schema::Store;
 use displays::egui_data_table::Renderer;
-use eframe::egui::{
-    Button, CentralPanel, ComboBox, ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui, Widget,
-};
+use eframe::egui::{Button, CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget};
 
 use log::info;
-use wasm_bindgen_futures::spawn_local;
+use tokio::spawn;
 
 pub mod row_viewer;
 pub mod stock_operations;
@@ -14,25 +12,25 @@ pub mod stock_operations;
 pub use row_viewer::*;
 pub use stock_operations::*;
 
-impl MtechServerContext {
+impl MastertechContext {
     pub fn stock_viewer(&mut self, ui: &mut Ui) {
-        SidePanel::right("Hotkeys")
-            .default_width(500.)
-            .show_inside(ui, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.heading("Hotkeys");
-                    ui.separator();
-                    ui.add_space(0.);
-                    ScrollArea::new([false, true]).show(ui, |ui| {
-                        for (k, a) in &self.data_viewer.hotkeys {
-                            Button::new(format!("{a:?}"))
-                                .shortcut_text(ui.ctx().format_shortcut(k))
-                                .ui(ui);
-                            ui.add_space(10.);
-                        }
-                    });
-                });
-            });
+        // SidePanel::right("Hotkeys")
+        //     .default_width(500.)
+        //     .show_inside(ui, |ui| {
+        //         ui.vertical_centered_justified(|ui| {
+        //             ui.heading("Hotkeys");
+        //             ui.separator();
+        //             ui.add_space(0.);
+        //             ScrollArea::new([false, true]).show(ui, |ui| {
+        //                 for (k, a) in &self.data_viewer.hotkeys {
+        //                     Button::new(format!("{a:?}"))
+        //                         .shortcut_text(ui.ctx().format_shortcut(k))
+        //                         .ui(ui);
+        //                     ui.add_space(10.);
+        //                 }
+        //             });
+        //         });
+        //     });
         TopBottomPanel::top("StockTopPanel")
             .exact_height(30.)
             .show_inside(ui, |ui| {
@@ -72,7 +70,7 @@ impl MtechServerContext {
                     if *selected != current {
                         let stock_tx = self.stock_channel.0.clone();
                         let store_selection = self.store_selection;
-                        spawn_local(async move {
+                        spawn(async move {
                             info!("Store: {:?}", store_selection);
                             let stock = get_stock(stock_tx.clone(), store_selection).await;
                             info!("Stock call: {stock:?}");
@@ -83,7 +81,7 @@ impl MtechServerContext {
                     if Button::new("Refresh").ui(ui).clicked() {
                         let stock_tx = self.stock_channel.0.clone();
                         let store_selection = self.store_selection;
-                        spawn_local(async move {
+                        spawn(async move {
                             let stock = get_stock(stock_tx.clone(), store_selection).await;
                             info!("Stock call: {stock:?}");
                         });
@@ -94,7 +92,7 @@ impl MtechServerContext {
                         let tx = self.serial_channel.0.clone();
                         let data_table = self.data_table.iter();
                         let sns = data_table.map(|r| r.1.clone()).collect::<Vec<String>>();
-                        spawn_local(async move {
+                        spawn(async move {
                             let _res = find_attached_serials(sns, tx.clone()).await;
                         });
                     }

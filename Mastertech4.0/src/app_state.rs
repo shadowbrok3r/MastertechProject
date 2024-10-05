@@ -1,14 +1,15 @@
 use crossbeam::channel::{Receiver, Sender};
 use database::{
     schema::{
-        prestashop_schema::PrestashopPayload, ComputerData, ConnectedClient,
-        CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload,
-        TicketData, User,
+        prestashop_schema::PrestashopPayload, ComputerData, ConnectedClient, CustomerData,
+        GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData,
+        User,
     },
     Database,
 };
 use displays::{
     channel_manager::ChannelManager,
+    egui_data_table::DataTable,
     ui_tools::{mention_handler::MentionHandler, toasts::Toasts},
     virtual_filesystem::FileSystem,
 };
@@ -16,12 +17,12 @@ use eframe::egui::{
     Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Ui, WidgetText,
 };
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabViewer};
-use surrealdb::RecordId;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
+use surrealdb::RecordId;
 // use egui_ratatui::RataguiBackend;
 use anyhow::Error;
 use chrono::{DateTime, Utc};
@@ -39,6 +40,7 @@ use crate::{
         github::self_updater::GithubRelease,
         logger::logger_ui,
         scripts::Scripts,
+        stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
         tur_sheet::{
             get_ticket::SendRequest,
             scaffold::{self, HardwareTest},
@@ -207,6 +209,14 @@ pub struct MastertechContext {
     pub github_releases: Vec<GithubRelease>,
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
+
+    pub data_viewer: MyRowViewer,
+    pub data_table: DataTable<MyRowData>,
+    pub seb_channel: (Sender<LocalSebData>, Receiver<LocalSebData>),
+    pub stock_data: RawStockData,
+    pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
+    pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
+    pub store_selection: u64,
 }
 
 impl MasterTechApp {
@@ -216,9 +226,11 @@ impl MasterTechApp {
         let mut tree = DockState::new(vec![
             "TUR Sheet".to_owned(),
             "Tasks".to_owned(),
-            "Part Order".to_owned(),
+            // "Part Order".to_owned(),
             "Minidump Analysis".to_owned(),
+            "SEB Lookup".to_owned(),
             "Downloads".to_owned(),
+            "Stock".to_owned(),
         ]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
@@ -285,6 +297,12 @@ impl MasterTechApp {
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
+        let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
+        let serial_channel = <SerialData>::create_unbounded_channel();
+        let seb_channel = <LocalSebData>::create_unbounded_channel();
+
+        let mut data_viewer = MyRowViewer::default();
+        data_viewer.stock_tx = Some(serial_channel.0.clone());
 
         let mastertech_context = MastertechContext {
             current_user: None,
@@ -410,6 +428,15 @@ impl MasterTechApp {
             minio_files,
             github_releases: Vec::new(),
             bytes_channel,
+
+            // Data table shit
+            data_table: DataTable::<MyRowData>::default(),
+            data_viewer,
+            stock_data: RawStockData::default(),
+            stock_channel,
+            serial_channel,
+            store_selection: 76,
+            seb_channel,
         };
         let context = mastertech_context;
 
@@ -489,69 +516,6 @@ impl MasterTechApp {
     }
 }
 
-impl TabViewer for MastertechContext {
-    type Tab = String;
-
-    fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
-        match tab.as_str() {
-            "TUR Sheet" => self.tur_sheet(ui),
-            "Console" => self.output_console(ui),
-            "Part Order" => self.special_part_order(ui),
-            "Scripts" => self.scripts(ui),
-            "ToolBox" => self.toolbox(ui),
-            "File Browser 📂" => self.file_browse(ui),
-            "SysInfo" => self.system_information(ui),
-            #[cfg(target_os = "windows")]
-            "Minidump Analysis" => self.mini_dump(ui),
-            "QC ☑️" => self.quality_check(ui),
-            "Tasks" => self.mastertech_website(ui),
-            "Bug Tracker" => self.github(ui),
-            "Websockets" => self.websockets(ui),
-            "Downloads" => self.downloads_page(ui),
-            "Logs" => logger_ui().show(ui),
-            _ => {
-                let sysinfo_tab = &"SysInfo".to_string();
-                if ui.label(tab.as_str()).clicked() {
-                    if tab.as_str() == sysinfo_tab {
-                        self.specs_first_run = true;
-                    }
-                };
-            }
-        }
-    }
-
-    fn context_menu(
-        &mut self,
-        ui: &mut Ui,
-        tab: &mut Self::Tab,
-        _surface_index: SurfaceIndex,
-        _node_index: NodeIndex,
-    ) {
-        match tab.as_str() {
-            "TUR Sheet" => self.simple_demo_menu(ui),
-            "Websockets" => self.websocket_menu(ui),
-            "File Browser 📂" => self.file_browser_popup(ui),
-            _ => {
-                ui.label(tab.to_string());
-                ui.label("This is a context menu");
-            }
-        }
-    }
-
-    fn title(&mut self, tab: &mut Self::Tab) -> WidgetText {
-        tab.as_str().into()
-    }
-
-    fn on_close(&mut self, tab: &mut Self::Tab) -> bool {
-        self.open_tabs.remove(tab);
-        true
-    }
-
-    fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
-        self.added_nodes.push((surface_index, node_index));
-    }
-}
-
 fn setup_custom_fonts(ctx: &Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = FontDefinitions::default();
@@ -587,4 +551,3 @@ fn setup_custom_fonts(ctx: &Context) {
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
 }
-
