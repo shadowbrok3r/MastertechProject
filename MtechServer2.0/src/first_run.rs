@@ -1,28 +1,23 @@
 use crate::{
     app_state::{AppState, MtechServer},
     pages::downloads_page::get_github_releases,
-    tabs::stock::{find_attached_serials, get_stock, BoolOrString, MyRowData},
-    utilities::ModalType,
+    tabs::stock::get_stock,
 };
 use database::{
-    live_data::{handle_live_delete, listen_data, update_or_insert_anything},
+    live_data::listen_data,
     schema::{
         utilities::{get_connected_clients, get_store_users, get_tasks},
-        TaskNotePayload, CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE,
+        CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
     },
     DATABASE,
 };
 use database::{schema::Store, STORAGE_URL};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
-use eframe::{
-    egui::{Color32, RichText},
-    Frame,
-};
+use eframe::Frame;
 use egui_dock::DockState;
 use log::info;
 use log::{debug, error};
 use mtechserver::webworker::Input;
-use surrealdb::{Action, RecordId};
 use wasm_bindgen_futures::spawn_local;
 
 // #[cfg(target_arch="wasm32")]
@@ -98,10 +93,7 @@ impl MtechServer {
         let store_users_tx = self.context.store_users_tx.clone();
         let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
-        // let github_releases_tx = self.context.github_releases_channel.0.clone();
         let stock_tx = self.context.stock_channel.0.clone();
-        // let notification_tx = self.context.notification_tx.clone();
-        // let live_output = self.context.live_output_tx.clone();
 
         if let Some(usr) = self.context.current_user.as_ref() {
             info!("Getting Initial data");
@@ -120,6 +112,7 @@ impl MtechServer {
                     self.context.file_system.secret_key = secret_key.clone();
                     let name = usr.email.clone();
                     let parsed = name.split_once('@').unwrap().0.to_string().clone();
+                    info!("Retrieving minio files");
                     bridge.send(Input {
                         url: STORAGE_URL.to_string(),
                         access_key,
@@ -160,19 +153,11 @@ impl MtechServer {
                     let get_tasks = get_tasks(initial_tasks_tx).await;
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                     let get_connected_clients = get_connected_clients(tx, user.clone()).await;
-                    // let get_releases = get_github_releases(github_releases_tx).await;
                     let stock = get_stock(stock_tx.clone(), store_selection).await;
                     info!("Stock call: {stock:?} for Store: {:?}", store_selection);
-                    // }
-
-                    // let get_notifications = get_notifications(notification_tx, user.clone().id.0).await;
-                    // let get_custs = get_customer_data(live_output).await;
                     info!("get_connected_clients: {get_connected_clients:?}");
                     info!("get_store_users: {get_store_users:?}");
                     info!("get_tasks: {get_tasks:?}");
-                    // info!("get_releases: {get_releases:?}");
-                    // info!("get_notifications: {get_notifications:?}");
-                    // info!("get_custs: {get_custs:?}");
                 });
             }
 
@@ -221,7 +206,6 @@ impl MtechServer {
             debug!("Releases: {releases:?}");
             self.context.github_releases = releases;
         }
-
 
         if let Ok(state) = self.context.app_state_rx.try_recv() {
             debug!("Got a new state: {state:?}");
