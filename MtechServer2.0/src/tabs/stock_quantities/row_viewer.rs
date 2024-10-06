@@ -9,37 +9,7 @@ use egui_extras::Column as TableColumnConfig;
 use log::info;
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, Debug, Serialize, Deserialize)]
-pub struct StockData {
-    pub result: Vec<RawStockData>,
-}
-
-#[derive(Default, Debug, Serialize, Deserialize)]
-pub struct SerialData {
-    pub result: Vec<SerialInfo>,
-}
-
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
-pub struct SerialInfo {
-    pub id: u64,
-    pub bs_prest_ref: BoolOrString,
-    // pub bs_sale_line_id: BoolOrString,
-    pub product_id: ProductID,
-    pub name: String,
-}
-
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
-pub struct RawStockData {
-    pub available_quantity: f32,
-    pub id: u64,
-    pub inventory_diff_quantity: f32,
-    pub inventory_quantity: f32,
-    pub lot_id: LotID,
-    pub product_id: ProductID,
-    pub quantity: f32,
-    pub reserved_quantity: f32,
-    pub location_id: LotID,
-}
+use crate::tabs::stock::ProductID;
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct ExtraInventoryData {
@@ -53,33 +23,34 @@ pub struct ExtraInventoryData {
     name: String,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
-pub struct LotID(pub i32, pub String);
-
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
-pub struct ProductID(pub i32, pub String);
-
 // Don't need to implement any trait on row data itself.
 #[derive(Default, Serialize, Clone)]
-pub struct MyRowData(pub String, pub String, pub String, pub String, pub bool);
-/// Every logic is defined in `Viewer`
+pub struct StockQuantityData(pub String, pub u64, pub u64, pub f64, pub f64);
+
 #[derive(Default, Serialize)]
-pub struct MyRowViewer {
+pub struct StockQuantityViewer {
     pub filter: String,
     pub row_protection: bool,
     pub hotkeys: Vec<(KeyboardShortcut, UiAction)>,
-    #[serde(skip)]
-    pub stock_tx: Option<Sender<SerialData>>,
+    // #[serde(skip)]
+    // pub stock_tx: Option<Sender<SerialData>>,
 }
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
-impl RowViewer<MyRowData> for MyRowViewer {
+impl RowViewer<StockQuantityData> for StockQuantityViewer {
     fn num_columns(&mut self) -> usize {
         5
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Item Code", "Serial Number", "Order", "Location", "     "][column].into()
+        [
+            "Item Code",
+            "# Available",
+            "# Virtual Available",
+            "Std Price",
+            "List Price",
+        ][column]
+            .into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
@@ -90,13 +61,10 @@ impl RowViewer<MyRowData> for MyRowViewer {
         &self.filter
     }
 
-    fn filter_row(&mut self, row: &MyRowData) -> bool {
+    fn filter_row(&mut self, row: &StockQuantityData) -> bool {
         let filter = &self.filter.to_uppercase();
 
-        row.0.contains(&format!("[{}]", filter))
-            // || row.0.contains(filter.to_string() + "]")
-            || row.0.contains(filter)
-            || row.1.contains(filter)
+        row.0.contains(&format!("[{}]", filter)) || row.0.contains(filter)
     }
 
     fn hotkeys(&mut self, context: &UiActionContext) -> Vec<(KeyboardShortcut, UiAction)> {
@@ -105,7 +73,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
         hotkeys
     }
 
-    fn show_cell_view(&mut self, ui: &mut Ui, row: &MyRowData, column: usize) {
+    fn show_cell_view(&mut self, ui: &mut Ui, row: &StockQuantityData, column: usize) {
         let _ = match column {
             0 => {
                 ui.horizontal_centered(|ui| {
@@ -153,26 +121,20 @@ impl RowViewer<MyRowData> for MyRowViewer {
                 .inner
             }
             1 => {
-                ui.horizontal_centered(|ui| {
-                    ui.add_space(5.);
-                    ui.colored_label(Color32::from_rgb(42, 195, 222), &row.1)
-                })
-                .inner
-            }
-            3 => ui.vertical_centered(|ui| ui.label(&row.3)).inner,
-            2 => {
                 ui.vertical_centered_justified(|ui| {
-                    let color = if &row.2 == "Not Attached" {
+                    let color = if row.1 <= 10 {
                         Color32::from_rgb(191, 33, 101)
-                    } else if &row.2 == "S/N Info ⮫" {
+                    } else if row.1 > 10 && row.1 <= 40 {
                         Color32::from_rgb(191, 33, 101)
                     } else {
                         Color32::from_rgb(51, 255, 189)
                     };
-                    Button::new(RichText::new(&row.2).color(color)).ui(ui)
+                    Button::new(RichText::new(&row.1).color(color)).ui(ui)
                 })
                 .inner
             }
+            2 => ui.vertical_centered(|ui| ui.label(&row.2)).inner,
+            3 => ui.vertical_centered(|ui| ui.label(&row.3)).inner,
             4 => {
                 ui.vertical_centered_justified(|ui| ui.checkbox(&mut { row.4 }, ""))
                     .inner
@@ -184,7 +146,7 @@ impl RowViewer<MyRowData> for MyRowViewer {
     fn show_cell_editor(
         &mut self,
         ui: &mut Ui,
-        row: &mut MyRowData,
+        row: &mut StockQuantityData,
         column: usize,
     ) -> Option<Response> {
         ui.vertical_centered_justified(|ui| {
@@ -203,6 +165,13 @@ impl RowViewer<MyRowData> for MyRowViewer {
                         .show(ui)
                         .response
                 }
+                2 => {
+                    TextEdit::multiline(&mut row.2)
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
                 3 => {
                     TextEdit::multiline(&mut row.3)
                         .desired_rows(1)
@@ -210,8 +179,13 @@ impl RowViewer<MyRowData> for MyRowViewer {
                         .show(ui)
                         .response
                 }
-                2 => Button::new(&row.2).ui(ui),
-                4 => ui.checkbox(&mut row.4, ""),
+                4 => {
+                    TextEdit::multiline(&mut row.4)
+                        .desired_rows(1)
+                        .code_editor()
+                        .show(ui)
+                        .response
+                }
                 _ => unreachable!(),
             }
             .into() // To make focusing work correctly, valid response must be returned.
@@ -221,10 +195,10 @@ impl RowViewer<MyRowData> for MyRowViewer {
 
     // fn on_cell_view_response(
     //     &mut self,
-    //     row: &MyRowData,
+    //     row: &StockQuantityData,
     //     column: usize,
     //     resp: &eframe::egui::Response,
-    // ) -> Option<Box<MyRowData>> {
+    // ) -> Option<Box<StockQuantityData>> {
     //     match column {
     //         2 => {
     //             // if resp.clicked() {
@@ -235,7 +209,12 @@ impl RowViewer<MyRowData> for MyRowViewer {
     //     }
     // }
 
-    fn set_cell_value(&mut self, src: &MyRowData, dst: &mut MyRowData, column: usize) {
+    fn set_cell_value(
+        &mut self,
+        src: &StockQuantityData,
+        dst: &mut StockQuantityData,
+        column: usize,
+    ) {
         info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
         match column {
             0 => dst.0 = src.0.clone(),
@@ -249,38 +228,24 @@ impl RowViewer<MyRowData> for MyRowViewer {
 
     fn compare_cell(
         &self,
-        row_l: &MyRowData,
-        row_r: &MyRowData,
+        row_l: &StockQuantityData,
+        row_r: &StockQuantityData,
         column: usize,
     ) -> std::cmp::Ordering {
         match column {
             0 => row_l.0.cmp(&row_r.0),
             1 => row_l.1.cmp(&row_r.1),
-            2 => {
-                let l_contains_not_attached = row_l.2.contains("Not Attached");
-                let r_contains_not_attached = row_r.2.contains("Not Attached");
-
-                match (l_contains_not_attached, r_contains_not_attached) {
-                    // If both contain "Not Attached", treat them as equal
-                    (true, true) => std::cmp::Ordering::Equal,
-                    // If row_l contains "Not Attached" but row_r doesn't, consider row_r "greater"
-                    (true, false) => std::cmp::Ordering::Less,
-                    // If row_r contains "Not Attached" but row_l doesn't, consider row_l "greater"
-                    (false, true) => std::cmp::Ordering::Greater,
-                    // Otherwise, compare the actual values
-                    (false, false) => row_l.2.cmp(&row_r.2),
-                }
-            }
+            2 => row_l.2.cmp(&row_r.2),
             3 => row_l.3.cmp(&row_r.3),
             4 => row_l.4.cmp(&row_r.4),
             _ => unreachable!(),
         }
     }
 
-    fn new_empty_row(&mut self) -> MyRowData {
+    fn new_empty_row(&mut self) -> StockQuantityData {
         // Instead of requiring `Default` trait for row data types, the viewer is
         // responsible of providing default creation method.
-        MyRowData(
+        StockQuantityData(
             Default::default(),
             Default::default(),
             Default::default(),
@@ -306,57 +271,5 @@ impl RowViewer<MyRowData> for MyRowViewer {
             table_row_height: Some(20.),
             ..Default::default()
         }
-    }
-}
-
-use serde::de::Deserializer;
-use std::fmt;
-
-#[derive(Debug, Serialize, Clone)]
-pub enum BoolOrString {
-    Bool(bool),
-    String(String),
-}
-
-impl Default for BoolOrString {
-    fn default() -> Self {
-        BoolOrString::Bool(false)
-    }
-}
-
-impl<'de> Deserialize<'de> for BoolOrString {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct BoolOrStringVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for BoolOrStringVisitor {
-            type Value = BoolOrString;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a bool or a string")
-            }
-
-            fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
-                Ok(BoolOrString::Bool(value))
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(BoolOrString::String(value.to_string()))
-            }
-
-            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(BoolOrString::String(value))
-            }
-        }
-
-        deserializer.deserialize_any(BoolOrStringVisitor)
     }
 }
