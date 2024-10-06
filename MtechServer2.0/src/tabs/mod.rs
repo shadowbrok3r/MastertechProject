@@ -10,6 +10,7 @@ pub mod query_builder;
 pub mod quote_fulfilled_tasks;
 pub mod seb_lookup;
 pub mod stock;
+pub mod stock_quantities;
 pub mod store_tasks;
 pub mod task_audit;
 pub mod terminal;
