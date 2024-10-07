@@ -42,18 +42,6 @@ pub struct RawStockData {
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
-pub struct ExtraInventoryData {
-    display_name: String,   // Display name is a String
-    id: u64,                // ID is a positive integer
-    list_price: f64,        // Monetary value (with decimals), so f64 is appropriate
-    qty_available: u64,     // Quantities should remain as u64 for non-negative integers
-    standard_price: f64,    // Monetary value (with decimals), so f64 is appropriate
-    virtual_available: u64, // Quantities should remain as u64 for non-negative integers
-    product_variant_id: ProductID,
-    name: String,
-}
-
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct LotID(pub i32, pub String);
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]

@@ -1,9 +1,8 @@
-use crossbeam::channel::Sender;
 use displays::egui_data_table::{
     viewer::{default_hotkeys, TrivialConfig, UiActionContext},
     RowViewer, UiAction,
 };
-use eframe::egui::{Button, Color32, KeyboardShortcut, Response, RichText, TextEdit, Ui, Widget};
+use eframe::egui::{Color32, KeyboardShortcut, Response, RichText, TextEdit, Ui};
 
 use egui_extras::Column as TableColumnConfig;
 use log::info;
@@ -13,19 +12,19 @@ use crate::tabs::stock::ProductID;
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct ExtraInventoryData {
-    display_name: String,   // Display name is a String
-    id: u64,                // ID is a positive integer
-    list_price: f64,        // Monetary value (with decimals), so f64 is appropriate
-    qty_available: u64,     // Quantities should remain as u64 for non-negative integers
-    standard_price: f64,    // Monetary value (with decimals), so f64 is appropriate
-    virtual_available: u64, // Quantities should remain as u64 for non-negative integers
-    product_variant_id: ProductID,
-    name: String,
+    pub display_name: String,   // Display name is a String
+    pub id: f64,                // ID is a positive integer
+    pub list_price: f64,        // Monetary value (with decimals), so f64 is appropriate
+    pub qty_available: f64,     // Quantities should remain as u64 for non-negative integers
+    pub standard_price: f64,    // Monetary value (with decimals), so f64 is appropriate
+    pub virtual_available: f64, // Quantities should remain as u64 for non-negative integers
+    pub product_variant_id: ProductID,
+    pub name: String,
 }
 
 // Don't need to implement any trait on row data itself.
 #[derive(Default, Serialize, Clone)]
-pub struct StockQuantityData(pub String, pub u64, pub u64, pub f64, pub f64);
+pub struct StockQuantityData(pub String, pub f64, pub f64, pub f64, pub f64);
 
 #[derive(Default, Serialize)]
 pub struct StockQuantityViewer {
@@ -121,24 +120,27 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
                 .inner
             }
             1 => {
-                ui.vertical_centered_justified(|ui| {
-                    let color = if row.1 <= 10 {
-                        Color32::from_rgb(191, 33, 101)
-                    } else if row.1 > 10 && row.1 <= 40 {
-                        Color32::from_rgb(191, 33, 101)
-                    } else {
-                        Color32::from_rgb(51, 255, 189)
-                    };
-                    Button::new(RichText::new(&row.1).color(color)).ui(ui)
-                })
-                .inner
+                let color = if row.1 <= 10.0 {
+                    Color32::from_rgb(191, 33, 101)
+                } else if row.1 > 10.0 && row.1 <= 40.0 {
+                    Color32::LIGHT_RED
+                } else {
+                    Color32::from_rgb(51, 255, 189)
+                };
+                ui.label(RichText::new(format!(" {}", &row.1)).color(color))
             }
-            2 => ui.vertical_centered(|ui| ui.label(&row.2)).inner,
-            3 => ui.vertical_centered(|ui| ui.label(&row.3)).inner,
-            4 => {
-                ui.vertical_centered_justified(|ui| ui.checkbox(&mut { row.4 }, ""))
-                    .inner
+            2 => {
+                let color = if row.2 <= 10.0 {
+                    Color32::from_rgb(191, 33, 101)
+                } else if row.2 > 10.0 && row.2 <= 40.0 {
+                    Color32::LIGHT_RED
+                } else {
+                    Color32::from_rgb(51, 255, 189)
+                };
+                ui.label(RichText::new(format!(" {}", &row.2)).color(color))
             }
+            3 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.3))),
+            4 => ui.label(format!(" $ {}", round_to_two_decimal_places(row.4))),
             _ => unreachable!(),
         };
     }
@@ -152,35 +154,35 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
         ui.vertical_centered_justified(|ui| {
             match column {
                 0 => {
-                    TextEdit::multiline(&mut row.0)
+                    TextEdit::multiline(&mut format!("{}", row.0))
                         .desired_rows(1)
                         .code_editor()
                         .show(ui)
                         .response
                 }
                 1 => {
-                    TextEdit::multiline(&mut row.1)
+                    TextEdit::multiline(&mut format!("{}", row.1))
                         .desired_rows(1)
                         .code_editor()
                         .show(ui)
                         .response
                 }
                 2 => {
-                    TextEdit::multiline(&mut row.2)
+                    TextEdit::multiline(&mut format!("{}", row.2))
                         .desired_rows(1)
                         .code_editor()
                         .show(ui)
                         .response
                 }
                 3 => {
-                    TextEdit::multiline(&mut row.3)
+                    TextEdit::multiline(&mut format!("{}", row.3))
                         .desired_rows(1)
                         .code_editor()
                         .show(ui)
                         .response
                 }
                 4 => {
-                    TextEdit::multiline(&mut row.4)
+                    TextEdit::multiline(&mut format!("{}", row.4))
                         .desired_rows(1)
                         .code_editor()
                         .show(ui)
@@ -234,10 +236,22 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
     ) -> std::cmp::Ordering {
         match column {
             0 => row_l.0.cmp(&row_r.0),
-            1 => row_l.1.cmp(&row_r.1),
-            2 => row_l.2.cmp(&row_r.2),
-            3 => row_l.3.cmp(&row_r.3),
-            4 => row_l.4.cmp(&row_r.4),
+            1 => row_l
+                .1
+                .partial_cmp(&row_r.1)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            2 => row_l
+                .2
+                .partial_cmp(&row_r.2)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            3 => row_l
+                .3
+                .partial_cmp(&row_r.3)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            4 => row_l
+                .4
+                .partial_cmp(&row_r.4)
+                .unwrap_or(std::cmp::Ordering::Equal),
             _ => unreachable!(),
         }
     }
@@ -258,10 +272,10 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
         let col_config = TableColumnConfig::auto();
         match column {
             0 => col_config.resizable(true).at_least(400.).at_most(550.),
-            1 => col_config.resizable(true).at_least(200.).at_most(250.),
-            3 => col_config.resizable(false).at_least(60.).at_most(60.),
-            2 => col_config.resizable(false).at_least(150.).at_most(150.),
-            4 => col_config.resizable(false).at_most(50.),
+            1 => col_config.resizable(true).at_most(120.),
+            3 => col_config.resizable(true).at_most(120.),
+            2 => col_config.resizable(true).at_most(140.),
+            4 => col_config.resizable(true).at_most(120.),
             _ => col_config,
         }
     }
@@ -271,5 +285,13 @@ impl RowViewer<StockQuantityData> for StockQuantityViewer {
             table_row_height: Some(20.),
             ..Default::default()
         }
+    }
+}
+
+fn round_to_two_decimal_places(value: f64) -> f64 {
+    if value > 0.0 {
+        (value * 100.0).round() / 100.0
+    } else {
+        value
     }
 }

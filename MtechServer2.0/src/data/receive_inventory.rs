@@ -1,6 +1,9 @@
 use crate::{
     app_state::MtechServer,
-    tabs::stock::{find_attached_serials, BoolOrString, MyRowData},
+    tabs::{
+        stock::{find_attached_serials, BoolOrString, MyRowData},
+        stock_quantities::StockQuantityData,
+    },
 };
 
 use database::schema::Store;
@@ -70,6 +73,22 @@ impl MtechServer {
             }
             self.context.data_table.replace(data_table);
         }
+
+        if let Ok(stock_inf) = self.context.extra_stock_channel.1.try_recv() {
+            debug!("Serial Data: {:?}", stock_inf);
+            let data: Vec<StockQuantityData> = stock_inf
+                .iter()
+                .map(|stock_data| {
+                    StockQuantityData(
+                        stock_data.display_name.clone(),
+                        stock_data.qty_available.clone(),
+                        stock_data.virtual_available.clone(),
+                        stock_data.standard_price.clone(),
+                        stock_data.list_price.clone(),
+                    )
+                })
+                .collect();
+            self.context.stock_quantity_table.replace(data);
+        }
     }
 }
-

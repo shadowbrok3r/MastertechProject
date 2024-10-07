@@ -79,6 +79,7 @@ impl TabViewer for MtechServerContext {
             "Stock" => self.stock_viewer(ui),
             "SEB Lookup" => self.seb_lookup(ui),
             "Task Audit" => self.task_table_viewer(ui),
+            "Stock Quantity" => self.stock_quantities_viewer(ui),
             _ => {}
         }
     }

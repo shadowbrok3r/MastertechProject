@@ -30,6 +30,12 @@ pub struct SendRequest {
     pub tx: crossbeam::channel::Sender<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct License {
+    r#type: String, // `r#type` is used because `type` is a reserved keyword in Rust.
+    key: String,
+}
+
 impl SendRequest {
     pub async fn get_cps(
         so_number: String,
@@ -58,23 +64,36 @@ impl SendRequest {
             .send()
             .await?;
 
-        // "\t\nSAS: 8YG4-YHSJ-MJGWE\nWRAV: SA28-TAOG-53DB-6AB9-E6AE\n"
-        let response_text = response.text().await?;
+        let response_text: Vec<License> = response.json().await?;
 
         let mut _webroot_key = "";
         let mut _superanti_key = "";
 
-        if response_text.contains("WRAV: ") || response_text.contains("SAS: ") {
-            let re =
-                Regex::new(r"SAS: (\w{4}-\w{4}-\w{5})\nWRAV: (\w{4}-\w{4}-\w{4}-\w{4}-\w{4})\n")
-                    .unwrap();
-            let captures = re.captures(&response_text).expect("Regex did not match");
-            _webroot_key = captures.get(2).map_or("", |m| m.as_str());
-            _superanti_key = captures.get(1).map_or("", |m| m.as_str());
+        let sas_key = response_text.get(0);
+        let wrsa_key = response_text.get(1);
+
+        if let Some(sas) = sas_key {
+            _superanti_key = &sas.key;
+        } else {
+            _superanti_key = "Error";
+        }
+        if let Some(wrsa) = wrsa_key {
+            _webroot_key = &wrsa.key;
         } else {
             _webroot_key = "Error";
-            _superanti_key = "Check console";
         }
+
+        // if response_text.contains("WRAV: ") || response_text.contains("SAS: ") {
+        //     let re =
+        //         Regex::new(r"SAS: (\w{4}-\w{4}-\w{5})\nWRAV: (\w{4}-\w{4}-\w{4}-\w{4}-\w{4})\n")
+        //             .unwrap();
+        //     let captures = re.captures(&response_text).expect("Regex did not match");
+        //     _webroot_key = captures.get(2).map_or("", |m| m.as_str());
+        //     _superanti_key = captures.get(1).map_or("", |m| m.as_str());
+        // } else {
+        //     _webroot_key = "Error";
+        //     _superanti_key = "Check console";
+        // }
 
         let response_keys = GetKeysResponse {
             webroot_key: _webroot_key.to_string(),
@@ -197,17 +216,18 @@ where
 
     if let Some(customer_email) = customer_email {
         params.insert("search", &customer_email);
-        
+
         let response = client
             .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
             .header(CONTENT_TYPE, "application/json")
             // .header(ACCEPT, "application/json")
             .form(&params)
             .send()
-            .await.unwrap();
+            .await
+            .unwrap();
 
         // info!("response: {:?}", response.text().await?);
-        
+
         let response_json: Vec<T> = response.json().await?;
         info!("response_json: {:?}", response_json);
         Ok(response_json.get(0).unwrap().clone())

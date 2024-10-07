@@ -1,3 +1,5 @@
+use crate::tabs::stock_quantities::ExtraInventoryData;
+
 use super::row_viewer::{RawStockData, SerialData, StockData};
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
@@ -63,5 +65,15 @@ pub async fn find_products_by_name(
     // info!("Result: {res:?}");
 
     stock_tx.try_send(res.unwrap())?;
+    Ok(())
+}
+
+pub async fn get_extra_stock_info(stock_tx: Sender<Vec<ExtraInventoryData>>) -> Result<(), Error> {
+    let res: Vec<ExtraInventoryData> = DATABASE
+        .query("RETURN fn::get_stock_extra_info(5000)")
+        .await?
+        .take(0)?;
+
+    stock_tx.try_send(res)?;
     Ok(())
 }

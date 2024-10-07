@@ -141,7 +141,7 @@ impl MastertechContext {
                             let mut local_seb = LocalSebData::default();
                             local_seb.ExtendedSeb = Some(ExtendedSeb::default());
 
-                            self.json_editor.set_value(local_seb);
+                            self.json_editor.set_value(local_seb).unwrap();
                         }
                         self.json_editor.show(ui);
                     });
