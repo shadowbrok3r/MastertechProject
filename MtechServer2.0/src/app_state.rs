@@ -5,6 +5,7 @@ use crate::{
         github_issue::GithubIssue,
         json_viewer::{JsonEditor, JsonEditorState},
         stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
+        stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer},
     },
     utilities::{
         displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
@@ -177,6 +178,11 @@ pub struct MtechServerContext {
     pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
     #[serde(skip)]
     pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
+    #[serde(skip)]
+    pub extra_stock_channel: (
+        Sender<Vec<ExtraInventoryData>>,
+        Receiver<Vec<ExtraInventoryData>>,
+    ),
 
     // UI and Application State Fields
     /// {Widgets / Modals / Ui for portions throughout the app}
@@ -223,6 +229,12 @@ pub struct MtechServerContext {
     pub data_table: DataTable<MyRowData>,
     /// store selection for inventory view
     pub store_selection: u64,
+    /// Data viewer for Stock Quantities tab
+    #[serde(skip)]
+    pub stock_quantity_viewer: StockQuantityViewer,
+    /// Data for Stock Quantities tab
+    #[serde(skip)]
+    pub stock_quantity_table: DataTable<StockQuantityData>,
 
     // Ui State Management Channels
     /// {UI actions channel for communication between UI components and main function}
@@ -397,6 +409,7 @@ impl MtechServer {
         let tur_channel = PrestashopPayload::create_unbounded_channel();
         let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
         let serial_channel = <SerialData>::create_unbounded_channel();
+        let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -447,6 +460,7 @@ impl MtechServer {
             github_releases_channel,
             bytes_channel,
             tur_channel,
+            extra_stock_channel,
 
             // MODALS / LAYOUTS
             tur: Tur::default(),
@@ -498,6 +512,9 @@ impl MtechServer {
             update_settings: false,
             get_settings: false,
             data_table: DataTable::<MyRowData>::default(),
+            stock_quantity_viewer: StockQuantityViewer::default(),
+            stock_quantity_table: DataTable::<StockQuantityData>::default(),
+
             data_viewer,
             stock_channel,
             serial_channel,
@@ -542,6 +559,7 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
         "SEB Lookup".to_owned(),
+        "Stock Quantity".to_owned(),
         // "Customers".to_owned(),
         // "Json Viewer".to_owned(),
         // "Query Builder".to_owned(),

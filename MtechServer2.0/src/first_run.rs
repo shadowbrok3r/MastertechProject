@@ -1,7 +1,7 @@
 use crate::{
     app_state::{AppState, MtechServer},
     pages::downloads_page::get_github_releases,
-    tabs::stock::get_stock,
+    tabs::stock::{get_extra_stock_info, get_stock},
 };
 use database::{
     live_data::listen_data,
@@ -94,6 +94,7 @@ impl MtechServer {
         let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
         let stock_tx = self.context.stock_channel.0.clone();
+        let ex_stock_tx = self.context.extra_stock_channel.0.clone();
 
         if let Some(usr) = self.context.current_user.as_ref() {
             info!("Getting Initial data");
@@ -154,6 +155,9 @@ impl MtechServer {
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                     let get_connected_clients = get_connected_clients(tx, user.clone()).await;
                     let stock = get_stock(stock_tx.clone(), store_selection).await;
+                    let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
+
+                    info!("Extra Stock {stock_quantities:?}");
                     info!("Stock call: {stock:?} for Store: {:?}", store_selection);
                     info!("get_connected_clients: {get_connected_clients:?}");
                     info!("get_store_users: {get_store_users:?}");

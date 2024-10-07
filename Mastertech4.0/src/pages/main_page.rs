@@ -1,8 +1,6 @@
 use crate::app_state::MasterTechApp;
 use crate::tabs::github::self_updater::run;
-use eframe::egui::{
-    Button, Context, FontId, Layout, ProgressBar, RichText, Stroke, Vec2, ViewportCommand, Widget,
-};
+use eframe::egui::{Button, Context, FontId, Layout, ProgressBar, RichText, Stroke, Vec2, Widget};
 use eframe::egui::{CentralPanel, Color32, Frame, TopBottomPanel};
 use egui_dock::{DockArea, Style as DockStyle};
 use tokio::spawn;
