@@ -4,7 +4,7 @@ members = [ "MtechServer2.0", "database" , "displays", "Mastertech4.0"] #  , "we
 
 [workspace.dependencies]
 database = { path = "database" }
-eframe = { version="=0.29.1", features=["persistence", "serde",  "default_fonts"] }
+eframe = { version="=0.29.1", features=["persistence", "serde",  "default_fonts", "accesskit"] }
 egui_extras = { version = "0.29.1", features = ["datepicker", "syntect", "serde" ]}
 surrealdb = { version = "2.0.1", features = ["protocol-ws"] } 
 egui_dock = { git="https://github.com/shadowbrok3r/egui_dock.git", features = ["serde"]} # { version = "0.13", features = ["serde"]}
