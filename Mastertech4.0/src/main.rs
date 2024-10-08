@@ -38,10 +38,7 @@ use tabs::{
     github::{
         download_release, get_github_releases,
         self_updater::{run, Asset},
-    },
-    logger::logging::builder,
-    stock::{find_attached_serials, get_stock, BoolOrString, MyRowData},
-    tur_sheet::scaffold::AsanaResponse,
+    }, logger::logging::builder, stock::{find_attached_serials, get_extra_stock_info, get_stock, BoolOrString, MyRowData}, stock_quantities::StockQuantityData, tur_sheet::scaffold::AsanaResponse
 };
 use tokio::spawn;
 use utilities::{
@@ -85,6 +82,8 @@ impl eframe::App for MasterTechApp {
             let pair_clone = Arc::clone(&pair);
             let github_tx = self.context.github_releases_channel.0.clone();
             let client = self.context.client.clone();
+            let ex_stock_tx = self.context.extra_stock_channel.0.clone();
+
             spawn(async move {
                 match ComputerData::default().get_computer_data().await {
                     // sysinfo_tx
@@ -101,6 +100,9 @@ impl eframe::App for MasterTechApp {
                     Ok(_) => info!("Got github releases"),
                     Err(e) => error!("Error getting github releases: {e:?}"),
                 }
+                let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
+
+                info!("Extra Stock {stock_quantities:?}");
             });
 
             // Wait for the spawned task to complete and notify the condition variable
@@ -555,6 +557,23 @@ impl eframe::App for MasterTechApp {
             self.context.data_table.replace(data_table);
         }
 
+        if let Ok(stock_inf) = self.context.extra_stock_channel.1.try_recv() {
+            debug!("Serial Data: {:?}", stock_inf);
+            let data: Vec<StockQuantityData> = stock_inf
+                .iter()
+                .map(|stock_data| {
+                    StockQuantityData(
+                        stock_data.display_name.clone(),
+                        stock_data.qty_available.clone(),
+                        stock_data.virtual_available.clone(),
+                        stock_data.standard_price.clone(),
+                        stock_data.list_price.clone(),
+                    )
+                })
+                .collect();
+            self.context.stock_quantity_table.replace(data);
+        }
+        
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {
             // self.context.seb_info = Some(seb);
             self.context.json_editor.set_value(seb.clone()).unwrap();

@@ -34,16 +34,10 @@ use crate::tabs::minidump::MiniDumpApp;
 use crate::{
     pages::login_page::Login,
     tabs::{
-        file_browser::FileBrowser,
-        github::self_updater::GithubRelease,
-        scripts::Scripts,
-        seb_lookup::JsonEditor,
-        stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
-        tur_sheet::{
+        file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::Scripts, seb_lookup::JsonEditor, stock::{MyRowData, MyRowViewer, RawStockData, SerialData}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, tur_sheet::{
             get_ticket::SendRequest,
             scaffold::{self, HardwareTest},
-        },
-        websockets::WebConsoleFrontend,
+        }, websockets::WebConsoleFrontend
     },
     utilities::{
         displays::{
@@ -189,6 +183,7 @@ pub struct MastertechContext {
     pub cps_keys_rx: Receiver<GetKeysResponse>,
     pub ui_actions_tx: Sender<TaskUiActions>,
     pub ui_actions_rx: Receiver<TaskUiActions>,
+    pub extra_stock_channel: (Sender<Vec<ExtraInventoryData>>,Receiver<Vec<ExtraInventoryData>>),
 
     pub store_users: Option<Vec<User>>,
     pub store_users_tx: Sender<Vec<User>>,
@@ -214,6 +209,10 @@ pub struct MastertechContext {
     pub stock_data: RawStockData,
     pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
     pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
+    /// Data viewer for Stock Quantities tab
+    pub stock_quantity_viewer: StockQuantityViewer,
+    /// Data for Stock Quantities tab
+    pub stock_quantity_table: DataTable<StockQuantityData>,
     pub store_selection: u64,
     pub json_editor: JsonEditor,
 }
@@ -230,6 +229,7 @@ impl MasterTechApp {
             "SEB Lookup".to_owned(),
             "Downloads".to_owned(),
             "Stock".to_owned(),
+            "Stock Quantity".to_owned(),
         ]);
         tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
@@ -299,6 +299,7 @@ impl MasterTechApp {
         let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
         let serial_channel = <SerialData>::create_unbounded_channel();
         let seb_channel = <Vec<Value>>::create_unbounded_channel();
+        let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -437,6 +438,9 @@ impl MasterTechApp {
             store_selection: 76,
             seb_channel,
             json_editor: JsonEditor::default(),
+            extra_stock_channel,
+            stock_quantity_viewer: StockQuantityViewer::default(),
+            stock_quantity_table: DataTable::<StockQuantityData>::default(),
         };
         let context = mastertech_context;
 

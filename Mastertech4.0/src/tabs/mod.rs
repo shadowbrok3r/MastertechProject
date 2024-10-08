@@ -22,6 +22,7 @@ pub mod system_information;
 pub mod toolbox;
 pub mod tur_sheet;
 pub mod websockets;
+pub mod stock_quantities;
 
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
@@ -83,6 +84,7 @@ impl TabViewer for MastertechContext {
             "SEB Lookup" => self.seb_lookup(ui),
             "Stock" => self.stock_viewer(ui),
             "Logs" => logger_ui().show(ui),
+            "Stock Quantity" => self.stock_quantities_viewer(ui),
             _ => {
                 let sysinfo_tab = &"SysInfo".to_string();
                 if ui.label(tab.as_str()).clicked() {
