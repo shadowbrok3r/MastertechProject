@@ -125,7 +125,7 @@ impl MtechServerContext {
     }
 }
 
-trait Show {
+pub trait Show {
     fn title(&self) -> &'static str;
     fn show(&mut self, ui: &mut Ui);
 }

@@ -33,6 +33,7 @@ use mtechserver::{
     live_worker::{LiveOutput, LiveWorker},
     webworker::WebWorker,
 };
+use serde_json::Value;
 use std::{
     cell::Cell,
     collections::{BTreeMap, HashMap, HashSet},
@@ -179,6 +180,8 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
     #[serde(skip)]
+    pub seb_channel: (Sender<Vec<Value>>, Receiver<Vec<Value>>),
+    #[serde(skip)]
     pub extra_stock_channel: (
         Sender<Vec<ExtraInventoryData>>,
         Receiver<Vec<ExtraInventoryData>>,
@@ -189,6 +192,7 @@ pub struct MtechServerContext {
     pub new_note: bool,
     pub search_input: String,
     pub client_search_input: String,
+    pub seb_email: String,
     pub client_search_inputs: HashMap<String, String>,
     pub edited_task: TaskPayload,
     /// {Task layouts for different tabs}
@@ -410,6 +414,7 @@ impl MtechServer {
         let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
         let serial_channel = <SerialData>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
+        let seb_channel = <Vec<Value>>::create_unbounded_channel();
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -461,6 +466,7 @@ impl MtechServer {
             bytes_channel,
             tur_channel,
             extra_stock_channel,
+            seb_channel,
 
             // MODALS / LAYOUTS
             tur: Tur::default(),
@@ -475,6 +481,7 @@ impl MtechServer {
             create_task_modal_handler: ModalHandler::default(),
             chat_modal: None,
             chat_modal_handler: ChatModalHandler::default(),
+            seb_email: String::new(),
 
             file_system: FileSystem::new(),
             github_issue: GithubIssue::new(),

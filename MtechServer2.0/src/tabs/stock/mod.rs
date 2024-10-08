@@ -16,23 +16,23 @@ pub use stock_operations::*;
 
 impl MtechServerContext {
     pub fn stock_viewer(&mut self, ui: &mut Ui) {
-        SidePanel::right("Hotkeys")
-            .default_width(500.)
-            .show_inside(ui, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.heading("Hotkeys");
-                    ui.separator();
-                    ui.add_space(0.);
-                    ScrollArea::new([false, true]).show(ui, |ui| {
-                        for (k, a) in &self.data_viewer.hotkeys {
-                            Button::new(format!("{a:?}"))
-                                .shortcut_text(ui.ctx().format_shortcut(k))
-                                .ui(ui);
-                            ui.add_space(10.);
-                        }
-                    });
-                });
-            });
+        // SidePanel::right("Hotkeys")
+        //     .default_width(250.)
+        //     .show_inside(ui, |ui| {
+        //         ui.vertical_centered_justified(|ui| {
+        //             ui.heading("Hotkeys");
+        //             ui.separator();
+        //             ui.add_space(0.);
+        //             ScrollArea::new([false, true]).show(ui, |ui| {
+        //                 for (k, a) in &self.data_viewer.hotkeys {
+        //                     Button::new(format!("{a:?}"))
+        //                         .shortcut_text(ui.ctx().format_shortcut(k))
+        //                         .ui(ui);
+        //                     ui.add_space(10.);
+        //                 }
+        //             });
+        //         });
+        //     });
         TopBottomPanel::top("StockTopPanel")
             .exact_height(30.)
             .show_inside(ui, |ui| {
