@@ -1,4 +1,6 @@
-use eframe::egui::{text, Style, Align, Color32, Stroke, TextStyle};
+use crate::ui_tools::{color_between_delimiters, color_matching_text};
+use eframe::egui::{text, Align, Color32, Stroke, Style, TextFormat, TextStyle};
+
 use super::parser;
 
 /// Highlight easymark, memoizing previous output to save CPU.
@@ -129,15 +131,23 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
         }
     }
 
-    job
+    // Now, apply your coloring functions to 'job'
+    let mut final_job = text::LayoutJob::default();
+
+    // First, color text between delimiters in LIGHT_BLUE
+    let remaining_text =
+        color_between_delimiters(&mut final_job, text, ("@", " "), Color32::LIGHT_BLUE);
+
+    // Then, color all occurrences of "@" in LIGHT_RED
+    let final_text = color_matching_text(&mut final_job, &remaining_text, "@", Color32::LIGHT_RED);
+
+    // Append any remaining text
+    final_job.append(&final_text, 0.0, TextFormat::default());
+
+    final_job
 }
 
-fn format_from_style(
-    egui_style: &Style,
-    emark_style: &parser::Style,
-) -> text::TextFormat {
-    
-
+fn format_from_style(egui_style: &Style, emark_style: &parser::Style) -> text::TextFormat {
     let color = if emark_style.strong || emark_style.heading {
         egui_style.visuals.strong_text_color()
     } else if emark_style.quoted {
@@ -191,3 +201,4 @@ fn format_from_style(
         ..Default::default()
     }
 }
+

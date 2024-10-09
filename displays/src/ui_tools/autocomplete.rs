@@ -1,27 +1,28 @@
-//! # Example
-//! ```rust
-//! use egui_autocomplete::AutoCompleteTextEdit;
-//! struct AutoCompleteExample {
-//!   // User entered text
-//!   text: String,
-//!   // A list of strings to search for completions
-//!   inputs: Vec<String>,
-//! }
-//!
-//! impl AutoCompleteExample {
-//!   fn update(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
-//!     ui.add(AutoCompleteTextEdit::new(
-//!        &mut self.text,
-//!        &self.inputs,
-//!     ));
-//!   }
-//! }
-//! ````
-use eframe::egui::{popup, text::LayoutJob, Color32, Context, FontId, Id, Key, Modifiers, PopupCloseBehavior, Response, TextBuffer, TextEdit, TextFormat, Ui, Widget};
+use eframe::egui::{
+    popup,
+    text::LayoutJob,
+    text_edit::TextEditState,
+    Color32,
+    Context,
+    FontId,
+    Id,
+    Key,
+    Modifiers,
+    PopupCloseBehavior,
+    Response,
+    TextEdit,
+    TextFormat,
+    Ui,
+    Widget, // TextBuffer
+};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use serde::{Deserialize, Serialize};
-use std::cmp::{min, Reverse};
+use std::sync::Arc;
+use std::{
+    cmp::{min, Reverse},
+    fmt::Debug,
+};
 
 /// Trait that can be used to modify the TextEdit
 type SetTextEditProperties = dyn FnOnce(TextEdit) -> TextEdit;
@@ -38,6 +39,8 @@ pub struct AutoCompleteTextEdit<'a, T> {
     highlight: bool,
     /// Used to set properties on the internal TextEdit
     set_properties: Option<Box<SetTextEditProperties>>,
+    filter: Option<Box<dyn Fn(&str) -> bool>>,
+    layouter: Option<&'a mut dyn FnMut(&Ui, &str, f32) -> Arc<eframe::egui::Galley>>,
 }
 
 impl<'a, T, S> AutoCompleteTextEdit<'a, T>
@@ -56,6 +59,8 @@ where
             max_suggestions: 10,
             highlight: false,
             set_properties: None,
+            filter: None,
+            layouter: None,
         }
     }
 }
@@ -70,6 +75,7 @@ where
         self.max_suggestions = max_suggestions;
         self
     }
+
     /// If set to true, characters will be highlighted in the dropdown to show the match
     pub fn highlight_matches(mut self, highlight: bool) -> Self {
         self.highlight = highlight;
@@ -96,12 +102,30 @@ where
         self.set_properties = Some(Box::new(set_properties));
         self
     }
+
+    /// Sets a filter function to filter the search results.
+    pub fn set_filter<F>(mut self, filter: F) -> Self
+    where
+        F: Fn(&str) -> bool + 'static,
+    {
+        self.filter = Some(Box::new(filter));
+        self
+    }
+
+    /// Sets the layouter function for custom text layout.
+    pub fn layouter(
+        mut self,
+        layouter: &'a mut dyn FnMut(&Ui, &str, f32) -> Arc<eframe::egui::Galley>,
+    ) -> Self {
+        self.layouter = Some(layouter);
+        self
+    }
 }
 
 impl<'a, T, S> Widget for AutoCompleteTextEdit<'a, T>
 where
     T: IntoIterator<Item = S>,
-    S: AsRef<str>,
+    S: AsRef<str> + Debug,
 {
     /// The response returned is the response from the internal text_edit
     fn ui(self, ui: &mut Ui) -> Response {
@@ -111,6 +135,8 @@ where
             max_suggestions,
             highlight,
             set_properties,
+            filter,
+            layouter,
         } = self;
 
         let id = ui.next_auto_id();
@@ -128,20 +154,67 @@ where
         if let Some(set_properties) = set_properties {
             text_edit = set_properties(text_edit);
         }
-
-        let text_response = text_edit.ui(ui);
+        if let Some(layouter) = layouter {
+            text_edit = text_edit.layouter(layouter);
+        }
+        let text_output = text_edit.show(ui);
+        let text_response = text_output.response;
+        let text_edit_state = text_output.state;
         state.focused = text_response.has_focus();
+        // Get cursor position and extract substring
+        let mut match_results = Vec::new();
+        let mut trigger_char_position = None;
+        let mut cursor_char_index = 0;
 
-        let matcher = SkimMatcherV2::default().ignore_case();
+        if let Some(ccursor_range) = text_edit_state.cursor.char_range() {
+            // Get the primary cursor position
+            cursor_char_index = ccursor_range.primary.index;
 
-        let mut match_results = search
-            .into_iter()
-            .filter_map(|s| {
-                let score = matcher.fuzzy_indices(s.as_ref(), text_field.as_str());
-                score.map(|(score, indices)| (s, score, indices))
-            })
-            .collect::<Vec<_>>();
-        match_results.sort_by_key(|k| Reverse(k.1));
+            // Ensure cursor_char_index is within bounds
+            cursor_char_index = cursor_char_index.min(text_field.chars().count());
+
+            // Convert cursor_char_index to byte index
+            let cursor_byte_index = text_field
+                .char_indices()
+                .nth(cursor_char_index)
+                .map(|(i, _)| i)
+                .unwrap_or_else(|| text_field.len());
+
+            let text_before_cursor = &text_field[..cursor_byte_index];
+
+            trigger_char_position = text_before_cursor.rfind('@');
+
+            if let Some(at_byte_pos) = trigger_char_position {
+                let match_text = &text_field[at_byte_pos + 1..cursor_byte_index];
+
+                if !match_text.is_empty() {
+                    let matcher = SkimMatcherV2::default().ignore_case();
+
+                    match_results = search
+                        .into_iter()
+                        .filter(|s| filter.as_ref().map_or(true, |f| f(s.as_ref())))
+                        .filter_map(|s| {
+                            let score = matcher.fuzzy_indices(s.as_ref(), match_text);
+                            score.map(|(score, indices)| (s, score, indices))
+                        })
+                        .collect::<Vec<_>>();
+
+                    match_results.sort_by_key(|k| Reverse(k.1));
+                }
+            }
+        }
+        // let matcher = SkimMatcherV2::default().ignore_case();
+        //
+        // let mut match_results = search
+        //     .into_iter()
+        //     .filter(|s| filter.as_ref().map_or(true, |f| f(s.as_ref())))
+        //     .filter_map(|s| {
+        //         let score = matcher.fuzzy_indices(s.as_ref(), text_field.as_str());
+        //         score.map(|(score, indices)| (s, score, indices))
+        //     })
+        //     .collect::<Vec<_>>();
+        //
+        // match_results.sort_by_key(|k| Reverse(k.1));
 
         if text_response.changed()
             || (state.selected_index.is_some()
@@ -157,48 +230,79 @@ where
             max_suggestions,
         );
 
-
         let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter))
             || ui.input_mut(|input| input.key_pressed(Key::Tab));
 
+        // if let (Some(index), true) = (
+        //     state.selected_index,
+        //     // If accepted by keyboard, close the popup. If the popup is closed with a selected index, take that text
+        //     accepted_by_keyboard || !ui.memory(|mem| mem.is_popup_open(id)),
+        // ) {
+        //     text_field.replace_with(match_results[index].0.as_ref());
+        //     state.selected_index = None;
+        // }
+
+        if accepted_by_keyboard {
+            text_response.request_focus()
+        }
+
         if let (Some(index), true) = (
             state.selected_index,
-            // If accepted by keyboard, close the popup. If the popup is closed with a selected index, take that text
             accepted_by_keyboard || !ui.memory(|mem| mem.is_popup_open(id)),
         ) {
-            text_field.replace_with(match_results[index].0.as_ref());
+            if let Some(at_pos) = trigger_char_position {
+                let selected_text = match_results[index].0.as_ref();
+                // Replace from '@' to cursor position with the selected text
+                text_field.replace_range(at_pos..cursor_char_index, &selected_text.to_string());
+            }
             state.selected_index = None;
         }
-        popup::popup_below_widget(ui, id, &text_response, PopupCloseBehavior::IgnoreClicks , |ui| {
-            for (i, (output, _, match_indices)) in
-                match_results.iter().take(max_suggestions).enumerate()
-            {
-                let mut selected = if let Some(x) = state.selected_index {
-                    x == i
-                } else {
-                    false
-                };
 
-                let text = if highlight {
-                    highlight_matches(
-                        output.as_ref(),
-                        match_indices,
-                        ui.style().visuals.widgets.active.text_color(),
-                    )
-                } else {
-                    let mut job = LayoutJob::default();
-                    job.append(output.as_ref(), 0.0, TextFormat::default());
-                    job
-                };
-                //  Update selected index based on hover
-                if ui.toggle_value(&mut selected, text).hovered() {
-                    state.selected_index = Some(i);
+        if !match_results.is_empty() && text_response.has_focus() {
+            ui.memory_mut(|mem| mem.open_popup(id));
+        } else {
+            ui.memory_mut(|mem| {
+                if mem.is_popup_open(id) {
+                    mem.close_popup()
                 }
-                // if ui.toggle_value(&mut selected, text).clicked() {
-                //     text_field.replace_with(output.as_ref());
-                // }
-            }
-        });
+            });
+        }
+        popup::popup_below_widget(
+            ui,
+            id,
+            &text_response,
+            PopupCloseBehavior::IgnoreClicks,
+            |ui| {
+                for (i, (output, _, match_indices)) in
+                    match_results.iter().take(max_suggestions).enumerate()
+                {
+                    let mut selected = if let Some(x) = state.selected_index {
+                        x == i
+                    } else {
+                        false
+                    };
+
+                    let text = if highlight {
+                        highlight_matches(
+                            output.as_ref(),
+                            match_indices,
+                            ui.style().visuals.widgets.active.text_color(),
+                        )
+                    } else {
+                        let mut job = LayoutJob::default();
+                        job.append(output.as_ref(), 0.0, TextFormat::default());
+                        job
+                    };
+                    //  Update selected index based on hover
+                    if ui.toggle_value(&mut selected, text).hovered() {
+                        state.selected_index = Some(i);
+                    }
+                    // if ui.toggle_value(&mut selected, text).clicked() {
+                    //     text_field.replace_with(output.as_ref());
+                    // }
+                }
+            },
+        );
         if !text_field.as_str().is_empty() && text_response.has_focus() && !match_results.is_empty()
         {
             ui.memory_mut(|mem| mem.open_popup(id));

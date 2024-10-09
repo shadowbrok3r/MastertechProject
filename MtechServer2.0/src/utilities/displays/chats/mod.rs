@@ -4,7 +4,7 @@ use eframe::egui::{
     epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
 };
 use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, Record, TaskNotePayload, User}, DATABASE};
-use displays::{markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER}, ui_tools::mention_handler::MentionHandler};
+use displays::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use surrealdb::RecordId;
 use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local};
@@ -49,7 +49,7 @@ impl ChatView {
         for user in users {
             let parsed_email = user.email.split_once('@');
             if let Some(email) = parsed_email {
-                users_set.insert(email.0.to_string());
+                users_set.insert(format!("@{}", email.0));
             }
         }
 
@@ -58,7 +58,7 @@ impl ChatView {
             messages,
             state: ModalState::default(),
             title: "Chat".to_string(),
-            markdown_editor: EasyMarkEditor::new(MentionHandler::new(users_set.clone())),
+            markdown_editor: EasyMarkEditor::new(),
             task_id: Some(task_id),
             delete: None,
             users: users_set
@@ -108,7 +108,6 @@ impl ChatView {
 
         let markdown_editor = &mut self.markdown_editor;
         markdown_editor.inputs = self.users.clone();
-
         let central_panel_frame = Frame::none().fill(color)
             .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
             .inner_margin(Margin::same(6.0)).rounding(Rounding::same(10.0));
