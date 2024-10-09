@@ -1,6 +1,7 @@
-use std::collections::BTreeSet;
+use crate::ui_tools::{autocomplete::AutoCompleteTextEdit, mention_handler::MentionHandler};
+use core::f32;
 use eframe::egui::{text::CCursorRange, *};
-use crate::ui_tools::mention_handler::MentionHandler;
+use std::collections::BTreeSet;
 pub mod highlighter;
 pub mod parser;
 pub mod viewer;
@@ -12,7 +13,7 @@ pub struct EasyMarkEditor {
     show_rendered: bool,
     pub inputs: BTreeSet<String>,
     pub highlighter: highlighter::MemoizedEasymarkHighlighter,
-    pub mention_handler: MentionHandler
+    // pub mention_handler: MentionHandler,
 }
 
 impl PartialEq for EasyMarkEditor {
@@ -30,22 +31,20 @@ impl Default for EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             inputs: BTreeSet::new(),
-            mention_handler: MentionHandler::default()
-            // default_msg: DEFAULT_CODE.trim().to_owned(),
+            // mention_handler: MentionHandler::default(), // default_msg: DEFAULT_CODE.trim().to_owned(),
         }
     }
 }
 
 impl EasyMarkEditor {
-    pub fn new(mention_handler: MentionHandler) -> Self {
+    pub fn new() -> Self {
         Self {
             message: String::new(),
             highlight_editor: true,
             show_rendered: false,
             highlighter: Default::default(),
             inputs: BTreeSet::new(),
-            mention_handler
-            // default_msg: DEFAULT_CODE.trim().to_owned(),
+            // mention_handler, // default_msg: DEFAULT_CODE.trim().to_owned(),
         }
     }
 
@@ -76,24 +75,29 @@ impl EasyMarkEditor {
         }
         ui.separator();
 
-        Grid::new("controls").spacing(Vec2::new(width, 10.0)).show(ui, |ui| {
-            let _response = ui.button("Hotkeys").on_hover_ui(nested_hotkeys_ui);
+        Grid::new("controls")
+            .spacing(Vec2::new(width, 10.0))
+            .show(ui, |ui| {
+                let _response = ui.button("Hotkeys").on_hover_ui(nested_hotkeys_ui);
 
-            ui.checkbox(&mut self.show_rendered, "Show rendered");
+                ui.checkbox(&mut self.show_rendered, "Show rendered");
 
-            ui.checkbox(&mut self.highlight_editor, "Highlight editor");
+                ui.checkbox(&mut self.highlight_editor, "Highlight editor");
 
-            let res = Button::new("Submit").min_size(Vec2::new(60.0, 10.0)).ui(ui);
-            response = Some(res);
-            ui.end_row();
-        });
+                let res = Button::new("Submit").min_size(Vec2::new(60.0, 10.0)).ui(ui);
+                response = Some(res);
+                ui.end_row();
+            });
 
         response
     }
 
     fn editor_ui(&mut self, ui: &mut Ui) {
         let Self {
-            message, highlighter, ..
+            message,
+            highlighter,
+            inputs,
+            ..
         } = self;
 
         let response = if self.highlight_editor {
@@ -103,6 +107,20 @@ impl EasyMarkEditor {
                 ui.fonts(|f| f.layout_job(layout_job))
             };
 
+            AutoCompleteTextEdit::new(message, &inputs.to_owned())
+                .set_filter(|s| s.contains('@'))
+                .highlight_matches(true)
+                .max_suggestions(10)
+                .layouter(&mut layouter)
+                .set_text_edit_properties(|text_edit: TextEdit<'_>| {
+                    text_edit
+                        .desired_width(f32::INFINITY)
+                        .font(FontId::proportional(12.0))
+                        .frame(true)
+                        .desired_rows(6)
+                        .code_editor()
+                })
+                .ui(ui)
             // if self.show_example{
             //     ui.add(
             //         TextEdit::multiline(&mut self.default_msg)
@@ -112,19 +130,18 @@ impl EasyMarkEditor {
             //             .layouter(&mut layouter),
             //     )
             // } else{
-                ui.add(
-                    TextEdit::multiline(message)
-                        .desired_width(f32::INFINITY).font(TextStyle::Monospace) 
-                        .layouter(&mut layouter),
-                )
+            //
+            // ui.add(
+            //     TextEdit::multiline(message)
+            //         .desired_width(f32::INFINITY)
+            //         .font(TextStyle::Monospace)
+            //         .layouter(&mut layouter),
+            // )
             // }
         } else {
-            ui.add(
-                TextEdit::multiline(message).desired_width(f32::INFINITY)
-            )
+            ui.add(TextEdit::multiline(message).desired_width(f32::INFINITY))
         };
 
-        
         if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {
             // info!("Text edit load state");
             if let Some(mut ccursor_range) = state.cursor.char_range() {
@@ -166,8 +183,7 @@ pub const SHORTCUT_UNDERLINE: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::W);
 pub const SHORTCUT_INDENT: KeyboardShortcut =
     KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::E);
-pub const SHORTCUT_ENTER: KeyboardShortcut = 
-    KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter);
+pub const SHORTCUT_ENTER: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter);
 
 fn nested_hotkeys_ui(ui: &mut Ui) {
     Grid::new("shortcuts").striped(true).show(ui, |ui| {
@@ -206,7 +222,7 @@ pub fn shortcuts(ui: &Ui, message: &mut dyn TextBuffer, ccursor_range: &mut CCur
         (SHORTCUT_BOLD, "*"),
         (SHORTCUT_CODE, "`"),
         (SHORTCUT_ITALICS, "/"),
-        (SHORTCUT_SUBSCRIPT, "$"),
+        // (SHORTCUT_SUBSCRIPT, "$"),
         (SHORTCUT_SUPERSCRIPT, "^"),
         (SHORTCUT_STRIKETHROUGH, "~"),
         (SHORTCUT_UNDERLINE, "_"),
