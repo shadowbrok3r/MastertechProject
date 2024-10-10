@@ -1,3 +1,4 @@
+use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::{
     popup,
     text::LayoutJob,
@@ -150,7 +151,10 @@ where
         let down_pressed = state.focused
             && ui.input_mut(|input| input.consume_key(Modifiers::default(), Key::ArrowDown));
 
-        let mut text_edit = TextEdit::singleline(text_field);
+        let text_edit_id = ui.next_auto_id();
+        ui.skip_ahead_auto_ids(1);
+
+        let mut text_edit = TextEdit::singleline(text_field).id(text_edit_id);
         if let Some(set_properties) = set_properties {
             text_edit = set_properties(text_edit);
         }
@@ -159,7 +163,7 @@ where
         }
         let text_output = text_edit.show(ui);
         let text_response = text_output.response;
-        let text_edit_state = text_output.state;
+        let mut text_edit_state = text_output.state;
         state.focused = text_response.has_focus();
         // Get cursor position and extract substring
         let mut match_results = Vec::new();
@@ -203,18 +207,6 @@ where
                 }
             }
         }
-        // let matcher = SkimMatcherV2::default().ignore_case();
-        //
-        // let mut match_results = search
-        //     .into_iter()
-        //     .filter(|s| filter.as_ref().map_or(true, |f| f(s.as_ref())))
-        //     .filter_map(|s| {
-        //         let score = matcher.fuzzy_indices(s.as_ref(), text_field.as_str());
-        //         score.map(|(score, indices)| (s, score, indices))
-        //     })
-        //     .collect::<Vec<_>>();
-        //
-        // match_results.sort_by_key(|k| Reverse(k.1));
 
         if text_response.changed()
             || (state.selected_index.is_some()
@@ -242,18 +234,44 @@ where
         //     state.selected_index = None;
         // }
 
-        if accepted_by_keyboard {
-            text_response.request_focus()
-        }
+        // if accepted_by_keyboard {
+        //     text_response.request_focus()
+        // }
 
         if let (Some(index), true) = (
             state.selected_index,
             accepted_by_keyboard || !ui.memory(|mem| mem.is_popup_open(id)),
         ) {
-            if let Some(at_pos) = trigger_char_position {
+            if let Some(at_char_index) = trigger_char_position {
                 let selected_text = match_results[index].0.as_ref();
+                text_response.request_focus();
                 // Replace from '@' to cursor position with the selected text
-                text_field.replace_range(at_pos..cursor_char_index, &selected_text.to_string());
+                // Convert character indices to byte indices for slicing
+                let at_byte_index = text_field
+                    .char_indices()
+                    .nth(at_char_index)
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                let cursor_byte_index = text_field
+                    .char_indices()
+                    .nth(cursor_char_index)
+                    .map(|(i, _)| i)
+                    .unwrap_or_else(|| text_field.len());
+                text_field.replace_range(at_byte_index..cursor_byte_index, &selected_text);
+
+                // Calculate the new cursor character index
+                let inserted_text_length = selected_text.chars().count();
+                let new_cursor_char_index = at_char_index + inserted_text_length;
+
+                // Update the TextEditState cursor
+                let new_ccursor = CCursor::new(new_cursor_char_index);
+                let mut new_cursor_state = text_edit_state.cursor.clone();
+                let cursor_range = CCursorRange::one(new_ccursor);
+                new_cursor_state.set_char_range(Some(cursor_range));
+                text_edit_state.cursor = new_cursor_state;
+
+                // Store the updated TextEditState
+                text_edit_state.store(ui.ctx(), text_edit_id);
             }
             state.selected_index = None;
         }
@@ -286,7 +304,7 @@ where
                         highlight_matches(
                             output.as_ref(),
                             match_indices,
-                            ui.style().visuals.widgets.active.text_color(),
+                            Color32::from_rgb(191, 33, 101),
                         )
                     } else {
                         let mut job = LayoutJob::default();

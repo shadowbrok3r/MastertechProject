@@ -59,7 +59,17 @@ pub fn item_ui(ui: &mut Ui, item: easy_mark::Item<'_>) {
                 ui.add(Hyperlink::from_label_and_url(label, url).open_in_new_tab(true));
             }
         }
-
+        easy_mark::Item::UserTag(style, text) => {
+            let label = rich_text_from_style(text, &style);
+            if style.small && !style.raised {
+                ui.with_layout(Layout::left_to_right(Align::BOTTOM), |ui| {
+                    ui.set_height(row_height);
+                    ui.add(Link::new(label));
+                });
+            } else {
+                ui.add(Link::new(label));
+            }
+        }
         easy_mark::Item::Separator => {
             ui.add(Separator::default().horizontal());
         }
@@ -112,6 +122,7 @@ fn rich_text_from_style(text: &str, style: &easy_mark::Style) -> RichText {
         italics,
         small,
         raised,
+        usertag,
     } = *style;
 
     let small = small || raised; // Raised text is also smaller
@@ -133,6 +144,9 @@ fn rich_text_from_style(text: &str, style: &easy_mark::Style) -> RichText {
     }
     if underline {
         rich_text = rich_text.underline();
+    }
+    if usertag {
+        rich_text = rich_text.underline().color(Color32::from_rgb(191, 33, 101));
     }
     if strikethrough {
         rich_text = rich_text.strikethrough();
@@ -172,3 +186,4 @@ fn numbered_point(ui: &mut Ui, width: f32, number: &str) -> Response {
     );
     response
 }
+

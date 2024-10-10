@@ -1,5 +1,4 @@
-use crate::ui_tools::{color_between_delimiters, color_matching_text};
-use eframe::egui::{text, Align, Color32, Stroke, Style, TextFormat, TextStyle};
+use eframe::egui::{text, Align, Color32, FontId, Stroke, Style, TextFormat, TextStyle};
 
 use super::parser;
 
@@ -102,6 +101,32 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
                 skip = 0;
             }
             style.raised ^= true;
+        } else if text.starts_with('@') {
+            style.usertag ^= true;
+            skip = 1;
+            // Find the end of the mention (e.g., until a space or end of text)
+            let end_idx = text.find(' ').unwrap_or_else(|| text.len());
+
+            // Extract the mention text
+            let mention_text = &text[..end_idx];
+
+            // Append the '@' symbol with Pinkish color
+            job.append(
+                "@",
+                0.0,
+                TextFormat::simple(FontId::default(), Color32::from_rgb(191, 33, 101)),
+            );
+
+            // Append the rest of the mention with Cyan color
+            job.append(
+                &mention_text[skip..], // Exclude the '@' symbol
+                0.0,
+                TextFormat::simple(FontId::default(), Color32::from_rgb(33, 191, 138)),
+            );
+
+            // Move to the text after the mention
+            text = &text[end_idx..];
+            continue;
         } else {
             skip = 0;
         }
@@ -112,7 +137,7 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
             .find('\n')
             .map_or_else(|| text.len(), |i| (skip + i + 1));
         let end = text[skip..]
-            .find(&['*', '`', '~', '_', '/', '$', '^', '\\', '<', '['][..])
+            .find(&['*', '`', '~', '_', '/', '$', '^', '\\', '<', '[', '@'][..])
             .map_or_else(|| text.len(), |i| (skip + i).max(1));
 
         if line_end <= end {
@@ -131,22 +156,8 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
         }
     }
 
-    // Now, apply your coloring functions to 'job'
-    let mut final_job = text::LayoutJob::default();
-
-    // First, color text between delimiters in LIGHT_BLUE
-    let remaining_text =
-        color_between_delimiters(&mut final_job, text, ("@", " "), Color32::LIGHT_BLUE);
-
-    // Then, color all occurrences of "@" in LIGHT_RED
-    let final_text = color_matching_text(&mut final_job, &remaining_text, "@", Color32::LIGHT_RED);
-
-    // Append any remaining text
-    final_job.append(&final_text, 0.0, TextFormat::default());
-
-    final_job
+    job
 }
-
 fn format_from_style(egui_style: &Style, emark_style: &parser::Style) -> text::TextFormat {
     let color = if emark_style.strong || emark_style.heading {
         egui_style.visuals.strong_text_color()
@@ -187,7 +198,7 @@ fn format_from_style(egui_style: &Style, emark_style: &parser::Style) -> text::T
     let valign = if emark_style.raised {
         Align::TOP
     } else {
-        Align::BOTTOM
+        Align::Center
     };
 
     text::TextFormat {
@@ -201,4 +212,3 @@ fn format_from_style(egui_style: &Style, emark_style: &parser::Style) -> text::T
         ..Default::default()
     }
 }
-

@@ -1,12 +1,3 @@
-//! A parser for `EasyMark`: a very simple markup language.
-//!
-//! WARNING: `EasyMark` is subject to change.
-//
-//! # `EasyMark` design goals:
-//! 1. easy to parse
-//! 2. easy to learn
-//! 3. similar to markdown
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Item<'a> {
     /// `\n`
@@ -36,6 +27,9 @@ pub enum Item<'a> {
 
     /// language, code
     CodeBlock(&'a str, &'a str),
+
+    /// user tag
+    UserTag(Style, &'a str),
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -66,6 +60,9 @@ pub struct Style {
 
     /// ^raised^
     pub raised: bool,
+
+    /// @user.tag
+    pub usertag: bool,
 }
 
 /// Parser for the `EasyMark` markup language.
@@ -269,6 +266,19 @@ impl<'a> Iterator for Parser<'a> {
                 }
             }
 
+            // # UserTag
+            if self.s.starts_with('@') {
+                self.start_of_line = false;
+                self.style.usertag = true;
+                let this_line = &self.s[..self.s.find('\n').unwrap_or(self.s.len())];
+                if let Some(url_end) = this_line.find(' ') {
+                    let url = &self.s[1..url_end];
+                    self.s = &self.s[url_end + 1..];
+                    self.start_of_line = false;
+                    return Some(Item::UserTag(self.style, url));
+                }
+            }
+
             // `code`
             if let Some(item) = self.inline_code() {
                 return Some(item);
@@ -319,7 +329,7 @@ impl<'a> Iterator for Parser<'a> {
             // Swallow everything up to the next special character:
             let end = self
                 .s
-                .find(&['*', '`', '~', '_', '/', '$', '^', '\\', '<', '[', '\n'][..])
+                .find(&['*', '`', '~', '_', '/', '$', '^', '\\', '<', '[', '\n', '@'][..])
                 .map_or_else(|| self.s.len(), |special| special.max(1));
 
             let item = Item::Text(self.style, &self.s[..end]);
@@ -329,3 +339,4 @@ impl<'a> Iterator for Parser<'a> {
         }
     }
 }
+

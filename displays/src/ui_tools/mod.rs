@@ -100,6 +100,100 @@ pub fn color_between_delimiters(
     remaining_text
 }
 
+pub fn highlight_text(
+    text: &str,
+    pattern: &str,
+    delimiters: (&str, &str),
+    pattern_color: Color32,
+    delimiter_color: Color32,
+    base_format: &TextFormat,
+) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let mut i = 0;
+    let text_len = text.len();
+
+    while i < text_len {
+        let remaining_text = &text[i..];
+
+        // Check if remaining_text is empty before proceeding
+        if remaining_text.is_empty() {
+            break;
+        }
+
+        // Check if the text at position i matches the start delimiter
+        if remaining_text.starts_with(delimiters.0) {
+            // Append the start delimiter with base format
+            let delimiter_len = delimiters.0.len();
+            job.append(&text[i..i + delimiter_len], 0.0, base_format.clone());
+            i += delimiter_len;
+
+            // Ensure we don't go out of bounds
+            if i >= text_len {
+                break;
+            }
+
+            // Find the end delimiter
+            let end_delimiter_pos = text[i..].find(delimiters.1);
+
+            let end_idx = match end_delimiter_pos {
+                Some(pos) => pos,
+                None => text_len - i, // No end delimiter found, take the rest of the text
+            };
+
+            // Append the text between delimiters with delimiter color
+            let mut format = base_format.clone();
+            format.color = delimiter_color;
+
+            // Ensure we don't go out of bounds
+            if i + end_idx <= text_len {
+                job.append(&text[i..i + end_idx], 0.0, format);
+                i += end_idx;
+            } else {
+                // Not enough bytes left, break the loop
+                break;
+            }
+
+            // Check if end delimiter is present
+            if i + delimiters.1.len() <= text_len && text[i..].starts_with(delimiters.1) {
+                // Append the end delimiter with base format
+                job.append(&text[i..i + delimiters.1.len()], 0.0, base_format.clone());
+                i += delimiters.1.len();
+            }
+        }
+        // Check if the text at position i matches the pattern
+        else if remaining_text.starts_with(pattern) {
+            // Append the pattern with the pattern color
+            let pattern_len = pattern.len();
+            if i + pattern_len <= text_len {
+                let mut format = base_format.clone();
+                format.color = pattern_color;
+                job.append(&text[i..i + pattern_len], 0.0, format);
+                i += pattern_len;
+            } else {
+                // Not enough bytes left, break the loop
+                break;
+            }
+        } else {
+            // Append the current character with base format
+            if let Some(c) = remaining_text.chars().next() {
+                let c_len = c.len_utf8();
+                if i + c_len <= text_len {
+                    job.append(&text[i..i + c_len], 0.0, base_format.clone());
+                    i += c_len;
+                } else {
+                    // Not enough bytes left, break the loop
+                    break;
+                }
+            } else {
+                // No more characters, break the loop
+                break;
+            }
+        }
+    }
+
+    job
+}
+
 /// Function to color text that matches a specific substring
 pub fn color_matching_text(
     layout_job: &mut LayoutJob,

@@ -293,7 +293,7 @@ fn set_darker_style() -> Arc<Style> {
     let hovered_bg_color = Color32::from_rgb(35, 35, 40); // Background for hovered widgets
     let active_bg_color = Color32::from_rgb(28, 28, 28); // Background for active widgets
     let border_color = Color32::from_rgb(16, 16, 23); // Border color for windows and panels
-    let text_color = Color32::from_rgb(199, 202, 245); // Default text color
+    let text_color = Color32::from_rgb(219, 199, 245); // Color32::from_rgb(199, 202, 245); // Default text color
     let error_color = Color32::from_rgb(227, 104, 176); // Error text color
     let warn_color = Color32::from_rgb(191, 33, 101); // Warning text color
     let link_color = Color32::from_rgb(155, 104, 227); // Hyperlink color

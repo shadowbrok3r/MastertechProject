@@ -1,4 +1,4 @@
-use crate::ui_tools::{autocomplete::AutoCompleteTextEdit, mention_handler::MentionHandler};
+use crate::ui_tools::autocomplete::AutoCompleteTextEdit;
 use core::f32;
 use eframe::egui::{text::CCursorRange, *};
 use std::collections::BTreeSet;
@@ -13,7 +13,6 @@ pub struct EasyMarkEditor {
     show_rendered: bool,
     pub inputs: BTreeSet<String>,
     pub highlighter: highlighter::MemoizedEasymarkHighlighter,
-    // pub mention_handler: MentionHandler,
 }
 
 impl PartialEq for EasyMarkEditor {
@@ -31,7 +30,6 @@ impl Default for EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             inputs: BTreeSet::new(),
-            // mention_handler: MentionHandler::default(), // default_msg: DEFAULT_CODE.trim().to_owned(),
         }
     }
 }
@@ -44,7 +42,6 @@ impl EasyMarkEditor {
             show_rendered: false,
             highlighter: Default::default(),
             inputs: BTreeSet::new(),
-            // mention_handler, // default_msg: DEFAULT_CODE.trim().to_owned(),
         }
     }
 
@@ -101,6 +98,10 @@ impl EasyMarkEditor {
         } = self;
 
         let response = if self.highlight_editor {
+            // if inputs.iter().any(|i| i == &message) {
+            //     ui.style_mut().
+            // }
+
             let mut layouter = |ui: &Ui, easymark: &str, wrap_width: f32| {
                 let mut layout_job = highlighter.highlight(ui.style(), easymark);
                 layout_job.wrap.max_width = wrap_width;
@@ -117,6 +118,7 @@ impl EasyMarkEditor {
                         .desired_width(f32::INFINITY)
                         .font(FontId::proportional(12.0))
                         .frame(true)
+                        .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
                         .desired_rows(6)
                         .code_editor()
                 })
