@@ -395,8 +395,9 @@ pub struct TaskNotePayload {
     pub everest_initials: String,
     pub created_at: String,
     pub note: String,
-    // pub id_customer_thread: Option<String>,
-    // pub id_employee: i32
+    pub username: String,
+    pub id_customer_thread: Option<String>,
+    pub id_employee: Option<u64>,
 }
 
 #[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq, Difference)]
@@ -682,6 +683,8 @@ pub struct User {
     pub minio_access_key: Option<String>,
     pub minio_secret_key: Option<String>,
     pub user_settings: Option<UserSettings>,
+    pub id_prestashop: Option<u64>,
+    pub id_store: Option<String>,
 }
 impl Default for User {
     fn default() -> Self {
@@ -694,13 +697,13 @@ impl Default for User {
             minio_access_key: None,
             minio_secret_key: None,
             user_settings: None,
+            id_store: None,
+            id_prestashop: None,
         }
     }
 }
 
-impl Eq for User {
-
-}
+impl Eq for User {}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct UserSettings {

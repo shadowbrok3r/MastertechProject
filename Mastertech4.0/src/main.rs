@@ -5,40 +5,36 @@ use database::{
     schema::{
         buckets::list_buckets,
         utilities::{get_store_users, get_tasks},
-        ComputerData, GetKeysResponse, HardwareTests, Record, Store, TaskNotePayload, TICKET_TABLE,
+        ComputerData, GetKeysResponse, HardwareTests, Store, TaskNotePayload, TICKET_TABLE,
     },
-    Database, DATABASE, STORAGE_URL,
+    Database, STORAGE_URL,
 };
 use displays::ui_tools::{
     carl_dark::{Aesthetix, CarlDark},
     toasts::{Toast, ToastKind, ToastOptions},
 };
 
-use eframe::{
-    egui::{
-        style::{
-            HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets,
-        },
-        Color32, Context, CursorIcon, FontFamily, FontId, IconData, Rounding, Shadow, Stroke,
-        Style, Vec2, ViewportBuilder, ViewportCommand, Visuals,
-    },
-    App,
+use eframe::egui::{
+    style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets},
+    Color32, Context, CursorIcon, FontFamily, FontId, IconData, Rounding, Shadow, Stroke, Style,
+    Vec2, ViewportBuilder, ViewportCommand, Visuals,
 };
 
 use filesystem::system_info::ComputerInfo;
 use log::{debug, error, info};
 use pages::login_page::HASH;
 use semver::Version;
-use std::{
-    path::Path,
-    sync::{atomic::Ordering, Arc, Condvar, Mutex},
-};
+use std::sync::{atomic::Ordering, Arc, Condvar, Mutex};
 use surrealdb::RecordId;
 use tabs::{
     github::{
-        download_release, get_github_releases,
+        get_github_releases,
         self_updater::{run, Asset},
-    }, logger::logging::builder, stock::{find_attached_serials, get_extra_stock_info, get_stock, BoolOrString, MyRowData}, stock_quantities::StockQuantityData, tur_sheet::scaffold::AsanaResponse
+    },
+    logger::logging::builder,
+    stock::{find_attached_serials, get_extra_stock_info, get_stock, BoolOrString, MyRowData},
+    stock_quantities::StockQuantityData,
+    tur_sheet::scaffold::AsanaResponse,
 };
 use tokio::spawn;
 use utilities::{
@@ -263,7 +259,7 @@ impl eframe::App for MasterTechApp {
                 .flat_map(|r| r.assets.iter().cloned())
                 .collect();
 
-            for (release, asset) in releases.iter().zip(assets.iter()) {
+            for (release, _asset) in releases.iter().zip(assets.iter()) {
                 let current_version =
                     Version::parse(env!("CARGO_PKG_VERSION")).expect("Invalid version format");
                 let github_release_version =
@@ -275,7 +271,7 @@ impl eframe::App for MasterTechApp {
 
                     let client = self.context.client.clone();
                     info!("Found a new release! {:?}", &github_release_version);
-                    let asset = asset.clone();
+                    // let asset = asset.clone();
                     let tx = self.context.bytes_tx.clone();
                     spawn(async move {
                         let download = run(client, tx.clone()).await;
@@ -365,8 +361,10 @@ impl eframe::App for MasterTechApp {
 
             for msg in data.customer_messages {
                 task_notes.push(TaskNotePayload {
-                    everest_initials: msg.id_employee,
+                    everest_initials: msg.id_employee.clone(),
                     note: msg.message,
+                    id_customer_thread: Some(msg.id_customer_thread),
+                    id_employee: Some(msg.id_employee.parse::<u64>().unwrap_or_default()),
                     ..Default::default()
                 })
             }
@@ -573,7 +571,7 @@ impl eframe::App for MasterTechApp {
                 .collect();
             self.context.stock_quantity_table.replace(data);
         }
-        
+
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {
             // self.context.seb_info = Some(seb);
             self.context.json_editor.set_value(seb.clone()).unwrap();

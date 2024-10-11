@@ -103,7 +103,7 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
             style.raised ^= true;
         } else if text.starts_with('@') {
             style.usertag ^= true;
-            skip = 1;
+            skip = 0;
             // Find the end of the mention (e.g., until a space or end of text)
             let end_idx = text.find(' ').unwrap_or_else(|| text.len());
 
@@ -119,14 +119,13 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
 
             // Append the rest of the mention with Cyan color
             job.append(
-                &mention_text[skip..], // Exclude the '@' symbol
+                &mention_text[0..], // Exclude the '@' symbol
                 0.0,
                 TextFormat::simple(FontId::default(), Color32::from_rgb(33, 191, 138)),
             );
 
             // Move to the text after the mention
             text = &text[end_idx..];
-            continue;
         } else {
             skip = 0;
         }
