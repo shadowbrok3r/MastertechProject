@@ -136,8 +136,9 @@ impl ChatView {
                     new_msg = Some(txt.clone());
 
                     if let Some(usr) = self.current_user.clone(){
-                        
-                        let new_note = TaskNotePayload { everest_initials: usr.everest_initials, note: txt, task_id: self.task_id.clone(), ..Default::default() };
+                        let email = usr.email.split_once('@').clone();
+                        let username = email.unwrap_or_default().0.to_string();
+                        let new_note = TaskNotePayload { everest_initials: usr.everest_initials, note: txt, task_id: self.task_id.clone(), username, ..Default::default() };
 
                         spawn_local(async move {
                             let query = format!("CREATE task_note CONTENT $note");
