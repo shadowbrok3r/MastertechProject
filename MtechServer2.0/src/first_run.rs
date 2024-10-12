@@ -6,8 +6,8 @@ use crate::{
 use database::{
     live_data::listen_data,
     schema::{
-        utilities::{get_connected_clients, get_store_users, get_tasks},
-        CONNECTED_CLIENT_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
+        utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks},
+        CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
     },
     DATABASE,
 };
@@ -95,6 +95,8 @@ impl MtechServer {
         let notes_tx = self.context.notes_tx.clone();
         let stock_tx = self.context.stock_channel.0.clone();
         let ex_stock_tx = self.context.extra_stock_channel.0.clone();
+        let live_notif_tx = self.context.live_notification_tx.clone();
+        let notif_tx = self.context.notification_tx.clone();
 
         if let Some(usr) = self.context.current_user.as_ref() {
             info!("Getting Initial data");
@@ -124,21 +126,25 @@ impl MtechServer {
             }
 
             spawn_local(async move {
-                let listen_task_notes = listen_data(notes_tx, TASK_NOTE_TABLE).await;
-                info!("listen_task_notes: {listen_task_notes:?}");
+                let listen_data = listen_data(notes_tx, TASK_NOTE_TABLE).await;
+                info!("listen_task_notes: {listen_data:?}");
             });
 
             spawn_local(async move {
-                let listen_tasks = listen_data(live_tasks_tx, TASK_TABLE).await;
-                info!("listen_tasks: {listen_tasks:?}");
+                let listen_data = listen_data(live_tasks_tx, TASK_TABLE).await;
+                info!("listen_tasks: {listen_data:?}");
             });
 
             spawn_local(async move {
                 let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
-                info!("listen_data: {listen_data:?}");
+                info!("listen_clients: {listen_data:?}");
             });
 
-            // spawn_local(async move { let listen_data = listen_notifications(notification_tx.clone()).await; info!("listen_notifications: {listen_notifications:?}"); });
+            spawn_local(async move {
+                let listen_data = listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await;
+                info!("listen_notifications: {listen_data:?}");
+            });
+
             if self.context.tasks.is_empty() || self.context.store_users.is_empty() {
                 let store_selection = match usr.clone().store {
                     Store::RIV => 76,
@@ -156,7 +162,9 @@ impl MtechServer {
                     let get_connected_clients = get_connected_clients(tx, user.clone()).await;
                     let stock = get_stock(stock_tx.clone(), store_selection).await;
                     let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
+                    let notifications = get_notifications(notif_tx.clone(), user.clone().id).await;
 
+                    info!("Get Notifications: {notifications:?}");
                     info!("Extra Stock {stock_quantities:?}");
                     info!("Stock call: {stock:?} for Store: {:?}", store_selection);
                     info!("get_connected_clients: {get_connected_clients:?}");

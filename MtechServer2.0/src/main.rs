@@ -97,6 +97,7 @@ impl eframe::App for MtechServer {
         self.receive_task();
         self.receive_ticket();
         self.receive_notes();
+        self.receive_notification();
         self.menu_bar(ctx);
         self.context.handle_modals(ctx);
         self.context.toasts.show(ctx);
