@@ -413,8 +413,9 @@ pub struct ConnectedClient {
     pub last_update: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Difference)]
 pub struct Notification {
+    pub id: RecordId,
     /// receiver of notification
     pub user: UserId,
     /// description of notification

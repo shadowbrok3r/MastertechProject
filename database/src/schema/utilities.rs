@@ -261,7 +261,9 @@ impl TaskNoteMod for TaskNotePayload {
         if let Some(id) = id {
             info!("deleting id: {:?}", id.clone());
             DATABASE.set("id", id.key().to_string().clone()).await?;
-            let y: Option<Record> = DATABASE.delete((TASK_NOTE_TABLE, id.key().to_string())).await?;
+            let y: Option<Record> = DATABASE
+                .delete((TASK_NOTE_TABLE, id.key().to_string()))
+                .await?;
             info!("Deleted note: {:?}", y);
         }
         Ok(())
@@ -282,6 +284,33 @@ pub async fn update_task_notes(new_msg: String, task_id: RecordId) -> Result<(),
 
     info!("Updated notes: {update_task:?}");
     Ok(())
+}
+
+#[async_trait]
+pub trait NotificationMod {
+    async fn delete_notification(&mut self) -> Result<(), Error>;
+    async fn mark_notification(&mut self) -> Result<(), Error>;
+}
+
+#[async_trait]
+impl NotificationMod for Notification {
+    async fn delete_notification(&mut self) -> Result<(), Error> {
+        let query: Option<Record> = DATABASE
+            .delete(("notification", self.id.key().to_string()))
+            .await?;
+        info!("Deleted notification: {query:?}");
+        Ok(())
+    }
+
+    async fn mark_notification(&mut self) -> Result<(), Error> {
+        DATABASE.set("id", self.id.clone()).await?;
+        let query: Option<Record> = DATABASE
+            .query("UPDATE notification SET status = 'Read' WHERE id == $id")
+            .await?
+            .take(0)?;
+        info!("Updated notification: {query:?}");
+        Ok(())
+    }
 }
 
 // #[async_trait]

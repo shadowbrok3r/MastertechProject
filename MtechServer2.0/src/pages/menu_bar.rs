@@ -1,18 +1,20 @@
 use crate::app_state::{AppState, MainPages, MtechServer};
 use crate::utilities::TaskUiActions;
-use database::schema::Notification;
+use database::schema::utilities::NotificationMod;
+use database::schema::{Notification, TaskPayload};
 use database::{self, DATABASE};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use eframe::egui::{
     menu, Align, Context, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit,
 };
-use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
+use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Ui, Widget};
 use log::{error, info};
 use std::collections::BTreeSet;
 use wasm_bindgen_futures::spawn_local;
 
 impl MtechServer {
     pub fn menu_bar(&mut self, ctx: &Context) {
+        let mut inputs = BTreeSet::new();
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             menu::bar(ui, |ui| {
                 ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
@@ -49,14 +51,9 @@ impl MtechServer {
                     });
 
                     ui.add_space(30.0);
-                    let mut inputs = BTreeSet::new();
 
                     for task in self.context.tasks.iter() {
                         inputs.insert(task.task_name.clone());
-                        inputs.insert(format!(
-                            "{}",
-                            task.service_number.clone().unwrap_or_default()
-                        ));
                     }
                     ui.style_mut().visuals.widgets.inactive.bg_stroke =
                         Stroke::new(2.0, Color32::from_rgb(50, 2, 43));
@@ -227,11 +224,13 @@ impl MtechServer {
                             });
 
                             ui.horizontal_top(|ui| {
-                                let read_button =
-                                    ui.button(RichText::new("Read").color(Color32::LIGHT_GREEN));
+                                let read_button = ui.button(
+                                    RichText::new("Read")
+                                        .color(Color32::from_rgba_premultiplied(42, 222, 192, 60)),
+                                );
                                 ui.add_space(ui.available_width() - 50.0);
                                 let unread_button = ui.button(
-                                    RichText::new("Unread").color(Color32::from_rgb(113, 156, 202)),
+                                    RichText::new("Unread").color(Color32::from_rgb(191, 33, 101)),
                                 );
                                 if read_button.clicked() {
                                     self.context.read_notifications = true;
@@ -240,83 +239,97 @@ impl MtechServer {
                                     self.context.read_notifications = false;
                                 }
                             });
+                            let row_height = 150.;
+                            let total_rows = self.context.notifications.len();
+                            let scroll_area = ScrollArea::vertical().auto_shrink(false);
+                            ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
 
-                            ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                                let mut notifications: Vec<Notification> =
-                                    if self.context.read_notifications {
-                                        self.context
-                                            .notifications
-                                            .iter()
-                                            .filter(|n| n.status == "Read")
-                                            .cloned()
-                                            .collect()
-                                    } else {
-                                        self.context
-                                            .notifications
-                                            .iter()
-                                            .filter(|n| n.status == "Unread")
-                                            .cloned()
-                                            .collect()
-                                    };
+                            scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                for row in row_range {
+                                    let mut notifications: Vec<Notification> =
+                                        if self.context.read_notifications {
+                                            self.context
+                                                .notifications
+                                                .iter()
+                                                .filter(|n| n.status == "Read")
+                                                .cloned()
+                                                .collect()
+                                        } else {
+                                            self.context
+                                                .notifications
+                                                .iter()
+                                                .filter(|n| n.status == "Unread")
+                                                .cloned()
+                                                .collect()
+                                        };
 
-                                for notification in notifications.iter_mut() {
-                                    eframe::egui::Frame::none()
-                                        .fill(ui.style().visuals.extreme_bg_color)
-                                        .rounding(Rounding::same(12.0))
-                                        .inner_margin(Margin::same(10.0))
-                                        .outer_margin(Margin::same(5.0))
-                                        .stroke(Stroke::new(
-                                            0.5,
-                                            if notification.status == "Read" {
-                                                Color32::LIGHT_GREEN
-                                            } else {
-                                                Color32::from_rgb(113, 156, 202)
-                                            },
-                                        ))
-                                        .show(ui, |ui| {
-                                            ui.horizontal_top(|ui| {
-                                                let w = 250.0;
-                                                ui.set_width(w);
-                                                ui.add_space(w / 3.0);
-                                                ui.colored_label(
-                                                    Color32::from_rgb(113, 156, 202),
-                                                    RichText::new(
-                                                        notification.notification_type.clone(),
+                                    if let Some(notification) = notifications.get_mut(row) {
+                                        eframe::egui::Frame::none()
+                                            .fill(ui.style().visuals.extreme_bg_color)
+                                            .rounding(Rounding::same(12.0))
+                                            .inner_margin(Margin::same(10.0))
+                                            .outer_margin(Margin::same(5.0))
+                                            .stroke(Stroke::new(
+                                                0.5,
+                                                if notification.status == "Read" {
+                                                    Color32::from_rgba_premultiplied(
+                                                        42, 222, 192, 60,
                                                     )
-                                                    .font(FontId::proportional(12.0)),
-                                                );
-                                                ui.add_space(80.0);
-                                                let button = Button::new(
-                                                    RichText::new("X")
-                                                        .color(Color32::from_rgb(113, 156, 202)),
-                                                )
-                                                .ui(ui);
-                                                if button.clicked() {
-                                                    notification.status = "Read".to_string();
-                                                    // let id = notification
-                                                    // spawn_local(async move {
-                                                    //     let _x: Option<Record> = DATABASE.query("UPDATE notification SET status = 'Read' WHERE id == $id")
-                                                    //         // .bind(("id", id.clone()))
-                                                    //         .await.unwrap().take(0).unwrap();
-                                                    // });
-                                                }
-                                            });
-
-                                            eframe::egui::Frame::none()
-                                                .fill(ui.style().visuals.window_fill)
-                                                .rounding(Rounding::same(12.0))
-                                                .inner_margin(Margin::same(15.0))
-                                                .outer_margin(Margin::same(5.0))
-                                                .show(ui, |ui| {
-                                                    ui.label(
-                                                        notification
-                                                            .notification_description
-                                                            .clone(),
+                                                } else {
+                                                    Color32::from_rgb(191, 33, 101)
+                                                },
+                                            ))
+                                            .show(ui, |ui| {
+                                                ui.horizontal_top(|ui| {
+                                                    let w = 250.0;
+                                                    ui.set_width(w);
+                                                    ui.add_space(w / 3.0);
+                                                    ui.colored_label(
+                                                        Color32::from_rgba_premultiplied(
+                                                            42, 222, 192, 60,
+                                                        ),
+                                                        RichText::new(
+                                                            notification.notification_type.clone(),
+                                                        )
+                                                        .font(FontId::proportional(12.0)),
                                                     );
-                                                })
-                                                .inner;
-                                        })
-                                        .inner;
+                                                    ui.add_space(80.0);
+                                                    let button = Button::new(
+                                                        RichText::new("X")
+                                                            .color(Color32::from_rgb(191, 33, 101)),
+                                                    )
+                                                    .ui(ui);
+                                                    if button.clicked() {
+                                                        let mut notif = notification.clone();
+                                                        if notification.status == "Read" {
+                                                            spawn_local(async move {
+                                                                notif
+                                                                    .delete_notification()
+                                                                    .await
+                                                                    .unwrap();
+                                                            });
+                                                        } else {
+                                                            notification.status =
+                                                                "Read".to_string();
+                                                            spawn_local(async move {
+                                                                notif
+                                                                    .mark_notification()
+                                                                    .await
+                                                                    .unwrap();
+                                                            });
+                                                        }
+                                                    }
+                                                });
+                                                show_notification(
+                                                    ui,
+                                                    &notification.notification_description,
+                                                    &inputs,
+                                                    self.context.ui_actions_tx.clone(),
+                                                    &self.context.tasks,
+                                                );
+                                            })
+                                            .inner;
+                                    }
                                 }
                             });
                         });
@@ -351,5 +364,89 @@ impl MtechServer {
                 }
             })
         });
+    }
+}
+
+pub fn find_task_in_description(
+    notification_description: &str,
+    task_names: &BTreeSet<String>, // BTreeSet of task names
+) -> Vec<String> {
+    // Collect matches where the task name is found in the notification description
+    let matches: Vec<String> = task_names
+        .iter()
+        .filter_map(|task_name| {
+            if notification_description.contains(task_name) {
+                Some(task_name.clone()) // Add the matching task name
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    matches
+}
+
+fn show_notification(
+    ui: &mut Ui,
+    notification_description: &str,
+    task_names: &BTreeSet<String>,
+    ui_actions_tx: crossbeam::channel::Sender<TaskUiActions>,
+    tasks: &Vec<TaskPayload>,
+) {
+    // Find task names in the notification description
+    let matches = find_task_in_description(notification_description, task_names);
+    // We assume only one match for simplicity; handle multiple matches if necessary
+    if let Some(task_name) = matches.get(0) {
+        // Find where the task name is in the notification description
+        if let Some(pos) = notification_description.find(task_name) {
+            // Split the text into before, task name, and after
+            let before = &notification_description[..pos];
+            let after = &notification_description[pos + task_name.len()..];
+
+            // Display the text parts with different formatting
+            eframe::egui::Frame::none()
+                .fill(ui.style().visuals.window_fill)
+                .rounding(Rounding::same(12.0))
+                .inner_margin(Margin::same(15.0))
+                .outer_margin(Margin::same(5.0))
+                .show(ui, |ui| {
+                    info!("{pos:?}, {before:?}, {task_name:?}, {after:?}");
+                    ui.horizontal_wrapped(|ui| {
+                        // Show the text before the task name
+                        ui.label(RichText::new(before));
+
+                        // Show the task name in a different color (e.g., blue)
+                        if Button::new(
+                            RichText::new(task_name)
+                                .color(Color32::from_rgba_premultiplied(42, 222, 192, 60)),
+                        )
+                        .ui(ui)
+                        .clicked
+                        {
+                            let task = tasks.iter().find(|&x| {
+                                x.task_name == *task_name
+                                    || format!("{}", x.service_number.clone().unwrap_or_default())
+                                        == format!("{}", *task_name)
+                            });
+
+                            if let Some(task) = task {
+                                let _ = ui_actions_tx
+                                    .try_send(TaskUiActions::OpenTaskModal(task.clone()));
+                            }
+                        }
+
+                        // Show the text after the task name
+                        ui.label(after);
+                    });
+                });
+        } else {
+            info!("No task found");
+            // If no task name is found, display the whole description normally
+            ui.label(notification_description);
+        }
+    } else {
+        info!("No Task Name is matched");
+        // If no task name is matched, just show the description
+        ui.label(notification_description);
     }
 }

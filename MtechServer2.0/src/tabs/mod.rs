@@ -16,6 +16,7 @@ pub mod task_audit;
 pub mod terminal;
 pub mod toolbox;
 pub mod web_console;
+// pub mod all_tasks;
 
 use super::app_state::MtechServerContext;
 use eframe::egui::{Ui, WidgetText};

@@ -289,6 +289,10 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub notification_rx: Receiver<Vec<Notification>>,
     #[serde(skip)]
+    pub live_notification_tx: Sender<(Action, Notification)>,
+    #[serde(skip)]
+    pub live_notification_rx: Receiver<(Action, Notification)>,
+    #[serde(skip)]
     pub app_state_tx: Sender<AppState>,
     #[serde(skip)]
     pub app_state_rx: Receiver<AppState>,
@@ -406,6 +410,8 @@ impl MtechServer {
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
         let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
+        let (live_notification_tx, live_notification_rx) =
+            channel::unbounded::<(Action, Notification)>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let (live_output_tx, live_output_rx) = channel::unbounded::<LiveOutput>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
@@ -460,6 +466,9 @@ impl MtechServer {
             new_note_rx,
             notification_tx,
             notification_rx,
+            live_notification_tx,
+            live_notification_rx,
+
             live_output_tx,
             live_output_rx,
             github_releases_channel,
