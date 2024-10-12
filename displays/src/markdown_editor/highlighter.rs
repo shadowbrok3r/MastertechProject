@@ -119,7 +119,7 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
 
             // Append the rest of the mention with Cyan color
             job.append(
-                &mention_text[0..], // Exclude the '@' symbol
+                &mention_text[1..], // Exclude the '@' symbol
                 0.0,
                 TextFormat::simple(FontId::default(), Color32::from_rgb(33, 191, 138)),
             );
