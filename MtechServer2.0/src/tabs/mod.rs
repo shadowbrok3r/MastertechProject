@@ -15,6 +15,7 @@ pub mod store_tasks;
 pub mod task_audit;
 pub mod terminal;
 pub mod toolbox;
+pub mod user_chat;
 pub mod web_console;
 // pub mod all_tasks;
 
