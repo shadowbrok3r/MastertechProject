@@ -76,9 +76,6 @@ impl eframe::App for MasterTechApp {
             let tx = self.context.db_tx.clone();
             let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
             let pair_clone = Arc::clone(&pair);
-            let github_tx = self.context.github_releases_channel.0.clone();
-            let client = self.context.client.clone();
-            let ex_stock_tx = self.context.extra_stock_channel.0.clone();
 
             spawn(async move {
                 match ComputerData::default().get_computer_data().await {
@@ -92,13 +89,6 @@ impl eframe::App for MasterTechApp {
                     }
                     Err(e) => error!("Error getting specs: {e:?}"),
                 }
-                match get_github_releases(github_tx, client).await {
-                    Ok(_) => info!("Got github releases"),
-                    Err(e) => error!("Error getting github releases: {e:?}"),
-                }
-                let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
-
-                info!("Extra Stock {stock_quantities:?}");
             });
 
             // Wait for the spawned task to complete and notify the condition variable
@@ -202,6 +192,9 @@ impl eframe::App for MasterTechApp {
                             info!("Getting Minio files");
 
                             let stock_tx = self.context.stock_channel.0.clone();
+                            let github_tx = self.context.github_releases_channel.0.clone();
+                            let client = self.context.client.clone();
+                            let ex_stock_tx = self.context.extra_stock_channel.0.clone();
                             let store_selection = match usr.store {
                                 Store::RIV => 76,
                                 Store::LTN => 73,
@@ -228,7 +221,13 @@ impl eframe::App for MasterTechApp {
                                     }
                                     Err(e) => error!("Error getting minio files: {e:?}"),
                                 }
+                                match get_github_releases(github_tx, client).await {
+                                    Ok(_) => info!("Got github releases"),
+                                    Err(e) => error!("Error getting github releases: {e:?}"),
+                                }
+                                let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
 
+                                info!("Extra Stock {stock_quantities:?}");
                                 let stock = get_stock(stock_tx.clone(), store_selection).await;
                                 info!("Stock call: {stock:?} for Store: {:?}", store_selection);
                             });
@@ -360,13 +359,24 @@ impl eframe::App for MasterTechApp {
                 .to_string();
 
             for msg in data.customer_messages {
-                task_notes.push(TaskNotePayload {
+                let mut task_note_payload = TaskNotePayload {
                     everest_initials: msg.id_employee.clone(),
                     note: msg.message,
                     id_customer_thread: Some(msg.id_customer_thread),
                     id_employee: Some(msg.id_employee.parse::<u64>().unwrap_or_default()),
                     ..Default::default()
-                })
+                };
+                if let Some(users) = self.context.store_users.as_ref() {
+                    for user in users {
+                        if let Some(presta_id) = user.id_prestashop {
+                            if msg.id_employee == presta_id.to_string() {
+                                task_note_payload.everest_initials = user.everest_initials.clone();
+                                task_note_payload.user = Some(user.id.clone());
+                            }
+                        }
+                    }
+                };
+                task_notes.push(task_note_payload);
             }
 
             customer.id = data.customer.id;
@@ -418,6 +428,7 @@ impl eframe::App for MasterTechApp {
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv() {
+            // info!("Store Users: {users:?}");
             self.context.store_users = Some(users);
         }
 
