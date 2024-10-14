@@ -49,7 +49,7 @@ impl<D> GetAssociatedDataFromId<D> for RecordId {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Record {
     #[allow(dead_code)]
-    pub id: Thing,
+    pub id: RecordId,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -398,6 +398,7 @@ pub struct TaskNotePayload {
     pub username: String,
     pub id_customer_thread: Option<String>,
     pub id_employee: Option<u64>,
+    pub user: Option<RecordId>,
 }
 
 #[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq, Difference)]
