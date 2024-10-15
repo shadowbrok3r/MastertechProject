@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use structdiff::{Difference, StructDiff};
 use surrealdb::{
     // opt::Resource::RecordId,
-    sql::Thing,
     RecordId,
 };
 
