@@ -396,7 +396,7 @@ pub struct TaskNotePayload {
     pub note: String,
     pub username: String,
     pub id_customer_thread: Option<String>,
-    pub id_employee: Option<u64>,
+    pub id_employee: Option<String>,
     pub user: Option<RecordId>,
 }
 

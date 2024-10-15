@@ -161,7 +161,7 @@ pub async fn send_payload(
 
         if let Some(ref record) = create_task_record {
             let update_task: Vec<Record> = DATABASE
-                .query("UPDATE task SET task_note = $notes WHERE id == $task")
+                .query("UPDATE task SET task_note += $notes WHERE id == $task")
                 .bind(("task", record.clone())) // .key().to_string().clone()
                 .bind(("notes", note_ids))
                 .await?
