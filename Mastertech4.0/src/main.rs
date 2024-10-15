@@ -362,6 +362,7 @@ impl eframe::App for MasterTechApp {
                 let mut task_note_payload = TaskNotePayload {
                     everest_initials: msg.id_employee.clone(),
                     note: msg.message,
+                    created_at: msg.date_add,
                     id_customer_thread: Some(msg.id_customer_thread),
                     id_employee: Some(msg.id_employee.parse::<u64>().unwrap_or_default()),
                     ..Default::default()

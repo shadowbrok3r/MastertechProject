@@ -70,50 +70,76 @@ pub async fn send_payload(
     task_data.everest_initials = queried_salesman.everest_initials;
     task_data.assignee = queried_salesman.id;
 
-    // if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await?{
-    //     let update_cust_record: Vec<RecordId> = DATABASE.update(cust.key().to_string()).content(customer_data.clone()).await?;
-    //     // info!("Customer updated: {update_cust_record:?}");
-    //
-    //     if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await?{
-    //         if send_specs{
-    //             let create_computer_record: Vec<RecordId> = DATABASE.update(computer_record.key().to_string()).content(computer_data).await?;
-    //             // info!("create_computer_record: {create_computer_record:?}");
-    //         }
-    //     }else{
-    //         let create_computer_record: Option<RecordId> = DATABASE.create(COMPUTER_TABLE).content(computer_data).await?;
-    //         // info!("create_computer_record: {create_computer_record:?}");
-    //     }
-    //     if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await?{
-    //         let service_ticket_record: Vec<RecordId> = DATABASE.update(ticket.key().to_string()).content(ticket_data).await?;
-    //         // info!("service_ticket_record: {service_ticket_record:?}");
-    //     }else{
-    //         let service_ticket_record: Option<RecordId> = DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
-    //         // info!("service_ticket_record: {service_ticket_record:?}");
-    //     }
-    // } else {
-    //     match DATABASE.create::<Option<Record>>(CUSTOMER_TABLE).content(customer_data.clone()).await {
-    //         Ok(create_cust_record) => info!("Created Record: {create_cust_record:?}"),
-    //         Err(e) => error!("Error with create_cust_record: {e:?}")
-    //     }
-    //     if send_specs{
-    //         match DATABASE.create::<Option<Record>>(COMPUTER_TABLE).content(computer_data).await{
-    //             Ok(create_computer_record) => info!("Created Record: {create_computer_record:?}"),
-    //             Err(e) => error!("Error with create_computer_record: {e:?}")
-    //         }
-    //     }
-    //     match DATABASE.create::<Option<Record>>(TICKET_TABLE).content(ticket_data).await{
-    //         Ok(create_ticket_record) => info!("Created Record: {create_ticket_record:?}"),
-    //         Err(e) => error!("Error with create_ticket_record: {e:?}")
-    //     }
-    // }
+    if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await? {
+        let update_cust_record: Vec<RecordId> = DATABASE
+            .update(cust.key().to_string())
+            .content(customer_data.clone())
+            .await?;
+        info!("Customer updated: {update_cust_record:?}");
+
+        if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await? {
+            if send_specs {
+                let create_computer_record: Vec<RecordId> = DATABASE
+                    .update(computer_record.key().to_string())
+                    .content(computer_data)
+                    .await?;
+                info!("create_computer_record: {create_computer_record:?}");
+            }
+        } else {
+            let create_computer_record: Option<RecordId> = DATABASE
+                .create(COMPUTER_TABLE)
+                .content(computer_data)
+                .await?;
+            info!("create_computer_record: {create_computer_record:?}");
+        }
+        if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await? {
+            let service_ticket_record: Vec<RecordId> = DATABASE
+                .update(ticket.key().to_string())
+                .content(ticket_data)
+                .await?;
+            info!("service_ticket_record: {service_ticket_record:?}");
+        } else {
+            let service_ticket_record: Option<RecordId> =
+                DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
+            info!("service_ticket_record: {service_ticket_record:?}");
+        }
+    } else {
+        match DATABASE
+            .create::<Option<Record>>(CUSTOMER_TABLE)
+            .content(customer_data.clone())
+            .await
+        {
+            Ok(create_cust_record) => info!("Created Record: {create_cust_record:?}"),
+            Err(e) => error!("Error with create_cust_record: {e:?}"),
+        }
+        if send_specs {
+            match DATABASE
+                .create::<Option<Record>>(COMPUTER_TABLE)
+                .content(computer_data)
+                .await
+            {
+                Ok(create_computer_record) => info!("Created Record: {create_computer_record:?}"),
+                Err(e) => error!("Error with create_computer_record: {e:?}"),
+            }
+        }
+        match DATABASE
+            .create::<Option<Record>>(TICKET_TABLE)
+            .content(ticket_data)
+            .await
+        {
+            Ok(create_ticket_record) => info!("Created Record: {create_ticket_record:?}"),
+            Err(e) => error!("Error with create_ticket_record: {e:?}"),
+        }
+    }
 
     info!("Task Data: {:?}", &task_data);
 
-    let create_task_record: Option<RecordId> = //  output: Err(Serialization error: 
-                                               //  failed to deserialize; expected an 
-                                               //  enum variant of Id, found $surrealdb::private::sql::Thing 
-                                               //  { tb: "task", id: Id::String("mgklqabp0yx96h5z9vji") }
-        DATABASE.create(TASK_TABLE).content(task_data).await?;
+    let create_task_record: Option<Record> = DATABASE.create(TASK_TABLE).content(task_data).await?;
+    //  output: Err(Serialization error:
+    //  failed to deserialize; expected an
+    //  enum variant of Id, found $surrealdb::private::sql::Thing
+    //  { tb: "task", id: Id::String("mgklqabp0yx96h5z9vji") }
+
     info!("create_task_record: {create_task_record:?}");
 
     if task_notes.len() > 0 {
@@ -122,9 +148,9 @@ pub async fn send_payload(
 
         for mut note in task_notes {
             if let Some(id) = &create_task_record {
-                note.task_id = Some(id.clone());
+                note.task_id = Some(id.id.clone());
                 info!("Task ID // Note ID: {:?}\n{:?}", id, &note.task_id);
-                let create_task_note_record: Option<RecordId> =
+                let create_task_note_record: Option<Record> =
                     DATABASE.create(TASK_NOTE_TABLE).content(note).await?;
                 info!("create_task_note_record: {:?}", create_task_note_record);
                 if let Some(note_record) = create_task_note_record {
@@ -134,7 +160,7 @@ pub async fn send_payload(
         }
 
         if let Some(ref record) = create_task_record {
-            let update_task: Vec<RecordId> = DATABASE
+            let update_task: Vec<Record> = DATABASE
                 .query("UPDATE task SET task_note = $notes WHERE id == $task")
                 .bind(("task", record.clone())) // .key().to_string().clone()
                 .bind(("notes", note_ids))
@@ -147,4 +173,3 @@ pub async fn send_payload(
 
     Ok(())
 }
-
