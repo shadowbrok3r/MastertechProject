@@ -138,7 +138,25 @@ impl ChatView {
                     if let Some(usr) = self.current_user.clone(){
                         let email = usr.email.split_once('@').clone();
                         let username = email.unwrap_or_default().0.to_string();
-                        let new_note = TaskNotePayload { everest_initials: usr.everest_initials, note: txt, task_id: self.task_id.clone(), username, ..Default::default() };
+                        let threads = self.messages.iter().map(|m| m.id_customer_thread.clone()).collect::<Vec<Option<String>>>();
+                        let employee_id = usr.id_prestashop.clone().unwrap_or_default();
+                        let id_employee = Some(employee_id.to_string());
+                        let mut new_note = TaskNotePayload {
+                            everest_initials: usr.everest_initials, 
+                            note: txt, 
+                            task_id: self.task_id.clone(), 
+                            username,
+                            user: Some(usr.id),
+                            id_employee,
+                            // id_customer_thread: id 
+                            ..Default::default() 
+                        };
+
+                        for thread in threads {
+                            if let Some(thread_id) = thread {
+                                new_note.id_customer_thread = Some(thread_id);
+                            }
+                        }
 
                         spawn_local(async move {
                             let query = format!("CREATE task_note CONTENT $note");

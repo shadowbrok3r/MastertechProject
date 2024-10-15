@@ -364,7 +364,12 @@ impl eframe::App for MasterTechApp {
                     note: msg.message,
                     created_at: msg.date_add,
                     id_customer_thread: Some(msg.id_customer_thread),
-                    id_employee: Some(msg.id_employee.parse::<u64>().unwrap_or_default()),
+                    id_employee: Some(
+                        msg.id_employee
+                            .parse::<u64>()
+                            .unwrap_or_default()
+                            .to_string(),
+                    ),
                     ..Default::default()
                 };
                 if let Some(users) = self.context.store_users.as_ref() {
