@@ -6,7 +6,7 @@ use schema::User;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, sync::RwLock};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Wss},
+    engine::remote::ws::{Client as WsClient, Ws, Wss},
     opt::auth::{Jwt, Record as SurrealRec},
     Error, Surreal,
 };
@@ -89,7 +89,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        DATABASE.connect::<Wss>(DB_URL).await?; //(&get_db_url()).await?;
+        DATABASE.connect::<Ws>(DB_URL_LOCAL).await?; //(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt {

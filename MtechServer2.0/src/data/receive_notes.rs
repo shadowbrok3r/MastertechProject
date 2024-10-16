@@ -57,5 +57,24 @@ impl MtechServer {
                 }
             }
         }
+        // if let Ok(notes) = self.context.init_notes_rx.try_recv() {
+        //     info!("{:?}", notes);
+        //     self.context.task_notes = notes;
+        //     for (task, task_note) in self
+        //         .context
+        //         .tasks
+        //         .iter_mut()
+        //         .zip(self.context.task_notes.iter())
+        //     {
+        //         if let (Some(id_task), Some(task_id)) =
+        //             (task.id.as_ref(), task_note.task_id.as_ref())
+        //         {
+        //             if task_id == id_task {
+        //                 info!("Got a match: {task_id:?}");
+        //                 task.task_note.push(task_note.clone());
+        //             }
+        //         }
+        //     }
+        // }
     }
 }
