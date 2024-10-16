@@ -6,7 +6,10 @@ use crate::{
 use database::{
     live_data::listen_data,
     schema::{
-        utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks},
+        utilities::{
+            get_connected_clients, get_notes_for_task, get_notifications, get_store_users,
+            get_tasks,
+        },
         CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
     },
     DATABASE,
@@ -93,6 +96,7 @@ impl MtechServer {
         let store_users_tx = self.context.store_users_tx.clone();
         let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
+        // TODO let tasks_notes = self.;
         let stock_tx = self.context.stock_channel.0.clone();
         let ex_stock_tx = self.context.extra_stock_channel.0.clone();
         let live_notif_tx = self.context.live_notification_tx.clone();
@@ -163,7 +167,7 @@ impl MtechServer {
                     let stock = get_stock(stock_tx.clone(), store_selection).await;
                     let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
                     let notifications = get_notifications(notif_tx.clone(), user.clone().id).await;
-
+                    // TODO let notes = get_notes_for_task(tx, task_id)
                     info!("Get Notifications: {notifications:?}");
                     info!("Extra Stock {stock_quantities:?}");
                     info!("Stock call: {stock:?} for Store: {:?}", store_selection);

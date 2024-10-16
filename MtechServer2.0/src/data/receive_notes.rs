@@ -38,12 +38,9 @@ impl MtechServer {
                 if let (Some(id), Some(user)) =
                     (&payload.1.clone().task_id, &self.context.current_user)
                 {
-                    if let Some(task) = self
-                        .context
-                        .tasks
-                        .iter()
-                        .find(|task| task.id == Some(id.clone()) && task.assignee == user.id)
-                    {
+                    if let Some(task) = self.context.tasks.iter().find(|task| {
+                        task.id == Some(id.clone()) && task.assignee == user.id && !task.completed
+                    }) {
                         // This should work with ID and not initials
                         if payload.1.everest_initials != user.everest_initials {
                             let toast = &mut self.context.toasts;
