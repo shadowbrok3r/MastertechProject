@@ -137,6 +137,8 @@ pub struct MtechServerContext {
     pub live_tasks: Option<LiveTaskPayload>,
     /// {All task data}
     pub tasks: Vec<TaskPayload>,
+    // {All task notes}
+    // pub task_notes: Vec<TaskNotePayload>,
     /// {Task transmission channel over crossbeam}
     #[serde(skip)]
     pub tasks_tx: Sender<(Action, TaskPayload)>,
@@ -158,6 +160,10 @@ pub struct MtechServerContext {
     pub notes_tx: Sender<(Action, TaskNotePayload)>,
     #[serde(skip)]
     pub notes_rx: Receiver<(Action, TaskNotePayload)>,
+    // #[serde(skip)]
+    // pub init_notes_tx: Sender<Vec<TaskNotePayload>>,
+    // #[serde(skip)]
+    // pub init_notes_rx: Receiver<Vec<TaskNotePayload>>,
     #[serde(skip)]
     pub new_note_tx: Sender<TaskNotePayload>,
     #[serde(skip)]
@@ -408,6 +414,7 @@ impl MtechServer {
         let (connected_clients_tx, connected_clients_rx) =
             channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
+        // let (init_notes_tx, init_notes_rx) = channel::unbounded::<Vec<TaskNotePayload>>();
         let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
         let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
         let (live_notification_tx, live_notification_rx) =
@@ -468,7 +475,8 @@ impl MtechServer {
             notification_rx,
             live_notification_tx,
             live_notification_rx,
-
+            // init_notes_tx,
+            // init_notes_rx,
             live_output_tx,
             live_output_rx,
             github_releases_channel,
@@ -516,6 +524,7 @@ impl MtechServer {
             open_tabs,
             style: None,
             added_nodes: Vec::new(),
+            // task_notes: Vec::new(),
             new_note: false,
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),

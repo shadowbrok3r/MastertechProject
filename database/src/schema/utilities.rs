@@ -144,7 +144,7 @@ pub fn deserialize_command(bytes: &[u8]) -> Cmd {
 
 pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
     debug!("get_tasks");
-    let query = format!("SELECT * FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer, task_note");
+    let query = format!("SELECT *, (SELECT * FROM task_note WHERE task_id == $parent.id) AS task_note FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer");
     let query_results: Vec<TaskPayload> = DATABASE.query(query).await?.take(0)?;
     tx.try_send(query_results)?;
     Ok(())
@@ -152,12 +152,12 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
 
 pub async fn get_notes_for_task(
     tx: Sender<Vec<TaskNotePayload>>,
-    task_id: Id,
+    // task_id: Id,
 ) -> Result<(), Error> {
     debug!("get_associated_task_notes");
-    DATABASE.set("id", task_id).await?;
+    // DATABASE.set("id", task_id).await?;
     let notes: Vec<TaskNotePayload> = DATABASE
-        .query("SELECT * FROM task_note WHERE task_id == $id")
+        .query("SELECT * FROM task_note") // WHERE task_id == $id
         .await?
         .take(0)?;
     debug!("note: {:?}", notes);

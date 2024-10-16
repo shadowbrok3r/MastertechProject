@@ -7,7 +7,7 @@ use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, Re
 use displays::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use surrealdb::RecordId;
 use wasm_bindgen_futures::spawn_local;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use eframe::emath::Vec2;
 use serde::Serialize;
 use log::{error, info};
@@ -138,7 +138,11 @@ impl ChatView {
                     if let Some(usr) = self.current_user.clone(){
                         let email = usr.email.split_once('@').clone();
                         let username = email.unwrap_or_default().0.to_string();
+
                         let threads = self.messages.iter().map(|m| m.id_customer_thread.clone()).collect::<Vec<Option<String>>>();
+
+                        let id_customer_thread = threads.get(0).cloned().unwrap_or_default();
+
                         let employee_id = usr.id_prestashop.clone().unwrap_or_default();
                         let id_employee = Some(employee_id.to_string());
                         let mut new_note = TaskNotePayload {
@@ -148,7 +152,7 @@ impl ChatView {
                             username,
                             user: Some(usr.id),
                             id_employee,
-                            // id_customer_thread: id 
+                            id_customer_thread,
                             ..Default::default() 
                         };
 
@@ -186,6 +190,11 @@ impl ChatView {
                 let fixed_height = 50.0;
                 let min_width = 200.0;
                 let other = min_width - 30.0;
+                self.messages.sort_by_key(|message| 
+                    DateTime::parse_from_rfc3339(&message.created_at.clone())
+                        .unwrap_or_default()
+                        .with_timezone(&Utc)
+                    );
                 for item in self.messages.iter_mut(){
                     let mut is_message_from_myself = false;
                     if let Some(user) = &self.current_user{

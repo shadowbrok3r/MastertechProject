@@ -96,7 +96,7 @@ impl MtechServer {
         let store_users_tx = self.context.store_users_tx.clone();
         let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
-        // TODO let tasks_notes = self.;
+        // let init_notes_tx = self.context.init_notes_tx.clone();
         let stock_tx = self.context.stock_channel.0.clone();
         let ex_stock_tx = self.context.extra_stock_channel.0.clone();
         let live_notif_tx = self.context.live_notification_tx.clone();
@@ -167,8 +167,9 @@ impl MtechServer {
                     let stock = get_stock(stock_tx.clone(), store_selection).await;
                     let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
                     let notifications = get_notifications(notif_tx.clone(), user.clone().id).await;
-                    // TODO let notes = get_notes_for_task(tx, task_id)
+                    // let notes = get_notes_for_task(init_notes_tx).await;
                     info!("Get Notifications: {notifications:?}");
+                    // info!("Get Initial Notes: {notes:?}");
                     info!("Extra Stock {stock_quantities:?}");
                     info!("Stock call: {stock:?} for Store: {:?}", store_selection);
                     info!("get_connected_clients: {get_connected_clients:?}");
