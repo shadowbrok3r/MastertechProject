@@ -150,6 +150,21 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
     Ok(())
 }
 
+pub async fn get_notes_for_task(
+    tx: Sender<Vec<TaskNotePayload>>,
+    task_id: Id,
+) -> Result<(), Error> {
+    debug!("get_associated_task_notes");
+    DATABASE.set("id", task_id).await?;
+    let notes: Vec<TaskNotePayload> = DATABASE
+        .query("SELECT * FROM task_note WHERE task_id == $id")
+        .await?
+        .take(0)?;
+    debug!("note: {:?}", notes);
+    tx.try_send(notes)?;
+    Ok(())
+}
+
 pub async fn get_associated_task_notes(
     tx: Sender<TaskNotePayload>,
     note_id: Id,
