@@ -173,7 +173,7 @@ impl ChatView {
 
                         spawn_local(async move {
                             DATABASE.set("note", new_note).await.unwrap();
-                            let update_task_note: Vec<Record> = DATABASE.query("fn::create_task_note($note)").await.unwrap().take(0).unwrap(); // fn::create_task_note($note)
+                            let update_task_note: Vec<Record> = DATABASE.query("CREATE task_note CONTENT $note").await.unwrap().take(0).unwrap(); // CREATE task_note CONTENT $note
                             info!("Update_note: {:?}", update_task_note);
                         });
                     }

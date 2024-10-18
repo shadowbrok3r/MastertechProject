@@ -147,7 +147,7 @@ pub async fn send_payload(
             if let Some(id) = &create_task_record {
                 info!("Task ID // Note ID: {:?}\n{:?}", id, &note.task_id);
                 let create_task_note_record: Vec<Record> = DATABASE
-                    .query("fn::create_task_note($note)")
+                    .query("CREATE task_note CONTENT $note") // 
                     .bind(("note", note))
                     .await?
                     .take(0)?;
