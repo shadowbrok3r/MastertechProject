@@ -1,5 +1,5 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
-use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Layout, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
+use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Layout, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
 use database::schema::{CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TicketData};
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use get_ticket::{request_seb_info, SendRequest};
@@ -176,6 +176,7 @@ impl MastertechContext {
                                                         for user in users.iter(){
                                                             let parsed = user.email.split_once("@").unwrap_or(("","")).0;
                                                             inputs.insert(parsed.to_string());
+                                                            // info!("Inputs: {:?}", inputs);
                                                         }
                                                         let size = vec2( self.widget_size + 2.0, 14.0 );
                                                         let _result = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
@@ -188,11 +189,13 @@ impl MastertechContext {
                                                                 .min_size(size)
                                                                 .font(FontId::proportional(12.0))
                                                                 .frame(true)
+                                                                .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
                                                                 // .horizontal_align(egui::Align::Center)
                                                         })
                                                         .ui(ui);
 
-                                                        let _result = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
+                                                        // info!("AutoCompleteTextEdit result Assignee: {:?}", result);
+                                                        let _result2 = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
                                                             .highlight_matches(true)
                                                             .max_suggestions(3)
                                                             .set_text_edit_properties(move |text_edit| 
@@ -202,9 +205,11 @@ impl MastertechContext {
                                                                 .min_size(size)
                                                                 .font(FontId::proportional(12.0))
                                                                 .frame(true)
+                                                                .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
                                                                 // .horizontal_align(egui::Align::Center)
                                                         })
                                                         .ui(ui);
+                                                        // info!("AutoCompleteTextEdit result Tech: {:?}", result2);
 
                                                     } else {
 

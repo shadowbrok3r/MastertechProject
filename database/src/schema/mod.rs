@@ -134,12 +134,12 @@ pub struct TaskPayload {
 impl Default for TaskPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((TASK_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             task_name: String::new(),
             service_ticket: None,
             everest_initials: String::new(),
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, Uuid::new_v4().to_string())),
+            assignee: RecordId::from((USER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             service_number: None,
             due_date: String::new(),
             priority: Priority::Normal,
@@ -155,15 +155,12 @@ pub struct LiveTaskPayload {
     pub id: RecordId,
     pub task_name: String,
     pub service_ticket: Option<RecordId>,
-    // #[serde(skip)]
     pub everest_initials: String,
     pub task_description: String,
     pub assignee: RecordId, // should i use a user id here or will email and name be enough for tracking?
     pub service_number: Option<String>,
     pub due_date: String, // optional because if not provided, set due date to creation date
     pub priority: Priority,
-    #[difference(collection_strategy = "ordered_array_like")]
-    pub task_note: Vec<TaskNoteId>,
     pub completed: bool,
     pub status: Status,
 }
@@ -171,16 +168,15 @@ pub struct LiveTaskPayload {
 impl Default for LiveTaskPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((TASK_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             task_name: String::new(),
             service_ticket: None,
             everest_initials: String::new(),
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, Uuid::new_v4().to_string())),
+            assignee: RecordId::from((USER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             service_number: None,
             due_date: String::new(),
             priority: Priority::Normal,
-            task_note: Vec::new(),
             completed: false,
             status: Status::Todo,
         }
@@ -230,7 +226,7 @@ pub struct TicketPayload {
 impl Default for TicketPayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TICKET_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((TICKET_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             created_at: Default::default(),
             customer: Default::default(),
             computer: Default::default(),
@@ -275,7 +271,7 @@ pub struct TicketData {
 impl Default for TicketData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TICKET_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((TICKET_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             created_at: Default::default(),
             customer: Default::default(),
             computer: Default::default(),
@@ -354,7 +350,7 @@ pub struct CustomerData {
 impl Default for CustomerData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((CUSTOMER_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((CUSTOMER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             cust_code: Default::default(),
             part_order_links: Default::default(),
             name: Default::default(),
@@ -385,7 +381,7 @@ pub struct ComputerData {
 impl Default for ComputerData {
     fn default() -> Self {
         Self {
-            id: RecordId::from((COMPUTER_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((COMPUTER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             customer: Default::default(),
             seb_info: Default::default(),
             hostname: Default::default(),
@@ -483,7 +479,7 @@ pub struct TaskNotePayload {
 impl Default for TaskNotePayload {
     fn default() -> Self {
         Self {
-            id: RecordId::from((TASK_NOTE_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((TASK_NOTE_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             task_id: Default::default(),
             everest_initials: Default::default(),
             created_at: Default::default(),
@@ -513,7 +509,7 @@ pub struct ConnectedClient {
 impl Default for ConnectedClient {
     fn default() -> Self {
         Self {
-            id: RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             assigned_user: Default::default(),
             client_hash: Default::default(),
             connection_string: Default::default(),
@@ -804,7 +800,7 @@ pub struct User {
 impl Default for User {
     fn default() -> Self {
         Self {
-            id: RecordId::from((USER_TABLE, Uuid::new_v4().to_string())),
+            id: RecordId::from((USER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
             name: String::new(),
             everest_initials: String::new(),
             email: String::new(),

@@ -3,9 +3,7 @@ use anyhow::Error;
 use app_state::{AppState, MasterTechApp};
 use database::{
     schema::{
-        buckets::list_buckets,
-        utilities::{get_store_users, get_tasks},
-        ComputerData, GetKeysResponse, HardwareTests, Store, TaskNotePayload, TICKET_TABLE,
+        buckets::list_buckets, utilities::{get_store_users, get_tasks}, ComputerData, GetKeysResponse, HardwareTests, Store, TaskNotePayload, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
     },
     Database, STORAGE_URL,
 };
@@ -25,7 +23,7 @@ use log::{debug, error, info};
 use pages::login_page::HASH;
 use semver::Version;
 use std::sync::{atomic::Ordering, Arc, Condvar, Mutex};
-use surrealdb::RecordId;
+use surrealdb::{sql::Uuid, RecordId};
 use tabs::{
     github::{
         get_github_releases,
@@ -310,13 +308,15 @@ impl eframe::App for MasterTechApp {
         if let Ok(data) = self.context.prestashop_api_rx.try_recv() {
             let customer = &mut self.context.customer_data;
             let ticket = &mut self.context.ticket_data;
-            // let _task = &mut self.context.task_data;
+            let task = &mut self.context.task_data;
             let task_notes = &mut self.context.task_notes;
             let computer = &mut self.context.computer_data;
 
             let hdd_test = format!("{:?}", &self.context.hdd_test_cbox);
             let ram_test = format!("{:?}", &self.context.ram_test_cbox);
             let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
+
+            task.id = RecordId::from_table_key(TASK_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat());
 
             let service_details = data.order.associations.order_service;
             let mut owned_computers: Vec<RecordId> = Vec::new();
@@ -347,42 +347,44 @@ impl eframe::App for MasterTechApp {
                 .email
                 .split_once("@")
                 .clone()
-                .unwrap_or(("", ""))
+                .unwrap_or(("nouser", "pclaptops.com"))
                 .0
                 .to_string();
             let email_split_rep = split_rep
                 .email
                 .split_once("@")
                 .clone()
-                .unwrap_or(("", ""))
+                .unwrap_or(("nouser", "pclaptops.com"))
                 .0
                 .to_string();
-
+            
             for msg in data.customer_messages {
-                let mut task_note_payload = TaskNotePayload {
-                    everest_initials: msg.id_employee.clone(),
-                    note: msg.message,
-                    created_at: msg.date_add,
-                    id_customer_thread: Some(msg.id_customer_thread),
-                    id_employee: Some(
-                        msg.id_employee
-                            .parse::<u64>()
-                            .unwrap_or_default()
-                            .to_string(),
-                    ),
-                    ..Default::default()
-                };
-                if let Some(users) = self.context.store_users.as_ref() {
-                    for user in users {
-                        if let Some(presta_id) = user.id_prestashop {
-                            if msg.id_employee == presta_id.to_string() {
-                                task_note_payload.everest_initials = user.everest_initials.clone();
-                                task_note_payload.user = Some(user.id.clone());
+                // let username = msg.id_employee
+                if msg.id_employee.clone() == "0" || msg.id_customer_thread == "0" {
+                    continue;
+                } else {
+                    let mut task_note_payload = TaskNotePayload {
+                        note: msg.message,
+                        created_at: msg.date_add,
+                        id_customer_thread: Some(msg.id_customer_thread),
+                        id_customer_message: Some(msg.id.clone()),
+                        id_employee: Some(msg.id_employee.clone()),
+                        id: RecordId::from_table_key(TASK_NOTE_TABLE, msg.id.clone()),
+                        task_id: Some(task.id.clone()),
+                        ..Default::default()
+                    };
+                    if let Some(users) = self.context.store_users.as_ref() {
+                        for user in users {
+                            if let Some(presta_id) = user.id_prestashop {
+                                if msg.id_employee == presta_id.to_string() {
+                                    task_note_payload.everest_initials = user.everest_initials.clone();
+                                    task_note_payload.user = Some(user.id.clone());
+                                }
                             }
                         }
-                    }
-                };
-                task_notes.push(task_note_payload);
+                    };
+                    task_notes.push(task_note_payload);
+                }
             }
 
             customer.id = data.customer.id;
