@@ -154,7 +154,7 @@ impl ComputerInfo for ComputerData {
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
 
-        self.id = Some(RecordId::from((COMPUTER_TABLE, id.clone().as_str())));
+        self.id = RecordId::from((COMPUTER_TABLE, id.clone().as_str()));
         Ok(self.to_owned())
     }
 

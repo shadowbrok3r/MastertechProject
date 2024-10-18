@@ -64,7 +64,7 @@ pub async fn send_payload(
         &customer_data.name,
         ticket_data.service_number.clone()
     );
-    task_data.service_ticket = ticket_id.clone();
+    task_data.service_ticket = Some(ticket_id.clone());
     task_data.service_number = Some(ticket_data.service_number.clone());
     task_data.priority = Priority::Normal;
     task_data.everest_initials = queried_salesman.everest_initials;

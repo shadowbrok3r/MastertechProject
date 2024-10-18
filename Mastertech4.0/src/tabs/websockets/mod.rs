@@ -1,4 +1,4 @@
-use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, Cmd, ConnectedClient, Record, SystemInformation, COMPUTER_TABLE, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, Cmd, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use log::error;
@@ -71,15 +71,9 @@ impl MastertechContext{
             )
         );
 
-        let computer_id = &self.computer_data.id.clone().unwrap_or(
-                RecordId::from(
-                    (COMPUTER_TABLE,  url_string.clone().as_str())
-            )
-        );
+        let computer_id = &self.computer_data.id.clone();
         
-        self.client_uuid = Some(
-                RecordId::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.key().to_string().clone()))
-        );
+        self.client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.key().to_string().clone()));
         
 
         let connected_client = ConnectedClient {
@@ -94,57 +88,55 @@ impl MastertechContext{
         let tx = self.connected_clients_tx.clone();
         let uuid = self.client_uuid.clone();
         spawn(async move {
-            if let Some(uuid) = uuid {
-                match query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.key().to_string().clone()).await {
-                    Ok(id) => {
-                        if let Some(id) = id {
-                            info!("Client: {id:?} already exists");
-                            
-                            let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                                .query("UPDATE $id SET connected = true")
-                                .bind(("id", id.clone()))
-                                .await?.take(0);
-        
-                            match res{
-                                Ok(data) => tx.try_send(data.clone())?,
-                                Err(e) => error!("Error Updating Client: {e:?}"),
-                            }
-                        } else {
-                            let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                                .query("CREATE connected_client CONTENT $content")
-                                .bind(("content", connected_client.clone()))
-                                .await?.take(0);
-        
-                            match res{
-                                Ok(data) => tx.try_send(data.clone())?,
-                                Err(e) => {
-                                    error!("Error Creating Client: {e:?}");
-                                    let res: Option<Record> = DATABASE
-                                        .upsert(uuid.clone())
-                                        .merge(connected_client)
-                                        .await?.take();
-                                    info!("last ditch effort: {:?}", res);
-                                },
-                            }
+            match query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.key().to_string().clone()).await {
+                Ok(id) => {
+                    if let Some(id) = id {
+                        info!("Client: {id:?} already exists");
+                        
+                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                            .query("UPDATE $id SET connected = true")
+                            .bind(("id", id.clone()))
+                            .await?.take(0);
+    
+                        match res{
+                            Ok(data) => tx.try_send(data.clone())?,
+                            Err(e) => error!("Error Updating Client: {e:?}"),
                         }
-                    },
-                    Err(e) => {
+                    } else {
+                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                            .query("CREATE connected_client CONTENT $content")
+                            .bind(("content", connected_client.clone()))
+                            .await?.take(0);
+    
+                        match res{
+                            Ok(data) => tx.try_send(data.clone())?,
+                            Err(e) => {
+                                error!("Error Creating Client: {e:?}");
+                                let res: Option<Record> = DATABASE
+                                    .upsert(uuid.clone())
+                                    .merge(connected_client)
+                                    .await?.take();
+                                info!("last ditch effort: {:?}", res);
+                            },
+                        }
+                    }
+                },
+                Err(e) => {
 
-                        if e.to_string().contains("already exists") {
-                            info!("Client: {:?} already exists", uuid.key().to_string().clone());
-                    
-                            let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                                .query("UPDATE $id SET connected = true")
-                                .bind(("id", uuid.key().to_string().clone().clone()))
-                                .await?.take(0);
-        
-                            match res{
-                                Ok(data) => tx.try_send(data.clone())?,
-                                Err(e) => error!("Error Updating Client: {e:?}"),
-                            }
+                    if e.to_string().contains("already exists") {
+                        info!("Client: {:?} already exists", uuid.key().to_string().clone());
+                
+                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
+                            .query("UPDATE $id SET connected = true")
+                            .bind(("id", uuid.key().to_string().clone().clone()))
+                            .await?.take(0);
+    
+                        match res{
+                            Ok(data) => tx.try_send(data.clone())?,
+                            Err(e) => error!("Error Updating Client: {e:?}"),
                         }
-                    },
-                }
+                    }
+                },
             }
 
             Ok::<(), Error>(())

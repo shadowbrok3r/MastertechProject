@@ -46,7 +46,7 @@ reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"]
 ratatui = { version = "0.28.0", features = ["crossterm"], optional = true }
 tui-input = { version = "0.10.0", features = ["crossterm"], optional = true}
 tui-textarea = { version = "0.6.1", optional = true}
-sysinfo = "0.31"
+sysinfo = "0.32"
 console-subscriber = "0.4.0"
 futures-util = "0.3"
 walkdir = "2.5"
@@ -77,7 +77,7 @@ minidump-common = { version = "0.22" }
 minidump-processor = { version = "0.22", features = ["http"] }
 minidump-unwind = "0.22"
 linked-hash-map = "0.5"
-ewebsock = { version = "0.6", features = [ "tls" ] }
+ewebsock = { version = "0.7", features = [ "tls" ] }
 hex = "0.4.3"
 ring = "0.17.8"
 # egui_tracing = "0.2.2"

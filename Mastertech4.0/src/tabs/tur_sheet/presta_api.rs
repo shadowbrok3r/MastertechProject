@@ -120,10 +120,10 @@ impl MastertechContext {
                 info!("address: {address:#?}");
 
                 let customer = CustomerData {
-                    id: Some(RecordId::from((
+                    id: RecordId::from((
                         CUSTOMER_TABLE.to_string(),
                         order.id_customer.clone(),
-                    ))),
+                    )),
                     cust_code: order.id_customer.clone(),
                     name: format!("{} {}", &cust.firstname, &cust.lastname),
                     phone_number: address.phone.clone().to_string(),

@@ -73,7 +73,7 @@ impl Interaction for TaskPayload {
         ui.style_mut().spacing.button_padding = Vec2::new(15.0, 3.0);
         let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
 
-        let id = self.id.clone().unwrap().key().to_string().to_string();
+        let id = self.id.clone().key().to_string().to_string();
         let date_picker = DatePickerButton::new(&mut due_date)
             .format("%m/%d")
             .id_salt(id.as_str())
@@ -122,7 +122,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_status(&mut self, ui: &mut Ui) -> Response {
-        ComboBox::new(Id::new(&self.id.clone().unwrap().key().to_string()), "")
+        ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.status.as_str())))
             .width(ui.available_width() - 15.0)
             .height(ui.available_height())
@@ -139,7 +139,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_priority(&mut self, ui: &mut Ui) -> Response {
-        ComboBox::new(Id::new(&self.id.clone().unwrap().key().to_string()), "")
+        ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
             .selected_text(RichText::new(format!("{}", &self.priority.as_str())))
             .width(ui.available_width() - 15.0)
             .height(ui.available_height() - 2.0)
@@ -159,7 +159,7 @@ impl Interaction for TaskPayload {
     }
 
     fn interact_assignee_initials(&mut self, ui: &mut Ui, store_users: &Vec<User>) -> Response {
-        ComboBox::new(Id::new(&self.id.clone().unwrap().key().to_string()), "")
+        ComboBox::new(Id::new(&self.id.clone().key().to_string()), "")
             .selected_text(&self.everest_initials)
             .width(ui.available_width() / 1.3)
             .height(ui.available_height() - 2.0)

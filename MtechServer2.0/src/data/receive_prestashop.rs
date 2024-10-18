@@ -65,15 +65,13 @@ impl MtechServer {
             ticket.ticket_total = presta_data.order.total_products_wt.clone();
             ticket.doc_alias = presta_data.order.order_type.clone();
             ticket.service_number = presta_data.order.id.clone();
-            ticket.id = Some(RecordId::from((
+            ticket.id = RecordId::from((
                 TICKET_TABLE.to_string(),
                 ticket.service_number.clone(),
-            )));
+            ));
 
-            if let Some(ticket_id) = &ticket.id {
-                services.push(ticket_id.clone());
-            }
-
+            services.push(ticket.id.clone());
+            
             if !service_details.is_empty() {
                 if service_details.len() == 1 {
                     let svc = service_details.get(0);

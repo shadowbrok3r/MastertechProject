@@ -132,7 +132,7 @@ pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
         // Search for the task by ID
         for (_, tasks) in self.task_map.iter_mut(){
             for task in tasks.iter_mut(){
-                if task.id.as_ref().unwrap().key().to_string() == *task_id{
+                if task.id.key().to_string() == *task_id{
                     info!("Got a match");
                     return Some(task);
                 }
@@ -200,7 +200,7 @@ pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
                             });
 
                             if let Some(action) = res{
-                                let ids = tasks.iter().map(|t| t.id.clone().unwrap()).collect::<Vec<RecordId>>();
+                                let ids = tasks.iter().map(|t| t.id.clone()).collect::<Vec<RecordId>>();
                                 match action{
                                     TaskActions::MarkComplete => {
                                         spawn(async move {

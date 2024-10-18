@@ -1,5 +1,5 @@
 use crate::app_state::MtechServerContext;
-use database::schema::{helper_traits::UserHelper, Store};
+use database::schema::helper_traits::UserHelper;
 use displays::egui_data_table::{
     viewer::{default_hotkeys, UiActionContext},
     Renderer, RowViewer, UiAction,
@@ -103,20 +103,20 @@ impl RowViewer<MyRowData> for TaskRowViewer {
         hotkeys
     }
 
-    fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &MyRowData, column: usize) {
+    fn show_cell_view(&mut self, _ui: &mut eframe::egui::Ui, _row: &MyRowData, _column: usize) {
         todo!()
     }
 
     fn show_cell_editor(
         &mut self,
-        ui: &mut eframe::egui::Ui,
-        row: &mut MyRowData,
-        column: usize,
+        _ui: &mut eframe::egui::Ui,
+        _row: &mut MyRowData,
+        _column: usize,
     ) -> Option<eframe::egui::Response> {
         todo!()
     }
 
-    fn set_cell_value(&mut self, src: &MyRowData, dst: &mut MyRowData, column: usize) {
+    fn set_cell_value(&mut self, _src: &MyRowData, _dst: &mut MyRowData, _column: usize) {
         todo!()
     }
 

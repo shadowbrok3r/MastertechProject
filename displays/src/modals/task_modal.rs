@@ -144,7 +144,7 @@ impl DisplayModal for TaskModal {
                                 let mut ids = Vec::new();
                                 let _task_id = self.task.id.as_ref().unwrap().clone();
                                 let _ticket_id = if let Some(ticket) = &self.task.service_ticket{
-                                    Some(ticket.id.clone().unwrap())
+                                    Some(ticket.id.clone())
                                 } else{ None };
 
                                 for message in self.chat_view.messages.iter(){

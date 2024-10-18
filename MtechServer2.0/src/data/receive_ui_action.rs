@@ -16,14 +16,12 @@ impl MtechServer {
         if let Ok(action) = self.context.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
-                    if let (Some(id), Some(usr)) =
-                        (task.id.clone(), self.context.current_user.clone())
-                    {
+                    if let Some(usr) = self.context.current_user.clone() {
                         let task_modal = if !task.task_note.is_empty() {
                             let chat_modal = ChatView::new(
                                 task.task_note.clone(),
                                 usr,
-                                id,
+                                task.id.clone(),
                                 self.context.store_users.clone(),
                             );
                             TaskModal::new(chat_modal, task.clone())
@@ -32,7 +30,7 @@ impl MtechServer {
                                 ChatView::new(
                                     task.task_note.clone(),
                                     usr,
-                                    id,
+                                    task.id.clone(),
                                     self.context.store_users.clone(),
                                 ),
                                 task.clone(),
