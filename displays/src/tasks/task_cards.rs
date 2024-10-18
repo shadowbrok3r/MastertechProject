@@ -59,13 +59,13 @@ impl Displayable for TaskPayload {
                                                 {
                                                     info!("assignee initials changed");
                                                     let _ = tx.try_send(TaskUiActions::Editing(
-                                                        self.id.clone().unwrap().id,
+                                                        self.id.clone().id,
                                                     ));
                                                 } else if response.lost_focus() {
                                                     info!("assignee initials lost_focus");
                                                     let _ =
                                                         tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.clone().unwrap().id,
+                                                            self.id.clone().id,
                                                         ));
                                                 }
                                             },
@@ -80,13 +80,13 @@ impl Displayable for TaskPayload {
                                                 if response.has_focus() && response.changed() {
                                                     info!("task_name changed");
                                                     let _ = tx.try_send(TaskUiActions::Editing(
-                                                        self.id.clone().unwrap().id,
+                                                        self.id.clone().id,
                                                     ));
                                                 } else if response.lost_focus() {
                                                     info!("task_name lost_focus");
                                                     let _ =
                                                         tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.clone().unwrap().id,
+                                                            self.id.clone().id,
                                                         ));
                                                 }
                                             },
@@ -127,7 +127,7 @@ impl Displayable for TaskPayload {
                                                     }
                                                     let _ =
                                                         tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.clone().unwrap().id,
+                                                            self.id.clone().id,
                                                         ));
                                                 }
                                             },
@@ -167,7 +167,7 @@ impl Displayable for TaskPayload {
                                                         tx.try_send(TaskUiActions::CommitChanges(
                                                             self.id.as_ref().unwrap().id.clone(),
                                                         ));
-                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().unwrap().id))
+                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().id))
                                                 }
                                             },
                                         );
@@ -189,7 +189,7 @@ impl Displayable for TaskPayload {
                                                         tx.try_send(TaskUiActions::CommitChanges(
                                                             self.id.as_ref().unwrap().id.clone(),
                                                         ));
-                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().unwrap().id))
+                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().id))
                                                 }
                                             },
                                         );
@@ -212,7 +212,7 @@ impl Displayable for TaskPayload {
                                                         tx.try_send(TaskUiActions::CommitChanges(
                                                             self.id.as_ref().unwrap().id.clone(),
                                                         ));
-                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().unwrap().id))
+                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().id))
                                                 }
                                             },
                                         );

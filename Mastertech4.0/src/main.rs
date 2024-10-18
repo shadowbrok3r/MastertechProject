@@ -390,11 +390,11 @@ impl eframe::App for MasterTechApp {
             customer.email = data.customer.email;
             customer.name = data.customer.name.clone();
             customer.phone_number = data.customer.phone_number;
-            computer.customer = customer.id.clone();
+            computer.customer = Some(customer.id.clone());
             ticket.salesman = email_split_rep;
             ticket.tech = email;
-            ticket.customer = customer.id.clone();
-            ticket.computer = computer.id.clone();
+            ticket.customer = Some(customer.id.clone());
+            ticket.computer = Some(computer.id.clone());
             ticket.hardware_test_results = HardwareTests {
                 hdd_test,
                 ssd_test,
@@ -402,17 +402,15 @@ impl eframe::App for MasterTechApp {
             };
             ticket.doc_alias = data.order.order_type_name.unwrap_or(String::new());
 
-            ticket.id = Some(RecordId::from((
+            ticket.id = RecordId::from((
                 TICKET_TABLE.to_string(),
                 ticket.service_number.clone(),
-            )));
-            if let Some(computer_id) = computer.id.clone() {
-                owned_computers.push(computer_id);
-            }
+            ));
+            owned_computers.push(computer.id.clone());
+            
             // customer.computers = Some(owned_computers);
-            if let Some(ticket_id) = &ticket.id {
-                services.push(ticket_id.clone());
-            }
+            services.push(ticket.id.clone());
+            
 
             if !service_details.is_empty() {
                 if service_details.len() == 1 {
@@ -449,7 +447,7 @@ impl eframe::App for MasterTechApp {
                         let chat_modal = ChatView::new(
                             task.task_note.clone(),
                             self.context.current_user.as_ref().unwrap().clone(),
-                            task.id.clone().unwrap(),
+                            task.id.clone(),
                         );
                         TaskModal::new(chat_modal, task.clone())
                     } else {

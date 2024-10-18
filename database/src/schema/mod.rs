@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use structdiff::{Difference, StructDiff};
 use surrealdb::{
     // opt::Resource::RecordId,
-    RecordId,
+    sql::Uuid, RecordId
 };
 
 use crate::DATABASE;
@@ -116,7 +116,7 @@ impl Default for TaskId {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TaskPayload {
-    pub id: Option<RecordId>,
+    pub id: RecordId,
     pub task_name: String,
     pub service_ticket: Option<TicketPayload>,
     pub everest_initials: String,
@@ -134,12 +134,12 @@ pub struct TaskPayload {
 impl Default for TaskPayload {
     fn default() -> Self {
         Self {
-            id: None,
+            id: RecordId::from((TASK_TABLE, Uuid::new_v4().to_string())),
             task_name: String::new(),
             service_ticket: None,
             everest_initials: String::new(),
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, "")),
+            assignee: RecordId::from((USER_TABLE, Uuid::new_v4().to_string())),
             service_number: None,
             due_date: String::new(),
             priority: Priority::Normal,
@@ -152,7 +152,7 @@ impl Default for TaskPayload {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct LiveTaskPayload {
-    pub id: Option<RecordId>,
+    pub id: RecordId,
     pub task_name: String,
     pub service_ticket: Option<RecordId>,
     // #[serde(skip)]
@@ -171,12 +171,12 @@ pub struct LiveTaskPayload {
 impl Default for LiveTaskPayload {
     fn default() -> Self {
         Self {
-            id: None,
+            id: RecordId::from((TASK_TABLE, Uuid::new_v4().to_string())),
             task_name: String::new(),
             service_ticket: None,
             everest_initials: String::new(),
             task_description: String::new(),
-            assignee: RecordId::from((USER_TABLE, "")),
+            assignee: RecordId::from((USER_TABLE, Uuid::new_v4().to_string())),
             service_number: None,
             due_date: String::new(),
             priority: Priority::Normal,
@@ -205,9 +205,9 @@ impl From<LiveTaskPayload> for TaskPayload {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TicketPayload {
-    pub id: Option<RecordId>,
+    pub id: RecordId,
     pub created_at: Option<String>,
     pub customer: Option<CustomerData>,
     pub computer: Option<ComputerData>,
@@ -227,10 +227,33 @@ pub struct TicketPayload {
     pub hardware_test_results: HardwareTests,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Difference)]
+impl Default for TicketPayload {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((TICKET_TABLE, Uuid::new_v4().to_string())),
+            created_at: Default::default(),
+            customer: Default::default(),
+            computer: Default::default(),
+            service_number: Default::default(),
+            checkin_rep: Default::default(),
+            sales_rep: Default::default(),
+            checkin_notes: Default::default(),
+            tech: Default::default(),
+            salesman: Default::default(),
+            terms: Default::default(),
+            ticket_total: Default::default(),
+            doc_alias: Default::default(),
+            current_antivirus: Default::default(),
+            hardware_test_results: Default::default(),
+            service_ticket: Default::default()
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TicketData {
     // Live Ticket Payload
-    pub id: Option<RecordId>,
+    pub id: RecordId,
     pub created_at: Option<String>,
     pub customer: Option<RecordId>,
     pub computer: Option<RecordId>,
@@ -247,6 +270,28 @@ pub struct TicketData {
     pub doc_alias: String, // type of order (service,sales,transfer)
     pub current_antivirus: Option<Vec<String>>,
     pub hardware_test_results: HardwareTests,
+}
+
+impl Default for TicketData {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((TICKET_TABLE, Uuid::new_v4().to_string())),
+            created_at: Default::default(),
+            customer: Default::default(),
+            computer: Default::default(),
+            service_number: Default::default(),
+            checkin_rep: Default::default(),
+            sales_rep: Default::default(),
+            checkin_notes: Default::default(),
+            tech: Default::default(),
+            salesman: Default::default(),
+            terms: Default::default(),
+            ticket_total: Default::default(),
+            doc_alias: Default::default(),
+            current_antivirus: Default::default(),
+            hardware_test_results: Default::default(),
+        }
+    }
 }
 
 impl From<TicketData> for TicketPayload {
@@ -286,15 +331,15 @@ impl From<TicketPayload> for TicketData {
             doc_alias: ticket.doc_alias,
             current_antivirus: ticket.current_antivirus,
             hardware_test_results: ticket.hardware_test_results,
-            customer: ticket.customer.unwrap_or_default().id,
-            computer: ticket.computer.unwrap_or_default().id,
+            customer: Some(ticket.customer.unwrap_or_default().id),
+            computer: Some(ticket.computer.unwrap_or_default().id),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct CustomerData {
-    pub id: Option<RecordId>,
+    pub id: RecordId,
     pub cust_code: String,
     pub part_order_links: Option<Vec<String>>,
     pub name: String,
@@ -306,9 +351,26 @@ pub struct CustomerData {
     pub num_inv: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+impl Default for CustomerData {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((CUSTOMER_TABLE, Uuid::new_v4().to_string())),
+            cust_code: Default::default(),
+            part_order_links: Default::default(),
+            name: Default::default(),
+            phone_number: Default::default(),
+            phone_number_2: Default::default(),
+            email: Default::default(),
+            li_doc: Default::default(),
+            li_amnt: Default::default(),
+            num_inv: Default::default(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ComputerData {
-    pub id: Option<RecordId>,
+    pub id: RecordId,
     pub customer: Option<RecordId>,
     pub seb_info: Option<LocalSebData>,
     pub hostname: String,
@@ -317,6 +379,23 @@ pub struct ComputerData {
     pub gpu: String,
     pub ram: String,
     pub drives: Vec<DriveData>,
+}
+
+
+impl Default for ComputerData {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((COMPUTER_TABLE, Uuid::new_v4().to_string())),
+            customer: Default::default(),
+            seb_info: Default::default(),
+            hostname: Default::default(),
+            operating_system: Default::default(),
+            cpu: Default::default(),
+            gpu: Default::default(),
+            ram: Default::default(),
+            drives: Default::default(),
+        }
+    }
 }
 
 impl ComputerData {
@@ -336,7 +415,7 @@ impl ComputerData {
 #[serde(rename_all(serialize = "PascalCase", deserialize = "snake_case"))]
 #[serde(rename = "xml")]
 pub struct LocalSebData {
-    // pub id: Option<RecordId>,
+    // pub id: RecordId,
     pub InstalledDeviceId: String,
     pub InstallInstanceId: String,
     pub HasIssues: String,
@@ -387,22 +466,40 @@ pub struct HardwareTests {
     pub ram_test: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Difference)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
 pub struct TaskNotePayload {
-    pub id: Option<RecordId>,
+    pub id: RecordId,
     pub task_id: Option<RecordId>,
     pub everest_initials: String,
     pub created_at: String,
     pub note: String,
     pub username: String,
     pub id_customer_thread: Option<String>,
+    pub id_customer_message: Option<String>,
     pub id_employee: Option<String>,
     pub user: Option<RecordId>,
 }
 
-#[derive(Serialize, Debug, Clone, Deserialize, Default, PartialEq, Difference)]
+impl Default for TaskNotePayload {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((TASK_NOTE_TABLE, Uuid::new_v4().to_string())),
+            task_id: Default::default(),
+            everest_initials: Default::default(),
+            created_at: Default::default(),
+            note: Default::default(),
+            username: Default::default(),
+            id_customer_thread: Default::default(),
+            id_customer_message: Default::default(),
+            id_employee: Default::default(),
+            user: Default::default(),
+        }
+    }
+}
+
+#[derive(Serialize, Debug, Clone, Deserialize, PartialEq, Difference)]
 pub struct ConnectedClient {
-    pub id: Option<RecordId>,
+    pub id: RecordId,
     pub assigned_user: Option<RecordId>,
     pub client_hash: String,
     pub connection_string: String,
@@ -411,6 +508,22 @@ pub struct ConnectedClient {
     pub friendly_name: Option<String>,
     pub customer: Option<RecordId>,
     pub last_update: Option<String>,
+}
+
+impl Default for ConnectedClient {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string())),
+            assigned_user: Default::default(),
+            client_hash: Default::default(),
+            connection_string: Default::default(),
+            command_history: Default::default(),
+            connected: Default::default(),
+            friendly_name: Default::default(),
+            customer: Default::default(),
+            last_update: Default::default(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Difference)]
@@ -687,10 +800,11 @@ pub struct User {
     pub id_prestashop: Option<u64>,
     pub id_store: Option<String>,
 }
+
 impl Default for User {
     fn default() -> Self {
         Self {
-            id: RecordId::from((USER_TABLE, "")),
+            id: RecordId::from((USER_TABLE, Uuid::new_v4().to_string())),
             name: String::new(),
             everest_initials: String::new(),
             email: String::new(),

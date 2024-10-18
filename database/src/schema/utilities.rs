@@ -150,21 +150,6 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn get_notes_for_task(
-    tx: Sender<Vec<TaskNotePayload>>,
-    // task_id: Id,
-) -> Result<(), Error> {
-    debug!("get_associated_task_notes");
-    // DATABASE.set("id", task_id).await?;
-    let notes: Vec<TaskNotePayload> = DATABASE
-        .query("SELECT * FROM task_note") // WHERE task_id == $id
-        .await?
-        .take(0)?;
-    debug!("note: {:?}", notes);
-    tx.try_send(notes)?;
-    Ok(())
-}
-
 pub async fn get_associated_task_notes(
     tx: Sender<TaskNotePayload>,
     note_id: Id,
@@ -273,14 +258,12 @@ pub trait TaskNoteMod {
 impl TaskNoteMod for TaskNotePayload {
     async fn delete_note(&mut self) -> Result<(), Error> {
         let id = self.id.clone();
-        if let Some(id) = id {
-            info!("deleting id: {:?}", id.clone());
-            DATABASE.set("id", id.key().to_string().clone()).await?;
-            let y: Option<Record> = DATABASE
-                .delete((TASK_NOTE_TABLE, id.key().to_string()))
-                .await?;
-            info!("Deleted note: {:?}", y);
-        }
+        info!("deleting id: {:?}", id.clone());
+        DATABASE.set("id", id.key().to_string().clone()).await?;
+        let y: Option<Record> = DATABASE
+            .delete((TASK_NOTE_TABLE, id.key().to_string()))
+            .await?;
+        info!("Deleted note: {:?}", y);
         Ok(())
     }
 }
@@ -344,7 +327,7 @@ impl NotificationMod for Notification {
 // #[async_trait]
 // impl Updatable for TaskPayload {
 //     async fn update_completed(&self, completed: bool) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         let query = format!("UPDATE task SET completed=$completed, status=$status WHERE id=$id");
 //         DATABASE.set("id", id).await?;
 //         DATABASE.set("completed", completed).await?;
@@ -354,7 +337,7 @@ impl NotificationMod for Notification {
 //         Ok(())
 //     }
 //     async fn update_due_date(&self, due_date: String) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         let query = format!("UPDATE task SET due_date=$date WHERE id=$id");
 //         DATABASE.set("id", id).await?;
 //         DATABASE.set("date", due_date).await?;
@@ -362,7 +345,7 @@ impl NotificationMod for Notification {
 //         Ok(())
 //     }
 //     async fn update_assignee_initials(&self, initials: String) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         let user_query = format!("SELECT id FROM user WHERE everest_initials=$initials");
 //         DATABASE.set("id", id).await?;
 //         DATABASE.set("initials", initials).await?;
@@ -373,7 +356,7 @@ impl NotificationMod for Notification {
 //         Ok(())
 //     }
 //     async fn update_task_name(&self, name: String) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         let query = format!("UPDATE task SET task_name=$name WHERE id=$id");
 //         DATABASE.set("id", id).await?;
 //         DATABASE.set("name", name).await?;
@@ -381,7 +364,7 @@ impl NotificationMod for Notification {
 //         Ok(())
 //     }
 //     async fn update_status(&self, status: Status) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         let mut _query = String::new();
 //         DATABASE.set("id", id).await?;
 //         match status{
@@ -402,7 +385,7 @@ impl NotificationMod for Notification {
 //         Ok(())
 //     }
 //     async fn update_dep(&self, dep: Store) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         let query = format!("UPDATE task SET dep=$dep WHERE id=$id");
 //         DATABASE.set("id", id).await?;
 //         DATABASE.set("dep", dep).await?;
@@ -410,7 +393,7 @@ impl NotificationMod for Notification {
 //         Ok(())
 //     }
 //     async fn update_priority(&self, priority: Option<Priority>) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         let query = format!("UPDATE task SET priority=$priority WHERE id=$id");
 //         DATABASE.set("id", id).await?;
 //         DATABASE.set("priority", priority.unwrap()).await?;
@@ -418,7 +401,7 @@ impl NotificationMod for Notification {
 //         Ok(())
 //     }
 //     async fn update_task_description(&self, description: String) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         let query = format!("UPDATE task SET task_description=$description WHERE id=$id");
 //         DATABASE.set("id", id).await?;
 //         DATABASE.set("description", description).await?;
@@ -427,7 +410,7 @@ impl NotificationMod for Notification {
 //     }
 //     async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> Result<(), Error> {
 //         let id = self.service_ticket.as_ref();
-//         let x = id.unwrap().id.clone().unwrap().0;
+//         let x = id.unwrap().id.clone().0;
 //         let query = format!("UPDATE service_order SET checkin_notes=$notes WHERE id=$id");
 //         DATABASE.set("id", checkin_notes.unwrap()).await?;
 //         DATABASE.set("notes", x).await?;
@@ -451,7 +434,7 @@ impl NotificationMod for Notification {
 //     fn get_computer_data<T>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error>
 //         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
 //     {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         spawn(async move {
 //             let query = format!(
 //                 "SELECT service_ticket.computer FROM task WHERE id={id} FETCH service_ticket.computer"
@@ -471,7 +454,7 @@ impl NotificationMod for Notification {
 //     fn get_customer_data<T>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error>
 //         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
 //     {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         spawn(async move {
 //             let query = format!(
 //                 "SELECT service_ticket.customer FROM task WHERE id={id} FETCH service_ticket.customer"
@@ -491,7 +474,7 @@ impl NotificationMod for Notification {
 //     fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error>
 //         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
 //     {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         spawn(async move {
 //             let query = format!(
 //                 "SELECT * FROM task_note WHERE id={id}"
@@ -511,7 +494,7 @@ impl NotificationMod for Notification {
 //     fn get_ticket_payload<T>(&mut self, tx: Sender<Option<T>>)//-> Result<(), Error>
 //         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
 //     {
-//         let id: RecordId = self.id.clone().unwrap().0;
+//         let id: RecordId = self.id.clone().0;
 //         spawn(async move {
 //             let get_data: Option<T> = DATABASE
 //                 .query(format!("SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id={id}"))

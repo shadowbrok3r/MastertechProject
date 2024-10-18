@@ -74,12 +74,11 @@ pub trait TaskNoteMod {
 impl TaskNoteMod for TaskNotePayload {
     async fn delete_note(&mut self) -> Result<(), Error> {
         let id = self.id.clone();
-        if let Some(id) = id {
-            info!("deleting id: {:?}", id.clone());
-            DATABASE.set("id", id.key().to_string().clone()).await?;
-            let y: Option<Record> = DATABASE.delete((TASK_NOTE_TABLE, id.key().to_string())).await?;
-            info!("Deleted note: {:?}", y);
-        }
+        info!("deleting id: {:?}", id.clone());
+        DATABASE.set("id", id.key().to_string().clone()).await?;
+        let y: Option<Record> = DATABASE.delete((TASK_NOTE_TABLE, id.key().to_string())).await?;
+        info!("Deleted note: {:?}", y);
+    
         Ok(())
     }
 }
@@ -105,7 +104,7 @@ impl Task for TaskPayload {
     async fn get_computer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> Result<Option<T>, Error> {
-        let id: RecordId = self.id.clone().unwrap();
+        let id: RecordId = self.id.clone();
         let query = format!(
             "SELECT service_ticket.computer FROM task WHERE id={id} FETCH service_ticket.computer"
         );
@@ -117,7 +116,7 @@ impl Task for TaskPayload {
     async fn get_customer_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> Result<Option<T>, Error> {
-        let id: RecordId = self.id.clone().unwrap();
+        let id: RecordId = self.id.clone();
         let query = format!(
             "SELECT service_ticket.customer FROM task WHERE id={id} FETCH service_ticket.customer"
         );
@@ -129,7 +128,7 @@ impl Task for TaskPayload {
     async fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> Result<Option<T>, Error> {
-        let id: RecordId = self.id.clone().unwrap();
+        let id: RecordId = self.id.clone();
         let query = format!("SELECT * FROM task_note WHERE id={id}");
         let get_data: Option<T> = DATABASE.query(query).await.unwrap().take(0).unwrap();
         debug!("get_data: {get_data:#?}");
@@ -139,7 +138,7 @@ impl Task for TaskPayload {
     async fn get_ticket_payload<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(
         &mut self,
     ) -> Result<Option<T>, Error> {
-        let id: RecordId = self.id.clone().unwrap();
+        let id: RecordId = self.id.clone();
 
         let get_data: Option<T> = DATABASE
                 .query(format!("SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id={id}"))

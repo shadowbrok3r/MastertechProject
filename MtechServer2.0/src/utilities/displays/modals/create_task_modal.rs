@@ -351,7 +351,7 @@ impl CreateTaskModal {
                                             completed: false,
                                             status: Status::Todo,
                                             service_number: service_number.clone(),
-                                            service_ticket: self.tur.ticket_data.id.clone(),
+                                            service_ticket: Some(self.tur.ticket_data.id.clone()),
                                             ..Default::default()
                                         };
                                         
@@ -574,10 +574,10 @@ impl Tur {
 
                 info!("address: {address:#?}");
                 let customer = CustomerData {
-                    id: Some(RecordId::from((
+                    id: RecordId::from((
                         CUSTOMER_TABLE.to_string(),
                         order.id_customer.clone(),
-                    ))),
+                    )),
                     cust_code: order.id_customer.clone(),
                     name: format!("{} {}", &cust.firstname, &cust.lastname),
                     phone_number: address.phone.clone().to_string(),
@@ -630,7 +630,7 @@ pub async fn send_payload(
         &customer_data.name,
         ticket_data.service_number.clone()
     );
-    task_data.service_ticket = ticket_id.clone();
+    task_data.service_ticket = Some(ticket_id.clone());
     task_data.service_number = Some(ticket_data.service_number.clone());
     task_data.priority = Priority::Normal;
     task_data.everest_initials = queried_salesman.everest_initials;
@@ -707,7 +707,7 @@ pub async fn send_payload(
         let mut note_ids = Vec::new();
 
         for mut note in task_notes {
-            note.task_id = task_id.clone();
+            note.task_id = Some(task_id.clone());
             let create_task_note_record: Option<RecordId> =
                 DATABASE.create(TASK_NOTE_TABLE).content(note).await?;
             info!("create_task_note_record: {:?}", create_task_note_record);

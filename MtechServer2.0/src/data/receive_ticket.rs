@@ -8,12 +8,12 @@ impl MtechServer {
         if let Ok(channel) = self.context.new_ticket_rx.try_recv() {
             info!("New Ticket Update");
 
-            let new_task_id = channel.new_task.1.id.clone().unwrap().key().to_string();
+            let new_task_id = channel.new_task.1.id.clone().key().to_string();
 
             for layout in self.context.task_layouts.values_mut() {
                 for tasks in layout.task_map.values_mut() {
                     for task in tasks.iter_mut() {
-                        if task.id.as_ref().unwrap().key().to_string() == new_task_id {
+                        if task.id.key().to_string() == new_task_id {
                             info!(
                                 "\nReplacing {:?}\n with \n{:?}\n",
                                 task.task_name.clone(),
@@ -44,7 +44,7 @@ impl MtechServer {
                 .context
                 .tasks
                 .iter()
-                .any(|task| task.id.as_ref().unwrap().key().to_string() == new_task_id)
+                .any(|task| task.id.key().to_string() == new_task_id)
             {
                 if let Err(e) = update_or_insert(
                     &mut self.context.tasks,

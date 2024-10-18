@@ -56,9 +56,7 @@ impl ChatView {
         let z = new_note.everest_initials.is_empty();
         info!("X {x} // Y {y} // Z {z}");
         if self.messages.iter().any(|note| {
-            if let (Some(new_id), Some(existing_id)) = (new_note.id.as_ref(), note.id.as_ref()) {
-                new_id.key().to_string() != existing_id.key().to_string() && !x && !y && !z
-            } else { false }
+            new_note.id.key().to_string() != note.id.key().to_string() && !x && !y && !z
         }) {
             info!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
             self.messages.push(new_note);

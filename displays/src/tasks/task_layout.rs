@@ -196,7 +196,7 @@ impl TaskLayout {
                             });
 
                             if let Some(action) = res{
-                                let ids = tasks.iter().map(|t| t.id.clone().unwrap().0).collect::<Vec<RecordId>>();
+                                let ids = tasks.iter().map(|t| t.id.clone().0).collect::<Vec<RecordId>>();
                                 match action{
                                     TaskActions::MarkComplete => {
                                         spawn_local(async move {
@@ -232,7 +232,7 @@ impl TaskLayout {
                                                             None => info!("There was no record")
                                                         }
                                                     },
-                                                    Err(e) =>  {e:?}")
+                                                    Err(e) =>  error!("{e:?}")
                                                 }
                                             }
                                         });

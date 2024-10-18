@@ -2,7 +2,6 @@ use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::{
     popup,
     text::LayoutJob,
-    text_edit::TextEditState,
     Color32,
     Context,
     FontId,

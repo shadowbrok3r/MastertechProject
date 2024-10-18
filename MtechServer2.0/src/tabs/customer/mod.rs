@@ -55,8 +55,8 @@ impl MtechServerContext{
                     if let Some(customer) = customers.get(idx){
 
                         let svcs: Vec<TicketData> = services.iter().filter(|svc| {
-                            if let (Some(cust_id), Some(c_id)) = (svc.customer.clone(), customer.id.clone()){   
-                                cust_id.key().to_string() == c_id.key().to_string()
+                            if let Some(cust_id) = svc.customer.clone(){   
+                                cust_id.key().to_string() == customer.id.clone().key().to_string()
                             } else { false }
                         }).cloned().collect();
 

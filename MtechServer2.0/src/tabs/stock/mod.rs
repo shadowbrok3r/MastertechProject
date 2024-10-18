@@ -2,7 +2,7 @@ use crate::app_state::MtechServerContext;
 use database::schema::Store;
 use displays::egui_data_table::Renderer;
 use eframe::egui::{
-    Button, CentralPanel, ComboBox, ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui, Widget,
+    Button, CentralPanel, ComboBox, TextEdit, TopBottomPanel, Ui, Widget,
 };
 
 use log::info;

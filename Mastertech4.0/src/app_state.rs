@@ -3,7 +3,7 @@ use database::{
     schema::{
         prestashop_schema::PrestashopPayload, ComputerData, ConnectedClient, CustomerData,
         GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData,
-        User,
+        User, CONNECTED_CLIENT_TABLE,
     },
     Database,
 };
@@ -20,7 +20,7 @@ use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
-use surrealdb::RecordId;
+use surrealdb::{sql::Uuid, RecordId};
 // use egui_ratatui::RataguiBackend;
 use anyhow::Error;
 use chrono::{DateTime, Utc};
@@ -157,7 +157,7 @@ pub struct MastertechContext {
     pub rerun_filtering_store_tasks: bool,
     pub rerun_filtering_completed: bool,
 
-    pub client_uuid: Option<RecordId>,
+    pub client_uuid: RecordId,
     pub disks: Value,
     pub disk_num: usize,
 
@@ -303,7 +303,7 @@ impl MasterTechApp {
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
-
+        let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
         let mastertech_context = MastertechContext {
             current_user: None,
             // terminal: Terminal::new(backend).unwrap(),
@@ -351,7 +351,7 @@ impl MasterTechApp {
             minidump_app: MiniDumpApp::default(),
             output_text: "".to_string(),
 
-            client_uuid: None,
+            client_uuid,
             rx,
 
             task_layouts: HashMap::new(),

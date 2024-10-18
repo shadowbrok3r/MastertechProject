@@ -122,17 +122,15 @@ impl DisplayModal for TaskModal {
 
                             if Button::new(RichText::new("Delete Task").color(Color32::LIGHT_RED)).ui(ui).double_clicked() {
                                 let mut ids = Vec::new();
-                                let _task_id = self.task.id.as_ref().unwrap().clone();
+                                let _task_id = self.task.id.clone();
                                 let _ticket_id = if let Some(ticket) = &self.task.service_ticket{
-                                    Some(ticket.id.clone().unwrap())
+                                    Some(ticket.id.clone())
                                 } else{ None };
 
                                 for message in self.chat_view.messages.iter(){
-                                    if let Some(id) = &message.id.clone(){
-                                        ids.push(id.clone());
-                                    }
+                                    ids.push(message.id.clone());
                                 };
-                                let task_id = self.task.id.as_ref().unwrap().clone();
+                                let task_id = self.task.id.clone();
 
                                 let id = task_id.clone();
                                 spawn(async move {
@@ -337,7 +335,7 @@ fn display_task_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec2){
                                         // ui.end_row();
 
                                         ui.colored_label(Color32::LIGHT_RED, "ID:");
-                                        ui.label(format!("{}", customer.id.as_ref().unwrap().key().to_string()));
+                                        ui.label(format!("{}", customer.id.key().to_string()));
                                         ui.end_row();
 
                                         ui.colored_label(Color32::LIGHT_RED, "Name:");

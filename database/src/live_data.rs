@@ -110,24 +110,23 @@ impl LiveUpdate for LiveTaskPayload {
 
 pub fn update_or_insert_notes(new_note: TaskNotePayload, task: &mut TaskPayload) -> anyhow::Result<(), anyhow::Error> {
     if let Some(ref task_id) = new_note.task_id {
-        if let Some(existing_task_id) = &task.id {
-            if existing_task_id == task_id {
-                let notes = &mut task.task_note;
-                
-                if let Some(existing_note) = notes.iter_mut().find(|note| {
-                    note.id.as_ref().unwrap().key().to_string() == new_note.id.as_ref().unwrap().key().to_string()
-                }) {
-                    // Apply diffs to the existing note
-                    let diffs = existing_note.diff(&new_note);
-                    existing_note.apply_mut(diffs);
-                    debug!("Updated existing note: {:?}", existing_note);
-                } else {
-                    // Insert the new note if it doesn't exist
-                    notes.push(new_note.clone());
-                    debug!("Inserted new note: {:?}", new_note);
-                }
-
+        let existing_task_id = &task.id;
+        if existing_task_id == task_id {
+            let notes = &mut task.task_note;
+            
+            if let Some(existing_note) = notes.iter_mut().find(|note| {
+                note.id.key().to_string() == new_note.id.key().to_string()
+            }) {
+                // Apply diffs to the existing note
+                let diffs = existing_note.diff(&new_note);
+                existing_note.apply_mut(diffs);
+                debug!("Updated existing note: {:?}", existing_note);
+            } else {
+                // Insert the new note if it doesn't exist
+                notes.push(new_note.clone());
+                debug!("Inserted new note: {:?}", new_note);
             }
+
         }
     }
     Ok(())
@@ -155,38 +154,34 @@ pub fn update_or_insert_anything<T: StructDiff + PartialEq + Debug>(current_data
 pub fn update_or_insert(tasks: &mut Vec<TaskPayload>, new_task: LiveTaskPayload, new_ticket: Option<TicketPayload>) 
     -> anyhow::Result<(), anyhow::Error>
 {
-    if let Some(ref id) = new_task.id {
-        let mut updated = false;
+    let id = &new_task.id;
+    let mut updated = false;
 
-        for task in tasks.iter_mut() {
-            if let Some(existing_id) = &task.id {
-                if existing_id == id{
-                    info!("ID's match: {:?} // {:?}", existing_id, id);
-                    let mut updated_task: TaskPayload = new_task.clone().into(); // convert_live_to_task(new_task.clone(), task, new_ticket);
+    for task in tasks.iter_mut() {
+        let existing_id = &task.id;
+        if existing_id == id{
+            info!("ID's match: {:?} // {:?}", existing_id, id);
+            let mut updated_task: TaskPayload = new_task.clone().into(); // convert_live_to_task(new_task.clone(), task, new_ticket);
 
-                    updated_task.service_ticket = if let Some(service) = new_ticket {
-                        Some(service)
-                    } else { task.service_ticket.clone() };
-                    updated_task.task_note = task.task_note.clone();
-                    // Calculate the diff and apply it to the existing task
-                    let diffs = task.diff(&updated_task);
-                    task.apply_mut(diffs);
+            updated_task.service_ticket = if let Some(service) = new_ticket {
+                Some(service)
+            } else { task.service_ticket.clone() };
+            updated_task.task_note = task.task_note.clone();
+            // Calculate the diff and apply it to the existing task
+            let diffs = task.diff(&updated_task);
+            task.apply_mut(diffs);
 
-                    *task = updated_task;
-                    updated = true;
-                    break;
-                }
-            }
+            *task = updated_task;
+            updated = true;
+            break;
         }
-
-        if !updated {
-            info!("data was NOT updated");
-            tasks.push(new_task.into());
-        }
-    } else {
-        debug!("there was NO task id");
+    }
+    
+    if !updated {
+        info!("data was NOT updated");
         tasks.push(new_task.into());
     }
+    
     Ok(())
 }
 
@@ -198,38 +193,32 @@ pub fn update_or_insert_layout(
 ) 
     -> anyhow::Result<(), anyhow::Error> 
 {
-    if let Some(ref id) = new_task.id {
-        let mut updated = false;
+    let id = &new_task.id;
+    let mut updated = false;
+    for task in tasks.iter_mut() {
+        let existing_id = &task.id;
+        if existing_id == id {
+            debug!("ID's match: {:?} // {:?}", existing_id, id);
+            let mut updated_task: TaskPayload = new_task.clone().into(); // convert_live_to_task(new_task.clone(), task, new_ticket);
 
-        for task in tasks.iter_mut() {
-            if let Some(existing_id) = &task.id {
-                if existing_id == id {
-                    debug!("ID's match: {:?} // {:?}", existing_id, id);
-                    let mut updated_task: TaskPayload = new_task.clone().into(); // convert_live_to_task(new_task.clone(), task, new_ticket);
+            updated_task.service_ticket = if let Some(service) = new_ticket {
+                Some(service)
+            } else { task.service_ticket.clone() };
+            updated_task.task_note = task.task_note.clone();
 
-                    updated_task.service_ticket = if let Some(service) = new_ticket {
-                        Some(service)
-                    } else { task.service_ticket.clone() };
-                    updated_task.task_note = task.task_note.clone();
+            // Calculate the diff and apply it to the existing task
+            let diffs = task.diff(&updated_task);
+            task.apply_mut(diffs);
 
-                    // Calculate the diff and apply it to the existing task
-                    let diffs = task.diff(&updated_task);
-                    task.apply_mut(diffs);
-
-                    // Also update the task_to_replace with the updated task
-                    *task_to_replace = task.clone();
-                    updated = true;
-                    break;
-                }
-            }
+            // Also update the task_to_replace with the updated task
+            *task_to_replace = task.clone();
+            updated = true;
+            break;
         }
+    }
 
-        if !updated {
-            debug!("Data was NOT updated; inserting new task.");
-            tasks.push(new_task.into());
-        }
-    } else {
-        debug!("No task ID provided; inserting new task.");
+    if !updated {
+        debug!("Data was NOT updated; inserting new task.");
         tasks.push(new_task.into());
     }
     Ok(())

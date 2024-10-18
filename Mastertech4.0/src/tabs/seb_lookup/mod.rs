@@ -124,7 +124,7 @@ impl MastertechContext {
             });
 
         let c_frame = Frame::default();
-        c_frame.inner_margin(Margin::same(10.));
+        let _ = c_frame.inner_margin(Margin::same(10.));
 
         CentralPanel::default()
             .frame(c_frame)
@@ -161,7 +161,7 @@ pub struct JsonEditor {
 }
 
 impl JsonEditor {
-    fn new(value: Value) -> Self {
+    fn _new(value: Value) -> Self {
         Self {
             value,
             editor: Default::default(),
@@ -178,7 +178,7 @@ impl JsonEditor {
 }
 
 #[derive(Default)]
-struct Editor {
+pub struct Editor {
     edit_events: Vec<EditEvent>,
     state: Option<EditState>,
 }

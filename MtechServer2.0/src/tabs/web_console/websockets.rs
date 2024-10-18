@@ -673,7 +673,7 @@ impl ClientHandler for ConnectedClient {
     fn connect(&mut self) { }
 
     fn export_logs(&mut self, history: Vec<String>) {
-        let id = self.id.clone().unwrap();
+        let id = self.id.clone();
         spawn_local(async move {
             DATABASE.set("id", id).await.unwrap();
             DATABASE.set("history", Some(history.clone())).await.unwrap();
@@ -688,7 +688,7 @@ impl ClientHandler for ConnectedClient {
      }
 
      fn delete_client(&mut self) {
-        let id = self.id.clone().unwrap();
+        let id = self.id.clone();
         spawn_local(async move {
             let update_history: Result<Option<Record>, surrealdb::Error> = DATABASE
                 .delete((CONNECTED_CLIENT_TABLE, id.key().to_string()))

@@ -1,7 +1,7 @@
 use crate::{app_state::MtechServerContext, tabs::stock::get_extra_stock_info};
 use displays::egui_data_table::Renderer;
 use eframe::egui::{
-    Button, CentralPanel, ScrollArea, SidePanel, TextEdit, TopBottomPanel, Ui, Widget,
+    Button, CentralPanel, TextEdit, TopBottomPanel, Ui, Widget,
 };
 
 use log::info;
