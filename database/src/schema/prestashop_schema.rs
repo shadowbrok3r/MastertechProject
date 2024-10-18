@@ -392,6 +392,8 @@ pub struct Customer {
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct CustomerMessage {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    pub id: String,
     pub id_employee: String,        //  isUnsignedId   ❌ 		Employee ID
     pub id_customer_thread: String, //	               ❌ 		Customer Thread ID
     pub message: String,            //  isCleanHtml    ✔️ 	     16777216

@@ -1,4 +1,5 @@
 use eframe::egui::text::{CCursor, CCursorRange};
+use eframe::egui::TextBuffer;
 use eframe::egui::{
     popup,
     text::LayoutJob,
@@ -187,11 +188,11 @@ where
 
             trigger_char_position = text_before_cursor.rfind('@');
 
+            let matcher = SkimMatcherV2::default().ignore_case();
             if let Some(at_byte_pos) = trigger_char_position {
                 let match_text = &text_field[at_byte_pos + 1..cursor_byte_index];
 
                 if !match_text.is_empty() {
-                    let matcher = SkimMatcherV2::default().ignore_case();
 
                     match_results = search
                         .into_iter()
@@ -203,6 +204,17 @@ where
                         .collect::<Vec<_>>();
 
                     match_results.sort_by_key(|k| Reverse(k.1));
+                }
+            } else {
+                if !text_field.is_empty() {
+                    match_results = search
+                        .into_iter()
+                        .filter_map(|s| {
+                            let score = matcher.fuzzy_indices(s.as_ref(), text_field.as_str());
+                            score.map(|(score, indices)| (s, score, indices))
+                        })
+                        .collect::<Vec<_>>();
+                    match_results.sort_by_key(|k| Reverse(k.1)); 
                 }
             }
         }
@@ -271,6 +283,8 @@ where
 
                 // Store the updated TextEditState
                 text_edit_state.store(ui.ctx(), text_edit_id);
+            } else {
+                text_field.replace_with(match_results[index].0.as_ref());
             }
             state.selected_index = None;
         }
@@ -288,7 +302,7 @@ where
             ui,
             id,
             &text_response,
-            PopupCloseBehavior::IgnoreClicks,
+            PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
                 for (i, (output, _, match_indices)) in
                     match_results.iter().take(max_suggestions).enumerate()
@@ -313,6 +327,7 @@ where
                     //  Update selected index based on hover
                     if ui.toggle_value(&mut selected, text).hovered() {
                         state.selected_index = Some(i);
+                        // text_field.replace_with(match_results[index].0.as_ref());
                     }
                     // if ui.toggle_value(&mut selected, text).clicked() {
                     //     text_field.replace_with(output.as_ref());

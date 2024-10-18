@@ -54,7 +54,7 @@ pub async fn send_payload(
     let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
     let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
 
-    let task_id = task_data.id.clone();
+    // let task_id = task_data.id.clone();
     let ticket_id = ticket_data.id.clone();
     let customer_id = customer_data.id.clone();
     let computer_id = computer_data.id.clone();
@@ -134,40 +134,26 @@ pub async fn send_payload(
 
     info!("Task Data: {:?}", &task_data);
 
-    let create_task_record: Option<Record> = DATABASE.create(TASK_TABLE).content(task_data).await?;
-    //  output: Err(Serialization error:
-    //  failed to deserialize; expected an
-    //  enum variant of Id, found $surrealdb::private::sql::Thing
-    //  { tb: "task", id: Id::String("mgklqabp0yx96h5z9vji") }
+    let create_task_record: Option<Record> = DATABASE
+        .create(TASK_TABLE)
+        .content(task_data).await?;
 
     info!("create_task_record: {create_task_record:?}");
 
     if task_notes.len() > 0 {
         info!("Task Notes: {:?}", task_notes);
-        let mut note_ids = Vec::new();
 
-        for mut note in task_notes {
+        for note in task_notes {
             if let Some(id) = &create_task_record {
-                note.task_id = Some(id.id.clone());
                 info!("Task ID // Note ID: {:?}\n{:?}", id, &note.task_id);
-                let create_task_note_record: Option<Record> =
-                    DATABASE.create(TASK_NOTE_TABLE).content(note).await?;
+                let create_task_note_record: Vec<Record> = DATABASE
+                    .query("fn::create_task_note($note)")
+                    .bind(("note", note))
+                    .await?
+                    .take(0)?;
+
                 info!("create_task_note_record: {:?}", create_task_note_record);
-                if let Some(note_record) = create_task_note_record {
-                    note_ids.push(note_record); // .key().to_string().clone()
-                }
             }
-        }
-
-        if let Some(ref record) = create_task_record {
-            let update_task: Vec<Record> = DATABASE
-                .query("UPDATE task SET task_note += $notes WHERE id == $task")
-                .bind(("task", record.clone())) // .key().to_string().clone()
-                .bind(("notes", note_ids))
-                .await?
-                .take(0)?;
-
-            info!("Update_task with notes: {update_task:?}");
         }
     }
 

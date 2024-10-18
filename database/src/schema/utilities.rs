@@ -215,10 +215,16 @@ pub async fn modify_connected_client(
 }
 
 pub async fn delete_task(id: RecordId) -> Result<(), Error> {
-    let id = id.clone();
     info!("deleting id: {id:?}");
-    DATABASE.set("id", id.key().to_string().clone()).await?;
-    let _y: Option<TaskPayload> = DATABASE.delete((TASK_TABLE, id.key().to_string())).await?;
+    let x = id.clone();
+    let delete_result: Option<Record> = DATABASE.delete(
+        (TASK_TABLE, id.key().to_string())
+    )
+    .await
+    .unwrap();
+
+    info!("delete_result: {delete_result:?} for {:?}", x.key().to_string());
+    
     Ok(())
 }
 

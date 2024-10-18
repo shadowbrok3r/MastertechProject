@@ -8,7 +8,7 @@ use eframe::egui::{
     Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget,
 };
 use egui_extras::{Size, StripBuilder};
-use log::{error, info};
+use log::info; // error, 
 use reqwest::{
     header::{ACCEPT, CONTENT_TYPE},
     Client,
@@ -171,7 +171,7 @@ impl DisplayModal for TaskModal {
                                     spawn_local(async move {
                                         match delete_task(id).await {
                                             Ok(_) => info!("Deleted task"),
-                                            Err(e) => error!("Error: {e:?}"),
+                                            Err(e) => info!("Error: {e:?}"),
                                         }
                                     });
                                     response = Some(ModalAction::Close);
