@@ -526,7 +526,7 @@ impl Default for ConnectedClient {
 pub struct Notification {
     pub id: RecordId,
     /// receiver of notification
-    pub user: UserId,
+    pub user: RecordId,
     /// description of notification
     pub notification_description: String,
     /// type of notification
@@ -534,7 +534,17 @@ pub struct Notification {
     /// Has the notification been read?
     pub status: String,
 }
-
+impl Default for Notification {
+    fn default() -> Self {
+        Self {
+            id: RecordId::from((NOTIFICATION_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            user: RecordId::from((USER_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat())),
+            notification_description: Default::default(),
+            notification_type: Default::default(),
+            status: Default::default()
+        }
+    }
+}
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum NotificationType {
     NewMessage,

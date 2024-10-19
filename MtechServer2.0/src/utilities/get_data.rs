@@ -76,9 +76,11 @@ impl TaskNoteMod for TaskNotePayload {
         let id = self.id.clone();
         info!("deleting id: {:?}", id.clone());
         DATABASE.set("id", id.key().to_string().clone()).await?;
-        let y: Option<Record> = DATABASE.delete((TASK_NOTE_TABLE, id.key().to_string())).await?;
+        let y: Option<Record> = DATABASE
+            .delete((TASK_NOTE_TABLE, id.key().to_string()))
+            .await?;
         info!("Deleted note: {:?}", y);
-    
+
         Ok(())
     }
 }
@@ -108,7 +110,7 @@ impl Task for TaskPayload {
         let query = format!(
             "SELECT service_ticket.computer FROM task WHERE id={id} FETCH service_ticket.computer"
         );
-        let get_data: Option<T> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
@@ -120,7 +122,7 @@ impl Task for TaskPayload {
         let query = format!(
             "SELECT service_ticket.customer FROM task WHERE id={id} FETCH service_ticket.customer"
         );
-        let get_data: Option<T> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
@@ -130,7 +132,7 @@ impl Task for TaskPayload {
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
         let query = format!("SELECT * FROM task_note WHERE id={id}");
-        let get_data: Option<T> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
@@ -141,10 +143,12 @@ impl Task for TaskPayload {
         let id: RecordId = self.id.clone();
 
         let get_data: Option<T> = DATABASE
-                .query(format!("SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id={id}"))
-                .await
-                .unwrap()
-                .take(0).unwrap();
+                .query(
+                    "SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id == $id"
+                )
+                .bind(("id", id))
+                .await?
+                .take(0)?;
         Ok(get_data)
     }
     // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>)//-> Result<(), Error>
