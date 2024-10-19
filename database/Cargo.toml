@@ -7,6 +7,7 @@ edition = "2021"
 reqwest = { version = "0.12", features = ["json"] }
 lazy_static = "1"
 rusty-s3 = "0.5"
+regex = { workspace=true }
 web-time = { workspace=true }
 surrealdb = { workspace=true }
 serde_json = { workspace=true }
@@ -22,4 +23,4 @@ once_cell = { workspace=true }
 futures = { workspace=true }
 structdiff = { workspace=true }
 gloo-console = { workspace=true }
-
+chrono = {workspace=true}

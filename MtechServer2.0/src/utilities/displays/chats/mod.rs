@@ -4,6 +4,7 @@ use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Directi
 };
 use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, Record, TaskNotePayload, User}, DATABASE};
 use displays::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
+use regex::Regex;
 use surrealdb::RecordId;
 use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local, Utc};
