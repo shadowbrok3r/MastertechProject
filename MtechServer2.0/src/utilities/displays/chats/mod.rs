@@ -170,10 +170,19 @@ impl ChatView {
                                 new_note.id_customer_thread = Some(thread_id);
                             }
                         }
-
+                        info!("new_note: {new_note:?}");
                         spawn_local(async move {
-                            DATABASE.set("note", new_note).await.unwrap();
-                            let update_task_note: Vec<Record> = DATABASE.query("CREATE task_note CONTENT $note").await.unwrap().take(0).unwrap(); // CREATE task_note CONTENT $note
+                            DATABASE
+                            .set("note", new_note)
+                            .await
+                            .unwrap();
+
+                            let update_task_note: Vec<Record> = DATABASE
+                            .query("CREATE task_note CONTENT $note")
+                            .await
+                            .unwrap()
+                            .take(0)
+                            .unwrap(); // CREATE task_note CONTENT $note
                             info!("Update_note: {:?}", update_task_note);
                         });
                     }
