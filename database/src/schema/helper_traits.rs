@@ -1,16 +1,18 @@
 use crate::DATABASE;
 
 use super::{
-    prestashop_schema::{self, CustomerMessage, Employee, Prestashop}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
+    prestashop_schema::{self, Employee, Prestashop},
+    ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record,
+    SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User,
+    TASK_NOTE_TABLE,
 };
 use anyhow::{Error, Result};
 use async_trait::async_trait;
 use log::{debug, info};
+use regex::Regex;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::Value;
 use std::{collections::HashMap, fmt::Debug};
 use structdiff::StructDiff;
-use regex::Regex;
 use surrealdb::RecordId;
 
 /// Macro to implement GetDataFromId for structs with an 'id' field
@@ -23,6 +25,21 @@ macro_rules! _get_id {
             }
         }
     };
+}
+
+/// Get the associated data tied to an ID 
+#[async_trait(?Send)]
+pub trait GetAssociatedDataFromId<D> {
+    async fn get_associated_data<T>(&mut self) -> Result<D, Error>
+    where
+        T: Serialize + for<'de> Deserialize<'de> + Clone,
+        D: structdiff::StructDiff
+            + DeserializeOwned
+            + Serialize
+            + 'static
+            + Debug
+            + std::marker::Unpin
+            + for<'de> Deserialize<'de>;
 }
 
 /// A trait for assisting with operations involving the Employee struct
@@ -104,19 +121,6 @@ pub trait OrderHelper {
         -> Result<Vec<prestashop_schema::Order>, Error>;
 }
 
-#[async_trait(?Send)]
-pub trait GetAssociatedDataFromId<D> {
-    async fn get_associated_data<T>(&mut self) -> Result<D, Error>
-    where
-        T: Serialize + for<'de> Deserialize<'de> + Clone,
-        D: structdiff::StructDiff
-            + DeserializeOwned
-            + Serialize
-            + 'static
-            + Debug
-            + std::marker::Unpin
-            + for<'de> Deserialize<'de>;
-}
 
 #[async_trait(?Send)]
 impl EmployeeHelper for Employee {
@@ -425,11 +429,11 @@ spawn_local(async move {
  */
 #[async_trait(?Send)]
 pub trait TaskNotePayloadHelper {
+    async fn create_prestashop_note(&mut self) -> Result<Response, anyhow::Error>;
+
     async fn check_tagged_user_in_note(&mut self) -> Result<(), anyhow::Error>;
 
     async fn create_task_note(&mut self) -> Result<(), anyhow::Error>;
-
-    async fn create_prestashop_note(&mut self) -> Result<Value, anyhow::Error>;
 
     async fn update_task_note_in_db(
         &mut self,
@@ -497,7 +501,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             .bind(("notif", notification))
             .await?
             .take(0)?;
-            
+
         Ok(())
     }
 
@@ -519,24 +523,21 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             && self.id_employee.is_some()
         {
             let response = self.create_prestashop_note().await?;
-            if let (Some(date_add), Some(id)) = (response.get("date_add"), response.get("id")) {
-                let date_str = date_add.to_string();
-                let date = date_str.split_once(' ').unwrap_or_default().0;
-                // Update task note with Prestashop details
-                let updated_value = TaskNotePayload {
-                    created_at: date.to_string(),
-                    id: RecordId::from((TASK_NOTE_TABLE, id.to_string().clone())),
-                    id_customer_message: Some(id.to_string().clone()),
-                    ..self.clone() // Keep other fields the same
-                };
-                let diffs = self.diff(&updated_value);
-                self.apply_mut(diffs);
-
-                self.update_task_note_in_db(updated_value).await?;
-
-                self.update_username_if_needed().await?;
+            let date_str = response.date_add.to_string();
+            let date = date_str.split_once(' ').unwrap_or_default().0;
+            // Update task note with Prestashop details
+            let updated_value = TaskNotePayload {
+                created_at: date.to_string(),
+                id: RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone())),
+                id_customer_message: Some(response.id.to_string().clone()),
+                ..self.clone() // Keep other fields the same
             };
+            let diffs = self.diff(&updated_value);
+            self.apply_mut(diffs);
 
+            self.update_task_note_in_db(updated_value).await?;
+
+            self.update_username_if_needed().await?;
         } else if self.created_at.is_empty() {
             // Update created_at if missing
             self.update_task_note_with_current_time().await?;
@@ -573,14 +574,14 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         Ok(())
     }
 
-    async fn create_prestashop_note(&mut self) -> Result<Value, Error> {
+    async fn create_prestashop_note(&mut self) -> Result<Response, Error> {
         // Prepare the XML payload
         let begin = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><prestashop xmlns:xlink=\"http://www.w3.org/1999/xlink\">";
         let end = "</prestashop>";
-        
+
         let id_employee = self.id_employee.as_deref().unwrap_or("");
         let id_customer_thread = self.id_customer_thread.as_deref().unwrap_or("");
-        
+
         let payload = format!(
             "{}<customer_message><id_lang>1</id_lang><id_employee>{}</id_employee><id_customer_thread>{}</id_customer_thread><message>{}</message><private>1</private><id_order_message_type>0</id_order_message_type></customer_message>{}",
             begin, id_employee, id_customer_thread, self.note, end
@@ -617,13 +618,11 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             .unwrap_or(""); // Optional field, so we handle it accordingly
 
         // Return a Response struct with extracted values
-        Ok(
-            serde_json::json!({
-                date_add: date_add.to_string(),
-                id: id.to_string(),
-                date_upd: date_upd.to_string(),
-            })
-        ) 
+        Ok(Response {
+            date_add: date_add.to_string(),
+            id: id.to_string(),
+            date_upd: date_upd.to_string(),
+        })
     }
 }
 
@@ -632,3 +631,9 @@ fn parse_email_user(email: &str) -> &str {
     email.split('@').next().unwrap_or(email)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Response {
+    pub date_add: String,
+    pub id: String,
+    pub date_upd: String,
+}
