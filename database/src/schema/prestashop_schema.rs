@@ -275,6 +275,23 @@ impl<'a> Prestashop<'a> {
 
         Ok(x)
     }
+
+    pub async fn delete_resource_wasm(
+        &self,
+        resource_name: &str,
+        id: &str,
+    ) 
+        -> anyhow::Result<String, anyhow::Error>
+    {
+        let base_url = format!("{PRESTASHOP_API_URL_WASM}/{resource_name}/{id}");
+        info!("URL: {base_url:?}");
+
+        let response: String = self.client.delete(base_url).send().await?.text().await?;
+
+        info!("response: {:#?}", response);
+
+        Ok(response) 
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]

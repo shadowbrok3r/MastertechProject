@@ -2,9 +2,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
 };
-use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, helper_traits::TaskNotePayloadHelper, Record, TaskNotePayload, User}, DATABASE};
+use database::{live_data::handle_live_delete, schema::{helper_traits::TaskNotePayloadHelper, Record, TaskNotePayload, User}, DATABASE};
 use displays::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
-use regex::Regex;
 use surrealdb::RecordId;
 use wasm_bindgen_futures::spawn_local;
 use chrono::{DateTime, Local, Utc};
