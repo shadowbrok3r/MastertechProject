@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
 };
-use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, Record, TaskNotePayload, User}, DATABASE};
+use database::{live_data::handle_live_delete, schema::{get_data::TaskNoteMod, helper_traits::TaskNotePayloadHelper, Record, TaskNotePayload, User}, DATABASE};
 use displays::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use regex::Regex;
 use surrealdb::RecordId;
@@ -146,12 +146,14 @@ impl ChatView {
                     new_msg = Some(txt.clone());
 
                     if let Some(usr) = self.current_user.clone(){
-                        let email = usr.email.split_once('@').clone();
-                        let username = email.unwrap_or_default().0.to_string();
+                        let username = usr.email.split_once('@').map_or_else(String::new, |(name, _)| name.to_string());
 
-                        let threads = self.messages.iter().map(|m| m.id_customer_thread.clone()).collect::<Vec<Option<String>>>();
-
-                        let id_customer_thread = threads.get(0).cloned().unwrap_or_default();
+                        // Extract the first customer thread ID if available
+                        let id_customer_thread = self
+                            .messages
+                            .iter()
+                            .filter_map(|m| m.id_customer_thread.clone())
+                            .next();
 
                         let employee_id = usr.id_prestashop.clone().unwrap_or_default();
                         let id_employee = Some(employee_id.to_string());
@@ -166,25 +168,17 @@ impl ChatView {
                             ..Default::default() 
                         };
 
-                        for thread in threads {
-                            if let Some(thread_id) = thread {
-                                new_note.id_customer_thread = Some(thread_id);
-                            }
+                        // If there are multiple threads, assign each as needed (retain only the last)
+                        for thread in self.messages.iter().filter_map(|m| m.id_customer_thread.clone()) {
+                            new_note.id_customer_thread = Some(thread);
                         }
                         info!("new_note: {new_note:?}");
                         spawn_local(async move {
-                            DATABASE
-                            .set("note", new_note)
-                            .await
-                            .unwrap();
-
-                            let update_task_note: Vec<Record> = DATABASE
-                            .query("CREATE task_note CONTENT $note")
-                            .await
-                            .unwrap()
-                            .take(0)
-                            .unwrap(); // CREATE task_note CONTENT $note
-                            info!("Update_note: {:?}", update_task_note);
+                            if let Err(e) = new_note.create_task_note().await {
+                                error!("Failed to create task note: {:?}", e);
+                            } else {
+                                info!("Task note successfully created.");
+                            }
                         });
                     }
                 }

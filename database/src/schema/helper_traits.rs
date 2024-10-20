@@ -473,6 +473,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             // Simulate database query for user with the email
             let tagged_user: Option<User> = employee.find_user().await?;
             if let (Some(id), Some(tagged_user)) = (task_id.clone(), tagged_user) {
+                info!("There is an ID, and there IS a tagged user: {:?} / {:?}", id, tagged_user);
                 // Create notification
                 let notification = Notification {
                     notification_description: format!(
@@ -485,10 +486,8 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                     user: tagged_user.id.clone(),
                     ..Default::default()
                 };
-
                 self.create_notification(notification).await?;
-                self.update_task_note_with_tagged_user(tagged_user.id.clone())
-                    .await?;
+                self.update_task_note_with_tagged_user(tagged_user.id.clone()).await?;
             } // else if let Some(id) = task_id.clone() {
         }
 
@@ -496,22 +495,24 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 
     async fn create_notification(&mut self, notification: Notification) -> Result<(), Error> {
-        let _: Option<Record> = DATABASE
-            .query("CREATE notification CONTENT $notif")
-            .bind(("notif", notification))
-            .await?
-            .take(0)?;
+        info!("Creating notification: {:?}", notification);
+        // let _: Option<Record> = DATABASE
+        //     .query("CREATE notification CONTENT $notif")
+        //     .bind(("notif", notification))
+        //     .await?
+        //     .take(0)?;
 
         Ok(())
     }
 
     async fn update_task_note_with_tagged_user(&mut self, user_id: RecordId) -> Result<(), Error> {
-        let _: Option<Record> = DATABASE
-            .query("UPDATE task_note SET tagged_users += $user_id WHERE id == $id")
-            .bind(("user_id", user_id))
-            .bind(("id", self.id.clone()))
-            .await?
-            .take(0)?;
+        info!("Updating {:?} with tagged_user: {:?}", self.id.clone(), user_id);
+        // let _: Option<Record> = DATABASE
+        //     .query("UPDATE task_note SET tagged_users += $user_id WHERE id == $id")
+        //     .bind(("user_id", user_id))
+        //     .bind(("id", self.id.clone()))
+        //     .await?
+        //     .take(0)?;
         Ok(())
     }
 
@@ -521,10 +522,13 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         if self.id_customer_message.is_none()
             && self.id_customer_thread.is_some()
             && self.id_employee.is_some()
-        {
+        { // Is this sent from the website or mastertech?
+            info!("Sent from website, {:?} - {:?}", self.id_customer_thread, self.id_employee);
             let response = self.create_prestashop_note().await?;
+            info!("Created prestashop note: {response:?}");
             let date_str = response.date_add.to_string();
             let date = date_str.split_once(' ').unwrap_or_default().0;
+            info!("Before struct diffing TaskNotePayload: {:?}", self.clone());
             // Update task note with Prestashop details
             let updated_value = TaskNotePayload {
                 created_at: date.to_string(),
@@ -535,14 +539,20 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             let diffs = self.diff(&updated_value);
             self.apply_mut(diffs);
 
+            info!("After struct diffing TaskNotePayload: {:?}", self.clone());
+            if self.created_at.is_empty() {
+                self.update_task_note_with_current_time().await?;
+                info!("Created_at is still empty after sending taskNotePayload: {:?}", self.created_at);
+            }
             self.update_task_note_in_db(updated_value).await?;
-
+            
             self.update_username_if_needed().await?;
         } else if self.created_at.is_empty() {
             // Update created_at if missing
             self.update_task_note_with_current_time().await?;
         } else {
             // Handle other cases
+            info!("Sent from Mastertech, updating other task note fields");
             self.update_task_note_fields().await?;
         }
 
@@ -555,17 +565,18 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 
     async fn update_task_note_in_db(&mut self, task_note: TaskNotePayload) -> Result<(), Error> {
-        let _: Option<Record> = DATABASE
-            .query("UPDATE task_note MERGE $task_note")
-            .bind(("task_note", task_note))
-            .await?
-            .take(0)?;
+        // let _: Option<Record> = DATABASE
+        //     .query("UPDATE task_note MERGE $task_note")
+        //     .bind(("task_note", task_note))
+        //     .await?
+        //     .take(0)?;
         Ok(())
     }
 
     async fn update_task_note_with_current_time(&mut self) -> Result<(), Error> {
         // Logic to update task note with the current time
         self.created_at = chrono::Utc::now().to_rfc3339();
+        info!("Created_at was empty, now it is {:?}", self.created_at);
         Ok(())
     }
 
@@ -589,39 +600,40 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
         // Send HTTP POST request with the XML payload
         let client = reqwest::Client::new();
-        let response_text = client
-            .post("https://pcl.master-tech.app/api/customer_messages")
-            .header("Content-type", "application/xml")
-            .body(payload)
-            .send()
-            .await?
-            .text()
-            .await?;
-
+        info!("Payload: {:?}", payload);
+        // let response_text = client
+        //     .post("https://pcl.master-tech.app/api/customer_messages")
+        //     .header("Content-type", "application/xml")
+        //     .body(payload)
+        //     .send()
+        //     .await?
+        //     .text()
+        //     .await?;
+        //
         // Parse the XML response to extract values
-        let id = response_text
-            .split("<id><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></id>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
-
-        let date_add = response_text
-            .split("<date_add><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_add>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
-
-        let date_upd = response_text
-            .split("<date_upd><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_upd>").next())
-            .unwrap_or(""); // Optional field, so we handle it accordingly
-
+        // let id = response_text
+        //     .split("<id><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></id>").next())
+        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+        //
+        // let date_add = response_text
+        //     .split("<date_add><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></date_add>").next())
+        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
+        //
+        // let date_upd = response_text
+        //     .split("<date_upd><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></date_upd>").next())
+        //     .unwrap_or(""); // Optional field, so we handle it accordingly
+        //
         // Return a Response struct with extracted values
         Ok(Response {
-            date_add: date_add.to_string(),
-            id: id.to_string(),
-            date_upd: date_upd.to_string(),
+            date_add: String::new(), // date_add.to_string(),
+            id: String::new(), // id.to_string(),
+            date_upd: String::new() // date_upd.to_string(),
         })
     }
 }
