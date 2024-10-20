@@ -2,9 +2,7 @@ use crate::app_state::MastertechContext;
 use chrono::{DateTime, SecondsFormat};
 use database::{
     schema::{
-        utilities::{query_id, query_user_from_email},
-        ComputerData, CustomerData, LiveTaskPayload, Priority, Record, TaskNotePayload, TicketData,
-        COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE,
+        helper_traits::TaskNotePayloadHelper, utilities::{query_id, query_user_from_email}, ComputerData, CustomerData, LiveTaskPayload, Priority, Record, TaskNotePayload, TicketData, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
     },
     DATABASE,
 };
@@ -144,15 +142,19 @@ pub async fn send_payload(
         info!("Task Notes: {:?}", task_notes);
 
         for note in task_notes {
+            if note.created_at.is_empty() {
+                info!("Note created_at is empty: {note:?}");
+                // note.update_task_note_with_current_time();
+            }
             if let Some(id) = &create_task_record {
                 info!("Task ID // Note ID: {:?}\n{:?}", id, &note.task_id);
-                let create_task_note_record: Vec<Record> = DATABASE
-                    .query("CREATE task_note CONTENT $note") // 
-                    .bind(("note", note))
-                    .await?
-                    .take(0)?;
-
-                info!("create_task_note_record: {:?}", create_task_note_record);
+                // let create_task_note_record: Vec<Record> = DATABASE
+                //     .query("CREATE task_note CONTENT $note") // 
+                //     .bind(("note", note))
+                //     .await?
+                //     .take(0)?;
+                //
+                // info!("create_task_note_record: {:?}", create_task_note_record);
             }
         }
     }
