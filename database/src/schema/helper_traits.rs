@@ -1,7 +1,7 @@
 use crate::DATABASE;
 
 use super::{
-    prestashop_schema::{self, Employee, Prestashop},
+    prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop},
     ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record,
     SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User,
     TASK_NOTE_TABLE,
@@ -88,12 +88,11 @@ pub trait ComputerDataHelper {
     /// Find Customer that owns this Computer
     async fn find_associated_customer(&mut self) -> Result<CustomerData, Error>;
     /// Find PrestaShop Orders associated with this Computer
-    async fn find_associated_prestashop_orders(
-        &mut self,
-    ) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn find_associated_prestashop_orders(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Find PrestaShop Customer associated with this Computer
     async fn find_prestashop_customer(&mut self) -> Result<prestashop_schema::Customer, Error>;
 }
+
 
 /// A trait for assisting with operations involving Customer Records
 #[async_trait(?Send)]
@@ -120,7 +119,6 @@ pub trait OrderHelper {
     async fn get_all_return_for_services(&mut self)
         -> Result<Vec<prestashop_schema::Order>, Error>;
 }
-
 
 #[async_trait(?Send)]
 impl EmployeeHelper for Employee {
@@ -282,6 +280,8 @@ impl UserHelper for User {
             .await?;
         Ok(employee)
     }
+
+ 
     async fn save_user_settings(&mut self) -> Result<(), Error> {
         let user_settings = serde_json::to_value(self.user_settings.clone())?;
 
@@ -435,10 +435,7 @@ pub trait TaskNotePayloadHelper {
 
     async fn create_task_note(&mut self) -> Result<(), anyhow::Error>;
 
-    async fn update_task_note_in_db(
-        &mut self,
-        task_note: TaskNotePayload,
-    ) -> Result<(), anyhow::Error>;
+    async fn update_task_note_in_db(&mut self, task_note: TaskNotePayload) -> Result<(), anyhow::Error>;
 
     async fn update_task_note_fields(&mut self) -> Result<(), anyhow::Error>;
 
@@ -446,15 +443,11 @@ pub trait TaskNotePayloadHelper {
 
     async fn update_username_if_needed(&mut self) -> Result<(), anyhow::Error>;
 
-    async fn create_notification(
-        &mut self,
-        notification: Notification,
-    ) -> Result<(), anyhow::Error>;
+    async fn create_notification(&mut self, notification: Notification) -> Result<(), anyhow::Error>;
 
-    async fn update_task_note_with_tagged_user(
-        &mut self,
-        user_id: RecordId,
-    ) -> Result<(), anyhow::Error>;
+    async fn update_task_note_with_tagged_user(&mut self, user_id: RecordId) -> Result<(), anyhow::Error>;
+
+    async fn get_task_note_payload(order_number: &str) -> Result<Vec<TaskNotePayload>>;
 }
 
 #[async_trait(?Send)]
@@ -496,23 +489,23 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
     async fn create_notification(&mut self, notification: Notification) -> Result<(), Error> {
         info!("Creating notification: {:?}", notification);
-        // let _: Option<Record> = DATABASE
-        //     .query("CREATE notification CONTENT $notif")
-        //     .bind(("notif", notification))
-        //     .await?
-        //     .take(0)?;
+        let _: Option<Record> = DATABASE
+            .query("CREATE notification CONTENT $notif")
+            .bind(("notif", notification))
+            .await?
+            .take(0)?;
 
         Ok(())
     }
 
     async fn update_task_note_with_tagged_user(&mut self, user_id: RecordId) -> Result<(), Error> {
         info!("Updating {:?} with tagged_user: {:?}", self.id.clone(), user_id);
-        // let _: Option<Record> = DATABASE
-        //     .query("UPDATE task_note SET tagged_users += $user_id WHERE id == $id")
-        //     .bind(("user_id", user_id))
-        //     .bind(("id", self.id.clone()))
-        //     .await?
-        //     .take(0)?;
+        let _: Option<Record> = DATABASE
+            .query("UPDATE task_note SET tagged_users += $user_id WHERE id == $id")
+            .bind(("user_id", user_id))
+            .bind(("id", self.id.clone()))
+            .await?
+            .take(0)?;
         Ok(())
     }
 
@@ -540,20 +533,19 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             self.apply_mut(diffs);
 
             info!("After struct diffing TaskNotePayload: {:?}", self.clone());
-            if self.created_at.is_empty() {
-                self.update_task_note_with_current_time().await?;
-                info!("Created_at is still empty after sending taskNotePayload: {:?}", self.created_at);
-            }
+
             self.update_task_note_in_db(updated_value).await?;
             
             self.update_username_if_needed().await?;
-        } else if self.created_at.is_empty() {
-            // Update created_at if missing
-            self.update_task_note_with_current_time().await?;
         } else {
             // Handle other cases
             info!("Sent from Mastertech, updating other task note fields");
             self.update_task_note_fields().await?;
+        }
+
+        if self.created_at.is_empty() {
+            self.update_task_note_with_current_time().await?;
+            info!("Created_at is still empty after sending taskNotePayload: {:?}", self.created_at);
         }
 
         Ok(())
@@ -565,11 +557,11 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 
     async fn update_task_note_in_db(&mut self, task_note: TaskNotePayload) -> Result<(), Error> {
-        // let _: Option<Record> = DATABASE
-        //     .query("UPDATE task_note MERGE $task_note")
-        //     .bind(("task_note", task_note))
-        //     .await?
-        //     .take(0)?;
+        let _: Option<Record> = DATABASE
+            .query("UPDATE task_note MERGE $task_note")
+            .bind(("task_note", task_note))
+            .await?
+            .take(0)?;
         Ok(())
     }
 
@@ -636,6 +628,91 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             date_upd: String::new() // date_upd.to_string(),
         })
     }
+
+    async fn get_task_note_payload(order_number: &str) -> Result<Vec<TaskNotePayload>> {
+        let api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+
+        query.insert("filter[id_order]", order_number);
+        query.insert("output_format", "JSON");
+        query.insert("display", "full");
+
+        let customer_threads: Vec<CustomerThread> = api_call
+            .request_resources("customer_threads", query.clone())
+            .await
+            .unwrap_or_default();
+
+        let mut customer_messages: Vec<CustomerMessage> = Vec::new();
+
+        if !customer_threads.is_empty() {
+            for thread in customer_threads.iter() {
+                for msg in thread.associations.customer_messages.iter() {
+                    match api_call
+                        .request_subresources_by_id(
+                            "customer_messages",
+                            "customer_message",
+                            msg.id.as_str(),
+                        )
+                        .await
+                    {
+                        Ok(msg) => customer_messages.push(msg),
+                        Err(e) => info!("Error getting customer messages: {e:?}"),
+                    }
+                }
+            }
+        }
+
+        // Iterate through each thread's customer messages
+        for thread in customer_threads {
+            for msg in thread.associations.customer_messages {
+                // Fetch customer message details
+                let customer_message_url = format!("{}/customer_messages/{}?output_format=JSON", base_url, msg.id);
+                let message: CustomerMessage = client
+                    .get(&customer_message_url)
+                    .send()
+                    .await?
+                    .json::<HashMap<String, CustomerMessage>>()
+                    .await?
+                    .remove("customer_message")
+                    .unwrap();
+
+                // Fetch employee details
+                let employee_url = format!("{}/employees/{}?output_format=JSON", base_url, message.id_employee);
+                let employee: Employee = client
+                    .get(&employee_url)
+                    .send()
+                    .await?
+                    .json::<HashMap<String, Employee>>()
+                    .await?
+                    .remove("employee")
+                    .unwrap();
+
+                // Fetch the user based on email
+                let user = get_user_by_email(&employee.email).await?;
+
+                // Fetch the task based on order number
+                let task = get_task_by_order_number(order_number).await?;
+
+                // Only proceed if user and task exist
+                if let (Some(user), Some(task)) = (user, task) {
+                    let task_note = TaskNote {
+                        created_at: message.date_add.split(' ').next().unwrap_or_default().to_string(),
+                        everest_initials: user.everest_initials,
+                        id_customer_thread: message.id_customer_thread,
+                        id_employee: message.id_employee,
+                        note: message.message,
+                        task_id: task.id,
+                        user: user.id,
+                        username: parse_username_from_email(&user.email),
+                    };
+                    task_notes.push(task_note);
+                }
+            }
+        }
+
+        Ok(task_notes)
+    }
+
 }
 
 /// Parses the username from an email address
