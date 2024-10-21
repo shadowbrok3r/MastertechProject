@@ -297,13 +297,12 @@ impl ChatView {
                                                 if save_btn.clicked(){
                                                     if self.allow_edit.contains(&id.to_string()) {
                                                         if let Some(msg) = self.edit_text.get_mut(&id.to_string()){
-                                                            let note = msg.note.clone();
-                                                            let id = id.clone();
+                                                            let mut task_note = msg.clone();
                                                             spawn_local(async move {
-                                                                DATABASE.set("note", note).await.unwrap();
-                                                                DATABASE.set("id", id).await.unwrap();
-                                                                let update_task_note: Vec<Record> = DATABASE.query("UPDATE task_note SET note = $note WHERE id == $id").await.unwrap().take(0).unwrap();
-                                                                info!("Update_note: {:?}", update_task_note);
+                                                                match task_note.modify_prestashop_note().await {
+                                                                    Ok(res) => info!("Modify note response:: {res:?}"),
+                                                                    Err(e) => error!("Error modifying note: {e:?}"),
+                                                                }
                                                             });
                                                             item.note = msg.note.clone();
                                                         }

@@ -81,7 +81,7 @@ impl MastertechContext {
             .frame(
                 Frame::central_panel(&ui.ctx().style())
                     .outer_margin(10.)
-                    .inner_margin(10.),
+                    .inner_margin(10.)
             )
             .show_inside(ui, |ui| {
                 ui.with_layout(

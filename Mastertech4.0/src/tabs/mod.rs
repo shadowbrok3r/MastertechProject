@@ -89,7 +89,7 @@ impl TabViewer for MastertechContext {
                 let sysinfo_tab = &"SysInfo".to_string();
                 if ui.label(tab.as_str()).clicked() {
                     if tab.as_str() == sysinfo_tab {
-                        self.specs_first_run = true;
+                        self.first_run = true;
                     }
                 };
             }

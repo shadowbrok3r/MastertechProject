@@ -1,48 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use anyhow::Error;
-use app_state::{AppState, MasterTechApp};
-use database::{
-    schema::{
-        buckets::list_buckets, utilities::{get_store_users, get_tasks}, ComputerData, GetKeysResponse, HardwareTests, Store, TaskNotePayload, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
-    },
-    Database, STORAGE_URL,
-};
-use displays::ui_tools::{
-    carl_dark::{Aesthetix, CarlDark},
-    toasts::{Toast, ToastKind, ToastOptions},
-};
+use app_state::{AppState, MainPages, MasterTechApp};
+use displays::ui_tools::carl_dark::{Aesthetix, CarlDark};
 
 use eframe::egui::{
     style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets},
     Color32, Context, CursorIcon, FontFamily, FontId, IconData, Rounding, Shadow, Stroke, Style,
-    Vec2, ViewportBuilder, ViewportCommand, Visuals,
+    Vec2, ViewportBuilder, Visuals,
 };
 
-use filesystem::system_info::ComputerInfo;
-use log::{debug, error, info};
-use pages::login_page::HASH;
-use semver::Version;
-use std::sync::{atomic::Ordering, Arc, Condvar, Mutex};
-use surrealdb::{sql::Uuid, RecordId};
-use tabs::{
-    github::{
-        get_github_releases,
-        self_updater::{run, Asset},
-    },
-    logger::logging::builder,
-    stock::{find_attached_serials, get_extra_stock_info, get_stock, BoolOrString, MyRowData},
-    stock_quantities::StockQuantityData,
-    tur_sheet::scaffold::AsanaResponse,
-};
-use tokio::spawn;
-use utilities::{
-    crypto::pass_hash::load_encrypted_user_data,
-    displays::{
-        chats::ChatView,
-        modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal},
-    },
-    ModalType, TaskUiActions,
-};
+use log::{error, info};
+use std::sync::Arc;
+use tabs::logger::logging::builder;
+
 // use simplelog::{Config, WriteLogger};
 
 #[cfg(target_os = "windows")]
@@ -60,6 +29,8 @@ pub mod pages;
 pub mod tabs;
 pub mod utilities;
 pub mod viewports;
+pub mod first_run;
+pub mod data;
 
 impl eframe::App for MasterTechApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
@@ -67,562 +38,21 @@ impl eframe::App for MasterTechApp {
         let arc_style = set_darker_style();
         ctx.set_style(arc_style); // let alt_style = set_alternative_style(); ctx.set_style(alt_style);
 
-        if self.context.specs_first_run {
-            self.context.specs_first_run = false;
-            // let x = std::env::current_exe().unwrap();
-            // std::fs::rename( x, "Mastertech1").unwrap();
-            let tx = self.context.db_tx.clone();
-            let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
-            let pair_clone = Arc::clone(&pair);
-
-            spawn(async move {
-                match ComputerData::default().get_computer_data().await {
-                    // sysinfo_tx
-                    Ok(data) => {
-                        let (lock, cvar) = &*pair_clone;
-                        let mut comp_data = lock.lock().unwrap();
-                        *comp_data = data;
-                        info!("Computer Data: {comp_data:?}");
-                        cvar.notify_one();
-                    }
-                    Err(e) => error!("Error getting specs: {e:?}"),
-                }
-            });
-
-            // Wait for the spawned task to complete and notify the condition variable
-            let (lock, cvar) = &*pair;
-            let mut comp_data = lock.lock().unwrap();
-            while comp_data.cpu.is_empty() {
-                comp_data = cvar.wait(comp_data).unwrap();
-            }
-            // Access the shared data after notification
-            self.context.computer_data = comp_data.clone();
-            for disk in &self.context.computer_data.drives {
-                self.context.disk_num += 1;
-                if let Some(disks_arr) = self.context.disks.as_array_mut() {
-                    let disk_json = serde_json::to_value(&disk).unwrap_or_default();
-                    disks_arr.push(disk_json);
-                } else {
-                    debug!("Expected self.context.drives to be an Array");
-                }
-            }
-            if let Some(seb_inf) = &self.context.computer_data.seb_info {
-                self.context.output_text += &format!("{:#?}", &seb_inf);
-            }
-
-            let loaded_data = load_encrypted_user_data(HASH);
-            match loaded_data {
-                Some(login) => {
-                    self.state = AppState::Authenticated(app_state::MainPages::Tasks);
-
-                    spawn(async move {
-                        let db = Database::new(login.username, login.password, None).await;
-                        info!("DB: {db:?}");
-                        match tx.try_send(db) {
-                            Ok(_) => {
-                                info!("Sent DB connection");
-                                drop(tx)
-                            }
-                            Err(e) => error!("Error sending specs: {e:?}"),
-                        }
-                    });
-
-                    // match x.poll_unpin(cx)
-                    #[cfg(target_os = "windows")]
-                    {
-                        let cps = &mut self.context.current_antivirus.clone();
-                        let installed_antivirus = ComputerData::get_antivirus()
-                            .map_err(|e| {
-                                *cps += format!("Error checking antivirus: {e}\n").as_str()
-                            })
-                            .unwrap_or(Vec::new());
-
-                        for (name, is_installed) in installed_antivirus {
-                            match is_installed {
-                                Some(true) => {
-                                    *cps += "\n";
-                                    *cps += &format!("{name}");
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                None => {
-                    let toast = &mut self.context.toasts;
-
-                    let error_toast = Toast {
-                        kind: ToastKind::Error,
-                        text: "Could not get login from encoded data".into(),
-                        options: ToastOptions::default()
-                            .show_progress(true)
-                            .duration_in_seconds(6.0),
-                    };
-                    toast.add(error_toast);
-                    self.state =
-                        AppState::NoAuth("No User returned from decryption phase".to_string());
-                }
-            }
+        if self.context.first_run {
+            self.context.first_run = false;
+            self.first_run();
         }
 
-        if let Ok(db) = self.context.db_rx.try_recv() {
-            info!("Received DB connection from thread");
-            self.context.specs_first_run = true;
-            match db {
-                Ok(db) => {
-                    self.context.current_user = db.user.clone();
-                    if let Some(usr) = db.user {
-                        if let (Some(access_key), Some(secret_key)) =
-                            (usr.minio_access_key.clone(), usr.minio_secret_key.clone())
-                        {
-                            self.context.toolbox.access_key = access_key.clone();
-                            self.context.toolbox.secret_key = secret_key.clone();
-                            self.context.toolbox.set_user(usr.clone());
-                            let minio_tx = self.context.minio_files.0.clone();
-                            let name = usr.email.clone();
-                            let parsed = name
-                                .split_once('@')
-                                .unwrap_or_default()
-                                .0
-                                .to_string()
-                                .clone();
-
-                            info!("Getting Minio files");
-
-                            let stock_tx = self.context.stock_channel.0.clone();
-                            let github_tx = self.context.github_releases_channel.0.clone();
-                            let client = self.context.client.clone();
-                            let ex_stock_tx = self.context.extra_stock_channel.0.clone();
-                            let store_selection = match usr.store {
-                                Store::RIV => 76,
-                                Store::LTN => 73,
-                                Store::MUR => 74,
-                                Store::AF => 72,
-                                Store::WJ => 78,
-                                Store::ORE => 75,
-                                Store::SAN => 77,
-                            };
-
-                            spawn(async move {
-                                let list_bucket_res = list_buckets(
-                                    STORAGE_URL.to_string(),
-                                    access_key,
-                                    secret_key,
-                                    parsed,
-                                )
-                                .await;
-
-                                match list_bucket_res {
-                                    Ok(files) => {
-                                        info!("Got files: {files:?}");
-                                        minio_tx.try_send(files).unwrap()
-                                    }
-                                    Err(e) => error!("Error getting minio files: {e:?}"),
-                                }
-                                match get_github_releases(github_tx, client).await {
-                                    Ok(_) => info!("Got github releases"),
-                                    Err(e) => error!("Error getting github releases: {e:?}"),
-                                }
-                                let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
-
-                                info!("Extra Stock {stock_quantities:?}");
-                                let stock = get_stock(stock_tx.clone(), store_selection).await;
-                                info!("Stock call: {stock:?} for Store: {:?}", store_selection);
-                            });
-                        }
-                        let initial_tasks_tx = self.context.initial_tasks_tx.clone();
-                        let tx = self.context.store_users_tx.clone();
-                        spawn(async move {
-                            get_store_users(tx, usr.store).await?;
-                            get_tasks(initial_tasks_tx).await?;
-                            Ok::<(), Error>(())
-                        });
-                        self.context.connect(ctx.clone());
-                        self.context.show_ws_viewport.store(true, Ordering::Relaxed);
-                    }
-                }
-                Err(e) => {
-                    error!("Error with auth: {e:?}");
-                    self.state = AppState::NoAuth(e.to_string());
-                    self.context.current_user = None;
-                }
-            }
-        }
-
-        if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
-            debug!("Releases: {releases:?}");
-            let assets: Vec<Asset> = releases
-                .iter()
-                .flat_map(|r| r.assets.iter().cloned())
-                .collect();
-
-            for (release, _asset) in releases.iter().zip(assets.iter()) {
-                let current_version =
-                    Version::parse(env!("CARGO_PKG_VERSION")).expect("Invalid version format");
-                let github_release_version =
-                    Version::parse(&release.tag_name).expect("Invalid version format");
-                info!("TagName: {:?}", release.tag_name);
-
-                if current_version < github_release_version {
-                    // ctx.send_viewport_cmd(ViewportCommand::Close);
-
-                    let client = self.context.client.clone();
-                    info!("Found a new release! {:?}", &github_release_version);
-                    // let asset = asset.clone();
-                    let tx = self.context.bytes_tx.clone();
-                    spawn(async move {
-                        let download = run(client, tx.clone()).await;
-                        info!("Download: {download:?}");
-                    });
-                }
-            }
-            self.context.github_releases = releases;
-        }
-
-        while let Ok(message) = self.context.rx.try_recv() {
-            if let Ok(info) = serde_json::from_str::<GetKeysResponse>(&message) {
-                if !info.webroot_key.is_empty() || !info.superanti_key.is_empty() {
-                    self.context.keys = info;
-                }
-                self.context.spinner = false;
-            } else if let Ok(info) = serde_json::from_str::<AsanaResponse>(&message) {
-                if let Some(e) = info.status {
-                    self.context.output_text = format!("Status Code: {e:#?}");
-                };
-                self.context.output_text = format!("{:#?}", info.gid);
-            } else {
-                self.context.output_text = format!("{}", message);
-                self.context.spinner = false;
-            }
-        }
-        // TODO
-        // Fix this, egui_file doesnt support 0.29 egui yet
-        // if let Some(dialog) = &mut self.context.open_file_dialog {
-        //     if dialog.show(&ctx).selected() {
-        //         if let Some(file) = dialog.path() {
-        //             self.context.opened_file = Some(file.to_path_buf());
-        //         }
-        //     }
-        // }
-
-        if let Ok(data) = self.context.prestashop_api_rx.try_recv() {
-            let customer = &mut self.context.customer_data;
-            let ticket = &mut self.context.ticket_data;
-            let task = &mut self.context.task_data;
-            let task_notes = &mut self.context.task_notes;
-            let computer = &mut self.context.computer_data;
-
-            let hdd_test = format!("{:?}", &self.context.hdd_test_cbox);
-            let ram_test = format!("{:?}", &self.context.ram_test_cbox);
-            let ssd_test = format!("{:?}", &self.context.ssd_test_cbox);
-
-            task.id = RecordId::from_table_key(TASK_TABLE, Uuid::new_v4().to_raw().split_terminator('-').collect::<Vec<&str>>().concat());
-
-            let service_details = data.order.associations.order_service;
-            let mut owned_computers: Vec<RecordId> = Vec::new();
-            let mut services: Vec<RecordId> = Vec::new();
-
-            #[cfg(target_os = "windows")]
-            {
-                let cps = &mut self.context.current_antivirus;
-                let installed_antivirus = ComputerData::get_antivirus()
-                    .map_err(|e| *cps += format!("Error checking antivirus: {e}\n").as_str())
-                    .unwrap_or(Vec::new());
-                let x: Vec<String> = installed_antivirus
-                    .iter()
-                    .map(|cps| {
-                        if let Some(true) = cps.1 {
-                            cps.0.clone()
-                        } else {
-                            "Not installed".to_string()
-                        }
-                    })
-                    .collect::<Vec<String>>();
-                ticket.current_antivirus = Some(x);
-            }
-
-            let sales_rep = data.sales_rep.unwrap_or_default();
-            let split_rep = data.split_rep.unwrap_or_default();
-            let email = sales_rep
-                .email
-                .split_once("@")
-                .clone()
-                .unwrap_or(("nouser", "pclaptops.com"))
-                .0
-                .to_string();
-            let email_split_rep = split_rep
-                .email
-                .split_once("@")
-                .clone()
-                .unwrap_or(("nouser", "pclaptops.com"))
-                .0
-                .to_string();
-            
-            for msg in data.customer_messages {
-                // let username = msg.id_employee
-                if msg.id_employee.clone() == "0" || msg.id_customer_thread == "0" {
-                    continue;
-                } else {
-                    let mut task_note_payload = TaskNotePayload {
-                        note: msg.message,
-                        created_at: msg.date_add,
-                        id_customer_thread: Some(msg.id_customer_thread),
-                        id_customer_message: Some(msg.id.clone()),
-                        id_employee: Some(msg.id_employee.clone()),
-                        id: RecordId::from_table_key(TASK_NOTE_TABLE, msg.id.clone()),
-                        task_id: Some(task.id.clone()),
-                        ..Default::default()
-                    };
-                    if let Some(users) = self.context.store_users.as_ref() {
-                        for user in users {
-                            if let Some(presta_id) = user.id_prestashop {
-                                if msg.id_employee == presta_id.to_string() {
-                                    task_note_payload.everest_initials = user.everest_initials.clone();
-                                    task_note_payload.user = Some(user.id.clone());
-                                }
-                            }
-                        }
-                    };
-                    task_notes.push(task_note_payload);
-                }
-            }
-
-            customer.id = data.customer.id;
-            customer.cust_code = data.customer.cust_code;
-            customer.email = data.customer.email;
-            customer.name = data.customer.name.clone();
-            customer.phone_number = data.customer.phone_number;
-            computer.customer = Some(customer.id.clone());
-            ticket.salesman = email_split_rep;
-            ticket.tech = email;
-            ticket.customer = Some(customer.id.clone());
-            ticket.computer = Some(computer.id.clone());
-            ticket.hardware_test_results = HardwareTests {
-                hdd_test,
-                ssd_test,
-                ram_test,
-            };
-            ticket.doc_alias = data.order.order_type_name.unwrap_or(String::new());
-
-            ticket.id = RecordId::from((
-                TICKET_TABLE.to_string(),
-                ticket.service_number.clone(),
-            ));
-            owned_computers.push(computer.id.clone());
-            
-            // customer.computers = Some(owned_computers);
-            services.push(ticket.id.clone());
-            
-
-            if !service_details.is_empty() {
-                if service_details.len() == 1 {
-                    let svc = service_details.get(0);
-                    if let Some(service) = svc {
-                        ticket.checkin_notes = service.check_in_notes.clone();
-                    }
-                } else {
-                    info!("Theres a couple.... {:?}", service_details);
-                }
-            }
-
-            self.context.output_text +=
-                &serde_json::to_string_pretty(&ticket).unwrap_or("".to_string());
-            self.context.output_text +=
-                &serde_json::to_string_pretty(&customer).unwrap_or("".to_string());
-            self.context.output_text +=
-                &serde_json::to_string_pretty(&computer).unwrap_or("".to_string());
-        }
-
-        if let Ok(users) = self.context.store_users_rx.try_recv() {
-            // info!("Store Users: {users:?}");
-            self.context.store_users = Some(users);
-        }
-
-        if let Ok(tasks) = self.context.initial_tasks_rx.try_recv() {
-            self.context.task_payload = Some(tasks);
-        }
-
-        if let Ok(action) = self.context.ui_actions_rx.try_recv() {
-            match action {
-                TaskUiActions::OpenTaskModal(task) => {
-                    let task_modal = if !task.task_note.is_empty() {
-                        let chat_modal = ChatView::new(
-                            task.task_note.clone(),
-                            self.context.current_user.as_ref().unwrap().clone(),
-                            task.id.clone(),
-                        );
-                        TaskModal::new(chat_modal, task.clone())
-                    } else {
-                        TaskModal::new(ChatView::default(), task.clone())
-                    };
-                    self.context.current_modal = ModalType::TaskModal(task_modal);
-                    self.context.task_modal_handler.open();
-                }
-                TaskUiActions::CreateTaskModal => {
-                    let create_modal =
-                        CreateTaskModal::new("Create Task", self.context.store_users.clone());
-                    self.context.current_modal = ModalType::CreateTaskModal(create_modal);
-                    self.context.create_task_modal_handler.open();
-                }
-                TaskUiActions::Response(_res) => {}
-                TaskUiActions::OpenChatModal(pld) => {
-                    info!("Got Chat action");
-                    if let Some(current_user) = self.context.current_user.as_ref() {
-                        let chat_modal =
-                            ChatView::new(pld.1.to_owned(), current_user.clone(), pld.0.clone());
-                        self.context.current_modal = ModalType::ChatView(chat_modal);
-                        self.context.chat_modal_handler.open();
-                    } // self.context.chat = ModalType::ChatView(pld);
-                }
-                _ => (),
-            }
-        }
-
-        if let Ok(keys) = self.context.cps_keys_rx.try_recv() {
-            if keys.webroot_key.contains("Error") {
-                let toast = &mut self.context.toasts;
-                self.context.output_text =
-                    "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
-                let error_toast = Toast {
-                    kind: ToastKind::Error,
-                    text: "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".into(),
-                    options: ToastOptions::default()
-                        .show_progress(true)
-                        .duration_in_seconds(6.0),
-                };
-                toast.add(error_toast);
-            }
-            self.context.keys = keys;
-        }
-
-        if let Ok(files) = self.context.minio_files.1.try_recv() {
-            self.context.toolbox.build_file_system(files);
-        }
-
-        if let Ok(state) = self.context.app_state_rx.try_recv() {
-            info!("Got a new state: {state:?}");
-            self.state = state
-        }
-
-        while let Ok(copied_items) = self.context.copied_items_rx.try_recv() {
-            // info!("GOT COPIED ITEMS: {copied_items:?}");
-            self.context.output_text += &format!("{copied_items}\n");
-            // if self.context.output_text.is_empty() {}
-        }
-
-        if let Ok(stock_data) = self.context.stock_channel.1.try_recv() {
-            let data: Vec<MyRowData> = stock_data
-                .iter()
-                .map(|stock_data| {
-                    MyRowData(
-                        stock_data.product_id.clone().1.clone(),
-                        stock_data.lot_id.clone().1.parse::<String>().unwrap(),
-                        "S/N Info ⮫".to_string(),
-                        match stock_data.location_id.0 {
-                            76 => Store::RIV.as_str(),
-                            73 => Store::LTN.as_str(),
-                            74 => Store::MUR.as_str(),
-                            78 => Store::WJ.as_str(),
-                            75 => Store::ORE.as_str(),
-                            72 => Store::AF.as_str(),
-                            77 => Store::SAN.as_str(),
-                            _ => Store::RIV.as_str(),
-                        }
-                        .to_string(),
-                        false,
-                    )
-                })
-                .collect();
-
-            let tx = self.context.serial_channel.0.clone();
-
-            let sns = data.iter().map(|r| r.1.clone()).collect::<Vec<String>>();
-
-            spawn(async move {
-                let _res = find_attached_serials(sns, tx.clone()).await;
-            });
-
-            self.context.data_table.replace(data);
-        }
-
-        if let Ok(serial_data) = self.context.serial_channel.1.try_recv() {
-            debug!("Serial Data: {:?}", serial_data);
-            let mut data_table = self.context.data_table.take();
-            for data in data_table.iter_mut() {
-                for serial_info in serial_data.result.iter() {
-                    if data.1 == serial_info.name {
-                        match serial_info.clone().bs_prest_ref {
-                            BoolOrString::Bool(_) => {
-                                data.2 = "Not Attached".to_string();
-                                data.4 = false;
-                            }
-                            BoolOrString::String(order_num) => {
-                                if !order_num.is_empty() {
-                                    data.2 = order_num;
-                                    data.4 = true;
-                                } else {
-                                    data.2 = "Not Attached".to_string();
-                                    data.4 = false;
-                                }
-                            }
-                        };
-                    }
-                }
-            }
-            self.context.data_table.replace(data_table);
-        }
-
-        if let Ok(stock_inf) = self.context.extra_stock_channel.1.try_recv() {
-            debug!("Serial Data: {:?}", stock_inf);
-            let data: Vec<StockQuantityData> = stock_inf
-                .iter()
-                .map(|stock_data| {
-                    StockQuantityData(
-                        stock_data.display_name.clone(),
-                        stock_data.qty_available.clone(),
-                        stock_data.virtual_available.clone(),
-                        stock_data.standard_price.clone(),
-                        stock_data.list_price.clone(),
-                    )
-                })
-                .collect();
-            self.context.stock_quantity_table.replace(data);
-        }
-
-        if let Ok(seb) = self.context.seb_channel.1.try_recv() {
-            // self.context.seb_info = Some(seb);
-            self.context.json_editor.set_value(seb.clone()).unwrap();
-        }
-
-        while let Ok(res) = self.context.bytes_rx.try_recv() {
-            self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
-            self.context.progress.1 = res.1 as f32;
-            self.context.progress.0 += res.0 as f32;
-            if res.0 == res.1 {
-                self.context.progress = (0.0, 0.0);
-                self.context.output_text += "\nFinished";
-                let current_path = std::env::current_dir().unwrap();
-                // let linux_path = std::env::current_dir().unwrap();
-                let mtech_path = current_path.join("git-MasterTech.exe");
-                // let mtech_linux_path = linux_path.join("git-MasterTech");
-
-                if mtech_path.exists() {
-                    info!("Mastertech does exist at {:?}", mtech_path);
-                    let mut mtech_cmd = std::process::Command::new(mtech_path);
-                    if mtech_cmd.status().is_ok() {
-                        info!("Mtech opened, closing current window");
-                        ctx.send_viewport_cmd(ViewportCommand::Close);
-                    }
-                }
-                // else if mtech_linux_path.exists() {
-                //     let mut mtech_cmd = std::process::Command::new(mtech_linux_path);
-                //     if mtech_cmd.status().is_ok() {
-                //         info!("Mtech opened, closing current window");
-                //         ctx.send_viewport_cmd(ViewportCommand::Close);
-                //     }
-                // }
-            }
-        }
+        self.receive_database(ctx);
+        self.receive_other(ctx);
+        self.receive_inventory();
+        self.receive_ui_action();
+        self.receive_prestashop();
+        self.receive_task();
+        self.receive_notes();
+        self.receive_notification();
+        self.context.handle_modals(ctx);
+        self.context.toasts.show(ctx);
 
         match &self.state {
             app_state::AppState::Authenticated(page) => match page {
@@ -630,7 +60,24 @@ impl eframe::App for MasterTechApp {
                 app_state::MainPages::Downloads => self.main_page(ctx),
                 app_state::MainPages::WebConsole => self.main_page(ctx),
             },
-            app_state::AppState::NoAuth(_reason) => self.main_page(ctx),
+            app_state::AppState::NoAuth(reason) => {
+                if reason.to_string().contains("Already connected") {
+                    info!("Already connected");
+                    if self.context.current_user.is_some() {
+                        self.load_data(ctx);
+                    } else {
+                        self.context.first_run = true;
+                        self.first_run()
+                    }
+                    self.state = AppState::Authenticated(MainPages::Tasks);
+                } else {
+                    self.login_page(
+                        ctx,
+                        self.context.db_tx.clone(),
+                        self.context.app_state_tx.clone(),
+                    )
+                }
+            },
             app_state::AppState::Login => self.login_page(
                 ctx,
                 self.context.db_tx.clone(),

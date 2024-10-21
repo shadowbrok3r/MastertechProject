@@ -123,7 +123,7 @@ pub struct MastertechContext {
 
     pub toasts: Toasts,
     pub animate_progress_bar: bool,
-    pub specs_first_run: bool,
+    pub first_run: bool,
     pub taco_first_run: bool,
     pub file_browse_run: bool,
     pub query_tasks_first_run: bool,
@@ -145,7 +145,7 @@ pub struct MastertechContext {
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
     pub chat_modal_handler: ChatModalHandler,
     pub chat_modal: Option<ChatView>,
-    pub task_payload: Option<Vec<TaskPayload>>,
+    pub task_payload: Vec<TaskPayload>,
     pub task_data: LiveTaskPayload,
     pub ticket_data: TicketData,
     pub customer_data: CustomerData,
@@ -317,7 +317,7 @@ impl MasterTechApp {
                 superanti_key: "SuperAnti Key".to_string(),
             },
 
-            task_payload: None,
+            task_payload: Vec::new(),
             task_data: LiveTaskPayload::default(),
             computer_data: ComputerData::default(),
             // computer_data_test: Arc::new(Mutex::new(ComputerData::default())),
@@ -372,7 +372,7 @@ impl MasterTechApp {
 
             send_specs: false,
 
-            specs_first_run: true,
+            first_run: true,
             taco_first_run: false,
             file_browse_run: false,
             query_tasks_first_run: true,
