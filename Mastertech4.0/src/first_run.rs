@@ -1,0 +1,263 @@
+use crate::tabs::tur_sheet::scaffold::AsanaResponse;
+
+use super::utilities::crypto::pass_hash::load_encrypted_user_data;
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use database::schema::{utilities::{get_store_users, get_tasks}, GetKeysResponse};
+use eframe::egui::{Context, ViewportCommand};
+use super::app_state::{AppState, MasterTechApp, MainPages};
+use database::{schema::{ComputerData, Store}, Database};
+use super::filesystem::system_info::ComputerInfo;
+use std::sync::{Arc, Condvar, Mutex};
+use super::pages::login_page::HASH;
+use std::sync::atomic::Ordering;
+use log::{debug, error, info};
+use anyhow::Error;
+use tokio::spawn;
+
+use super::tabs::{github::get_github_releases, stock::{get_extra_stock_info, get_stock}};
+
+impl MasterTechApp {
+    pub fn first_run(&mut self) {
+        // let x = std::env::current_exe().unwrap();
+        // std::fs::rename( x, "Mastertech1").unwrap();
+        let tx = self.context.db_tx.clone();
+        let pair = Arc::new((Mutex::new(ComputerData::default()), Condvar::new()));
+        let pair_clone = Arc::clone(&pair);
+
+        spawn(async move {
+            match ComputerData::default().get_computer_data().await {
+                // sysinfo_tx
+                Ok(data) => {
+                    let (lock, cvar) = &*pair_clone;
+                    let mut comp_data = lock.lock().unwrap();
+                    *comp_data = data;
+                    info!("Computer Data: {comp_data:?}");
+                    cvar.notify_one();
+                }
+                Err(e) => error!("Error getting specs: {e:?}"),
+            }
+        });
+
+        // Wait for the spawned task to complete and notify the condition variable
+        let (lock, cvar) = &*pair;
+        let mut comp_data = lock.lock().unwrap();
+        while comp_data.cpu.is_empty() {
+            comp_data = cvar.wait(comp_data).unwrap();
+        }
+        // Access the shared data after notification
+        self.context.computer_data = comp_data.clone();
+        for disk in &self.context.computer_data.drives {
+            self.context.disk_num += 1;
+            if let Some(disks_arr) = self.context.disks.as_array_mut() {
+                let disk_json = serde_json::to_value(&disk).unwrap_or_default();
+                disks_arr.push(disk_json);
+            } else {
+                debug!("Expected self.context.drives to be an Array");
+            }
+        }
+        if let Some(seb_inf) = &self.context.computer_data.seb_info {
+            self.context.output_text += &format!("{:#?}", &seb_inf);
+        }
+
+        let loaded_data = load_encrypted_user_data(HASH);
+        match loaded_data {
+            Some(login) => {
+                self.state = AppState::Authenticated(MainPages::Tasks);
+
+                spawn(async move {
+                    let db = Database::new(login.username, login.password, None).await;
+                    info!("DB: {db:?}");
+                    match tx.try_send(db) {
+                        Ok(_) => {
+                            info!("Sent DB connection");
+                            drop(tx)
+                        }
+                        Err(e) => error!("Error sending specs: {e:?}"),
+                    }
+                });
+
+                // match x.poll_unpin(cx)
+                #[cfg(target_os = "windows")]
+                {
+                    let cps = &mut self.context.current_antivirus.clone();
+                    let installed_antivirus = ComputerData::get_antivirus()
+                        .map_err(|e| {
+                            *cps += format!("Error checking antivirus: {e}\n").as_str()
+                        })
+                        .unwrap_or(Vec::new());
+
+                    for (name, is_installed) in installed_antivirus {
+                        match is_installed {
+                            Some(true) => {
+                                *cps += "\n";
+                                *cps += &format!("{name}");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            None => {
+                let toast = &mut self.context.toasts;
+
+                let error_toast = Toast {
+                    kind: ToastKind::Error,
+                    text: "Could not get login from encoded data".into(),
+                    options: ToastOptions::default()
+                        .show_progress(true)
+                        .duration_in_seconds(6.0),
+                };
+                toast.add(error_toast);
+                self.state =
+                    AppState::NoAuth("No User returned from decryption phase".to_string());
+            }
+        }
+    }
+
+    pub fn load_data(&mut self, ctx: &Context) {
+        if let Some(usr) = self.context.current_user.clone() {
+            let initial_tasks_tx = self.context.initial_tasks_tx.clone();
+            let stock_tx = self.context.stock_channel.0.clone();
+            let github_tx = self.context.github_releases_channel.0.clone();
+            let client = self.context.client.clone();
+            let ex_stock_tx = self.context.extra_stock_channel.0.clone();
+            let tx = self.context.store_users_tx.clone();
+            let store_selection = match usr.store {
+                Store::RIV => 76,
+                Store::LTN => 73,
+                Store::MUR => 74,
+                Store::AF => 72,
+                Store::WJ => 78,
+                Store::ORE => 75,
+                Store::SAN => 77,
+            };
+            spawn(async move {
+                match get_github_releases(github_tx, client).await {
+                    Ok(_) => info!("get_github_releases ran ok"),
+                    Err(e) => error!("Error getting github releases: {e:?}"),
+                }
+                match get_extra_stock_info(ex_stock_tx).await{
+                    Ok(_) => info!("get_extra_stock_info ran ok"),
+                    Err(e) => error!("Error getting Extra Stock info: {e:?}")
+                }
+                match get_stock(stock_tx.clone(), store_selection).await{
+                    Ok(_) => info!("get_stock ran ok"),
+                    Err(e) => error!("Error getting Stock: {e:?}")
+                }
+                match get_store_users(tx, usr.store).await{
+                    Ok(_) => info!("get_store_users ran ok"),
+                    Err(e) => error!("Error running get_store_users: {e:?}")
+                }
+                match get_tasks(initial_tasks_tx).await{
+                    Ok(_) => info!("get_tasks ran ok"),
+                    Err(e) => error!("Error running get_tasks: {e:?}")
+                }
+                Ok::<(), Error>(())
+            });
+            self.context.connect(ctx.clone());
+            self.context.show_ws_viewport.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn receive_other(&mut self, ctx: &Context) {
+        while let Ok(message) = self.context.rx.try_recv() {
+            if let Ok(info) = serde_json::from_str::<GetKeysResponse>(&message) {
+                if !info.webroot_key.is_empty() || !info.superanti_key.is_empty() {
+                    self.context.keys = info;
+                }
+                self.context.spinner = false;
+            } else if let Ok(info) = serde_json::from_str::<AsanaResponse>(&message) {
+                if let Some(e) = info.status {
+                    self.context.output_text = format!("Status Code: {e:#?}");
+                };
+                self.context.output_text = format!("{:#?}", info.gid);
+            } else {
+                self.context.output_text = format!("{}", message);
+                self.context.spinner = false;
+            }
+        }
+        // TODO
+        // Fix this, egui_file doesnt support 0.29 egui yet
+        // if let Some(dialog) = &mut self.context.open_file_dialog {
+        //     if dialog.show(&ctx).selected() {
+        //         if let Some(file) = dialog.path() {
+        //             self.context.opened_file = Some(file.to_path_buf());
+        //         }
+        //     }
+        // }
+
+        while let Ok(res) = self.context.bytes_rx.try_recv() {
+            self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
+            self.context.progress.1 = res.1 as f32;
+            self.context.progress.0 += res.0 as f32;
+            if res.0 == res.1 {
+                self.context.progress = (0.0, 0.0);
+                self.context.output_text += "\nFinished";
+                let current_path = std::env::current_dir().unwrap();
+                // let linux_path = std::env::current_dir().unwrap();
+                let mtech_path = current_path.join("git-MasterTech.exe");
+                // let mtech_linux_path = linux_path.join("git-MasterTech");
+
+                if mtech_path.exists() {
+                    info!("Mastertech does exist at {:?}", mtech_path);
+                    let mut mtech_cmd = std::process::Command::new(mtech_path);
+                    if mtech_cmd.status().is_ok() {
+                        info!("Mtech opened, closing current window");
+                        ctx.send_viewport_cmd(ViewportCommand::Close);
+                    }
+                }
+                // else if mtech_linux_path.exists() {
+                //     let mut mtech_cmd = std::process::Command::new(mtech_linux_path);
+                //     if mtech_cmd.status().is_ok() {
+                //         info!("Mtech opened, closing current window");
+                //         ctx.send_viewport_cmd(ViewportCommand::Close);
+                //     }
+                // }
+            }
+        }
+
+        if let Ok(keys) = self.context.cps_keys_rx.try_recv() {
+            if keys.webroot_key.contains("Error") {
+                let toast = &mut self.context.toasts;
+                self.context.output_text =
+                    "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
+                let error_toast = Toast {
+                    kind: ToastKind::Error,
+                    text: "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".into(),
+                    options: ToastOptions::default()
+                        .show_progress(true)
+                        .duration_in_seconds(6.0),
+                };
+                toast.add(error_toast);
+            }
+            self.context.keys = keys;
+        }
+
+        if let Ok(files) = self.context.minio_files.1.try_recv() {
+            self.context.toolbox.build_file_system(files);
+        }
+
+        if let Ok(state) = self.context.app_state_rx.try_recv() {
+            info!("Got a new state: {state:?}");
+            self.state = state
+        }
+
+        while let Ok(copied_items) = self.context.copied_items_rx.try_recv() {
+            // info!("GOT COPIED ITEMS: {copied_items:?}");
+            self.context.output_text += &format!("{copied_items}\n");
+            // if self.context.output_text.is_empty() {}
+        }
+
+        if let Ok(users) = self.context.store_users_rx.try_recv() {
+            // info!("Store Users: {users:?}");
+            self.context.store_users = Some(users);
+        }
+
+
+
+        if let Ok(seb) = self.context.seb_channel.1.try_recv() {
+            // self.context.seb_info = Some(seb);
+            self.context.json_editor.set_value(seb.clone()).unwrap();
+        }
+    }
+}

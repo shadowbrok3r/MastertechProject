@@ -6,7 +6,7 @@ use crate::app_state::MastertechContext;
 
 impl MastertechContext{
     pub fn system_information(&mut self, ui: &mut Ui){
-        self.specs_first_run = false;
+        self.first_run = false;
 
         let computer_data = &self.computer_data;
         let gpu = computer_data.gpu.clone();

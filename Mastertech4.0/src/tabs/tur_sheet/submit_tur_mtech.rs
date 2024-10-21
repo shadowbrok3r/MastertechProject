@@ -2,7 +2,9 @@ use crate::app_state::MastertechContext;
 use chrono::{DateTime, SecondsFormat};
 use database::{
     schema::{
-        helper_traits::TaskNotePayloadHelper, utilities::{query_id, query_user_from_email}, ComputerData, CustomerData, LiveTaskPayload, Priority, Record, TaskNotePayload, TicketData, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
+        helper_traits::TaskNotePayloadHelper, 
+        utilities::{query_id, query_user_from_email}, 
+        ComputerData, CustomerData, LiveTaskPayload, Priority, Record, TaskNotePayload, TicketData, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE
     },
     DATABASE,
 };
@@ -26,7 +28,7 @@ impl MastertechContext {
         task_data.due_date = due_date.unwrap_or_default();
         let send_specs = self.send_specs.clone();
         spawn(async move {
-            let x = send_payload(
+            let send_payload_result = send_payload(
                 ticket_data,
                 customer_data,
                 computer_data,
@@ -35,7 +37,7 @@ impl MastertechContext {
                 send_specs,
             )
             .await;
-            info!("output: {x:?}");
+            info!("send_payload_result: {send_payload_result:?}");
         });
     }
 }
@@ -138,26 +140,9 @@ pub async fn send_payload(
 
     info!("create_task_record: {create_task_record:?}");
 
-    if task_notes.len() > 0 {
-        info!("Task Notes: {:?}", task_notes);
-
-        for note in task_notes {
-            if note.created_at.is_empty() {
-                info!("Note created_at is empty: {note:?}");
-                // note.update_task_note_with_current_time();
-            }
-            if let Some(id) = &create_task_record {
-                info!("Task ID // Note ID: {:?}\n{:?}", id, &note.task_id);
-                // let create_task_note_record: Vec<Record> = DATABASE
-                //     .query("CREATE task_note CONTENT $note") // 
-                //     .bind(("note", note))
-                //     .await?
-                //     .take(0)?;
-                //
-                // info!("create_task_note_record: {:?}", create_task_note_record);
-            }
-        }
+    for mut note in task_notes {
+        let res = note.create_task_note().await;
+        info!("Task Note Creation from Mastertech: {res:?}");
     }
-
     Ok(())
 }

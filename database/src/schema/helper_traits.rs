@@ -1,5 +1,5 @@
+#![allow(async_fn_in_trait)]
 use crate::DATABASE;
-
 use super::{
     prestashop_schema::{self, CustomerThread, Employee, Prestashop, CustomerMessage},
     ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record,
@@ -44,7 +44,6 @@ pub trait GetAssociatedDataFromId<D> {
 }
 
 /// A trait for assisting with operations involving the Employee struct
-#[async_trait(?Send)]
 pub trait EmployeeHelper {
     /// Find a User based on Employee info -> id_employee
     async fn find_user(&mut self) -> Result<Option<User>, Error>;
@@ -63,7 +62,6 @@ pub trait EmployeeHelper {
 }
 
 /// A trait for assisting with operations involving the `User` struct.
-#[async_trait(?Send)]
 pub trait UserHelper {
     /// Finds and retrieves the associated Employee record based on the User information.
     ///
@@ -176,56 +174,69 @@ pub trait OrderHelper {
 }
 
 /// A trait for managing operations and data related to task note payloads.
-#[async_trait(?Send)]
-pub trait TaskNotePayloadHelper {
+pub trait TaskNotePayloadHelper: Send {
     /// Creates a task note in the Prestashop system.
     ///
     /// # Returns
     /// - `Ok(Response)` on successful creation.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
-    async fn create_prestashop_note(&mut self) -> Result<Response, anyhow::Error>;
+    async fn create_prestashop_note(&mut self) -> Result<Response, anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Checks if a user is tagged in a note and updates the note if necessary.
     ///
     /// # Returns
     /// - `Ok(())` if the check is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the check or update.
-    async fn check_tagged_user_in_note(&mut self) -> Result<(), anyhow::Error>;
+    async fn check_tagged_user_in_note(&mut self) -> Result<(), anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Creates a task note record in the system.
     ///
     /// # Returns
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
-    async fn create_task_note(&mut self) -> Result<(), anyhow::Error>;
+    async fn create_task_note(&mut self) -> Result<(), anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Creates the task note record in the database.
     ///
     /// # Returns
     /// - `Ok(())` if the task_note created successfully.
     /// - `Err(anyhow::Error)` if an error occurs during the creation.
-    async fn create_task_note_in_db(&mut self) -> Result<(), anyhow::Error>;
+    async fn create_task_note_in_db(&mut self) -> Result<(), anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Updates the fields of an existing task note.
     ///
     /// # Returns
     /// - `Ok(())` if the update is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the update.
-    async fn update_task_note_fields(&mut self) -> Result<(), anyhow::Error>;
+    async fn update_task_note_fields(&mut self) -> Result<(), anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Updates the `created_at` field of a task note to the current time.
     ///
     /// # Returns
     /// - `Ok(())` if the update is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the update.
-    async fn update_task_note_with_current_time(&mut self) -> Result<(), anyhow::Error>;
+    async fn update_task_note_with_current_time(&mut self) -> Result<(), anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Updates the username field of a task note if it is missing or incorrect.
     ///
     /// # Returns
     /// - `Ok(())` if the update is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the update.
-    async fn update_username_if_needed(&mut self) -> Result<(), anyhow::Error>;
+    async fn update_username_if_needed(&mut self) -> Result<(), anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Creates a notification record based on the task note changes.
     ///
@@ -235,7 +246,9 @@ pub trait TaskNotePayloadHelper {
     /// # Returns
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during creation.
-    async fn create_notification(&mut self, notification: Notification) -> Result<(), anyhow::Error>;
+    async fn create_notification(&mut self, notification: Notification) -> Result<(), anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Updates a task note with information about a tagged user.
     ///
@@ -245,21 +258,27 @@ pub trait TaskNotePayloadHelper {
     /// # Returns
     /// - `Ok(())` if the update is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the update.
-    async fn update_task_note_with_tagged_user(&mut self, user_id: RecordId) -> Result<(), anyhow::Error>;
+    async fn update_task_note_with_tagged_user(&mut self, user_id: RecordId) -> Result<(), anyhow::Error>
+    where
+        anyhow::Error: Send;
 
     /// Retrieves the thread ID based on an order.
     ///
     /// # Returns
     /// - `Ok(String)` containing the thread ID on success.
     /// - `Err(Error)` if the thread ID cannot be found or an error occurs.
-    async fn get_thread_id_from_order(&mut self) -> Result<String>;
+    async fn get_thread_id_from_order(&mut self) -> Result<String>
+    where
+        anyhow::Error: Send;
 
     /// Retrieves the order ID associated with a task.
     ///
     /// # Returns
     /// - `Ok(String)` containing the order ID on success.
     /// - `Err(Error)` if the order cannot be found or an error occurs.
-    async fn get_order_by_task_id(&mut self) -> Result<String>;
+    async fn get_order_by_task_id(&mut self) -> Result<String>
+    where
+        anyhow::Error: Send;
 
     /// Check to see if a Customer Message already exists
     /// in SurrealDB, to ensure we are not causing weirdness 
@@ -276,14 +295,26 @@ pub trait TaskNotePayloadHelper {
     /// a task_note with that message id
     /// - `Err(Error)` if an error occurs during checks 
     /// / queries in SurrealDB to find existing notes
-    async fn check_existing_note_record(&mut self, msg_id: &String) -> Result<Option<RecordId>, Error>;
+    async fn check_existing_note_record(&mut self, msg_id: &String) -> Result<Option<RecordId>, Error>
+    where
+        anyhow::Error: Send;
+
+    /// Modified a task_note and updates the corresponding
+    /// note in prestashop 
+    ///
+    /// # Returns
+    /// - `Ok(())` if the modification is successful.
+    /// - `Err(Error)` if an error occurs during modification.
+    async fn modify_prestashop_note(&mut self) -> Result<Response, Error>;
 
     /// Deletes a note from the system.
     ///
     /// # Returns
     /// - `Ok(())` if the deletion is successful.
     /// - `Err(Error)` if an error occurs during deletion.
-    async fn delete_note(&mut self) -> Result<(), Error>;
+    async fn delete_note(&mut self) -> Result<(), Error>
+    where
+        anyhow::Error: Send;
 
     /// Deletes a note from prestashop. This will only
     /// happen if there IS an id_customer_message as 
@@ -292,10 +323,11 @@ pub trait TaskNotePayloadHelper {
     /// # Returns
     /// - `Ok(())` if the deletion is successful.
     /// - `Err(Error)` if an error occurs during deletion.
-    async fn delete_prestashop_note(&mut self) -> Result<(), Error>;
+    async fn delete_prestashop_note(&mut self) -> Result<(), Error>
+    where
+        anyhow::Error: Send;
 }
 
-#[async_trait(?Send)]
 impl TaskNotePayloadHelper for TaskNotePayload {
     async fn check_tagged_user_in_note(&mut self) -> Result<(), Error> {
         let re = Regex::new(r"@\b[a-zA-Z]+(\.[a-zA-Z]+)?\b")?;
@@ -547,6 +579,9 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 let customer_threads: Vec<CustomerThread> = api_call
                     .request_resources_wasm("customer_threads", query.clone())
                     .await?;
+                    // .map_err(|e| {
+                    //     info!("ERROR getting customer threads: {e:?}\nContinue from here to create task note");
+                    // })?;
                 info!("Got customer threads: {customer_threads:?}");
                 for thread in customer_threads {
                     for msg in thread.associations.customer_messages.iter() {
@@ -647,6 +682,75 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         Ok(None)
     }
 
+    async fn modify_prestashop_note(&mut self) -> Result<Response, Error> {
+        let thread_id = self.get_thread_id_from_order().await?;
+        let id_employee = self.id_employee.as_deref().unwrap_or("");
+        
+        let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
+            thread_id.clone()
+        } else { thread_id };
+
+        // Check if id_employee or id_customer_thread is empty
+        if id_employee.is_empty() {
+            return Err(anyhow::anyhow!("id_employee is empty")).into();
+        }
+
+        if id_customer_thread.is_empty() {
+            return Err(anyhow::anyhow!("id_customer_thread is empty")).into();
+        }
+
+        if self.id_customer_message.is_none() {
+            return Err(anyhow::anyhow!("id_customer_thread is empty")).into();
+        }
+
+        // Prepare the XML payload
+        let begin = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><prestashop xmlns:xlink=\"http://www.w3.org/1999/xlink\">";
+        let end = "</prestashop>";
+
+        let payload = format!(
+            "{}<customer_message><id_lang>1</id_lang><id_employee>{}</id_employee><id_customer_thread>{}</id_customer_thread><id>{}</id><message>{}</message><private>1</private><id_order_message_type>0</id_order_message_type></customer_message>{}",
+            begin, id_employee, id_customer_thread, self.id_customer_message.clone().unwrap(), self.note, end
+        );
+
+        // Send HTTP POST request with the XML payload
+        let client = reqwest::Client::new();
+        info!("Payload: {:?}", payload);
+        // let response_text = client
+        //     .post("https://pcl.master-tech.app/api/customer_messages")
+        //     .header("Content-type", "application/xml")
+        //     .body(payload)
+        //     .send()
+        //     .await?
+        //     .text()
+        //     .await?;
+
+        // // Parse the XML response to extract values
+        // let id = response_text
+        //     .split("<id><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></id>").next())
+        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+
+        // let date_add = response_text
+        //     .split("<date_add><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></date_add>").next())
+        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
+
+        // let date_upd = response_text
+        //     .split("<date_upd><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></date_upd>").next())
+        //     .unwrap_or(""); // Optional field, so we handle it accordingly
+
+        // Return a Response struct with extracted values
+        Ok(Response {
+            date_add: String::new(), //convert_date_string(date_add)?.to_string(), //,
+            id: String::new(), //id.to_string(),
+            date_upd: String::new(), //convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
+        })
+     }
+
     async fn delete_note(&mut self) -> Result<(), Error> {
         let id = self.id.clone();
         info!("deleting id: {:?}", &id);
@@ -701,7 +805,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 }
 
-#[async_trait(?Send)]
+
 impl EmployeeHelper for Employee {
     async fn find_user(&mut self) -> Result<Option<User>, Error> {
         DATABASE.set("email", self.email.clone()).await?;
@@ -847,7 +951,6 @@ impl EmployeeHelper for Employee {
     }
 }
 
-#[async_trait(?Send)]
 impl UserHelper for User {
     async fn find_employee(&mut self) -> Result<prestashop_schema::Employee, Error> {
         let api_call = Prestashop::default();

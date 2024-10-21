@@ -440,12 +440,12 @@ fn show_notification(
                     });
                 });
         } else {
-            info!("No task found");
+            // info!("No task found");
             // If no task name is found, display the whole description normally
             ui.label(notification_description);
         }
     } else {
-        info!("No Task Name is matched");
+        // info!("No Task Name is matched");
         // If no task name is matched, just show the description
         ui.label(notification_description);
     }
