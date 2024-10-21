@@ -180,13 +180,15 @@ impl MasterTechApp{
                                             password: pass,
                                         };
                                         spawn(async move {
-                                                let res = Login::login(login, db_tx.clone(), appstate_tx.clone()).await;
-                                                match res {
-                                                    Ok(_) => appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap(), 
-                                                    Err(e) => appstate_tx.try_send(AppState::NoAuth(e.to_string())).unwrap()
-                                                }
+                                            let res = Login::login(login, db_tx.clone(), appstate_tx.clone()).await;
+                                            match res {
+                                                Ok(_) => appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap(), 
+                                                Err(e) => appstate_tx.try_send(AppState::NoAuth(e.to_string())).unwrap()
+                                            }
                                         });
-                                    }
+                                    };
+                                } else {
+                                    ui.label(format!("{:?}", self.state));
                                 }
                             });
                         });

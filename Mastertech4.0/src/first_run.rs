@@ -108,8 +108,7 @@ impl MasterTechApp {
                         .duration_in_seconds(6.0),
                 };
                 toast.add(error_toast);
-                self.state =
-                    AppState::NoAuth("No User returned from decryption phase".to_string());
+                self.state = AppState::Login;
             }
         }
     }
@@ -131,6 +130,7 @@ impl MasterTechApp {
                 Store::ORE => 75,
                 Store::SAN => 77,
             };
+
             spawn(async move {
                 match get_github_releases(github_tx, client).await {
                     Ok(_) => info!("get_github_releases ran ok"),
@@ -154,6 +154,7 @@ impl MasterTechApp {
                 }
                 Ok::<(), Error>(())
             });
+
             self.context.connect(ctx.clone());
             self.context.show_ws_viewport.store(true, Ordering::Relaxed);
         }

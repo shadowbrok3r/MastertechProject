@@ -5,7 +5,7 @@ use surrealdb::{sql::Uuid, RecordId};
 #[cfg(target_os="windows")]
 use {
     database::schema::ComputerData,
-    filesystem::system_info::ComputerInfo
+    crate::filesystem::system_info::ComputerInfo
 };
 
 impl MasterTechApp {

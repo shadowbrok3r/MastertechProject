@@ -347,12 +347,19 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                     "There is an ID, and there IS a tagged user: {:?} / {:?}",
                     id, tagged_user
                 );
+                let task_name: Option<String> = DATABASE.query("SELECT VALUE task_name FROM task WHERE id == $task_id")
+                    .bind(("task_id", task_id.clone()))
+                    .await?
+                    .take(0)?;
+
+                info!("Task Name: {:?}", task_name);
+                let name = if let Some(name) = task_name { name } else { id.to_string() };
                 // Create notification
                 let notification = Notification {
                     notification_description: format!(
                         "tagged {} in task {}",
                         parse_email_user(&tagged_user.email),
-                        id
+                        name
                     ),
                     notification_type: String::from("Task Update"),
                     status: String::from("Unread"),
@@ -514,40 +521,45 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         // Send HTTP POST request with the XML payload
         let client = reqwest::Client::new();
         info!("Payload: {:?}", payload);
-        let response_text = client
-            .post("https://pcl.master-tech.app/api/customer_messages")
-            .header("Content-type", "application/xml")
-            .body(payload)
-            .send()
-            .await?
-            .text()
-            .await?;
-
-        // Parse the XML response to extract values
-        let id = response_text
-            .split("<id><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></id>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
-
-        let date_add = response_text
-            .split("<date_add><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_add>").next())
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
-
-        let date_upd = response_text
-            .split("<date_upd><![CDATA[")
-            .nth(1)
-            .and_then(|s| s.split("]]></date_upd>").next())
-            .unwrap_or(""); // Optional field, so we handle it accordingly
-
+        // let response_text = client
+        //     .post("https://pcl.master-tech.app/api/customer_messages")
+        //     .header("Content-type", "application/xml")
+        //     .body(payload)
+        //     .send()
+        //     .await?
+        //     .text()
+        //     .await?;
+        //
+        // // Parse the XML response to extract values
+        // let id = response_text
+        //     .split("<id><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></id>").next())
+        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+        //
+        // let date_add = response_text
+        //     .split("<date_add><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></date_add>").next())
+        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
+        //
+        // let date_upd = response_text
+        //     .split("<date_upd><![CDATA[")
+        //     .nth(1)
+        //     .and_then(|s| s.split("]]></date_upd>").next())
+        //     .unwrap_or(""); // Optional field, so we handle it accordingly
+        //
         // Return a Response struct with extracted values
         Ok(Response {
-            date_add: convert_date_string(date_add)?.to_string(), //,
-            id: id.to_string(),
-            date_upd: convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
+            date_add: String::new(), // convert_date_string(date_add)?.to_string(), //,
+            id: String::new(), // id.to_string(),
+            date_upd: String::new(), // convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
         })
+        // Ok(Response {
+        //     date_add: convert_date_string(date_add)?.to_string(), //,
+        //     id: id.to_string(),
+        //     date_upd: convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
+        // })
     }
 
     async fn get_order_by_task_id(&mut self) -> Result<String> {
@@ -708,8 +720,20 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         let end = "</prestashop>";
 
         let payload = format!(
-            "{}<customer_message><id_lang>1</id_lang><id_employee>{}</id_employee><id_customer_thread>{}</id_customer_thread><id>{}</id><message>{}</message><private>1</private><id_order_message_type>0</id_order_message_type></customer_message>{}",
-            begin, id_employee, id_customer_thread, self.id_customer_message.clone().unwrap(), self.note, end
+            r#"
+            {begin}
+            <customer_message>
+            <id_lang>1</id_lang>
+            <id_employee>{id_employee}</id_employee>
+            <id_customer_thread>{id_customer_thread}</id_customer_thread>
+            <id>{}</id>
+            <message>{}</message>
+            <private>1</private>
+            <id_order_message_type>0</id_order_message_type>
+            </customer_message>
+            {end}
+            "#,
+            self.id_customer_message.clone().unwrap(), self.note
         );
 
         // Send HTTP POST request with the XML payload
