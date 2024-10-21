@@ -190,7 +190,6 @@ pub async fn get_github_releases(
         .await?
         .json()
         .await?;
-
     tx.try_send(response.clone())?;
     Ok(())
 }

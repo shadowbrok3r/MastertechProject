@@ -45,6 +45,7 @@ impl eframe::App for MasterTechApp {
 
         self.receive_database(ctx);
         self.receive_other(ctx);
+        self.receive_github();
         self.receive_inventory();
         self.receive_ui_action();
         self.receive_prestashop();

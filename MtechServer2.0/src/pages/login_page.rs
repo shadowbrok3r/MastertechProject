@@ -124,11 +124,11 @@ impl MtechServer{
                                             let tx = db_tx.clone();
                                             let app_tx = appstate_tx.clone();
                                             spawn_local(async move {
-                                                let res = Login::login(email, pass, tx, app_tx.clone()).await;
-                                                match res {
-                                                    Ok(_) => app_tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap(), 
-                                                    Err(e) => app_tx.try_send(AppState::NoAuth(e.to_string())).unwrap()
-                                                }
+                                                let res = Login::login(email, pass, tx, app_tx.clone()).await.unwrap();
+                                                // match res {
+                                                //     Ok(_) => app_tx.try_send(AppState::Authenticated(MainPages::Tasks)).unwrap(), 
+                                                //     Err(e) => app_tx.try_send(AppState::NoAuth(e.to_string())).unwrap()
+                                                // }
                                             });
                                         }
                                     }

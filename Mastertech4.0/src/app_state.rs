@@ -236,14 +236,13 @@ impl MasterTechApp {
         let [_a, _b] = tree.main_surface_mut().split_left(
             NodeIndex::root(),
             0.30,
-            vec!["File Browser 📂".to_owned()],
+            vec!["File Browser 📂".to_owned(), "Logs".to_owned()],
         );
         let [_a, b] = tree.main_surface_mut().split_below(
             NodeIndex::root(),
             0.65,
             vec![
                 "Console".to_owned(),
-                "Logs".to_owned(),
                 "Websockets".to_owned(),
             ],
         );

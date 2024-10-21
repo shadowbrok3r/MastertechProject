@@ -579,6 +579,7 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
         // "Json Viewer".to_owned(),
         // "Query Builder".to_owned(),
         "Stock".to_owned(),
+        "Logs".to_owned(),
     ]);
 
     let [_a, b] =
@@ -598,7 +599,6 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
             "My Tasks".to_owned(),
             // "Task Audit".to_owned(),
             // "Ai Playground".to_owned(),
-            "Logs".to_owned(),
         ],
     );
 

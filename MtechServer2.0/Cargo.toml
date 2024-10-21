@@ -1,6 +1,6 @@
 [package]
 name = "mtechserver"
-version = "2.0.8"
+version = "2.0.10"
 edition = "2021"
 
 [dependencies]
