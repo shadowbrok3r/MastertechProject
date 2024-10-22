@@ -5,7 +5,7 @@ use database::schema::{Notification, TaskPayload};
 use database::{self, DATABASE};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use eframe::egui::{
-    menu, Align, Context, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit,
+    menu, Align, Context, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit,
 };
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Ui, Widget};
 use log::{error, info};
@@ -74,7 +74,9 @@ impl MtechServer {
                             })
                             .ui(ui);
 
-                    if result.secondary_clicked() {
+                    let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
+
+                    if result.secondary_clicked() || accepted_by_keyboard {
                         info!("selected? {}", self.context.search_input.clone());
                         if let Some(input) = inputs.get(&self.context.search_input) {
                             let task = self.context.tasks.iter().find(|&x| {
@@ -368,15 +370,14 @@ impl MtechServer {
     }
 }
 
-
 pub fn find_task_in_description(
     notification_description: &str,
     task_names: &BTreeSet<String>, // BTreeSet of task names
 ) -> Vec<String> {
     // Define multiple regex patterns for different task formats
     let regex_patterns = vec![
-        Regex::new(r"in task (.+)").unwrap(),               // Matches: "in task {task name}"
-        Regex::new(r"(.+) assigned to you").unwrap(),       // Matches: "{task name} assigned to you"
+        Regex::new(r"in task (.+)").unwrap(), // Matches: "in task {task name}"
+        Regex::new(r"(.+) assigned to you").unwrap(), // Matches: "{task name} assigned to you"
     ];
 
     // Iterate through each regex pattern and try to find matches
@@ -384,7 +385,8 @@ pub fn find_task_in_description(
     for task_name_regex in regex_patterns {
         // Use regex to find the task name in the description
         if let Some(caps) = task_name_regex.captures(notification_description) {
-            if let Some(match_task_name) = caps.get(1) { // Get the first capture group (task name)
+            if let Some(match_task_name) = caps.get(1) {
+                // Get the first capture group (task name)
                 let task_name = match_task_name.as_str().to_string();
 
                 // Check if the extracted task name is in the set of task names
