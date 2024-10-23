@@ -6,10 +6,7 @@ use crate::{
 use database::{
     live_data::listen_data,
     schema::{
-        utilities::{
-            get_connected_clients, get_notifications, get_store_users,
-            get_tasks,
-        },
+        utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks},
         CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
     },
     DATABASE,
@@ -106,27 +103,27 @@ impl MtechServer {
             let user = usr.clone();
             let name = usr.name.clone();
 
-            if self.context.file_system.paths.is_empty() {
-                let bridge_op = &self.context.bridge;
-
-                if let (Some(access_key), Some(secret_key), Some(bridge)) = (
-                    usr.minio_access_key.clone(),
-                    usr.minio_secret_key.clone(),
-                    bridge_op,
-                ) {
-                    self.context.file_system.access_key = access_key.clone();
-                    self.context.file_system.secret_key = secret_key.clone();
-                    let name = usr.email.clone();
-                    let parsed = name.split_once('@').unwrap().0.to_string().clone();
-                    info!("Retrieving minio files");
-                    bridge.send(Input {
-                        url: STORAGE_URL.to_string(),
-                        access_key,
-                        secret_key,
-                        name: parsed,
-                    });
-                }
-            }
+            // if self.context.file_system.paths.is_empty() {
+            //     let bridge_op = &self.context.bridge;
+            //
+            //     if let (Some(access_key), Some(secret_key), Some(bridge)) = (
+            //         usr.minio_access_key.clone(),
+            //         usr.minio_secret_key.clone(),
+            //         bridge_op,
+            //     ) {
+            //         self.context.file_system.access_key = access_key.clone();
+            //         self.context.file_system.secret_key = secret_key.clone();
+            //         let name = usr.email.clone();
+            //         let parsed = name.split_once('@').unwrap().0.to_string().clone();
+            //         info!("Retrieving minio files");
+            //         bridge.send(Input {
+            //             url: STORAGE_URL.to_string(),
+            //             access_key,
+            //             secret_key,
+            //             name: parsed,
+            //         });
+            //     }
+            // }
 
             spawn_local(async move {
                 let listen_data = listen_data(notes_tx, TASK_NOTE_TABLE).await;

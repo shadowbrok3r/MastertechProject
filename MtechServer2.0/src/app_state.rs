@@ -598,7 +598,7 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
         vec![
             "My Tasks".to_owned(),
             // "Task Audit".to_owned(),
-            // "Ai Playground".to_owned(),
+            "Ai Playground".to_owned(),
         ],
     );
 
