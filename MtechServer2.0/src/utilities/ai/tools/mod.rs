@@ -2,25 +2,26 @@
 
 mod ai_tools;
 mod spec;
+pub mod tasks;
 mod weather;
 
 // -- Flatten
 pub use ai_tools::*;
 pub use spec::*;
 
-use anyhow::{Result, Error};
+use anyhow::{Error, Result};
 use rpc_router::{ResourcesBuilder, RouterBuilder};
 
 // endregion: --- Modules
 
 pub fn new_ai_tools(resources: Option<ResourcesBuilder>) -> Result<AiTools, Error> {
-	let router = RouterBuilder::default()
-		.extend_resources(resources)
-		.extend(weather::router_builder())
-		.build();
+    let router = RouterBuilder::default()
+        .extend_resources(resources)
+        .extend(weather::router_builder())
+        .build();
 
-	let mut chat_tools = Vec::new();
-	chat_tools.extend(weather::chat_tools()?);
+    let mut chat_tools = Vec::new();
+    chat_tools.extend(weather::chat_tools()?);
 
-	Ok(AiTools::new(router, chat_tools))
+    Ok(AiTools::new(router, chat_tools))
 }
