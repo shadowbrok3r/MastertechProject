@@ -1,3 +1,4 @@
+use crate::utilities::ai::{conv, tools::AiTools};
 use anyhow::{Error, Result};
 use async_openai_wasm::types::{
     ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest,
@@ -8,6 +9,7 @@ use rpc_router::{router_builder, RpcParams};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use surrealdb::RecordId;
+
 use super::{chat, gpts, oa_client::new_oa_client};
 
 pub async fn call() -> Result<(), Error> {
@@ -127,13 +129,15 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
     let chat_client = oa_client.chat();
     let model = gpts::MODEL;
     // Add a system message to instruct the model to use Markdown formatting
-    let system_message = chat::user_msg(r#"
+    let system_message = chat::user_msg(
+        r#"
 				You are an AI assistant. 
 				You should use Markdown language to format your responses whenever applicable. 
 				You can use headers (With one # followed by a space), lists, code blocks, bold, italics, and other Markdown 
 				features to make the response more readable.
-		"#)?;
-    
+		"#,
+    )?;
+
     let user_message = chat::user_msg(input)?;
 
     let messages = vec![system_message, user_message];
@@ -172,7 +176,9 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
 
     // -- If message.content, end early
     if let Some(response_content) = first_choice.message.content {
-        gloo_console::info!(format!("\nResponse early (no tools):\n\n{response_content}"));
+        gloo_console::info!(format!(
+            "\nResponse early (no tools):\n\n{response_content}"
+        ));
         // return Ok(res);
     }
 
@@ -191,7 +197,9 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
         let fn_name = tool_call.function.name.clone();
         let params: Value = serde_json::from_str(&tool_call.function.arguments).unwrap();
 
-        gloo_console::info!(format!("Params: {params:?}\ntool_call_id: {tool_call_id:?}\nfn_name: {fn_name:?}"));
+        gloo_console::info!(format!(
+            "Params: {params:?}\ntool_call_id: {tool_call_id:?}\nfn_name: {fn_name:?}"
+        ));
         // Execute with rpc_router
         let call_result = rpc_router
             .call_route(None, fn_name, Some(params))
@@ -237,3 +245,50 @@ pub async fn call_with_response(input: &str) -> Result<Vec<ChatChoice>, Box<Erro
     Ok(choices)
 }
 
+pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>, Box<Error>> {
+    // -- Init AI Client
+    let oa_client = new_oa_client()?;
+
+    // Add a system message to instruct the model to use Markdown formatting
+    let system_message = chat::user_msg(
+        r#"
+				You are an AI assistant. 
+				You should use Markdown language to format your responses whenever applicable. 
+				You can use headers (With one # followed by a space), lists, code blocks, bold, italics, and other Markdown 
+				features to make the response more readable.
+		"#,
+    )?;
+
+    let user_message = chat::user_msg(input)?;
+
+    let messages = vec![system_message, user_message];
+
+    let tool_task_summary = chat::tool_fn(
+        "get_task_summary",
+        "get the summary of a task given its ID",
+        json!({
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "The ID of the task you want to fetch"
+                }
+            },
+            "required": ["task_id"],
+        }),
+    )?;
+
+    // Add both tools to the list
+    let tools = vec![tool_task_summary];
+
+    // -- Init rpc_router
+    let rpc_router = router_builder![get_task_summary].build();
+
+    let ai_tools = AiTools::new(rpc_router, tools);
+    // -- Execute question with conv
+    let response: Vec<ChatChoice> = conv::send_user_msg(oa_client, ai_tools, messages).await?;
+
+    println!("\nFinal answer:\n\n{response:?}");
+
+    Ok(response)
+}
