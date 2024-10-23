@@ -13,6 +13,7 @@ parking_lot = "0.12"
 ewebsock = "0.6"
 zstd = "0.13"
 reqwest = { version = "0.12", features = ["stream", "json"] }
+rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] }
 rfd = "0.14"
 tap = "1"
 itertools = "0.13"
@@ -38,7 +39,7 @@ futures = { workspace=true }
 bytes = { workspace=true }
 regex = { workspace=true }
 structdiff = { workspace=true }
-rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] }
+egui_struct = { workspace = true }
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 # rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] }
