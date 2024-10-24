@@ -48,4 +48,6 @@ debug = false
 opt-level = 3
 
 
-
+# Optimize all dependencies even in debug builds:
+[profile.dev.package."*"]
+opt-level = 2

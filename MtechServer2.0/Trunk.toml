@@ -10,7 +10,10 @@ dist = "./dist"
 # The public URL from which assets are to be served.
 public_url = "/"
 # Whether to include hash values in the output file names.
-filehash = false
+# filehash = false
+pattern_script = '''
+<script type="module">import init, { initThreadPool} from '{base}{js}';await init('{base}{wasm}'); await initThreadPool(navigator.hardwareConcurrency);</script>
+'''
 [serve]
 # The address to serve on.
 address = "0.0.0.0"

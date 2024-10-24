@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 console_error_panic_hook = "0.1"
 gloo-worker = "0.5"
+# wasm_thread = "0.3"
+rayon = "1.8"
+wasm-bindgen-rayon = "1.2"
 gloo-net = { version = "0.6", features = ["http"]}
 web-sys = { version = "0.3.7", features = ["Storage", "Window", "Location", "HtmlCanvasElement"] }
 wasm-cookies = { version= "0.2" }
@@ -17,7 +20,6 @@ derive_more = {version = "1", features = ["from"]}
 rpc-router = "0.1"
 schemars = "0.8"
 reqwest = { version = "0.12", features = ["stream", "json"] }
-
 displays = { path="../displays", features = ["wasm"]}
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -54,12 +56,10 @@ gloo-console = { workspace=true }
 # ratframe = { workspace=true }
 
 [[bin]]
-name = "dummy_worker"
-path = "src/dummy_worker.rs"
+name = "worker"
+path = "src/worker.rs"
+#
+# [[bin]]
+# name = "live_worker"
+# path = "src/live_worker.rs"
 
-[[bin]]
-name = "live_worker"
-path = "src/live_worker.rs"
-
-[build]
-target = [ "wasm32-unknown-unknown"]

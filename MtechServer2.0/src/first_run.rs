@@ -17,7 +17,7 @@ use eframe::Frame;
 use egui_dock::DockState;
 use log::info;
 use log::{debug, error};
-use mtechserver::webworker::Input;
+// use mtechserver::webworker::Input;
 use wasm_bindgen_futures::spawn_local;
 
 // #[cfg(target_arch="wasm32")]
@@ -208,10 +208,10 @@ impl MtechServer {
             self.context.store_users = users;
         }
 
-        if let Ok(live_output) = self.context.live_output_rx.try_recv() {
-            info!("Customers: {live_output:?}");
-            self.context.data_output = live_output;
-        }
+        // if let Ok(live_output) = self.context.live_output_rx.try_recv() {
+        //     info!("Customers: {live_output:?}");
+        //     self.context.data_output = live_output;
+        // }
 
         if let Ok(releases) = self.context.github_releases_channel.1.try_recv() {
             debug!("Releases: {releases:?}");

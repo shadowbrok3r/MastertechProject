@@ -7,6 +7,7 @@ use eframe::egui::{
 };
 use log::{debug, info};
 use std::sync::Arc;
+use wasm_bindgen_futures::spawn_local;
 
 pub mod app_state;
 pub mod data;
@@ -28,16 +29,19 @@ impl eframe::App for MtechServer {
         // This is our 'dummy' worker that retrieves Minio bucket storage
         // contents, then builds our 'virtual' file system ui in the
         // crate::tabs::toolbox tab
-        let data_update = self.context.data_update.as_mut().unwrap();
-        if let Some(items) = data_update.take() {
-            if !items.is_empty() && self.context.file_system.paths.is_empty() {
-                debug!("Files: {items:?}");
-                self.context.file_system.build_file_system(items);
-            }
-        }
+        // let data_update = self.context.data_update.as_mut().unwrap();
+        // if let Some(items) = data_update.take() {
+        //     if !items.is_empty() && self.context.file_system.paths.is_empty() {
+        //         debug!("Files: {items:?}");
+        //         self.context.file_system.build_file_system(items);
+        //     }
+        // }
 
         // do some initial setting up
         if self.context.first_run {
+            spawn_local(async move {
+                gloo_console::info!("Hello from a worker?");
+            });
             self.first_run(frame);
         }
 

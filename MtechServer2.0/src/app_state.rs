@@ -29,10 +29,7 @@ use eframe::{
 };
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use gloo_worker::Spawnable;
-use mtechserver::{
-    live_worker::{LiveOutput, LiveWorker},
-    webworker::WebWorker,
-};
+// use mtechserver::{webworker::WebWorker};
 use serde_json::Value;
 use std::{
     cell::Cell,
@@ -297,28 +294,13 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub app_state_rx: Receiver<AppState>,
 
-    // Webworker Communication
-    /// Data from our Dummy Worker
-    #[serde(skip)]
-    pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
-    /// Data from our Live Update worker
-    /// (Currently not in use until i find something to
-    /// use it for)
-    #[serde(skip)]
-    pub live_data_update: Option<Rc<Cell<Option<LiveOutput>>>>,
-    /// The data structure from Live Update worker
-    pub data_output: LiveOutput,
-    /// Getting / Sending data from our Live Update worker
-    #[serde(skip)]
-    pub live_output_tx: Sender<LiveOutput>,
-    #[serde(skip)]
-    pub live_output_rx: Receiver<LiveOutput>,
-    /// The actual communication bridge to / from our dummy worker
-    #[serde(skip)]
-    pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
-    /// The actual communication bridge to / from our live update web worker    
-    #[serde(skip)]
-    pub live_bridge: Option<gloo_worker::WorkerBridge<LiveWorker>>,
+    // // Webworker Communication
+    // /// Data from our Dummy Worker
+    // #[serde(skip)]
+    // pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
+    // /// The actual communication bridge to / from our dummy worker
+    // #[serde(skip)]
+    // pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
 
     // Other Components
     pub tur: Tur,
@@ -378,24 +360,15 @@ impl MtechServer {
         // }
 
         let ctx = cc.egui_ctx.clone();
-        let data_update = Rc::new(std::cell::Cell::new(None));
-        let sender = data_update.clone();
-        let live_data_update = Rc::new(std::cell::Cell::new(None));
-        let live_sender = live_data_update.clone();
+        // let data_update = Rc::new(std::cell::Cell::new(None));
+        // let sender = data_update.clone();
         let context = ctx.clone();
-        let bridge = <WebWorker as Spawnable>::spawner()
-            .callback(move |response| {
-                sender.set(Some(response.buckets));
-                context.request_repaint();
-            })
-            .spawn("./dummy_worker.js");
-
-        let live_bridge = <LiveWorker as Spawnable>::spawner()
-            .callback(move |response| {
-                live_sender.set(Some(response));
-                ctx.request_repaint();
-            })
-            .spawn("./live_worker.js");
+        // let bridge = <WebWorker as Spawnable>::spawner()
+        //     .callback(move |response| {
+        //         sender.set(Some(response.buckets));
+        //         context.request_repaint();
+        //     })
+        //     .spawn("./dummy_worker.js");
 
         let (db_tx, db_rx) = channel::unbounded();
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
@@ -413,7 +386,6 @@ impl MtechServer {
         let (live_notification_tx, live_notification_rx) =
             channel::unbounded::<(Action, Notification)>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
-        let (live_output_tx, live_output_rx) = channel::unbounded::<LiveOutput>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
@@ -436,7 +408,7 @@ impl MtechServer {
             task_map: BTreeMap::new(),
             live_tasks: None,
             tasks,
-            data_output: LiveOutput::default(),
+            // data_output: LiveOutput::default(),
             store_users: Vec::new(),
 
             // CHANNEL SENDERS / RECEIVERS
@@ -468,8 +440,6 @@ impl MtechServer {
             notification_rx,
             live_notification_tx,
             live_notification_rx,
-            live_output_tx,
-            live_output_rx,
             github_releases_channel,
             bytes_channel,
             tur_channel,
@@ -505,10 +475,8 @@ impl MtechServer {
             error: Default::default(),
 
             // MISC / EVERYTHING ELSE
-            bridge: Some(bridge),
-            live_bridge: Some(live_bridge),
-            live_data_update: Some(live_data_update),
-            data_update: Some(data_update),
+            // bridge: Some(bridge),
+            // data_update: Some(data_update),
             search_input: String::new(),
             client_search_input: String::new(),
             client_search_inputs: HashMap::new(),
