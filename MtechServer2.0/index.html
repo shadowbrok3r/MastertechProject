@@ -14,6 +14,7 @@
 
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
     <!-- <link data-trunk rel="rust" data-wasm-opt="2" /> -->
+    <!-- data-wasm-opt="4" -->
     <link
       data-trunk
       rel="rust"
@@ -21,25 +22,35 @@
       data-bin="mtechserver"
       data-wasm-opt="4"
       data-type="main"
+      data-bindgen-target="web"
     />
+    <!-- <script type="module"> -->
+    <!--   import init, { initThreadPool } from "{base}{js}"; -->
+    <!--   await init("{base}{wasm}"); -->
+    <!--   await initThreadPool(navigator.hardwareConcurrency); -->
+    <!-- </script> -->
     <link
       data-trunk
       rel="rust"
       href="Cargo.toml"
       data-integrity="none"
       data-wasm-opt="4"
-      data-bin="dummy_worker"
+      data-bin="worker"
       data-type="worker"
+      data-bindgen-target="web"
+      data-loader-shim
     />
-    <link
-      data-trunk
-      rel="rust"
-      href="Cargo.toml"
-      data-integrity="none"
-      data-wasm-opt="4"
-      data-bin="live_worker"
-      data-type="worker"
-    />
+    <!-- <link -->
+    <!--   data-trunk -->
+    <!--   rel="rust" -->
+    <!--   href="Cargo.toml" -->
+    <!--   data-integrity="none" -->
+    <!--   data-wasm-opt="4" -->
+    <!--   data-bin="live_worker" -->
+    <!--   data-type="worker" -->
+    <!--   data-bindgen-target="web" -->
+    <!--   data-loader-shim -->
+    <!-- /> -->
 
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />

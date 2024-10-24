@@ -10,7 +10,7 @@ use database::{
     DATABASE,
 };
 use log::{debug, info};
-use mtechserver::live_worker::LiveOutput;
+// use mtechserver::live_worker::LiveOutput;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use surrealdb::Action;
@@ -36,24 +36,24 @@ pub async fn get_associated_ticket(
     Ok(())
 }
 
-pub async fn get_customer_data(tx: Sender<LiveOutput>) -> Result<(), Error> {
-    // tx: Sender<CustomerData>
-    debug!("get_customers");
-    let customers: Vec<CustomerData> = DATABASE.query("SELECT * FROM customer").await?.take(0)?;
-    DATABASE.set("id", "value").await?;
-    let computers: Vec<ComputerData> = DATABASE.query("SELECT * FROM computer").await?.take(0)?;
-    let tickets: Vec<TicketData> = DATABASE
-        .query("SELECT * FROM service_order")
-        .await?
-        .take(0)?;
-    let output = LiveOutput {
-        customers,
-        computers,
-        tickets,
-    };
-    tx.try_send(output)?;
-    Ok(())
-}
+// pub async fn get_customer_data(tx: Sender<LiveOutput>) -> Result<(), Error> {
+// tx: Sender<CustomerData>
+// debug!("get_customers");
+// let customers: Vec<CustomerData> = DATABASE.query("SELECT * FROM customer").await?.take(0)?;
+// DATABASE.set("id", "value").await?;
+// let computers: Vec<ComputerData> = DATABASE.query("SELECT * FROM computer").await?.take(0)?;
+// let tickets: Vec<TicketData> = DATABASE
+//     .query("SELECT * FROM service_order")
+//     .await?
+//     .take(0)?;
+// let output = LiveOutput {
+//     customers,
+//     computers,
+//     tickets,
+// };
+//     tx.try_send(output)?;
+//     Ok(())
+// }
 
 pub async fn get_user_from_email(email: String) -> Result<Option<User>, Error> {
     DATABASE.set("email", email).await?;

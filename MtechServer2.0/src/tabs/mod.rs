@@ -74,7 +74,7 @@ impl TabViewer for MtechServerContext {
             "Web Console" => self.web_console(ui),
             "Completed Tasks" => self.completed_tasks(ui),
             "Bug Report" => self.github(ui),
-            "Customers" => self.customer_view(ui),
+            // "Customers" => self.customer_view(ui),
             "Logs" => logger_ui().show(ui),
             "Query Builder" => self.query_builder(ui),
             "Json Viewer" => self.json_viewer(ui),
