@@ -56,7 +56,7 @@ use anyhow::Error;
 use displays::channel_manager::ChannelManager;
 use log::{error, info};
 use serde::Serialize;
-
+use wasm_bindgen::prelude::wasm_bindgen;
 #[derive(Serialize)]
 pub struct MtechServer {
     #[serde(skip)]
@@ -639,7 +639,7 @@ impl MtechServerContext {
                         ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
 
                         if let Some(_new_message) = chat_modal.ui(ui) {
-                            spawn_local(async move {});
+                            // spawn_local(async move {});
                         }
                     },
                 );
@@ -650,6 +650,7 @@ impl MtechServerContext {
 }
 
 // #[cfg(target_arch="wasm32")]
+#[wasm_bindgen]
 pub fn check_authentication(
     db_tx: Sender<anyhow::Result<Database, Error>>,
 ) -> Result<(AppState, Option<User>), Error> {

@@ -3,12 +3,19 @@ name = "mtechserver"
 version = "2.0.11"
 edition = "2021"
 
+# [[bin]]
+# name = "mtechserver"
+# path = "src/mtechserver.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 console_error_panic_hook = "0.1"
 gloo-worker = "0.5"
 # wasm_thread = "0.3"
 rayon = "1.8"
-wasm-bindgen-rayon = "1.2"
+wasm-bindgen-rayon = {version="1.2", features=["no-bundler"]}
 gloo-net = { version = "0.6", features = ["http"]}
 web-sys = { version = "0.3.7", features = ["Storage", "Window", "Location", "HtmlCanvasElement"] }
 wasm-cookies = { version= "0.2" }
@@ -21,7 +28,7 @@ rpc-router = "0.1"
 schemars = "0.8"
 reqwest = { version = "0.12", features = ["stream", "json"] }
 displays = { path="../displays", features = ["wasm"]}
-
+js-sys = "0.3"
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 egui_json_tree = { workspace = true }
 wasm-bindgen-futures = { workspace=true }
@@ -58,8 +65,5 @@ gloo-console = { workspace=true }
 [[bin]]
 name = "worker"
 path = "src/worker.rs"
-#
-# [[bin]]
-# name = "live_worker"
-# path = "src/live_worker.rs"
+
 
