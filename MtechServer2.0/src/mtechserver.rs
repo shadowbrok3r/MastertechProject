@@ -9,13 +9,7 @@ use log::{debug, info};
 use std::sync::Arc;
 use wasm_bindgen_futures::spawn_local;
 
-pub mod app_state;
-pub mod data;
-pub mod first_run;
-pub mod pages;
-pub mod tabs;
-pub mod utilities;
-pub mod webworker;
+use crate::app_state;
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
@@ -179,68 +173,16 @@ impl eframe::App for MtechServer {
         eframe::set_value(storage, eframe::APP_KEY, self)
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Some(window) = web_sys::window() {
-            if let Ok(storage) = window.local_storage() {
-                if let Some(storage) = storage {
-                    let clear = storage.clear();
-                    info!("Clearing storage: {clear:?}");
-                }
-            }
-        }
-    }
-}
-
-// When compiling to web using trunk:
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    use eframe::wasm_bindgen::JsCast as _;
-    use log::LevelFilter;
-    use tabs::logger::logging::builder;
-    use wasm_bindgen::prelude::*;
-    use web_sys::HtmlCanvasElement;
-    builder().init().unwrap();
-
-    // Redirect `log` message to `console.log` and friends:
-    // eframe::WebLogger::init(log::LevelFilter::Debug).ok();
-
-    let web_options = eframe::WebOptions::default();
-
-    wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .expect("No window")
-            .document()
-            .expect("No document");
-
-        let canvas = document
-            .get_element_by_id("mtech_canvas")
-            .expect("Failed to find the_canvas_id")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("the_canvas_id was not a HtmlCanvasElement");
-
-        let start_result = eframe::WebRunner::new()
-            .start(
-                canvas,
-                web_options,
-                Box::new(|cc| Ok(Box::new(MtechServer::new(cc)))),
-            )
-            .await;
-
-        // Remove the loading text and spinner:
-        if let Some(loading_text) = document.get_element_by_id("loading_text") {
-            match start_result {
-                Ok(_) => {
-                    loading_text.remove();
-                }
-                Err(e) => {
-                    loading_text.set_inner_html(
-                        "<p> The app has crashed. See the developer console for details. </p>",
-                    );
-                    panic!("Failed to start eframe: {e:?}");
-                }
-            }
-        }
-    });
+    // fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    //     if let Some(window) = web_sys::window() {
+    //         if let Ok(storage) = window.local_storage() {
+    //             if let Some(storage) = storage {
+    //                 let clear = storage.clear();
+    //                 info!("Clearing storage: {clear:?}");
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 fn set_style() -> Arc<Style> {

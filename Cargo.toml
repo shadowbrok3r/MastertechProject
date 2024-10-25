@@ -4,7 +4,7 @@ members = [ "MtechServer2.0", "database" , "displays", "Mastertech4.0"] #  , "we
 
 [workspace.dependencies]
 database = { path = "database" }
-eframe = { version="=0.29.1", features=["persistence", "serde",  "default_fonts", "accesskit"] }
+eframe = { version="=0.29.1", features=["persistence", "serde",  "default_fonts", "accesskit", "glow"], default-features=false }
 egui_extras = { version = "0.29.1", features = ["datepicker", "syntect", "serde" ]}
 surrealdb = { version = "2.0.4", features = ["protocol-ws"] } 
 egui_dock = { version = "0.14", features = ["serde"]}

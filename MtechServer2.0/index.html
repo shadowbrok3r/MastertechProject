@@ -19,10 +19,9 @@
       data-trunk
       rel="rust"
       data-integrity="none"
-      data-bin="mtechserver"
       data-wasm-opt="4"
       data-type="main"
-      data-bindgen-target="web"
+      data-target-name="mtechserver"
     />
     <!-- <script type="module"> -->
     <!--   import init, { initThreadPool } from "{base}{js}"; -->
@@ -40,23 +39,11 @@
       data-bindgen-target="web"
       data-loader-shim
     />
-    <!-- <link -->
-    <!--   data-trunk -->
-    <!--   rel="rust" -->
-    <!--   href="Cargo.toml" -->
-    <!--   data-integrity="none" -->
-    <!--   data-wasm-opt="4" -->
-    <!--   data-bin="live_worker" -->
-    <!--   data-type="worker" -->
-    <!--   data-bindgen-target="web" -->
-    <!--   data-loader-shim -->
-    <!-- /> -->
 
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
 
     <link data-trunk rel="icon" href="assets/favicon.ico" />
-    <!-- <link data-trunk rel="copy-file" href="assets/coi-serviceworker.js" /> -->
     <link data-trunk rel="copy-file" href="assets/sw.js" />
 
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
@@ -64,6 +51,7 @@
     <link data-trunk rel="copy-file" href="assets/mtechlogo.png" />
 
     <link rel="manifest" href="manifest.json" />
+
     <!-- <meta name="theme-color" media="(prefers-color-scheme: light)" content="white"> -->
     <meta
       name="theme-color"
@@ -163,7 +151,10 @@
     <!-- The WASM code will resize the canvas dynamically -->
     <!-- the id is hardcoded in main.rs . so, make sure both match. -->
     <canvas id="mtech_canvas"></canvas>
-
+    <script type="module">
+      import "./worker_loader.js";
+      console.log("Main Wasm and thread pool initialized.");
+    </script>
     <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
     <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
     <script>

@@ -1,15 +1,15 @@
 // use gloo_worker::Registrable;
 // use mtechserver::webworker;
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_rayon::init_thread_pool;
 use web_sys::console;
 // fn main() {
 //     webworker::WebWorker::registrar().register();
 // }
 
-#[wasm_bindgen]
-pub fn start_worker() {
-    console::log_1(&"Worker started".into());
+pub use wasm_bindgen_rayon::init_thread_pool;
+
+pub fn main() {
+    gloo_console::info!("Worker started");
 
     // Initialize the thread pool for Rayon
     let num_threads = web_sys::window()
@@ -17,20 +17,30 @@ pub fn start_worker() {
         .navigator()
         .hardware_concurrency() as usize; // Cast f64 to usize
 
-    // Wrap the Rust closure in a `Closure`
-    let closure = Closure::wrap(Box::new(move |_value: JsValue| {
-        console::log_1(&format!("Initialized worker with {} threads", num_threads).into());
+    // Define the closure for handling successful thread pool initialization
+    let success_closure = Closure::wrap(Box::new(move |_value: JsValue| {
+        gloo_console::info!(format!("Initialized worker with {} threads", num_threads));
     }) as Box<dyn FnMut(JsValue)>);
 
-    // Handle the Promise from init_thread_pool, chaining the .then() and .catch() methods
+    // Define the closure for handling errors in thread pool initialization
+    let error_closure = Closure::wrap(Box::new(move |err: JsValue| {
+        gloo_console::error!(format!("Error initializing thread pool: {:?}", err));
+    }) as Box<dyn FnMut(JsValue)>);
+
+    // Define the closure for finalization
+    let finally_closure = Closure::wrap(Box::new(move || {
+        gloo_console::info!("Initialization complete.");
+    }) as Box<dyn FnMut()>);
+
+    // Handle the Promise from init_thread_pool, chaining the .then(), .catch(), and .finally() methods
     let promise = init_thread_pool(num_threads);
-    promise.then(&closure);
+    promise
+        .then(&success_closure)
+        .catch(&error_closure)
+        .finally(&finally_closure); // Forget the closure so it isn't dropped prematurely
 
-    // Forget the closure so it isn't dropped prematurely
-    closure.forget();
-}
-
-fn main() {
-    // Web Workers don't need a `main()` function when targeting Wasm.
-    // This is just to satisfy the Rust compiler for non-Wasm targets.
+    // Forget all closures so they aren't dropped prematurely
+    success_closure.forget();
+    error_closure.forget();
+    finally_closure.forget();
 }
