@@ -15,7 +15,6 @@ use database::{schema::Store, STORAGE_URL};
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::Frame;
 use egui_dock::DockState;
-use futures::executor::block_on;
 use log::info;
 use log::{debug, error};
 // use mtechserver::webworker::Input;
@@ -32,11 +31,9 @@ impl MtechServer {
         self.context.first_run = false;
 
         let github_releases_tx = self.context.github_releases_channel.0.clone();
-        rayon::spawn(move || {
-            block_on(async {
-                let get_releases = get_github_releases(github_releases_tx).await;
-                info!("get_releases: {get_releases:?}");
-            });
+        spawn_local(async move {
+            let get_releases = get_github_releases(github_releases_tx).await;
+            info!("get_releases: {get_releases:?}");
         });
 
         if let Some(storage) = frame.storage_mut() {
@@ -70,13 +67,11 @@ impl MtechServer {
                 if let Some(ref usr) = d.1 {
                     self.context.current_user = Some(usr.clone());
                     self.context.file_system.set_user(usr.clone());
-                    rayon::spawn(move || {
-                        block_on(async {
-                            match DATABASE.health().await {
-                                Ok(_) => info!("Healthy connection"),
-                                Err(e) => info!("Database connection health: {e:?}"),
-                            }
-                        });
+                    spawn_local(async move {
+                        match DATABASE.health().await {
+                            Ok(_) => info!("Healthy connection"),
+                            Err(e) => info!("Database connection health: {e:?}"),
+                        }
                     });
                 }
             }
@@ -130,32 +125,24 @@ impl MtechServer {
             //     }
             // }
 
-            rayon::spawn(move || {
-                block_on(async {
-                    let listen_data = listen_data(notes_tx, TASK_NOTE_TABLE).await;
-                    info!("listen_task_notes: {listen_data:?}");
-                });
+            spawn_local(async move {
+                let listen_data = listen_data(notes_tx, TASK_NOTE_TABLE).await;
+                info!("listen_task_notes: {listen_data:?}");
             });
 
-            rayon::spawn(move || {
-                block_on(async {
-                    let listen_data = listen_data(live_tasks_tx, TASK_TABLE).await;
-                    info!("listen_tasks: {listen_data:?}");
-                });
+            spawn_local(async move {
+                let listen_data = listen_data(live_tasks_tx, TASK_TABLE).await;
+                info!("listen_tasks: {listen_data:?}");
             });
 
-            rayon::spawn(move || {
-                block_on(async {
-                    let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
-                    info!("listen_clients: {listen_data:?}");
-                });
+            spawn_local(async move {
+                let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
+                info!("listen_clients: {listen_data:?}");
             });
 
-            rayon::spawn(move || {
-                block_on(async {
-                    let listen_data = listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await;
-                    info!("listen_notifications: {listen_data:?}");
-                });
+            spawn_local(async move {
+                let listen_data = listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await;
+                info!("listen_notifications: {listen_data:?}");
             });
 
             if self.context.tasks.is_empty() || self.context.store_users.is_empty() {
@@ -169,23 +156,19 @@ impl MtechServer {
                     Store::SAN => 77,
                 };
 
-                rayon::spawn(move || {
-                    block_on(async {
-                        let get_tasks = get_tasks(initial_tasks_tx).await;
-                        let get_store_users =
-                            get_store_users(store_users_tx, user.clone().store).await;
-                        let get_connected_clients = get_connected_clients(tx, user.clone()).await;
-                        let stock = get_stock(stock_tx.clone(), store_selection).await;
-                        let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
-                        let notifications =
-                            get_notifications(notif_tx.clone(), user.clone().id).await;
-                        info!("Get Notifications: {notifications:?}");
-                        info!("Extra Stock {stock_quantities:?}");
-                        info!("Stock call: {stock:?} for Store: {:?}", store_selection);
-                        info!("get_connected_clients: {get_connected_clients:?}");
-                        info!("get_store_users: {get_store_users:?}");
-                        info!("get_tasks: {get_tasks:?}");
-                    });
+                spawn_local(async move {
+                    let get_tasks = get_tasks(initial_tasks_tx).await;
+                    let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
+                    let get_connected_clients = get_connected_clients(tx, user.clone()).await;
+                    let stock = get_stock(stock_tx.clone(), store_selection).await;
+                    let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
+                    let notifications = get_notifications(notif_tx.clone(), user.clone().id).await;
+                    info!("Get Notifications: {notifications:?}");
+                    info!("Extra Stock {stock_quantities:?}");
+                    info!("Stock call: {stock:?} for Store: {:?}", store_selection);
+                    info!("get_connected_clients: {get_connected_clients:?}");
+                    info!("get_store_users: {get_store_users:?}");
+                    info!("get_tasks: {get_tasks:?}");
                 });
             }
 

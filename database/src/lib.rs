@@ -7,7 +7,11 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, sync::RwLock};
 use surrealdb::{
     engine::remote::ws::{Client as WsClient, Ws, Wss},
-    opt::auth::{Jwt, Record as SurrealRec},
+    opt::{
+        auth::{Jwt, Record as SurrealRec},
+        capabilities::Capabilities,
+        Config,
+    },
     Error, Surreal,
 };
 pub mod live_data;
@@ -89,7 +93,10 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        DATABASE.connect::<Ws>(DB_URL_LOCAL).await?; //(&get_db_url()).await?;
+        match DATABASE.connect::<Wss>(DB_URL).await {
+            Ok(_) => info!("Connected to {DB_URL:?}"),
+            Err(e) => info!("Error connecting to database: {e:?}"),
+        } //(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt {
@@ -144,7 +151,10 @@ impl Database {
         email: String,
     ) -> anyhow::Result<Self, anyhow::Error> {
         // let db_url = get_db_url();
-        DATABASE.connect::<Wss>(DB_URL).await?; //(&get_db_url()).await?;(&db_url).await?;
+        let cap = Capabilities::all();
+        let config = Config::new().capabilities(cap);
+
+        DATABASE.connect::<Wss>((DB_URL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE
