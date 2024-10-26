@@ -56,7 +56,7 @@ use anyhow::Error;
 use displays::channel_manager::ChannelManager;
 use log::{error, info};
 use serde::Serialize;
-use wasm_bindgen::prelude::wasm_bindgen;
+
 #[derive(Serialize)]
 pub struct MtechServer {
     #[serde(skip)]
@@ -650,7 +650,6 @@ impl MtechServerContext {
 }
 
 // #[cfg(target_arch="wasm32")]
-#[wasm_bindgen]
 pub fn check_authentication(
     db_tx: Sender<anyhow::Result<Database, Error>>,
 ) -> Result<(AppState, Option<User>), Error> {
