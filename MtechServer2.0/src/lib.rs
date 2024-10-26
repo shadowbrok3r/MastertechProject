@@ -16,13 +16,13 @@ use wasm_bindgen::prelude::*;
 pub fn run() {
     use eframe::wasm_bindgen::JsCast as _;
     use log::LevelFilter;
+    use tabs::logger::logging::builder;
     use wasm_bindgen::prelude::*;
     use web_sys::HtmlCanvasElement;
 
-    // builder().init().unwrap();
-    gloo_console::info!("Rust main() function called!");
+    builder().init().unwrap();
     // Redirect `log` message to `console.log` and friends:
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+    // eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions::default();
 
