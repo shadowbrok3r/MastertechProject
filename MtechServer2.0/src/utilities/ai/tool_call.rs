@@ -2,8 +2,11 @@ use crate::utilities::ai::{conv, tools::AiTools};
 use anyhow::{Error, Result};
 use async_openai_wasm::types::{
     ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest,
+    CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent,
+    MessageRole, RunStatus,
 };
 use database::DATABASE;
+use gloo_timers::future::sleep;
 use log::info;
 use rpc_router::{router_builder, RpcParams};
 use serde::{Deserialize, Serialize};
@@ -292,3 +295,201 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
 
     Ok(response)
 }
+
+pub async fn assistant_call_with_response_ai_tools(input: &str) -> Result<(), Box<Error>> {
+    // -- Initialize AI Client
+    let oa_client = new_oa_client()?;
+    let assistant_id = "asst_3wOgem2DpYiXkk7x34hVb9My"; // Your existing assistant ID
+
+    // -- Retrieve the Existing Assistant
+    let assistant = oa_client.assistants().retrieve(assistant_id).await?;
+
+    // -- Create a Thread for the Conversation
+    let thread_request = CreateThreadRequestArgs::default().build()?;
+    let thread = oa_client.threads().create(thread_request.clone()).await?;
+
+    // -- Add a System Message to Set Instructions for Markdown Formatting
+    let system_message = CreateMessageRequestArgs::default()
+        .role(MessageRole::Assistant)
+        .content(SYSTEM_INSTRUCTIONS)
+        .build()?;
+
+    // -- Attach System Message to the Thread
+    oa_client
+        .threads()
+        .messages(&thread.id)
+        .create(system_message)
+        .await?;
+
+    // -- Add User Message to the Thread
+    let user_message = CreateMessageRequestArgs::default()
+        .role(MessageRole::User)
+        .content(input.to_string())
+        .build()?;
+
+    oa_client
+        .threads()
+        .messages(&thread.id)
+        .create(user_message)
+        .await?;
+
+    // -- Create a Run for the Thread
+    let run_request = CreateRunRequestArgs::default()
+        .assistant_id(assistant_id)
+        .build()?;
+
+    let run = oa_client
+        .threads()
+        .runs(&thread.id)
+        .create(run_request)
+        .await?;
+
+    // -- Wait for the Run to Complete
+    let mut awaiting_response = true;
+    while awaiting_response {
+        // Retrieve the Run
+        let run = oa_client
+            .threads()
+            .runs(&thread.id)
+            .retrieve(&run.id)
+            .await?;
+
+        // Check the Status of the Run
+        match run.status {
+            RunStatus::Completed => {
+                awaiting_response = false;
+            }
+            RunStatus::Failed => {
+                awaiting_response = false;
+                return Err(format!("Run Failed: {:#?}", run).into());
+            }
+            RunStatus::Queued
+            | RunStatus::InProgress
+            | RunStatus::Cancelling
+            | RunStatus::Incomplete => {
+                println!("--- Run In Progress ...");
+            }
+            RunStatus::Cancelled | RunStatus::Expired | RunStatus::RequiresAction => {
+                awaiting_response = false;
+                return Err(format!("Run Error: Status - {:?}", run.status).into());
+            }
+        }
+
+        // Wait for 1 second before checking the status again
+        sleep(web_time::Duration::from_secs(1)).await;
+    }
+
+    // -- Retrieve the Response from the Run
+    let query = [("limit", "1")]; // Limit the list responses to 1 message
+    let response = oa_client
+        .threads()
+        .messages(&thread.id)
+        .list(&query)
+        .await?;
+
+    let choices: Vec<ChatChoice> = chat::all_choices(response.data)?;
+    // -- Map the Response into Vec<ChatChoice>
+    let chat_choices: Vec<ChatChoice> = response
+        .data
+        .iter()
+        .filter_map(|message| {
+            if let Some(MessageContent::Text(text)) = message.content.first() {
+                Some(ChatChoice {
+                    message: text.text.value.clone(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // -- Cleanup: Delete the Thread
+    oa_client.threads().delete(&thread.id).await?;
+
+    // -- Return the Assistant's Response as Vec<ChatChoice>
+    Ok(chat_choices)
+}
+
+const SYSTEM_INSTRUCTIONS: &str = r#"
+Analyze diagnostic data from repairs conducted by the company to identify trends and correlations, and assist in understanding which products, models, or hardware configurations are associated with the most issues.
+
+In this task, you will provide a statistical analysis of the repair data, generate visualizations to illustrate trends, and run statistical formulas to derive meaningful insights that help to identify recurring problems. 
+Your aim is to help the user understand which products or configurations are the most problematic. The analysis should include relevant statistical metrics, visual trends, and clear interpretations of what the data reveals.
+
+# Steps
+
+1. **Data Overview**:
+   - Review the dataset provided, inspect its structure, and identify important fields (e.g., product type, model, configuration, repair frequency).
+   - Summarize key statistics: counts, percentages, averages, etc.
+
+2. **Identify Key Variables**:
+   - List important categories that should be analyzed, such as product type, model number, hardware configuration, repair type, etc.
+  
+3. **Statistical Analysis and Correlation**:
+   - Use statistical methods to identify factors most correlated with repair frequency, such as:
+     - Frequency counts of repairs per product type.
+     - Calculating failure rates for different models (failures/total units serviced).
+     - Performing correlation analysis between configurations (e.g., RAM, GPU types) and uptick in failures.
+  
+4. **Graph Generation**:
+   - Generate descriptive graphs such as:
+     - **Bar Graphs/Histograms**: Frequency of issues per product or configuration type.
+     - **Scatter Plots**: Showing correlations between hardware configurations and repair frequency.
+     - **Pie Charts**: Percentage of total failures categorized by model, product type, etc.
+     - Ensure that the graphs are easy to understand and provide insightful trends.
+
+5. **Provide Insights**:
+   - Interpret the analysis and explain what the trends and correlations suggest.
+   - Help answer questions like:
+     - Which product models tend to have higher repair rates?
+     - Which type of configuration seems the most prone to failure?
+     - Are there any specific time patterns in the data (e.g., seasonal failure rates)?
+
+6. **Recommendations**:
+   - When possible, offer actionable recommendations based on your findings, such as which configurations to avoid or need improvement.
+
+# Output Format
+
+Provide the output as a comprehensive report consisting of:
+- Key insights summarized in bullet points or short paragraphs.
+- Graphs (where applicable, provide a link to the graph or a description of the trends revealed).
+- Identified correlations and their likely interpretations.
+- Suggested actionable recommendations.
+
+The output report should be structured as follows:
+1. **Overview**: A summary of the key findings.
+2. **Graphs & Visualizations**: Include graphs with brief explanations.
+3. **Statistical Analysis**: Present the calculated correlations, trends, insights, and notable patterns.
+4. **Recommendations**: A list of actionable recommendations based on the analysis.
+
+# Example
+
+**Input Data**:
+Repair records for multiple products with attributes including:
+- Product Type: Laptop, Desktop
+- Model: Specific model identifier
+- Configuration: RAM Size, Disk Type, Processor, etc.
+- Repair Record: Description & date of repair
+
+**Output** (Summarized):
+1. **Overview**:
+   - Laptop Model X has a notably higher frequency of repairs.
+   - Systems with Configuration Y experienced 30% higher failures compared to Configuration Z.
+
+2. **Graphs & Visualizations**:
+   - [Graph 1: Bar Graph showing repair frequency per product model]
+   - [Graph 2: Pie Chart showing repair percentage by configuration types]
+
+3. **Statistical Analysis**:
+   - There is a significant positive correlation (correlation coefficient = 0.78) between 8GB RAM configuration and failure rate.
+   - Laptops tend to have an 18% higher failure rate compared to desktops.
+
+4. **Recommendations**:
+   - Consider shifting to 16GB RAM on Laptop Model X due to reduced failure rates observed.
+   - Further analyze storage type's effects on repair rates.
+
+# Notes
+
+- Avoid conclusions without statistical backing.
+- Be cautious about overinterpreting correlations—correlation does not imply causation.
+- If identifying outliers, visually differentiate them in graphs for clarity."#;

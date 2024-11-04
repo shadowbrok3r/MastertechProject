@@ -1,6 +1,8 @@
 use crate::{
     app_state::MtechServerContext,
-    utilities::ai::tool_call::{call_with_response, call_with_response_ai_tools},
+    utilities::ai::tool_call::{
+        assistant_call_with_response_ai_tools, call_with_response, call_with_response_ai_tools,
+    },
 };
 use async_openai_wasm::types::ChatChoice;
 use crossbeam::channel::{Receiver, Sender};
@@ -263,7 +265,7 @@ impl AiPlayground {
                     sender: "You".to_string(),
                 });
                 spawn_local(async move {
-                    let res = call_with_response_ai_tools(input.as_str()).await;
+                    let res = assistant_call_with_response_ai_tools(input.as_str()).await;
 
                     match res {
                         Ok(chat_choices) => tx.try_send(chat_choices).unwrap(),
