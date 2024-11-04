@@ -1,11 +1,11 @@
 #![allow(async_fn_in_trait)]
-use crate::DATABASE;
 use super::{
-    prestashop_schema::{self, CustomerThread, Employee, Prestashop, CustomerMessage},
+    prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop},
     ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record,
     SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User,
     TASK_NOTE_TABLE,
 };
+use crate::DATABASE;
 use anyhow::{Error, Result};
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, TimeZone, Utc};
@@ -170,7 +170,8 @@ pub trait OrderHelper {
     /// # Returns
     /// - `Ok(Vec<Order>)` containing a list of return orders.
     /// - `Err(Error)` if an error occurs during retrieval.
-    async fn get_all_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn get_all_return_for_services(&mut self)
+        -> Result<Vec<prestashop_schema::Order>, Error>;
 }
 
 /// A trait for managing operations and data related to task note payloads.
@@ -246,7 +247,10 @@ pub trait TaskNotePayloadHelper: Send {
     /// # Returns
     /// - `Ok(())` if the creation is successful.
     /// - `Err(anyhow::Error)` if an error occurs during creation.
-    async fn create_notification(&mut self, notification: Notification) -> Result<(), anyhow::Error>
+    async fn create_notification(
+        &mut self,
+        notification: Notification,
+    ) -> Result<(), anyhow::Error>
     where
         anyhow::Error: Send;
 
@@ -258,7 +262,10 @@ pub trait TaskNotePayloadHelper: Send {
     /// # Returns
     /// - `Ok(())` if the update is successful.
     /// - `Err(anyhow::Error)` if an error occurs during the update.
-    async fn update_task_note_with_tagged_user(&mut self, user_id: RecordId) -> Result<(), anyhow::Error>
+    async fn update_task_note_with_tagged_user(
+        &mut self,
+        user_id: RecordId,
+    ) -> Result<(), anyhow::Error>
     where
         anyhow::Error: Send;
 
@@ -281,26 +288,29 @@ pub trait TaskNotePayloadHelper: Send {
         anyhow::Error: Send;
 
     /// Check to see if a Customer Message already exists
-    /// in SurrealDB, to ensure we are not causing weirdness 
+    /// in SurrealDB, to ensure we are not causing weirdness
     /// with the bridge from SurrealDB <-> Prestashop
     /// when deleting, editing, creating notes, etc, as well
-    /// as ensuring we always have the synced notes from 
-    /// prestashop, this will ideally be called as well 
-    /// when user clicks a "sync with prestashop" or 
+    /// as ensuring we always have the synced notes from
+    /// prestashop, this will ideally be called as well
+    /// when user clicks a "sync with prestashop" or
     /// something
-    /// 
+    ///
     /// # Returns
-    /// - `Ok(Option<RecordId>)` ID of the record that already exists 
+    /// - `Ok(Option<RecordId>)` ID of the record that already exists
     /// in the database with the given criteria, or None if we need to create
     /// a task_note with that message id
-    /// - `Err(Error)` if an error occurs during checks 
+    /// - `Err(Error)` if an error occurs during checks
     /// / queries in SurrealDB to find existing notes
-    async fn check_existing_note_record(&mut self, msg_id: &String) -> Result<Option<RecordId>, Error>
+    async fn check_existing_note_record(
+        &mut self,
+        msg_id: &String,
+    ) -> Result<Option<RecordId>, Error>
     where
         anyhow::Error: Send;
 
     /// Modified a task_note and updates the corresponding
-    /// note in prestashop 
+    /// note in prestashop
     ///
     /// # Returns
     /// - `Ok(())` if the modification is successful.
@@ -317,7 +327,7 @@ pub trait TaskNotePayloadHelper: Send {
         anyhow::Error: Send;
 
     /// Deletes a note from prestashop. This will only
-    /// happen if there IS an id_customer_message as 
+    /// happen if there IS an id_customer_message as
     /// well as an id_customer_thread.
     ///
     /// # Returns
@@ -347,13 +357,18 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                     "There is an ID, and there IS a tagged user: {:?} / {:?}",
                     id, tagged_user
                 );
-                let task_name: Option<String> = DATABASE.query("SELECT VALUE task_name FROM task WHERE id == $task_id")
+                let task_name: Option<String> = DATABASE
+                    .query("SELECT VALUE task_name FROM task WHERE id == $task_id")
                     .bind(("task_id", task_id.clone()))
                     .await?
                     .take(0)?;
 
                 info!("Task Name: {:?}", task_name);
-                let name = if let Some(name) = task_name { name } else { id.to_string() };
+                let name = if let Some(name) = task_name {
+                    name
+                } else {
+                    id.to_string()
+                };
                 // Create notification
                 let notification = Notification {
                     notification_description: format!(
@@ -402,7 +417,6 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 
     async fn create_task_note(&mut self) -> Result<(), anyhow::Error> {
-        
         if self.created_at.is_empty() {
             self.update_task_note_with_current_time().await?;
         }
@@ -410,7 +424,9 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         let thread_id = self.get_thread_id_from_order().await?;
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
-        } else { thread_id };
+        } else {
+            thread_id
+        };
 
         if self.id_customer_message.is_none()
             && !id_customer_thread.is_empty()
@@ -427,7 +443,10 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             // Update task note with Prestashop details
             let id = if self.id.key().to_string().is_empty() {
                 let task_note_default = TaskNotePayload::default();
-                info!("ID is empty, assigning a new id: {:?}", task_note_default.id);
+                info!(
+                    "ID is empty, assigning a new id: {:?}",
+                    task_note_default.id
+                );
                 task_note_default.id
             } else {
                 if !response.id.to_string().is_empty() {
@@ -436,12 +455,15 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                     id
                 } else {
                     let task_note_default = TaskNotePayload::default();
-                    info!("ID is empty, assigning a new id: {:?}", task_note_default.id);
+                    info!(
+                        "ID is empty, assigning a new id: {:?}",
+                        task_note_default.id
+                    );
                     task_note_default.id
                 }
             };
 
-            let updated_value = TaskNotePayload { 
+            let updated_value = TaskNotePayload {
                 id,
                 id_customer_message: Some(response.id.to_string().clone()),
                 id_customer_thread: self.id_customer_thread.clone(),
@@ -495,10 +517,12 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     async fn create_prestashop_note(&mut self) -> Result<Response, Error> {
         let thread_id = self.get_thread_id_from_order().await?;
         let id_employee = self.id_employee.as_deref().unwrap_or("");
-        
+
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
-        } else { thread_id };
+        } else {
+            thread_id
+        };
 
         // Check if id_employee or id_customer_thread is empty
         if id_employee.is_empty() {
@@ -521,55 +545,59 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         // Send HTTP POST request with the XML payload
         let client = reqwest::Client::new();
         info!("Payload: {:?}", payload);
-        // let response_text = client
-        //     .post("https://pcl.master-tech.app/api/customer_messages")
-        //     .header("Content-type", "application/xml")
-        //     .body(payload)
-        //     .send()
-        //     .await?
-        //     .text()
-        //     .await?;
-        //
-        // // Parse the XML response to extract values
-        // let id = response_text
-        //     .split("<id><![CDATA[")
-        //     .nth(1)
-        //     .and_then(|s| s.split("]]></id>").next())
-        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
-        //
-        // let date_add = response_text
-        //     .split("<date_add><![CDATA[")
-        //     .nth(1)
-        //     .and_then(|s| s.split("]]></date_add>").next())
-        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
-        //
-        // let date_upd = response_text
-        //     .split("<date_upd><![CDATA[")
-        //     .nth(1)
-        //     .and_then(|s| s.split("]]></date_upd>").next())
-        //     .unwrap_or(""); // Optional field, so we handle it accordingly
-        //
+        let response_text = client
+            .post("https://pcl.master-tech.app/api/customer_messages")
+            .header("Content-type", "application/xml")
+            .body(payload)
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        info!("response text: {response_text:?}");
+        // Parse the XML response to extract values
+        let id = response_text
+            .split("<id><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></id>").next())
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+
+        let date_add = response_text
+            .split("<date_add><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></date_add>").next())
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
+
+        let date_upd = response_text
+            .split("<date_upd><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></date_upd>").next())
+            .unwrap_or(""); // Optional field, so we handle it accordingly
+
         // Return a Response struct with extracted values
-        Ok(Response {
-            date_add: String::new(), // convert_date_string(date_add)?.to_string(), //,
-            id: String::new(), // id.to_string(),
-            date_upd: String::new(), // convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
-        })
         // Ok(Response {
-        //     date_add: convert_date_string(date_add)?.to_string(), //,
-        //     id: id.to_string(),
-        //     date_upd: convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
+        //     date_add: String::new(), // convert_date_string(date_add)?.to_string(), //,
+        //     id: String::new(), // id.to_string(),
+        //     date_upd: String::new(), // convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
         // })
+        Ok(Response {
+            date_add: convert_date_string(date_add)?.to_string(), //,
+            id: id.to_string(),
+            date_upd: convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
+        })
     }
 
     async fn get_order_by_task_id(&mut self) -> Result<String> {
-        if let Some(id) = self.task_id.clone(){
+        if let Some(id) = self.task_id.clone() {
             let order_number: Option<String> = DATABASE
                 .query("SELECT VALUE service_number FROM task WHERE id == $task_id")
                 .bind(("task_id", id.clone()))
                 .await?
                 .take(0)?;
-            info!("Order number pulled from task_id: {order_number:?} using task id: {:?}", id);
+            info!(
+                "Order number pulled from task_id: {order_number:?} using task id: {:?}",
+                id
+            );
             Ok(order_number.unwrap_or_default())
         } else {
             info!("No order number found");
@@ -586,14 +614,14 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
             query.insert("filter[id_order]", &order_number);
             query.insert("output_format", "JSON");
-             
+
             if !order_number.is_empty() {
                 let customer_threads: Vec<CustomerThread> = api_call
                     .request_resources_wasm("customer_threads", query.clone())
                     .await?;
-                    // .map_err(|e| {
-                    //     info!("ERROR getting customer threads: {e:?}\nContinue from here to create task note");
-                    // })?;
+                // .map_err(|e| {
+                //     info!("ERROR getting customer threads: {e:?}\nContinue from here to create task note");
+                // })?;
                 info!("Got customer threads: {customer_threads:?}");
                 for thread in customer_threads {
                     for msg in thread.associations.customer_messages.iter() {
@@ -605,7 +633,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 .request_subresources_by_id_wasm(
                                     "customer_messages",
                                     "customer_message",
-                                    &msg.id
+                                    &msg.id,
                                 )
                                 .await?;
 
@@ -613,11 +641,10 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 .request_subresources_by_id_wasm(
                                     "employees",
                                     "employee",
-                                    &customer_message.id_employee
+                                    &customer_message.id_employee,
                                 )
                                 .await?; // Employee::default();
-                            // employee.get_employee_from_id(&customer_message.id_employee).await?;
-
+                                         // employee.get_employee_from_id(&customer_message.id_employee).await?;
 
                             let id = RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone()));
                             let user = if let Some(usr) = employee.find_user().await? {
@@ -634,9 +661,9 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 id_employee: Some(customer_message.id_employee),
                                 created_at: convert_date_string(&customer_message.date_add)?,
                                 note: customer_message.message,
-                                username:  parse_email_user(&employee.email).to_string(),
+                                username: parse_email_user(&employee.email).to_string(),
                                 everest_initials: employee.initials,
-                                user
+                                user,
                             };
                             info!("Creating a new task_note: {task_note:?}");
 
@@ -669,16 +696,21 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             .unwrap_or_default();
 
         info!("Customer thread id from order: {id_customer_thread:?}");
-        
+
         Ok(id_customer_thread)
     }
 
-    async fn check_existing_note_record(&mut self, msg_id: &String) -> Result<Option<RecordId>, Error> {
+    async fn check_existing_note_record(
+        &mut self,
+        msg_id: &String,
+    ) -> Result<Option<RecordId>, Error> {
         let query_results: Vec<TaskNotePayload> = DATABASE
-            .query(r#"
+            .query(
+                r#"
                 SELECT * FROM task_note 
                     WHERE id_customer_message == $id_customer_message
-            "#)
+            "#,
+            )
             .bind(("id_customer_message", msg_id.clone()))
             // .bind(("id_customer_thread", thread_id.clone()))
             .await?
@@ -687,8 +719,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
         for res in query_results.iter() {
             if res.id != self.id {
-
-                return Ok(Some(res.id.clone()))
+                return Ok(Some(res.id.clone()));
             }
         }
         Ok(None)
@@ -697,10 +728,12 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     async fn modify_prestashop_note(&mut self) -> Result<Response, Error> {
         let thread_id = self.get_thread_id_from_order().await?;
         let id_employee = self.id_employee.as_deref().unwrap_or("");
-        
+
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
-        } else { thread_id };
+        } else {
+            thread_id
+        };
 
         // Check if id_employee or id_customer_thread is empty
         if id_employee.is_empty() {
@@ -733,7 +766,8 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             </customer_message>
             {end}
             "#,
-            self.id_customer_message.clone().unwrap(), self.note
+            self.id_customer_message.clone().unwrap(),
+            self.note
         );
 
         // Send HTTP POST request with the XML payload
@@ -770,21 +804,19 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         // Return a Response struct with extracted values
         Ok(Response {
             date_add: String::new(), //convert_date_string(date_add)?.to_string(), //,
-            id: String::new(), //id.to_string(),
+            id: String::new(),       //id.to_string(),
             date_upd: String::new(), //convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
         })
-     }
+    }
 
     async fn delete_note(&mut self) -> Result<(), Error> {
         let id = self.id.clone();
         info!("deleting id: {:?}", &id);
-        if let (
-            Some(thread_id), Some(message_id)
-        ) = (
-            self.id_customer_thread.as_ref(), self.id_customer_message.as_ref()
+        if let (Some(thread_id), Some(message_id)) = (
+            self.id_customer_thread.as_ref(),
+            self.id_customer_message.as_ref(),
         ) {
             if !thread_id.is_empty() && !message_id.is_empty() {
-
                 self.delete_prestashop_note().await?;
             } else {
                 info!("Thread ID or Message ID is empty: {thread_id:?} / {message_id:?}");
@@ -804,14 +836,11 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 
     async fn delete_prestashop_note(&mut self) -> Result<(), Error> {
-       if let Some(cust_msg_id) = self.id_customer_message.as_ref() {
+        if let Some(cust_msg_id) = self.id_customer_message.as_ref() {
             if !cust_msg_id.is_empty() {
                 let prestashop = Prestashop::default();
                 let delete_result = prestashop
-                    .delete_resource_wasm(
-                        "customer_messages", 
-                        &cust_msg_id.clone()
-                    )
+                    .delete_resource_wasm("customer_messages", &cust_msg_id.clone())
                     .await?;
 
                 info!("Delete Result for customer message: {delete_result:?}");
@@ -825,10 +854,9 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 info!("Deleted note: {:?}", delete_res);
             }
         }
-       Ok(())
+        Ok(())
     }
 }
-
 
 impl EmployeeHelper for Employee {
     async fn find_user(&mut self) -> Result<Option<User>, Error> {
@@ -1089,7 +1117,6 @@ impl ComputerDataHelper for ComputerData {
         Ok(customer)
     }
 }
-
 
 fn convert_date_string(input: &str) -> Result<String, chrono::ParseError> {
     // Define the input format as per the provided string.

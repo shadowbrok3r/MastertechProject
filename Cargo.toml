@@ -51,3 +51,7 @@ opt-level = 3
 # Optimize all dependencies even in debug builds:
 [profile.dev.package."*"]
 opt-level = 2
+
+# [patch.crates-io]
+# libc = { git = "https://github.com/wasix-org/libc", branch = "master" }
+# tokio = { git = "https://github.com/wasix-org/tokio", branch = "wasix-1.24.2" }
