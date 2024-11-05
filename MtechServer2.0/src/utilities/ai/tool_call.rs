@@ -1,17 +1,24 @@
 use crate::utilities::ai::{conv, tools::AiTools};
 use anyhow::{Error, Result};
-use async_openai_wasm::types::{
-    ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest,
-    CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent,
-    MessageRole, RunStatus,
+use async_openai_wasm::{
+    config::OpenAIConfig,
+    types::{
+        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption,
+        CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs,
+        CreateThreadRequestArgs, MessageContent, MessageDeltaContent, MessageRole, RunObject,
+        RunStatus, SubmitToolOutputsRunRequest, ToolsOutputs,
+    },
+    Client,
 };
 use database::DATABASE;
+use futures::StreamExt;
 use gloo_timers::future::sleep;
 use log::info;
 use rpc_router::{router_builder, RpcParams};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use surrealdb::RecordId;
+use wasm_bindgen_futures::spawn_local;
 
 use super::{chat, gpts, oa_client::new_oa_client};
 
@@ -336,78 +343,168 @@ pub async fn assistant_call_with_response_ai_tools(input: &str) -> Result<(), Bo
     // -- Create a Run for the Thread
     let run_request = CreateRunRequestArgs::default()
         .assistant_id(assistant_id)
+        .stream(true)
         .build()?;
 
-    let run = oa_client
+    let mut run = oa_client
         .threads()
         .runs(&thread.id)
-        .create(run_request)
+        .create_stream(run_request)
         .await?;
 
-    // -- Wait for the Run to Complete
-    let mut awaiting_response = true;
-    while awaiting_response {
-        // Retrieve the Run
-        let run = oa_client
-            .threads()
-            .runs(&thread.id)
-            .retrieve(&run.id)
-            .await?;
+    let mut task_handle = None;
 
-        // Check the Status of the Run
-        match run.status {
-            RunStatus::Completed => {
-                awaiting_response = false;
+    while let Some(event) = run.next().await {
+        match event {
+            Ok(event) => match event {
+                AssistantStreamEvent::ThreadRunRequiresAction(run_object) => {
+                    info!("thread.run.requires_action: run_id:{}", run_object.id);
+                    let client = oa_client.clone();
+                    task_handle = Some(spawn_local(async move {
+                        handle_requires_action(client, run_object).await
+                    }));
+                }
+                _ => info!("\nEvent: {event:?}\n"),
+            },
+            Err(e) => {
+                info!("Error: {e}");
             }
-            RunStatus::Failed => {
-                awaiting_response = false;
-                return Err(format!("Run Failed: {:#?}", run).into());
+        }
+    }
+    // // -- Wait for the Run to Complete
+    // let mut awaiting_response = true;
+    // while awaiting_response {
+    //     // Retrieve the Run
+    //     let run = oa_client
+    //         .threads()
+    //         .runs(&thread.id)
+    //         .retrieve(&run.id)
+    //         .await?;
+    //
+    //     // Check the Status of the Run
+    //     match run.status {
+    //         RunStatus::Completed => {
+    //             awaiting_response = false;
+    //         }
+    //         RunStatus::Failed => {
+    //             awaiting_response = false;
+    //             return Err(format!("Run Failed: {:#?}", run).into());
+    //         }
+    //         RunStatus::Queued
+    //         | RunStatus::InProgress
+    //         | RunStatus::Cancelling
+    //         | RunStatus::Incomplete => {
+    //             println!("--- Run In Progress ...");
+    //         }
+    //         RunStatus::Cancelled | RunStatus::Expired | RunStatus::RequiresAction => {
+    //             awaiting_response = false;
+    //             return Err(format!("Run Error: Status - {:?}", run.status).into());
+    //         }
+    //     }
+    //
+    //     // Wait for 1 second before checking the status again
+    //     sleep(web_time::Duration::from_secs(1)).await;
+    // }
+    //
+    // // -- Retrieve the Response from the Run
+    // let query = [("limit", "1")]; // Limit the list responses to 1 message
+    // let response = oa_client
+    //     .threads()
+    //     .messages(&thread.id)
+    //     .list(&query)
+    //     .await?;
+    //
+    // let choices: Vec<ChatChoice> = chat::all_choices(response.data)?;
+    // // -- Map the Response into Vec<ChatChoice>
+    // let chat_choices: Vec<ChatChoice> = response
+    //     .data
+    //     .iter()
+    //     .filter_map(|message| {
+    //         if let Some(MessageContent::Text(text)) = message.content.first() {
+    //             Some(ChatChoice {
+    //                 message: text.text.value.clone(),
+    //             })
+    //         } else {
+    //             None
+    //         }
+    //     })
+    //     .collect();
+    //
+    // // -- Cleanup: Delete the Thread
+    // oa_client.threads().delete(&thread.id).await?;
+    //
+    // // -- Return the Assistant's Response as Vec<ChatChoice>
+    // Ok(chat_choices)
+    Ok(())
+}
+
+async fn handle_requires_action(client: Client<OpenAIConfig>, run_object: RunObject) {
+    let mut tool_outputs: Vec<ToolsOutputs> = vec![];
+    if let Some(ref required_action) = run_object.required_action {
+        for tool in &required_action.submit_tool_outputs.tool_calls {
+            if tool.function.name == "get_current_temperature" {
+                tool_outputs.push(ToolsOutputs {
+                    tool_call_id: Some(tool.id.clone()),
+                    output: Some("57".into()),
+                })
             }
-            RunStatus::Queued
-            | RunStatus::InProgress
-            | RunStatus::Cancelling
-            | RunStatus::Incomplete => {
-                println!("--- Run In Progress ...");
-            }
-            RunStatus::Cancelled | RunStatus::Expired | RunStatus::RequiresAction => {
-                awaiting_response = false;
-                return Err(format!("Run Error: Status - {:?}", run.status).into());
+
+            if tool.function.name == "get_rain_probability" {
+                tool_outputs.push(ToolsOutputs {
+                    tool_call_id: Some(tool.id.clone()),
+                    output: Some("0.06".into()),
+                })
             }
         }
 
-        // Wait for 1 second before checking the status again
-        sleep(web_time::Duration::from_secs(1)).await;
+        if let Err(e) = submit_tool_outputs(client, run_object, tool_outputs).await {
+            info!("Error on submitting tool outputs: {e}");
+        }
     }
+}
 
-    // -- Retrieve the Response from the Run
-    let query = [("limit", "1")]; // Limit the list responses to 1 message
-    let response = oa_client
+async fn submit_tool_outputs(
+    client: Client<OpenAIConfig>,
+    run_object: RunObject,
+    tool_outputs: Vec<ToolsOutputs>,
+) -> Result<(), Box<dyn Error>> {
+    let mut event_stream = client
         .threads()
-        .messages(&thread.id)
-        .list(&query)
+        .runs(&run_object.thread_id)
+        .submit_tool_outputs_stream(
+            &run_object.id,
+            SubmitToolOutputsRunRequest {
+                tool_outputs,
+                stream: Some(true),
+            },
+        )
         .await?;
 
-    let choices: Vec<ChatChoice> = chat::all_choices(response.data)?;
-    // -- Map the Response into Vec<ChatChoice>
-    let chat_choices: Vec<ChatChoice> = response
-        .data
-        .iter()
-        .filter_map(|message| {
-            if let Some(MessageContent::Text(text)) = message.content.first() {
-                Some(ChatChoice {
-                    message: text.text.value.clone(),
-                })
-            } else {
-                None
+    while let Some(event) = event_stream.next().await {
+        match event {
+            Ok(event) => {
+                if let AssistantStreamEvent::ThreadMessageDelta(delta) = event {
+                    if let Some(contents) = delta.delta.content {
+                        for content in contents {
+                            // only text is expected here and no images
+                            if let MessageDeltaContent::Text(text) = content {
+                                if let Some(text) = text.text {
+                                    if let Some(text) = text.value {
+                                        info!("{}", text);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        })
-        .collect();
+            Err(e) => {
+                info!("Error: {e}");
+            }
+        }
+    }
 
-    // -- Cleanup: Delete the Thread
-    oa_client.threads().delete(&thread.id).await?;
-
-    // -- Return the Assistant's Response as Vec<ChatChoice>
-    Ok(chat_choices)
+    Ok(())
 }
 
 const SYSTEM_INSTRUCTIONS: &str = r#"
