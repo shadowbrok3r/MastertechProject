@@ -267,7 +267,7 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
 		"#,
     )?;
 
-    let user_message = chat::user_msg(input)?;
+    let user_message = chat::user_msg(input)?; // ChatCompletionRequestMessage
 
     let messages = vec![system_message, user_message];
 
@@ -284,7 +284,7 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
             },
             "required": ["task_id"],
         }),
-    )?;
+    )?; // ChatCompletionTool
 
     // Add both tools to the list
     let tools = vec![tool_task_summary];
@@ -294,7 +294,8 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
 
     let ai_tools = AiTools::new(rpc_router, tools);
     // -- Execute question with conv
-    let response: Vec<ChatChoice> = conv::send_user_msg(oa_client, ai_tools, messages).await?;
+    let response: Vec<ChatChoice> =
+        conv::send_user_msg(oa_client, Some(ai_tools), messages, None).await?;
 
     println!("\nFinal answer:\n\n{response:?}");
 
@@ -400,75 +401,6 @@ pub async fn assistant_call_with_response_ai_tools(
 
     // -- Return the Assistant's Response and the Thread ID for Subsequent Messages
     Ok(chat_choices)
-}
-
-async fn handle_requires_action(client: Client<OpenAIConfig>, run_object: RunObject) {
-    let mut tool_outputs: Vec<ToolsOutputs> = vec![];
-    if let Some(ref required_action) = run_object.required_action {
-        for tool in &required_action.submit_tool_outputs.tool_calls {
-            if tool.function.name == "get_current_temperature" {
-                tool_outputs.push(ToolsOutputs {
-                    tool_call_id: Some(tool.id.clone()),
-                    output: Some("57".into()),
-                })
-            }
-
-            if tool.function.name == "get_rain_probability" {
-                tool_outputs.push(ToolsOutputs {
-                    tool_call_id: Some(tool.id.clone()),
-                    output: Some("0.06".into()),
-                })
-            }
-        }
-
-        if let Err(e) = submit_tool_outputs(client, run_object, tool_outputs).await {
-            info!("Error on submitting tool outputs: {e}");
-        }
-    }
-}
-
-async fn submit_tool_outputs(
-    client: Client<OpenAIConfig>,
-    run_object: RunObject,
-    tool_outputs: Vec<ToolsOutputs>,
-) -> Result<(), Box<dyn Error>> {
-    let mut event_stream = client
-        .threads()
-        .runs(&run_object.thread_id)
-        .submit_tool_outputs_stream(
-            &run_object.id,
-            SubmitToolOutputsRunRequest {
-                tool_outputs,
-                stream: Some(true),
-            },
-        )
-        .await?;
-
-    while let Some(event) = event_stream.next().await {
-        match event {
-            Ok(event) => {
-                if let AssistantStreamEvent::ThreadMessageDelta(delta) = event {
-                    if let Some(contents) = delta.delta.content {
-                        for content in contents {
-                            // only text is expected here and no images
-                            if let MessageDeltaContent::Text(text) = content {
-                                if let Some(text) = text.text {
-                                    if let Some(text) = text.value {
-                                        info!("{}", text);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                info!("Error: {e}");
-            }
-        }
-    }
-
-    Ok(())
 }
 
 const SYSTEM_INSTRUCTIONS: &str = r#"
