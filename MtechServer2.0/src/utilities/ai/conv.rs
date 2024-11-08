@@ -4,7 +4,8 @@ use crate::utilities::ai::{chat, gpts};
 use anyhow::{Error, Result};
 use async_openai_wasm::types::{
     ChatChoice, ChatCompletionRequestMessage, ChatCompletionToolChoiceOption,
-    CreateChatCompletionRequest, CreateThreadRequestArgs,
+    CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs,
+    CreateThreadRequestArgs, MessageContent, RunStatus,
 };
 use serde_json::Value;
 
@@ -118,18 +119,89 @@ pub async fn send_assistant_msg(
         thread.id
     };
 
-    // Step 2: Prepare system message (only on new thread)
-    let mut all_messages = messages.clone();
-    if existing_thread_id.is_none() {
-        let system_message = chat::user_msg(SYSTEM_INSTRUCTIONS)?;
-        all_messages.insert(0, system_message); // Add system message at the beginning
+    // Step 2: Add messages to the thread (each message in `messages` vector)
+    for message in messages {
+        let create_message_request = CreateMessageRequestArgs::default()
+            .role(message.role)
+            .content(message.content.clone())
+            .build()?;
+
+        oa_client
+            .threads()
+            .messages(&thread_id)
+            .create(create_message_request)
+            .await?;
     }
 
-    // Step 3: Send message using `send_user_msg`
-    let response = send_user_msg(oa_client, ai_tools, all_messages).await?;
+    // Step 3: Create a Run for the Thread
+    let run_request = CreateRunRequestArgs::default()
+        .assistant_id(assistant_id)
+        .stream(false) // Set stream to false for a more synchronous response
+        .build()?;
 
-    // Return the response and the thread ID for future use
-    Ok((response, thread_id))
+    let run = oa_client
+        .threads()
+        .runs(&thread_id)
+        .create(run_request)
+        .await?;
+
+    // Step 4: Wait for the Run to Complete
+    let mut awaiting_response = true;
+    while awaiting_response {
+        // Retrieve the Run
+        let run_status = oa_client
+            .threads()
+            .runs(&thread_id)
+            .retrieve(&run.id)
+            .await?;
+
+        // Check the Status of the Run
+        match run_status.status {
+            RunStatus::Completed => {
+                awaiting_response = false;
+            }
+            RunStatus::Failed => {
+                return Err(format!("Run Failed: {:#?}", run_status).into());
+            }
+            RunStatus::Queued
+            | RunStatus::InProgress
+            | RunStatus::Cancelling
+            | RunStatus::Incomplete => {
+                println!("--- Run In Progress ...");
+                sleep(web_time::Duration::from_secs(1)).await;
+            }
+            RunStatus::Cancelled | RunStatus::Expired | RunStatus::RequiresAction => {
+                return Err(format!("Run Error: Status - {:?}", run_status.status).into());
+            }
+        }
+    }
+
+    // Step 5: Retrieve the Response from the Run
+    let query = [("limit", "1")]; // Limit the list responses to 1 message
+    let response = oa_client
+        .threads()
+        .messages(&thread_id)
+        .list(&query)
+        .await?;
+
+    // Step 6: Map the Response into Vec<ChatChoice>
+    let chat_choices: Vec<ChatChoice> = response
+        .data
+        .iter()
+        .filter_map(|message| {
+            if let Some(MessageContent::Text(text)) = message.content.first() {
+                Some(ChatChoice {
+                    message: text.text.value.clone(),
+                    ..Default::default()
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Step 7: Return the Assistant's Response and the Thread ID for Subsequent Messages
+    Ok((chat_choices, thread_id))
 }
 
 pub const SYSTEM_INSTRUCTIONS: &str = r#"
