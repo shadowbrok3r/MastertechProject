@@ -20,7 +20,7 @@ address = "0.0.0.0"
 # The port to serve on.
 port = 8080
 
-[serve.headers]
+# [serve.headers]
 # see ./assets/_headers for more documentation
 # "cross-origin-embedder-policy"= "require-corp"
 # "cross-origin-opener-policy"= "same-origin"

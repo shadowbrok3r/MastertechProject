@@ -265,7 +265,7 @@ impl AiPlayground {
                     sender: "You".to_string(),
                 });
                 spawn_local(async move {
-                    let res = assistant_call_with_response_ai_tools(input.as_str()).await;
+                    let res = assistant_call_with_response_ai_tools(input.as_str(), None).await;
 
                     match res {
                         Ok(chat_choices) => tx.try_send(chat_choices).unwrap(),
