@@ -14,7 +14,7 @@ use egui_json_tree::{
         DefaultRender, RenderBaseValueContext, RenderContext, RenderExpandableDelimiterContext,
         RenderPropertyContext,
     },
-    DefaultExpand, JsonTree, JsonTreeStyle,
+    DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
 };
 use log::info;
 use serde::{Deserialize, Serialize};
@@ -555,20 +555,25 @@ impl Show for JsonEditor {
 
     fn show(&mut self, ui: &mut Ui) {
         JsonTree::new(self.title(), &self.value)
-            .abbreviate_root(true)
-            .default_expand(DefaultExpand::ToLevel(2))
-            .on_render(|ui, context| self.editor.show(ui, &self.value, context))
-            .style(JsonTreeStyle {
-                bool_color: Color32::LIGHT_BLUE,
-                object_key_color: Color32::LIGHT_GREEN,
-                array_idx_color: Color32::from_rgb(120, 20, 120),
-                number_color: Color32::GREEN,
-                string_color: Color32::from_rgb(120, 20, 120),
-                highlight_color: Color32::from_rgba_premultiplied(120, 20, 120, 100),
-                punctuation_color: Color32::LIGHT_RED,
-                ..Default::default()
-            })
-            .show(ui);
+        .default_expand(DefaultExpand::ToLevel(2))
+        .on_render(|ui, context| self.editor.show(ui, &self.value, context))
+        .style(JsonTreeStyle {
+            visuals: Some(
+                JsonTreeVisuals {
+                    bool_color: Color32::LIGHT_BLUE,
+                    object_key_color: Color32::LIGHT_GREEN,
+                    array_idx_color: Color32::from_rgb(120, 20, 120),
+                    number_color: Color32::GREEN,
+                    string_color: Color32::from_rgb(120, 20, 120),
+                    highlight_color: Color32::from_rgba_premultiplied(120, 20, 120, 100),
+                    punctuation_color: Color32::LIGHT_RED,
+                    ..Default::default()
+                }
+            ),
+            abbreviate_root: true,
+            ..Default::default()
+        })
+        .show(ui);
 
         self.editor.apply_events(&mut self.value);
     }
