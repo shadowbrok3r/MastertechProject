@@ -28,14 +28,10 @@ use eframe::{
     CreationContext,
 };
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use gloo_worker::Spawnable;
+// use gloo_worker::Spawnable;
 // use mtechserver::{webworker::WebWorker};
 use serde_json::Value;
-use std::{
-    cell::Cell,
-    collections::{BTreeMap, HashMap, HashSet},
-    rc::Rc,
-};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
@@ -359,10 +355,10 @@ impl MtechServer {
         //     tree = default_tree(open_tabs.clone());
         // }
 
-        let ctx = cc.egui_ctx.clone();
+        // let ctx = cc.egui_ctx.clone();
         // let data_update = Rc::new(std::cell::Cell::new(None));
         // let sender = data_update.clone();
-        let context = ctx.clone();
+        // let context = ctx.clone();
         // let bridge = <WebWorker as Spawnable>::spawner()
         //     .callback(move |response| {
         //         sender.set(Some(response.buckets));

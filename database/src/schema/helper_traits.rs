@@ -771,7 +771,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         );
 
         // Send HTTP POST request with the XML payload
-        let client = reqwest::Client::new();
+        let _client = reqwest::Client::new();
         info!("Payload: {:?}", payload);
         // let response_text = client
         //     .post("https://pcl.master-tech.app/api/customer_messages")
