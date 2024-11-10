@@ -34,10 +34,17 @@ use crate::tabs::minidump::MiniDumpApp;
 use crate::{
     pages::login_page::Login,
     tabs::{
-        file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::Scripts, seb_lookup::JsonEditor, stock::{MyRowData, MyRowViewer, RawStockData, SerialData}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, tur_sheet::{
+        file_browser::FileBrowser,
+        github::self_updater::GithubRelease,
+        scripts::Scripts,
+        seb_lookup::JsonEditor,
+        stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
+        stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer},
+        tur_sheet::{
             get_ticket::SendRequest,
             scaffold::{self, HardwareTest},
-        }, websockets::WebConsoleFrontend
+        },
+        websockets::WebConsoleFrontend,
     },
     utilities::{
         displays::{
@@ -183,7 +190,10 @@ pub struct MastertechContext {
     pub cps_keys_rx: Receiver<GetKeysResponse>,
     pub ui_actions_tx: Sender<TaskUiActions>,
     pub ui_actions_rx: Receiver<TaskUiActions>,
-    pub extra_stock_channel: (Sender<Vec<ExtraInventoryData>>,Receiver<Vec<ExtraInventoryData>>),
+    pub extra_stock_channel: (
+        Sender<Vec<ExtraInventoryData>>,
+        Receiver<Vec<ExtraInventoryData>>,
+    ),
 
     pub store_users: Option<Vec<User>>,
     pub store_users_tx: Sender<Vec<User>>,
@@ -241,10 +251,7 @@ impl MasterTechApp {
         let [_a, b] = tree.main_surface_mut().split_below(
             NodeIndex::root(),
             0.65,
-            vec![
-                "Console".to_owned(),
-                "Websockets".to_owned(),
-            ],
+            vec!["Console".to_owned(), "Websockets".to_owned()],
         );
         let [_, _] = tree.main_surface_mut().split_left(
             b,
