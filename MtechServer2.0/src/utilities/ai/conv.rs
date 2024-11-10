@@ -4,8 +4,7 @@ use crate::utilities::ai::{chat, gpts};
 use anyhow::{Error, Result};
 use async_openai_wasm::types::{
     ChatChoice, ChatCompletionRequestMessage, ChatCompletionToolChoiceOption,
-    CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs,
-    CreateThreadRequestArgs, MessageContent, RunStatus,
+    CreateChatCompletionRequest,
 };
 use serde_json::Value;
 
@@ -15,6 +14,7 @@ pub async fn send_user_msg(
     messages: Vec<ChatCompletionRequestMessage>,
 ) -> Result<Vec<ChatChoice>, Error> {
     let chat_client = oa_client.chat();
+
     let model = gpts::MODEL;
 
     // -- Extract tools and rpc_router

@@ -11,14 +11,15 @@ use eframe::egui::{
     epaint::Shadow, Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText,
     Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Ui, Vec2, Widget,
 };
-use log::error;
 use wasm_bindgen_futures::spawn_local;
 
 pub struct AiPlayground {
     pub input: String,
     pub history: Vec<Message>,
-    pub command_tx: Sender<Vec<ChatChoice>>,
-    pub command_rx: Receiver<Vec<ChatChoice>>,
+    // pub command_tx: Sender<Vec<ChatChoice>>,
+    // pub command_rx: Receiver<Vec<ChatChoice>>,
+    pub command_tx: Sender<Vec<String>>,
+    pub command_rx: Receiver<Vec<String>>,
 }
 
 struct Message {
@@ -28,7 +29,8 @@ struct Message {
 
 impl Default for AiPlayground {
     fn default() -> Self {
-        let (tx, rx) = crossbeam::channel::unbounded::<Vec<ChatChoice>>();
+        // let (tx, rx) = crossbeam::channel::unbounded::<Vec<ChatChoice>>();
+        let (tx, rx) = crossbeam::channel::unbounded::<Vec<String>>();
         Self {
             input: String::new(),
             history: Vec::new(),
@@ -265,12 +267,14 @@ impl AiPlayground {
                     sender: "You".to_string(),
                 });
                 spawn_local(async move {
-                    let res = assistant_call_with_response_ai_tools(input.as_str(), None).await;
-
-                    match res {
-                        Ok(chat_choices) => tx.try_send(chat_choices).unwrap(),
-                        Err(e) => error!("Error sending {e:?}"),
-                    }
+                    let res =
+                        assistant_call_with_response_ai_tools(input.as_str(), None, tx.clone())
+                            .await; // call_with_response_ai_tools
+                    log::info!("Res: {res:?}")
+                    // match res {
+                    //     Ok(chat_choices) => tx.try_send(chat_choices).unwrap(),
+                    //     Err(e) => error!("Error sending {e:?}"),
+                    // }
                 });
             }
         });
@@ -278,7 +282,7 @@ impl AiPlayground {
         if let Ok(chat_choices) = self.command_rx.try_recv() {
             for x in chat_choices {
                 self.history.push(Message {
-                    note: x.message.content.unwrap_or_default(),
+                    note: x,
                     sender: "GPT".to_string(),
                 });
             }
