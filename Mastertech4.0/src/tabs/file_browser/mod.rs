@@ -574,6 +574,7 @@ impl FileBrowser {
             .borrow_mut()
             .insert(self.path.clone(), new_contents);
         self.path_edit = self.path.to_string_lossy().to_string();
+        self.get_drives();
         //self.select(None);
     }
 
