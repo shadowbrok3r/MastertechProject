@@ -100,7 +100,8 @@ pub async fn send_user_msg(
 
     Ok(all_choices)
 }
-
+/*
+ *
 pub async fn send_assistant_msg(
     oa_client: OaClient,
     ai_tools: AiTools,                           // Ability to use tools retained
@@ -203,7 +204,7 @@ pub async fn send_assistant_msg(
     // Step 7: Return the Assistant's Response and the Thread ID for Subsequent Messages
     Ok((chat_choices, thread_id))
 }
-
+*/
 pub const SYSTEM_INSTRUCTIONS: &str = r#"
 Analyze diagnostic data from repairs conducted by the company to identify trends and correlations, and assist in understanding which products, models, or hardware configurations are associated with the most issues.
 

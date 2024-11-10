@@ -266,3 +266,70 @@ where
         Ok(res)
     }
 }
+
+pub async fn request_seb_info_from_drive<T>(
+    client: reqwest::Client,
+    customer_email: Option<String>,
+    drive: String,
+) -> anyhow::Result<T, anyhow::Error>
+where
+    T: Debug + Serialize + for<'a> Deserialize<'a> + Clone + std::convert::From<LocalSebData>,
+{
+    let mut params: HashMap<&str, &str> = HashMap::new();
+    params.insert("user_email", "logan.lees@pclaptops.com");
+    params.insert("user_password", "Poolparty1");
+    params.insert("application", "carbonite");
+    params.insert("action", "search");
+
+    if let Some(customer_email) = customer_email {
+        params.insert("search", &customer_email);
+
+        let response = client
+            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            // .header(ACCEPT, "application/json")
+            .form(&params)
+            .send()
+            .await
+            .unwrap();
+
+        // info!("response: {:?}", response.text().await?);
+
+        let response_json: Vec<T> = response.json().await?;
+        info!("response_json: {:?}", response_json);
+        Ok(response_json.get(0).unwrap().clone())
+    } else {
+        // supereasybackup.com/downloads/SuperEasyBackup.exe
+        let file_path = format!("{drive}DCProtectData\\Shared\\Logs\\InstallationTracking.log"); // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log";
+
+        // Read the file content
+        let file_content = fs::read_to_string(file_path)?;
+
+        // Deserialize the XML content
+        let mut result: LocalSebData = from_str(&file_content)?;
+
+        params.insert("search", &result.InstalledDeviceId);
+
+        let response = client
+            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json")
+            .form(&params)
+            .send()
+            .await?;
+
+        let response_json: Vec<ExtendedSeb> = response.json().await?; // ExtendedSeb
+
+        info!("response: {:?}", response_json);
+        let actual_response = response_json.get(0);
+
+        if let Some(extended_seb) = actual_response {
+            debug!("Carbonite response: {extended_seb:#?}");
+            result.ExtendedSeb = Some(extended_seb.clone());
+        }
+
+        let res: T = result.try_into()?;
+
+        Ok(res)
+    }
+}

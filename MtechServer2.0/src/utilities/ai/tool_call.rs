@@ -294,14 +294,13 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
 
     let ai_tools = AiTools::new(rpc_router, tools);
     // -- Execute question with conv
-    let response: Vec<ChatChoice> =
-        conv::send_user_msg(oa_client, Some(ai_tools), messages, None).await?;
+    let response: Vec<ChatChoice> = conv::send_user_msg(oa_client, ai_tools, messages).await?;
 
     println!("\nFinal answer:\n\n{response:?}");
 
     Ok(response)
 }
-
+/*
 pub async fn assistant_call_with_response_ai_tools(
     input: &str,
     existing_thread_id: Option<String>,
@@ -402,7 +401,7 @@ pub async fn assistant_call_with_response_ai_tools(
     // -- Return the Assistant's Response and the Thread ID for Subsequent Messages
     Ok(chat_choices)
 }
-
+*/
 const SYSTEM_INSTRUCTIONS: &str = r#"
 Analyze diagnostic data from repairs conducted by the company to identify trends and correlations, and assist in understanding which products, models, or hardware configurations are associated with the most issues.
 

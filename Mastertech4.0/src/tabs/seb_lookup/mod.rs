@@ -5,7 +5,7 @@ use anyhow::{Error, Result};
 use database::schema::{ExtendedSeb, LocalSebData};
 use eframe::egui::{
     text::{CCursor, CCursorRange},
-    vec2, Button, CentralPanel, Color32, CursorIcon, Frame, Margin, ScrollArea, TextEdit,
+    vec2, Button, CentralPanel, Color32, CursorIcon, Frame, Margin, RichText, ScrollArea, TextEdit,
     TextStyle, TopBottomPanel, Ui, Widget,
 };
 // use egui_extras::{Size, StripBuilder};
@@ -25,7 +25,7 @@ use egui_json_tree::{
     DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
 };
 
-// use super::tur_sheet::get_ticket::request_seb_info;
+use super::tur_sheet::get_ticket::{request_seb_info, request_seb_info_from_drive};
 
 impl MastertechContext {
     pub fn seb_lookup(&mut self, ui: &mut Ui) {
@@ -82,44 +82,64 @@ impl MastertechContext {
                             tx.try_send(response_json).unwrap();
                         });
                     }
+
                     ui.add_space(10.);
+                    let mut drives = self
+                        .computer_data
+                        .drives
+                        .iter()
+                        .map(|d| d.drive_letter.clone())
+                        .collect::<Vec<String>>()
+                        .clone();
+                    drives.sort_unstable_by(|b, a| b.partial_cmp(a).unwrap());
+                    let search_string = self.data_viewer.filter.clone();
 
-                    // if Button::new("Show Local Device SEB Info").ui(ui).clicked() {
-                    //     let tx = self.seb_channel.0.clone();
-                    //     let client = self.client.clone();
-                    //     spawn(async move {
-                    //         let mut params: HashMap<&str, &str> = HashMap::new();
-                    //         params.insert("user_email", "logan.lees@pclaptops.com");
-                    //         params.insert("user_password", "Poolparty1");
-                    //         params.insert("application", "carbonite");
-                    //         params.insert("action", "search");
-                    //         params.insert("search", &search_string);
+                    for drive in drives.iter().cloned() {
+                        let button = Button::new(RichText::new(drive.clone()));
+                        if ui.add(button).clicked() {
+                            let tx = self.seb_channel.0.clone();
+                            let client = self.client.clone();
+                            let search = search_string.clone();
 
-                    //         let response = client
-                    //             .post("https://scaffold.pclaptops.com/api/index")
-                    //             .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
-                    //             .form(&params)
-                    //             .send()
-                    //             .await.unwrap();
+                            spawn(async move {
+                                let mut params: HashMap<&str, &str> = HashMap::new();
+                                params.insert("user_email", "logan.lees@pclaptops.com");
+                                params.insert("user_password", "Poolparty1");
+                                params.insert("application", "carbonite");
+                                params.insert("action", "search");
+                                params.insert("search", &search);
 
-                    //         let response_json: Vec<Value> = response.json().await.unwrap();
-                    //         info!("response_json: {:?}", response_json);
+                                let response = client
+                                    .post("https://scaffold.pclaptops.com/api/index")
+                                    .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
+                                    .form(&params)
+                                    .send()
+                                    .await
+                                    .unwrap();
 
-                    //         // let seb_data: Result<LocalSebData, anyhow::Error> =
-                    //         //     request_seb_info(client, Some(search_string))
-                    //         //         .await
-                    //         //         .or_else(|err| {
-                    //         //             error!("Error Pulling SEB info: {:?}", err.to_string());
-                    //         //             Err(err)
-                    //         //         })
-                    //         //         .and_then(|data| {
-                    //         //             info!("Pulled SEB Data successfully: {data:#?}");
-                    //         //             Ok(data)
-                    //         //         });
+                                let response_json: Vec<Value> = response.json().await.unwrap();
+                                info!("response_json: {:?}", response_json);
 
-                    //         tx.try_send(response_json).unwrap();
-                    //     });
-                    // }
+                                let seb_data: Result<LocalSebData, anyhow::Error> =
+                                    request_seb_info_from_drive(client, None, drive.clone())
+                                        .await
+                                        .or_else(|err| {
+                                            log::error!(
+                                                "Error Pulling SEB info: {:?}",
+                                                err.to_string()
+                                            );
+                                            Err(err)
+                                        })
+                                        .and_then(|data| {
+                                            info!("Pulled SEB Data successfully: {data:#?}");
+                                            Ok(data)
+                                        });
+
+                                info!("SEB Data pull: {seb_data:?}");
+                                tx.try_send(response_json).unwrap();
+                            });
+                        };
+                    }
                 });
             });
 
@@ -598,18 +618,16 @@ impl Show for JsonEditor {
             .default_expand(DefaultExpand::ToLevel(2))
             .on_render(|ui, context| self.editor.show(ui, &self.value, context))
             .style(JsonTreeStyle {
-                visuals: Some(
-                    JsonTreeVisuals {
-                        bool_color: Color32::LIGHT_BLUE,
-                        object_key_color: Color32::LIGHT_GREEN,
-                        array_idx_color: Color32::from_rgb(120, 20, 120),
-                        number_color: Color32::GREEN,
-                        string_color: Color32::from_rgb(120, 20, 120),
-                        highlight_color: Color32::from_rgba_premultiplied(120, 20, 120, 100),
-                        punctuation_color: Color32::LIGHT_RED,
-                        ..Default::default()
-                    }
-                ),
+                visuals: Some(JsonTreeVisuals {
+                    bool_color: Color32::LIGHT_BLUE,
+                    object_key_color: Color32::LIGHT_GREEN,
+                    array_idx_color: Color32::from_rgb(120, 20, 120),
+                    number_color: Color32::GREEN,
+                    string_color: Color32::from_rgb(120, 20, 120),
+                    highlight_color: Color32::from_rgba_premultiplied(120, 20, 120, 100),
+                    punctuation_color: Color32::LIGHT_RED,
+                    ..Default::default()
+                }),
                 abbreviate_root: true,
                 ..Default::default()
             })
