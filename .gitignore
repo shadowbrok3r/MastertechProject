@@ -16,7 +16,6 @@ MtechServer2.0/dist/pcllogo.png
 MtechServer2.0/websocket_server/output.log
 MtechServer2.0/rust-toolchain.toml
 target
-Cargo.lock
 Mastertech4.0/target
 Mastertech4.0/dist
 Mastertech4.0/.env

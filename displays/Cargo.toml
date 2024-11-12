@@ -6,22 +6,18 @@ edition = "2021"
 [features]
 default = [ "wasm" ]
 tokio = ["dep:tokio"]
-wasm = ["dep:wasm-bindgen", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:web-time"]
+wasm = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:web-time"]
 
 [dependencies]
-parking_lot = "0.12.0"
-ewebsock = "0.7.0"
+parking_lot = "0.12.3"
+ewebsock = "0.8.0"
 zstd = "0.13"
 reqwest = { version = "0.12", features = ["stream", "json"] }
 rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] }
-rfd = "0.14.0"
+rfd = "0.15.0"
 tap = "1"
 itertools = "0.13"
 thiserror = "2.0.2"
-web-time = { workspace=true, optional = true }
-wasm-bindgen = { workspace=true, optional = true }
-wasm-bindgen-futures = { workspace=true, optional = true }
-tokio = { workspace=true, optional = true }
 bincode = { workspace=true } 
 anyhow = { workspace=true }
 database = { workspace=true }
@@ -39,7 +35,16 @@ futures = { workspace=true }
 bytes = { workspace=true }
 regex = { workspace=true }
 structdiff = { workspace=true }
-egui_struct = { workspace = true }
+# egui_struct = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace=true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = { workspace=true, optional = true }
+wasm-bindgen = { workspace=true, optional = true }
+wasm-bindgen-futures = { workspace=true, optional = true }
+
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 # rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] }
