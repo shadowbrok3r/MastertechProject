@@ -1,5 +1,4 @@
 use std::sync::Arc;
-
 use crate::utilities::ai::{conv, tools::AiTools};
 use anyhow::{Error, Result};
 use async_openai_wasm::{
@@ -315,10 +314,6 @@ pub async fn assistant_call_with_response_ai_tools(
     let assistant_id = "asst_3wOgem2DpYiXkk7x34hVb9My"; // Your existing assistant ID
 
     let assistant_client = oa_client.assistants();
-    let assistant = assistant_client.retrieve(assistant_id).await?;
-    // let assistant_tools = assistant.tools;
-    // let assistant_res = assistant.tool_resources.unwrap().file_search;
-    // let x = CreateAssistantToolFileSearchResources::from(assistant_res.unwrap());
     let asst_thread = Threads::new(&oa_client);
 
     // -- Check if there is an existing thread to use, or create a new one
@@ -367,7 +362,7 @@ pub async fn assistant_call_with_response_ai_tools(
         match event {
             Ok(event) => match event {
                 AssistantStreamEvent::ThreadRunRequiresAction(run_object) => {
-                    println!("thread.run.requires_action: run_id:{}", run_object.id);
+                    info!("thread.run.requires_action: run_id:{}", run_object.id);
                     let client = oa_client.clone();
                     let tx = tx.clone();
                     spawn_local(async move {
@@ -376,7 +371,7 @@ pub async fn assistant_call_with_response_ai_tools(
                         tx.try_send(x).unwrap();
                     });
                 }
-                _ => println!("\nEvent: {event:?}\n"),
+                _ => info!("\nEvent: {event:?}\n"),
             },
             Err(e) => {
                 info!("Error: {e}");
@@ -394,74 +389,6 @@ pub async fn assistant_call_with_response_ai_tools(
     // -- Return the Assistant's Response and the Thread ID for Subsequent Messages
     Ok(())
 }
-
-/*
-*   // -- Wait for the Run to Complete
-   let mut awaiting_response = true;
-
-   while awaiting_response {
-
-       // Retrieve the Run
-       let run_status = oa_client
-           .threads()
-           .runs(&thread_id)
-           .retrieve(&run.id)
-           .await?;
-
-       // Check the Status of the Run
-       match run_status.status {
-           RunStatus::Completed => {
-               awaiting_response = false;
-               // once the run is completed we
-               // get the response from the run
-               // which will be the first message
-               // in the thread
-
-               //retrieve the response from the run
-               let response = oa_client.threads().messages(&thread.id).list(&query).await?;
-               //get the message id from the response
-               let message_id = response.data.first().unwrap().id.clone();
-               //get the message from the response
-               let message = oa_client
-                   .threads()
-                   .messages(&thread.id)
-                   .retrieve(&message_id)
-                   .await?;
-
-               //get the content from the message
-               let content = message.content.first().unwrap();
-
-               //get the text from the content
-               let text = match content {
-                   MessageContent::Text(text) => text.text.value.clone(),
-                   MessageContent::ImageFile(img) | MessageContent::ImageUrl(img_url) => {
-                       info!("Image data: {img:?}\n\nURL: {img_url:?}");
-                       img_url.image_url.url
-                   }
-                   MessageContent::Refusal(refusal) => refusal.refusal.clone(),
-               };
-
-               //print the text
-               info!("--- Response: {}\n", text);
-           }
-           RunStatus::Failed => {
-               return Err(anyhow::anyhow!("Run Failed: {:#?}", run_status).into());
-           }
-           RunStatus::Queued
-           | RunStatus::InProgress
-           | RunStatus::Cancelling
-           | RunStatus::Incomplete => {
-               info!("--- Run In Progress ...");
-
-               // Wait for 1 second before checking the status again
-               sleep(web_time::Duration::from_secs(1)).await;
-           }
-           RunStatus::Cancelled | RunStatus::Expired | RunStatus::RequiresAction => {
-               return Err(anyhow::anyhow!("Run Error: Status - {:?}", run_status.status).into());
-           }
-       }
-   }
-*/
 
 async fn handle_requires_action(
     client: Arc<Client<OpenAIConfig>>, 
@@ -525,7 +452,7 @@ async fn submit_tool_outputs(
                             if let MessageDeltaContent::Text(text) = content {
                                 if let Some(text) = text.text {
                                     if let Some(text) = text.value {
-                                        info!("{}", text);
+                                        info!("txt: {}", text);
                                         msgs.push(text);
                                     }
                                 }

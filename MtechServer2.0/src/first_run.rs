@@ -29,7 +29,6 @@ use {
 impl MtechServer {
     pub fn first_run(&mut self, frame: &mut Frame) {
         self.context.first_run = false;
-
         let github_releases_tx = self.context.github_releases_channel.0.clone();
         spawn_local(async move {
             let get_releases = get_github_releases(github_releases_tx).await;
@@ -56,6 +55,49 @@ impl MtechServer {
                         serde_json::to_string(&self.context.user_settings).unwrap_or_default(),
                     );
                 }
+            }
+            if let Some(version) = storage.get_string("version") {
+                if env!("CARGO_PKG_VERSION") != version {
+                    gloo_console::info!(format!("Mismatched Cargo Version. Doing update from {:?} to -> {:?}", version, env!("CARGO_PKG_VERSION")));
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        wasm_cookies::delete("user");
+                        wasm_cookies::delete("jwt");
+                    }
+                    spawn_local(async move {
+                        let invalidation = DATABASE.invalidate().await;
+                        info!("invalidated connection: {:?}", invalidation);
+                    });
+
+                    if let Some(window) = web_sys::window() {
+                        let reload = window.location().reload();
+                        info!("Reloading winodw: {reload:?}");
+                        if let Ok(storage) = window.local_storage() {
+                            if let Some(storage) = storage {
+                                let clear = storage.clear();
+                                info!("Clearing storage: {clear:?}");
+                            }
+                        }
+                    } else {
+                        info!("No window");
+                    }
+                    let logout_msg = "Logged out".to_string();
+                    self.state = AppState::NoAuth(logout_msg.clone());
+                    match self
+                        .context
+                        .app_state_tx
+                        .try_send(AppState::NoAuth(logout_msg))
+                    {
+                        Ok(_) => info!("Logged out"),
+                        Err(e) => error!("Error: {e:?}"),
+                    }
+                }
+            }
+            else {
+                storage.set_string(
+                    "version",
+                    env!("CARGO_PKG_VERSION").to_string()
+                );
             }
         }
 

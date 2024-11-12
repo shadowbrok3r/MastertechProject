@@ -8,12 +8,12 @@ use futures::{StreamExt, Future};
 use anyhow::{Result, Error};
 use mime_guess::from_path;
 use surrealdb::sql::Uuid;
-use web_time::Duration;
 use rfd::FileHandle;
 use bytes::Bytes;
 use regex::Regex;
 use log::info;
 
+#[cfg(target_arch="wasm32")]
 #[cfg(feature="wasm")]
 use wasm_bindgen_futures::spawn_local;
 
@@ -22,8 +22,8 @@ use {
     tokio::spawn,
     std::path::PathBuf
 };
-
-pub const ONE_HOUR: Duration = Duration::from_secs(3600);
+#[cfg(target_arch="wasm32")]
+pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
 
 #[derive(Debug, Clone)]
 pub struct FileSystem {
@@ -234,6 +234,7 @@ impl FileSystem {
                                             #[cfg(target_os="windows")]
                                             self._download_selection_tokio(full_path.to_string(), label.clone());
                                         } else {
+                                            #[cfg(target_arch="wasm32")]
                                             self.download_selection(full_path.to_string(), label.clone());
                                         }
                                     }
@@ -247,6 +248,7 @@ impl FileSystem {
                                                 #[cfg(target_os="windows")]
                                                 self.upload_tokio(full_path.to_string());
                                             } else {
+                                                #[cfg(target_arch="wasm32")]
                                                 self.upload(full_path.to_string());
                                             }
                                         // }
@@ -293,6 +295,7 @@ impl FileSystem {
                                             #[cfg(target_os="windows")]
                                             self.upload_tokio(dir);
                                         } else {
+                                            #[cfg(target_arch="wasm32")]
                                             self.upload(dir);
                                         }
                                     }
@@ -352,6 +355,7 @@ impl FileSystem {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);
                                 if ui.button("Download").clicked(){
+                                    #[cfg(target_arch="wasm32")]
                                     self.download_selection(full_path.clone(), label.clone());
                                 }
                             }).inner
@@ -388,6 +392,7 @@ impl FileSystem {
         self.directory_paths.iter().find(|path| path.ends_with(&format!("\\\\{label}"))).cloned()
     }
 
+    #[cfg(target_arch="wasm32")]
     #[cfg(feature="wasm")]
     pub fn upload(&self, path: String) {
         let task = rfd::AsyncFileDialog::new().pick_files();
@@ -448,6 +453,7 @@ impl FileSystem {
         });
     }
     
+    #[cfg(target_arch="wasm32")]
     #[cfg(feature="wasm")]
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
@@ -516,6 +522,7 @@ impl FileSystem {
         // });
     // }
 
+    #[cfg(target_arch="wasm32")]
     async fn perform_upload(
         name: &String, 
         access_key: &String, 
@@ -600,6 +607,7 @@ impl FileSystem {
         Ok(())
     }
     
+    #[cfg(target_arch="wasm32")]
     async fn perform_download(
         name: &String, 
         access_key: &String, 
