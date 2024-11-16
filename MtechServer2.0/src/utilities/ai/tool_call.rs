@@ -4,14 +4,11 @@ use anyhow::{Error, Result};
 use async_openai_wasm::{
     config::OpenAIConfig,
     types::{
-        AssistantStreamEvent, AssistantToolCodeInterpreterResources, AssistantVectorStore,
-        ChatChoice, ChatCompletionToolChoiceOption, CreateAssistantToolFileSearchResources,
-        CreateAssistantToolResources, CreateChatCompletionRequest, CreateMessageRequestArgs,
-        CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent, MessageDeltaContent,
-        MessageRole, RunObject, RunStatus, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs,
+        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent, MessageDeltaContent, MessageRole, RunObject, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
     },
     Client, Threads,
 };
+use bytes::Bytes;
 use crossbeam::channel::Sender;
 use database::DATABASE;
 use futures::StreamExt;
@@ -307,13 +304,14 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
 pub async fn assistant_call_with_response_ai_tools(
     input: &str,
     existing_thread_id: Option<String>,
-    tx: Sender<Vec<String>>
+    tx: Sender<String>,
+    file_tx: Sender<Bytes>
 ) -> Result<(), Error> {
     // -- Initialize AI Client
     let oa_client = new_oa_client()?;
     let assistant_id = "asst_3wOgem2DpYiXkk7x34hVb9My"; // Your existing assistant ID
 
-    let assistant_client = oa_client.assistants();
+    // let assistant_client = oa_client.assistants();
     let asst_thread = Threads::new(&oa_client);
 
     // -- Check if there is an existing thread to use, or create a new one
@@ -329,7 +327,7 @@ pub async fn assistant_call_with_response_ai_tools(
     };
 
     let thread_id = thread.id;
-
+    tx.try_send(thread_id.clone())?;
     // -- Add User Message to the Thread
     let user_message = CreateMessageRequestArgs::default()
         .role(MessageRole::User)
@@ -366,10 +364,77 @@ pub async fn assistant_call_with_response_ai_tools(
                     let client = oa_client.clone();
                     let tx = tx.clone();
                     spawn_local(async move {
-                        let x = handle_requires_action(client, run_object).await;
-                        info!("{x:?}");
-                        tx.try_send(x).unwrap();
+                        let strings = handle_requires_action(client, run_object).await;
+                        // info!("{x:?}");
+                        for string in strings {
+                            tx.try_send(string).unwrap();
+                        }
                     });
+                },
+                AssistantStreamEvent::ThreadMessageDelta(msg) => {
+                    let tx = tx.clone();
+                    if let Some(content) = msg.delta.content {
+                        for msg in content {
+                            match msg {
+                                // MessageDeltaContent::ImageFile(img_obj) => {
+                                //     if let Some(img_file) = img_obj.image_file {
+                                //         if let Some(detail) = img_file.detail {
+                                //         }
+                                //     }
+                                // },
+                                MessageDeltaContent::ImageUrl(img_url) => {
+                                    if let Some(img_obj) = img_url.image_url {
+                                        info!("img_obj: {:?}", img_obj.url);
+                                        tx.try_send(img_obj.url)?;
+                                    }
+                                },
+                                MessageDeltaContent::Text(txt) => {
+                                    // Should probably send the whole object so i can store it in local storage
+                                    if let Some(content) = txt.text {
+                                        if let Some(text) = content.value {
+                                            tx.try_send(text)?;
+                                        }
+                                    }
+                                },
+                                MessageDeltaContent::Refusal(refusal_obj) => {
+                                    if let Some(refusal) = refusal_obj.refusal {
+                                        tx.try_send(refusal)?;
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                    }
+                },
+                AssistantStreamEvent::ThreadMessageCompleted(run_step_obj) => {
+                    if let Some(attachments) = run_step_obj.attachments {
+                        for attchmnt in attachments {
+                            info!("attchmnt.file_id: {:?}", attchmnt.file_id);
+                            let file_bytes = oa_client
+                                .files()
+                                .content(&attchmnt.file_id)
+                                .await?;
+
+                            file_tx.try_send(file_bytes);
+                        }
+                    }
+
+                    for msg in run_step_obj.content {
+                        match msg {
+                            MessageContent::ImageFile(img_obj) => {
+                                info!("message_content_image_file_object: {:?}", img_obj.image_file);
+                                tx.try_send(img_obj.image_file.file_id)?;
+                            },
+                            MessageContent::ImageUrl(img_url) => {
+                                info!("Image URL: {:?}", img_url.image_url.url);
+                                tx.try_send(img_url.image_url.url);
+                            },
+                            _ => {}
+                        }
+                    }
+                },
+                AssistantStreamEvent::Done(done) => {
+                    tx.try_send(done)?;
                 }
                 _ => info!("\nEvent: {event:?}\n"),
             },
