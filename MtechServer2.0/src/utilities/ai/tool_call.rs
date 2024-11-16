@@ -1,14 +1,16 @@
 use std::sync::Arc;
-use crate::utilities::ai::{conv, tools::AiTools};
+use crate::{tabs::ai_playground::{ChatMessage, ChatMessageType, SentFrom}, utilities::ai::{conv, tools::AiTools}};
 use anyhow::{Error, Result};
 use async_openai_wasm::{
     config::OpenAIConfig,
     types::{
-        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent, MessageDeltaContent, MessageRole, RunObject, RunStepDetailsToolCalls, StepDetails, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
+        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, 
+        CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent, 
+        MessageDeltaContent, MessageRole, RunObject, SubmitToolOutputsRunRequest, ThreadObject, 
+        ToolsOutputs
     },
     Client, Threads,
 };
-use bytes::Bytes;
 use crossbeam::channel::Sender;
 use database::DATABASE;
 use futures::StreamExt;
@@ -301,45 +303,64 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
     Ok(response)
 }
 
-pub async fn assistant_call_with_response_ai_tools(
-    input: &str,
-    existing_thread_id: Option<String>,
-    tx: Sender<String>,
-    file_tx: Sender<Bytes>,
-    code_tx: Sender<String>
-) -> Result<(), Error> {
-    // -- Initialize AI Client
-    let oa_client = new_oa_client()?;
-    let assistant_id = "asst_3wOgem2DpYiXkk7x34hVb9My"; // Your existing assistant ID
 
-    // let assistant_client = oa_client.assistants();
-    let asst_thread = Threads::new(&oa_client);
+pub struct AiBuilder {
 
-    // -- Check if there is an existing thread to use, or create a new one
-    let thread: ThreadObject = if let Some(thread_id) = existing_thread_id {
-        asst_thread.retrieve(&thread_id).await?
+}
+
+pub async fn get_or_retrieve_thread(asst_thread: Threads<'_, OpenAIConfig>, existing_thread_id: Option<String>) -> Result<ThreadObject, Error> {
+    if let Some(thread_id) = existing_thread_id {
+        Ok(asst_thread.retrieve(&thread_id).await?)
     } else {
         // Create a new thread if none exists
         let thread_request = CreateThreadRequestArgs::default()
             // .tool_resources(CreateAssistantToolResources::from(assistant_tools))
             .build()?;
         let thread = asst_thread.create(thread_request.clone()).await?;
-        thread
-    };
+        Ok(thread)
+    }
+}
+
+pub async fn assistant_call_with_response_ai_tools(
+    input: &str,
+    existing_thread_id: Option<String>,
+    response_tx: Sender<ChatMessage>,
+) -> Result<(), Error> {
+    let assistant_id = "asst_3wOgem2DpYiXkk7x34hVb9My";
+    // -- Initialize AI Client
+    let oa_client: Arc<Client<OpenAIConfig>> = new_oa_client()?;
+    // let assistant_client = oa_client.assistants();
+    let asst_thread: Threads<'_, OpenAIConfig> = Threads::new(&oa_client);
+    // -- Check if there is an existing thread to use, or create a new one
+    let thread = get_or_retrieve_thread(asst_thread, existing_thread_id).await?;
 
     let thread_id = thread.id;
-    tx.try_send(thread_id.clone())?;
+    let mut res = ChatMessage { 
+        thread_id: thread_id.clone(),
+        from: SentFrom::Gpt,
+        ..Default::default()
+    };
     // -- Add User Message to the Thread
     let user_message = CreateMessageRequestArgs::default()
         .role(MessageRole::User)
         .content(input.to_string())
         .build()?;
-
-    oa_client
+    
+    let user_msg = oa_client
         .threads()
-        .messages(&thread_id)
+        .messages(&thread_id.clone())
         .create(user_message)
         .await?;
+
+    let user_chat_msg = ChatMessage {
+        id: user_msg.id,
+        from: SentFrom::Me,
+        thread_id: thread_id.clone(),
+        ts: user_msg.created_at,
+        content: ChatMessageType::Text(input.to_string())
+    };
+
+    response_tx.try_send(user_chat_msg)?;
 
     // -- Create a Run for the Thread
     let run_request = CreateRunRequestArgs::default()
@@ -349,115 +370,143 @@ pub async fn assistant_call_with_response_ai_tools(
 
     let mut event_stream = oa_client
         .threads()
-        .runs(&thread_id)
+        .runs(&thread_id.clone())
         .create_stream(run_request)
         .await?;
 
-    // -- Retrieve the Response from the Run
-    let query = [("limit", "1")]; // Limit the list responses to 1 message
-                                  // let mut message_responses: Vec<String> = Vec::new();
-                                  //
     while let Some(event) = event_stream.next().await {
+        let tx = response_tx.clone();
         match event {
             Ok(event) => match event {
                 AssistantStreamEvent::ThreadRunRequiresAction(run_object) => {
                     info!("thread.run.requires_action: run_id:{}", run_object.id);
                     let client = oa_client.clone();
-                    let tx = tx.clone();
+                    // let tx = response_tx.clone();
+                    // let response = res.clone();
+                    // let id = run_object.id.clone();
                     spawn_local(async move {
                         let strings = handle_requires_action(client, run_object).await;
-                        // info!("{x:?}");
-                        for string in strings {
-                            tx.try_send(string).unwrap();
-                        }
+                        gloo_console::info!(format!("ThreadRunRequiresAction: {strings:?}"));
+                        // for string in &strings {
+                        //     let mut response = response.clone();
+                        //     // response.id = id.clone();
+                        //     response.content = ChatMessageType::Text(string.clone());
+                        //     let _ = tx.try_send(response);
+                        // }
                     });
                 },
                 AssistantStreamEvent::ThreadMessageDelta(msg) => {
-                    let tx = tx.clone();
+                    res.id = msg.id;
                     if let Some(content) = msg.delta.content {
                         for msg in content {
                             match msg {
-                                // MessageDeltaContent::ImageFile(img_obj) => {
-                                //     if let Some(img_file) = img_obj.image_file {
-                                //         if let Some(detail) = img_file.detail {
-                                //         }
-                                //     }
-                                // },
+                                MessageDeltaContent::ImageFile(img_obj) => {
+                                    if let Some(img_file) = img_obj.image_file {
+                                        let mut response = res.clone();
+                                        
+                                        response.content = ChatMessageType::FileId(img_file.file_id);
+                                        tx.try_send(response)?;
+                                    }
+                                },
                                 MessageDeltaContent::ImageUrl(img_url) => {
                                     if let Some(img_obj) = img_url.image_url {
+                                        let mut response = res.clone();
                                         info!("img_obj: {:?}", img_obj.url);
-                                        tx.try_send(img_obj.url)?;
+                                        response.content = ChatMessageType::Text(img_obj.url);
+                                        tx.try_send(response)?;
                                     }
                                 },
                                 MessageDeltaContent::Text(txt) => {
                                     // Should probably send the whole object so i can store it in local storage
                                     if let Some(content) = txt.text {
                                         if let Some(text) = content.value {
-                                            tx.try_send(text)?;
+                                            let mut response = res.clone();
+                                            response.content = ChatMessageType::Text(text);
+                                            tx.try_send(response)?;
                                         }
                                     }
                                 },
                                 MessageDeltaContent::Refusal(refusal_obj) => {
                                     if let Some(refusal) = refusal_obj.refusal {
-                                        tx.try_send(refusal)?;
+                                        let mut response = res.clone();
+                                        response.content = ChatMessageType::Error(refusal);
+                                        tx.try_send(response)?;
                                     }
-                                },
-                                _ => {}
+                                }
                             }
                         }
                     }
                 },
-                AssistantStreamEvent::ThreadMessageCompleted(run_step_obj) => {
-                    if let Some(attachments) = run_step_obj.attachments {
+                AssistantStreamEvent::ThreadMessageCompleted(msg_obj) => {
+                    res.id = msg_obj.id;
+                    if let Some(attachments) = msg_obj.attachments {
                         for attchmnt in attachments {
                             info!("attchmnt.file_id: {:?}", attchmnt.file_id);
                             let file_bytes = oa_client
                                 .files()
                                 .content(&attchmnt.file_id)
                                 .await?;
-
-                            file_tx.try_send(file_bytes);
+                            let mut response = res.clone();
+                            response.content = ChatMessageType::Image((attchmnt.file_id, file_bytes));
+                            tx.try_send(response)?;
                         }
                     }
 
-                    for msg in run_step_obj.content {
+                    for msg in msg_obj.content {
                         match msg {
                             MessageContent::ImageFile(img_obj) => {
                                 info!("message_content_image_file_object: {:?}", img_obj.image_file.file_id);
                                 let file_bytes = oa_client
                                     .files()
-                                    .content(&img_obj.image_file.file_id)
+                                    .content(&img_obj.image_file.file_id.clone())
                                     .await?;
-
-                                file_tx.try_send(file_bytes);
+                                let mut response = res.clone();
+                                response.content = ChatMessageType::Image((img_obj.image_file.file_id, file_bytes));
+                                tx.try_send(response)?;
                             },
                             MessageContent::ImageUrl(img_url) => {
+                                let mut response = res.clone();
                                 info!("Image URL: {:?}", img_url.image_url.url);
-                                tx.try_send(img_url.image_url.url);
+                                response.content = ChatMessageType::Text(img_url.image_url.url);
+                                tx.try_send(response)?;
                             },
                             _ => {}
                         }
                     }
                 },
-                AssistantStreamEvent::ThreadRunStepCompleted(run_object) => {
-                    match run_object.step_details {
-                        StepDetails::ToolCalls(run_tools) => {
-                            for call in run_tools.tool_calls.iter() {
-                                match call {
-                                    RunStepDetailsToolCalls::CodeInterpreter(run_code_obj) => {
-                                        let input = &run_code_obj.code_interpreter.input;
-                                        gloo_console::info!(format!("CODE: {input}"));
-                                        code_tx.try_send(input.clone())?;
-                                    },
-                                    _ => {}
-                                }
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                AssistantStreamEvent::Done(done) => {
-                    tx.try_send(done)?;
+                // AssistantStreamEvent::ThreadRunStepCompleted(run_object) => {
+                //     match run_object.step_details {
+                //         StepDetails::ToolCalls(run_tools) => {
+                //             for call in run_tools.tool_calls.iter() {
+                //                 match call {
+                //                     RunStepDetailsToolCalls::CodeInterpreter(run_code_obj) => {
+                //                         let input = &run_code_obj.code_interpreter.input;
+                //                         for output in &run_code_obj.code_interpreter.outputs {
+                //                             match output {
+                //                                 CodeInterpreterOutput::Image(code_out_image) => {
+                //                                     let mut response = res.clone();
+                //                                     response.content = ChatMessageType::FileId(code_out_image.image.file_id.clone());
+                //                                     tx.try_send(response)?;
+                //                                 },
+                //                                 _ => {}
+                //                             }
+                //                         }
+                //                         gloo_console::info!(format!("CODE: {input}"));
+                //                         let mut response = res.clone();
+                //                         response.content = ChatMessageType::Code(input.clone());
+                //                         tx.try_send(response)?;
+                //                     },
+                //                     _ => {}
+                //                 }
+                //             }
+                //         },
+                //         _ => {}
+                //     }
+                // },
+                AssistantStreamEvent::Done(_) => {
+                    let mut response = res.clone();
+                    response.content = ChatMessageType::Done;
+                    tx.try_send(response)?;
                 },
                 _ => info!("\nEvent: {event:?}\n"),
             },
@@ -467,13 +516,15 @@ pub async fn assistant_call_with_response_ai_tools(
         }
     }
 
-    let _response = oa_client
-        .threads()
-        .messages(&thread_id)
-        .list(&query)
-        .await?;
-
-    info!("Response: {_response:?}");
+    // -- Retrieve the Response from the Run
+    // let query = [("limit", "1")]; // Limit the list responses to 1 message
+    // let _response: async_openai_wasm::types::ListMessagesResponse = oa_client
+    //     .threads()
+    //     .messages(&thread_id.clone())
+    //     .list(&query)
+    //     .await?;
+    
+    // info!("Response: {_response:?}");
     // -- Return the Assistant's Response and the Thread ID for Subsequent Messages
     Ok(())
 }

@@ -125,6 +125,17 @@ impl eframe::App for MtechServer {
             );
         }
 
+        if self.context.save_chats {
+            self.context.save_chats = false;
+            let threads = self.context.ai_playground.get_threads();
+
+            info!("Saving chats: {:?}", threads);
+            frame.storage_mut().unwrap().set_string(
+                "chat_history",
+                serde_json::to_string(&threads).unwrap(),
+            );
+        }
+
         // Handle changes to state from various places, such as
         // hitting the login button, clicking the 'home page' button
         // (which is clicking Mtechserver in the top middle of the page),
