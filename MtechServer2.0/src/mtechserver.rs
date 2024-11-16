@@ -5,7 +5,7 @@ use eframe::egui::{
     Color32, Context, CursorIcon, FontFamily, FontId, Frame, Margin, Rounding, Shadow, Stroke,
     Style, Vec2, Visuals, Window,
 };
-use log::{debug, info};
+use log::info;
 use std::sync::Arc;
 use wasm_bindgen_futures::spawn_local;
 

@@ -11,7 +11,7 @@ use database::{
     },
     DATABASE,
 };
-use database::{schema::Store, STORAGE_URL};
+use database::schema::Store;
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::Frame;
 use egui_dock::DockState;

@@ -1807,6 +1807,7 @@ dependencies = [
  "chrono",
  "egui 0.29.1",
  "enum-map",
+ "image",
  "log",
  "mime_guess2",
  "serde",

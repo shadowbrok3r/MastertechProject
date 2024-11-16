@@ -42,7 +42,10 @@ pub fn run() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(MtechServer::new(cc)))),
+                Box::new(|cc| {
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
+                    Ok(Box::new(MtechServer::new(cc)))
+                }),
             )
             .await
             .unwrap();
