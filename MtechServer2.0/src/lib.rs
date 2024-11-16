@@ -10,14 +10,15 @@ pub mod worker;
 // Re-export MtechServer to make it accessible from the crate root
 pub use app_state::MtechServer;
 
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub fn run() {
     use eframe::wasm_bindgen::JsCast as _;
     use log::LevelFilter;
     use tabs::logger::logging::builder;
-    use wasm_bindgen::prelude::*;
     use web_sys::HtmlCanvasElement;
 
     builder().init().unwrap();

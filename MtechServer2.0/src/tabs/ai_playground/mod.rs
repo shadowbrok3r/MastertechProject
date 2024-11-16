@@ -2,31 +2,48 @@ use crate::{
     app_state::MtechServerContext,
     utilities::ai::tool_call::assistant_call_with_response_ai_tools
 };
-use bytes::Bytes;
-use crossbeam::channel::{Receiver, Sender};
-use displays::markdown_editor::viewer;
 use eframe::egui::{
-    epaint::Shadow, Align, Button, Color32, Direction, Frame, Image, ImageSource, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Ui, Vec2, Widget
+    epaint::Shadow, Align, Button, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, Ui, Vec2, Widget
 };
+use crossbeam::channel::{Receiver, Sender};
 use wasm_bindgen_futures::spawn_local;
+use displays::markdown_editor::viewer;
+use bytes::Bytes;
+use core::str;
 
 pub struct AiPlayground {
-    pub input: String,
-    pub history: Vec<Message>,
+    input: String,
+    thread: Vec<Message>, // Threads
     // pub command_tx: Sender<Vec<ChatChoice>>,
     // pub command_rx: Receiver<Vec<ChatChoice>>,
-    pub current_streaming_message: Option<Message>, // Buffer for the streaming message
-    pub command_tx: Sender<String>,
-    pub command_rx: Receiver<String>,
-    pub file_tx: Sender<Bytes>,
-    pub file_rx: Receiver<Bytes>
+    current_streaming_message: Option<Message>, // Buffer for the streaming message
+    command_tx: Sender<String>,
+    command_rx: Receiver<String>,
+
+    code_tx: Sender<String>,
+    code_rx: Receiver<String>,
+
+    file_tx: Sender<Bytes>,
+    file_rx: Receiver<Bytes>,
+
+    code: String,
+    file: Option<Bytes>
 }
+
+#[derive(Debug, Clone)]
+pub struct Threads {
+    message: Message,
+    thread: String,
+}
+
+// pub struct 
 
 #[derive(Debug, Clone)]
 struct Message {
     thread_id: String,
     note: String,
     sender: String,
+    code: bool
 }
 
 impl Default for AiPlayground {
@@ -34,14 +51,16 @@ impl Default for AiPlayground {
         // let (tx, rx) = crossbeam::channel::unbounded::<Vec<ChatChoice>>();
         let (tx, rx) = crossbeam::channel::unbounded::<String>();
         let (file_tx, file_rx) = crossbeam::channel::unbounded::<Bytes>();
-
+        let (code_tx, code_rx) = crossbeam::channel::unbounded::<String>();
         Self {
             input: String::new(),
-            history: Vec::new(),
-            command_tx: tx,
-            command_rx: rx,
+            thread: Vec::new(),
+            command_tx: tx, command_rx: rx,
+            code_tx, code_rx,
             file_tx, file_rx,
-            current_streaming_message: None
+            current_streaming_message: None,
+            code: String::new(),
+            file: None,
         }
     }
 }
@@ -70,7 +89,7 @@ impl AiPlayground {
                         let min_width = 200.0;
 
                         // Render all finalized messages
-                        for item in &self.history {
+                        for item in &self.thread {
                             self.render_message(ui, item, max_msg_width, fixed_height, min_width);
                         }
 
@@ -91,26 +110,32 @@ impl AiPlayground {
                 text_edit.request_focus();
                 let input = self.input.clone();
                 self.input.clear();
-                let tx = self.command_tx.clone();
+                let msg_tx = self.command_tx.clone();
                 let file_tx = self.file_tx.clone();
+                let code_tx = self.code_tx.clone();
                 let thread_id = if let Some(ref thread_id) = self.current_streaming_message {
                     thread_id.thread_id.clone()
                 } else {
                     "".to_string()
                 };
 
-                self.history.push(Message {
+                self.thread.push(Message {
                     note: input.clone(),
                     sender: "You".to_string(),
-                    thread_id
+                    thread_id: thread_id.clone(),
+                    ..Default::default()
                 });
                 spawn_local(async move {
+                    let id = if !thread_id.is_empty() {
+                        Some(thread_id.clone())
+                    } else { None };
                     let res =
                         assistant_call_with_response_ai_tools(
                             input.as_str(), 
-                            None, 
-                            tx.clone(),
-                            file_tx.clone()
+                            id, 
+                            msg_tx.clone(),
+                            file_tx.clone(),
+                            code_tx.clone()
                         ).await;
                     log::info!("Res: {res:?}");
                 });
@@ -125,28 +150,43 @@ impl AiPlayground {
                 "".to_string()
             };
             if let Some(ref mut streaming_message) = self.current_streaming_message {
-                streaming_message.note.push_str(&msg.clone());
+                if msg.ne("[DONE]") {
+                    streaming_message.note.push_str(&msg.clone());
+                }
             } else {
-
+                
                 // If no message is being streamed, start a new one
                 self.current_streaming_message = Some(
                     Message {
                         note: msg,
                         sender: "GPT".to_string(),
-                        thread_id
+                        thread_id,
+                        code: false
                     }
                 );
             }
         }
 
         if let Ok(image_bytes) = self.file_rx.try_recv() {
-            ui.image(Image::new(ImageSource::Bytes { uri: "", bytes: image_bytes }));
+            self.file = Some(image_bytes);
+        }
+
+        if let Ok(code) = self.code_rx.try_recv() {
+            self.current_streaming_message = Some(
+                Message {
+                    note: code,
+                    sender: "GPT".to_string(),
+                    thread_id,
+                    code: true
+                }
+            );
         }
 
         // Finalize the streaming message when complete (optional logic to detect completion)
         if let Some(ref mut current_message) = self.current_streaming_message {
             if current_message.note.eq("[DONE]") {
-                self.history.push(current_message.clone());
+                current_message.note = current_message.note.split_at(5).1.to_string();
+                self.thread.push(current_message.clone());
             }
             if current_message.note.starts_with("thread_") && current_message.thread_id.is_empty(){
                 current_message.thread_id = current_message.note.clone();
@@ -305,7 +345,20 @@ impl AiPlayground {
                                 ),
                                 |ui| {
                                     ui.set_width(ui.available_width());
+                                    if let Some(bytes) = &self.file {
+                                        if let Ok(img) = str::from_utf8(bytes) {
+                                            ui.image(img);
+                                        }
+                                    }
+                                    // if self.begin_code && self.end_code.eq(&false) && item.note.ends_with(pat)
+                                    if !self.code.is_empty() {
+                                        let language = "python";
+                                        let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+                                        egui_extras::syntax_highlighting::code_view_ui(ui, &theme, &self.code, language);
+                                    }
+
                                     viewer::easy_mark(ui, &item.note);
+                                    
                                 },
                             );
                         });
