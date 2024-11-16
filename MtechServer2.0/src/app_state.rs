@@ -12,6 +12,7 @@ use crate::{
         ModalTypes,
     },
 };
+use async_openai_wasm::types::ThreadObject;
 use crossbeam::channel::{self, Receiver, Sender};
 use database::{
     schema::{
@@ -179,6 +180,9 @@ pub struct MtechServerContext {
         Sender<Vec<ExtraInventoryData>>,
         Receiver<Vec<ExtraInventoryData>>,
     ),
+    #[serde(skip)]
+    pub ai_thread_channel: (Sender<ThreadObject>, Receiver<ThreadObject>),
+    
 
     // UI and Application State Fields
     /// {Widgets / Modals / Ui for portions throughout the app}
@@ -313,6 +317,8 @@ pub struct MtechServerContext {
     /// Just some testing for Ai capabilities
     #[serde(skip)]
     pub ai_playground: AiPlayground,
+    /// Save AI chats to local storage // SurrealDB for persistence
+    pub save_chats: bool
 }
 
 impl MtechServer {
@@ -389,6 +395,7 @@ impl MtechServer {
         let serial_channel = <SerialData>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let seb_channel = <Vec<Value>>::create_unbounded_channel();
+        let ai_thread_channel = <ThreadObject>::create_unbounded_channel();
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -441,6 +448,7 @@ impl MtechServer {
             tur_channel,
             extra_stock_channel,
             seb_channel,
+            ai_thread_channel,
 
             // MODALS / LAYOUTS
             tur: Tur::default(),
@@ -498,6 +506,7 @@ impl MtechServer {
             stock_channel,
             serial_channel,
             store_selection: 76,
+            save_chats: false
         };
 
         Self {
@@ -546,21 +555,22 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
         "Logs".to_owned(),
     ]);
 
-    let [_a, b] =
-        tree.main_surface_mut()
-            .split_below(NodeIndex::root(), 0.65, vec!["My Tools".to_owned()]);
+    // let [_a, b] =
+    //     tree.main_surface_mut()
+    //         .split_below(NodeIndex::root(), 0.65, vec!["My Tools".to_owned()]);
 
-    let [_, _] = tree
-        .main_surface_mut()
-        .split_right(b, 0.5, vec!["Bug Report".to_owned()]);
+    // let [_, _] = tree
+    //     .main_surface_mut()
+    //     .split_right(b, 0.5, vec!["Bug Report".to_owned()]);
 
     // "Terminal".to_owned(),
 
-    let [_, _] = tree.main_surface_mut().split_left(
-        b,
+    let [_, _] = tree.main_surface_mut().split_below(// .split_left(
+        NodeIndex::root(), // b,
         0.6,
         vec![
             "My Tasks".to_owned(),
+            "Bug Report".to_owned(),
             // "Task Audit".to_owned(),
             "Ai Playground".to_owned(),
         ],

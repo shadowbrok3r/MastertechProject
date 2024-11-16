@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use crate::{
     app_state::{AppState, MtechServer},
     pages::downloads_page::get_github_releases,
-    tabs::stock::{get_extra_stock_info, get_stock},
+    tabs::{ai_playground::ChatThread, stock::{get_extra_stock_info, get_stock}},
 };
 use database::{
     live_data::listen_data,
@@ -56,6 +58,14 @@ impl MtechServer {
                     );
                 }
             }
+
+            // Get existing chats a user has
+            // with ChatGPT
+            if let Some(chat_history) = storage.get_string("chat_history") {
+                let chat_threads: HashMap<String, ChatThread> = serde_json::from_str(&chat_history).unwrap_or_default();
+                self.context.ai_playground.set_threads(chat_threads);
+            }
+
             if let Some(version) = storage.get_string("version") {
                 if env!("CARGO_PKG_VERSION") != version {
                     gloo_console::info!(format!("Mismatched Cargo Version. Doing update from {:?} to -> {:?}", version, env!("CARGO_PKG_VERSION")));
@@ -263,6 +273,19 @@ impl MtechServer {
         if let Ok(state) = self.context.app_state_rx.try_recv() {
             debug!("Got a new state: {state:?}");
             self.state = state
+        }
+
+        if let Ok(thread_obj) = self.context.ai_thread_channel.1.try_recv() {
+            let mut thread_map = HashMap::new();
+            
+            thread_map.insert(thread_obj.id.clone(), ChatThread {
+                id: thread_obj.id,
+                messages: Vec::new(),
+                images: Vec::new(),
+                input: String::new(),
+            });
+
+            self.context.ai_playground.set_threads(thread_map);
         }
     }
 }
