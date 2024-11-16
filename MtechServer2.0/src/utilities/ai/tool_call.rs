@@ -4,7 +4,7 @@ use anyhow::{Error, Result};
 use async_openai_wasm::{
     config::OpenAIConfig,
     types::{
-        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent, MessageDeltaContent, MessageRole, RunObject, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
+        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent, MessageDeltaContent, MessageRole, RunObject, RunStepDetailsToolCalls, StepDetails, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
     },
     Client, Threads,
 };
@@ -305,7 +305,8 @@ pub async fn assistant_call_with_response_ai_tools(
     input: &str,
     existing_thread_id: Option<String>,
     tx: Sender<String>,
-    file_tx: Sender<Bytes>
+    file_tx: Sender<Bytes>,
+    code_tx: Sender<String>
 ) -> Result<(), Error> {
     // -- Initialize AI Client
     let oa_client = new_oa_client()?;
@@ -422,8 +423,13 @@ pub async fn assistant_call_with_response_ai_tools(
                     for msg in run_step_obj.content {
                         match msg {
                             MessageContent::ImageFile(img_obj) => {
-                                info!("message_content_image_file_object: {:?}", img_obj.image_file);
-                                tx.try_send(img_obj.image_file.file_id)?;
+                                info!("message_content_image_file_object: {:?}", img_obj.image_file.file_id);
+                                let file_bytes = oa_client
+                                    .files()
+                                    .content(&img_obj.image_file.file_id)
+                                    .await?;
+
+                                file_tx.try_send(file_bytes);
                             },
                             MessageContent::ImageUrl(img_url) => {
                                 info!("Image URL: {:?}", img_url.image_url.url);
@@ -433,9 +439,26 @@ pub async fn assistant_call_with_response_ai_tools(
                         }
                     }
                 },
+                AssistantStreamEvent::ThreadRunStepCompleted(run_object) => {
+                    match run_object.step_details {
+                        StepDetails::ToolCalls(run_tools) => {
+                            for call in run_tools.tool_calls.iter() {
+                                match call {
+                                    RunStepDetailsToolCalls::CodeInterpreter(run_code_obj) => {
+                                        let input = &run_code_obj.code_interpreter.input;
+                                        gloo_console::info!(format!("CODE: {input}"));
+                                        code_tx.try_send(input.clone())?;
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                },
                 AssistantStreamEvent::Done(done) => {
                     tx.try_send(done)?;
-                }
+                },
                 _ => info!("\nEvent: {event:?}\n"),
             },
             Err(e) => {
@@ -578,7 +601,7 @@ Your aim is to help the user understand which products or configurations are the
 
 Provide the output as a comprehensive report consisting of:
 - Key insights summarized in bullet points or short paragraphs.
-- Graphs (where applicable, provide a link to the graph or a description of the trends revealed).
+- Graphs/Images with a description of the Graph/Image
 - Identified correlations and their likely interpretations.
 - Suggested actionable recommendations.
 
@@ -587,6 +610,24 @@ The output report should be structured as follows:
 2. **Graphs & Visualizations**: Include graphs with brief explanations.
 3. **Statistical Analysis**: Present the calculated correlations, trends, insights, and notable patterns.
 4. **Recommendations**: A list of actionable recommendations based on the analysis.
+
+You can use markdown. But these are the only forms of markdown allowed:
+- inline text:
+  - normal, `code`, *strong*, ~strikethrough~, _underline_, /italics/, ^raised^, $small$
+  - `\` escapes the next character
+  - [hyperlink](https://example.com)
+  - Embedded URL: <https://example.com>
+- `# ` header
+- `---` separator (horizontal line)
+- `> ` quote
+- `- ` bullet list
+- `1. ` numbered list
+- \`\`\` code fence
+- a^2^ + b^2^ = c^2^
+- $small print$
+
+If you use these markdown characters and you are NOT intentionally writing markdown, then escape the character with `\` 
+like this: orderFile\_v1.json
 
 # Example
 

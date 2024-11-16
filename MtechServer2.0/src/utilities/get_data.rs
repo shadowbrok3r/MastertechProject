@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use database::{
     schema::{
-        ComputerData, CustomerData, LiveTaskPayload, Record, TaskNotePayload, TaskPayload,
-        TicketData, TicketPayload, User, TASK_NOTE_TABLE,
+        LiveTaskPayload, Record, TaskNotePayload, TaskPayload,
+        TicketPayload, User, TASK_NOTE_TABLE,
     },
     DATABASE,
 };
