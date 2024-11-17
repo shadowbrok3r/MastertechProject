@@ -2,10 +2,9 @@ use crate::{
     app_state::MtechServerContext,
     utilities::ai::{oa_client::new_oa_client, tool_call::{assistant_call_with_response_ai_tools, get_or_retrieve_thread}}
 };
-use async_openai_wasm::Threads;
+use async_openai_wasm::{types::ThreadObject, Threads};
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Key, Layout, Margin, Rect, RichText, 
-    Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
 };
 
 use crossbeam::channel::{Receiver, Sender};
@@ -18,7 +17,7 @@ use core::str;
 use std::collections::HashMap;
 
 pub struct AiPlayground {
-    selected_thread: String,
+    pub selected_thread: String,
     threads: HashMap<String, ChatThread>,
 
     response_tx: Sender<ChatMessage>,
@@ -84,24 +83,43 @@ impl Default for AiPlayground {
 
 impl MtechServerContext {
     pub fn ai_playground(&mut self, ui: &mut Ui) {
-        SidePanel::left("ChatHistoryPanel")
-            .default_width(50.)
-            .frame(Frame::dark_canvas(ui.style()))
-            .show_inside(ui, |ui| {
-                let mut selected_thread = self.ai_playground.selected_thread.clone();
-                if !self.ai_playground.threads.is_empty() {
-                    for (thread_id, _) in self.ai_playground.threads.iter() {
-                        let selected_thread_res = ui.selectable_label(
-                            selected_thread.eq(&thread_id.clone()), 
-                            RichText::new(thread_id.clone())
-                        );
 
-                        if selected_thread_res.clicked() {
-                            selected_thread = thread_id.clone();
+
+        TopBottomPanel::top("GPT")
+            .frame(Frame::default().inner_margin(Margin::same(8.)))
+            .exact_height(50.)
+            .show_inside(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    let selected_thread = self.ai_playground.selected_thread.clone();
+                    ui.label(selected_thread)
+                });
+            });
+
+        SidePanel::left("ChatHistoryPanel")
+            .frame(Frame::default().inner_margin(Margin::same(8.)))
+            .exact_width(175.)
+            .show_inside(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    let mut selected_thread = self.ai_playground.selected_thread.clone();
+                    if !self.ai_playground.threads.is_empty() {
+                        for (thread_id, _) in self.ai_playground.threads.iter() {
+                            let selected_thread_res = ui.selectable_label(
+                                selected_thread.eq(&thread_id.clone()), 
+                                RichText::new(thread_id.clone())
+                            );
+                        
+                            if selected_thread_res.clicked() {
+                                selected_thread = thread_id.clone();
+                            }
                         }
                     }
-                } else {
-                    let new_chat = Button::new("New chat +").ui(ui);
+
+                    let new_chat = Button::new("New ➕")
+                        .rounding(Rounding::same(25.0))
+                        .min_size(Vec2::new(120., 24.))
+                        .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                        .ui(ui);
+
                     if new_chat.clicked() {
                         let tx = self.ai_thread_channel.0.clone();
                         spawn_local(async move {
@@ -113,13 +131,11 @@ impl MtechServerContext {
                             let _ = tx.try_send(thread);
                         });
                     }
-                }
-
-
+                });
             });
 
         TopBottomPanel::bottom("ChatInputPanel")
-            .frame(Frame::dark_canvas(ui.style()))
+            .frame(Frame::default().inner_margin(Margin::same(8.)))
             .show_inside(ui, |ui| {
                 self.ai_playground.chat(ui);
             });
@@ -170,48 +186,68 @@ impl AiPlayground {
             },
         );
 
-        self.handle_events();
+        self.handle_events(ui);
     }
 
     fn chat(&mut self, ui: &mut Ui) {
         if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
-            ui.vertical_centered_justified(|ui| {
-                let text_edit = TextEdit::multiline(&mut thread.input)
-                    .hint_text("Ask GPT to summarize a service order")
-                    .ui(ui);
+            ui.horizontal_centered(|ui| {
+                ui.vertical_centered_justified(|ui| {
+                    let text_edit = TextEdit::multiline(&mut thread.input)
+                        .hint_text("Ask GPT to summarize a service order")
+                        .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
+                        .ui(ui);
 
-                let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+                    let key_press = ui
+                        .input(|i| 
+                            i.key_pressed(Key::Enter)
+                        );
 
-                if text_edit.lost_focus() && key_press {
+                    if text_edit.lost_focus() && key_press {
+                        text_edit.request_focus();
+                        Self::submit_input(thread, self.response_tx.clone());
+                    }
+                });
+                
+                let submit = Button::new("↗️")
+                    .rounding(Rounding::same(25.0))
+                    .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
+                    .ui(ui)
+                    .on_hover_text(RichText::new("(Or CTRL + Shift to submit)"));
 
-                    text_edit.request_focus();
-                    let response_tx = self.response_tx.clone();
-                    let input = thread.input.clone();
-                    thread.input.clear();
-
-                    // let current_thread = &self.selected_thread;
-                    let id = if !thread.id.is_empty() {
-                        Some(thread.id.clone())
-                    } else { None };
-
-                    spawn_local(async move {
-                        
-                        let res = assistant_call_with_response_ai_tools(
-                            input.as_str(), 
-                            id, 
-                            response_tx.clone()
-                        ).await;
-
-                        log::info!("Res: {res:?}");
-                    });
+                if submit.clicked() {
+                    Self::submit_input(thread, self.response_tx.clone());
                 }
             });
         }
     }
 
-    fn handle_events(&mut self) {
+    fn submit_input(thread: &mut ChatThread, response_tx: Sender<ChatMessage>) {
+        
+        let input = thread.input.clone();
+        thread.input.clear();
+
+        // let current_thread = &self.selected_thread;
+        let id = if !thread.id.is_empty() {
+            Some(thread.id.clone())
+        } else { None };
+
+        spawn_local(async move {
+            
+            let res = assistant_call_with_response_ai_tools(
+                input.as_str(), 
+                id, 
+                response_tx.clone()
+            ).await;
+
+            log::info!("Res: {res:?}");
+        });
+    }
+
+    fn handle_events(&mut self, ui: &mut Ui) {
         // Append characters to the current streaming message
         while let Ok(response) = self.response_rx.try_recv() {
+            ui.ctx().request_repaint();
             gloo_console::log!(format!("Response: {response:?}"));
                     // Ensure the thread exists
             let current_thread = self
@@ -226,7 +262,7 @@ impl AiPlayground {
             );
 
             match response.content {
-                ChatMessageType::Text(ref msg) => {
+                ChatMessageType::Text(ref msg) | ChatMessageType::Code(ref msg) => {
                     // Update or add the message in the thread
                     if let Some(existing_message) = current_thread.messages.iter_mut().find(|m| m.id == response.id) {
                         // Append new text to the existing message
@@ -238,8 +274,12 @@ impl AiPlayground {
                         current_thread.messages.push(response);
                     }
                 }
-                ChatMessageType::Image(_) | ChatMessageType::Code(_) | ChatMessageType::FileId(_) => {
+                ChatMessageType::Image((_, ref img)) => {
+                    gloo_console::info!(format!("{img:?}"));
                     // Directly add these types of messages
+                    current_thread.messages.push(response);
+                }
+                ChatMessageType::FileId(_)  => {
                     current_thread.messages.push(response);
                 }
                 ChatMessageType::Error(ref e) => {
@@ -428,17 +468,16 @@ impl AiPlayground {
                                 |ui| {
                                     ui.set_width(ui.available_width());
                                     match &item.content {
-                                        ChatMessageType::Text(msg) => {
-                                            viewer::easy_mark(ui, msg);
-                                        },
+                                        ChatMessageType::Text(msg) => viewer::easy_mark(ui, msg),
                                         ChatMessageType::Code(code) => {
                                             let language = "python";
                                             let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
                                             code_view_ui(ui, &theme, code, language);
                                         },
                                         ChatMessageType::Image((_, img)) => {
-                                            if let Ok(img) = str::from_utf8(img) {
-                                                ui.image(img);
+                                            match str::from_utf8(img) {
+                                                Ok(img) => {ui.image(img);},
+                                                Err(e) => {gloo_console::info!(format!("Utf8Error: {e:?}"));}
                                             }
                                         },
                                         _ => {}
