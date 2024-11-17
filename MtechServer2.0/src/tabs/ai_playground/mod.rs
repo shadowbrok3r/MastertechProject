@@ -4,7 +4,7 @@ use crate::{
 };
 use async_openai_wasm::Threads;
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
 };
 
 use crossbeam::channel::{Receiver, Sender};
@@ -106,14 +106,30 @@ impl MtechServerContext {
                     ui.add_space(ui.available_width()/2.5);
                     if !self.ai_playground.edit_title {
                         ui.heading(self.ai_playground.selected_thread.clone());
-                        ui.add_space(5.);
-                        if ui.button("🖊").clicked() {
+                        ui.add_space(10.);
+                        if Button::new(
+                                RichText::new("🖊")
+                                .heading()
+                            )
+                            .min_size(Vec2::new(10., 8.))
+                            .clicked() 
+                        {
                             self.ai_playground.edit_title = true;
                         }
                     } else {
-                        let edit = TextEdit::singleline(title).ui(ui);
-                        ui.add_space(5.);
-                        let done = ui.button("✔️");
+                        let edit = TextEdit::singleline(title)
+                        .margin(Margin::same(5.))
+                        .font(FontId::proportional(12.))
+                        .ui(ui);
+                        // request keyboard focus somehow..
+                        ui.add_space(10.);
+                        let done = Button::new(
+                                RichText::new("✔")
+                                .heading()
+                            )
+                            .min_size(Vec2::new(10., 8.))
+                            .ui(ui);
+
                         if edit.lost_focus() ||  done.clicked() {
                             info!("self.ai_playground.chat_title: {:?}", self.ai_playground.chat_title);
                             // self.ai_playground.chat_title.get(&selected_thread).insert(&title.clone());
@@ -182,7 +198,7 @@ impl MtechServerContext {
 
         TopBottomPanel::bottom("ChatInputPanel")
             .frame(Frame::default().inner_margin(Margin::same(8.)))
-            .exact_height(180.)
+            .exact_height(75.)
             .show_inside(ui, |ui| {
                 self.ai_playground.chat(ui);
             });
@@ -248,7 +264,7 @@ impl AiPlayground {
         if let Some(thread) = self.threads.get_mut(&self.selected_thread) {
             ui.horizontal_centered(|ui| {
 
-                let add_media = Button::new("🖻")
+                let add_media = Button::new(RichText::new("🖻").heading())
                     .rounding(Rounding::same(25.0))
                     .min_size(Vec2::new(60., ui.available_height()/1.5))
                     .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
@@ -262,8 +278,9 @@ impl AiPlayground {
                 ui.add_space(10.);
 
                 let text_edit = TextEdit::multiline(&mut thread.input)
-                    .desired_width(ui.available_width()/1.2)
+                    .desired_width(ui.available_width()/1.1)
                     .hint_text("Ask GPT to summarize a service order")
+                    .margin(Margin::same(8.))
                     .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
                     .ui(ui);
 
@@ -279,7 +296,7 @@ impl AiPlayground {
 
                 ui.add_space(10.);
 
-                let submit = Button::new("⮫")
+                let submit = Button::new(RichText::new("⮫").heading())
                     .rounding(Rounding::same(25.0))
                     .min_size(Vec2::new(60., ui.available_height()/1.5))
                     .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
