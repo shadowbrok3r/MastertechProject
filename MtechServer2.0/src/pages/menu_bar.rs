@@ -76,7 +76,7 @@ impl MtechServer {
 
                     let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
 
-                    if result.secondary_clicked() || accepted_by_keyboard {
+                    if result.secondary_clicked() || accepted_by_keyboard && !self.context.search_input.is_empty() {
                         info!("selected? {}", self.context.search_input.clone());
                         if let Some(input) = inputs.get(&self.context.search_input) {
                             let task = self.context.tasks.iter().find(|&x| {

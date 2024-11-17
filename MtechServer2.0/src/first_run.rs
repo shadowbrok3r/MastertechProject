@@ -62,7 +62,12 @@ impl MtechServer {
             // Get existing chats a user has
             // with ChatGPT
             if let Some(chat_history) = storage.get_string("chat_history") {
+                // info!("chat_history: {chat_history:?}");
                 let chat_threads: HashMap<String, ChatThread> = serde_json::from_str(&chat_history).unwrap_or_default();
+                // info!("chat_threads: {chat_threads:?}");
+                if let Some((nth, _)) = chat_threads.iter().nth(0) {
+                    self.context.ai_playground.selected_thread = nth.to_string();
+                }
                 self.context.ai_playground.set_threads(chat_threads);
             }
 
