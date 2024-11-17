@@ -112,6 +112,7 @@ impl MtechServerContext {
                                 .heading()
                             )
                             .min_size(Vec2::new(10., 8.))
+                            .ui(ui)
                             .clicked() 
                         {
                             self.ai_playground.edit_title = true;
