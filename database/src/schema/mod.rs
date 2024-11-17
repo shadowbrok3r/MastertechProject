@@ -31,6 +31,7 @@ pub const SEB_TABLE: &str = "seb_data";
 pub const USER_TABLE: &str = "user";
 pub const NOTIFICATION_TABLE: &str = "notification";
 pub const CONNECTED_CLIENT_TABLE: &str = "connected_client";
+pub const CHAT_THREADS_TABLE: &str = "threads";
 
 #[async_trait(?Send)]
 impl<D> GetAssociatedDataFromId<D> for RecordId {
@@ -50,33 +51,6 @@ pub struct Record {
     #[allow(dead_code)]
     pub id: RecordId,
 }
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ClientId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ComputerId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct CustomerId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct TicketId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd)]
-pub struct UserId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct TaskId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct TaskNoteId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct SebId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct NotificationId(pub RecordId);
 
 #[derive(Serialize, Debug)]
 pub struct RecordResult {
@@ -405,6 +379,16 @@ impl ComputerData {
         self.drives.push(disk);
     }
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ChatThreads {
+    pub id: RecordId,
+    pub files: Option<Vec<String>>,
+    pub messages: Vec<HashMap<String, String>>,
+    pub user: RecordId,
+    pub images: Option<Vec<bytes::Bytes>>
+}
+
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 #[allow(non_snake_case)]
@@ -805,6 +789,7 @@ pub struct User {
     pub user_settings: Option<UserSettings>,
     pub id_prestashop: Option<u64>,
     pub id_store: Option<String>,
+    pub chat_threads: Option<Vec<ChatThreads>>
 }
 
 impl Default for User {
@@ -820,6 +805,7 @@ impl Default for User {
             user_settings: None,
             id_store: None,
             id_prestashop: None,
+            chat_threads: None
         }
     }
 }
@@ -864,3 +850,32 @@ impl Status {
     }
     pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
 }
+
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ClientId(pub RecordId);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ComputerId(pub RecordId);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CustomerId(pub RecordId);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TicketId(pub RecordId);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd)]
+pub struct UserId(pub RecordId);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TaskId(pub RecordId);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TaskNoteId(pub RecordId);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SebId(pub RecordId);
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct NotificationId(pub RecordId);

@@ -127,13 +127,17 @@ impl eframe::App for MtechServer {
 
         if self.context.save_chats {
             self.context.save_chats = false;
-            let threads = self.context.ai_playground.get_threads();
-
-            info!("Saving chats: {:?}", threads);
-            frame.storage_mut().unwrap().set_string(
-                "chat_history",
-                serde_json::to_string(&threads).unwrap(),
-            );
+            if let Some(usr) = &self.context.current_user {
+                let threads = self.context.ai_playground.get_threads();
+                // for (id, thread) in threads {
+                    // thread.messages
+                // }
+                info!("Saving chats: {:?}", threads);
+                frame.storage_mut().unwrap().set_string(
+                    "chat_history",
+                    serde_json::to_string(&threads).unwrap(),
+                );
+            }
         }
 
         // Handle changes to state from various places, such as

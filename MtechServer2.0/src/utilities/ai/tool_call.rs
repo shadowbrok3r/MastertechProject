@@ -304,16 +304,35 @@ pub async fn call_with_response_ai_tools(input: &str) -> Result<Vec<ChatChoice>,
 }
 
 
-pub struct AiBuilder {
+// #[derive(Clone, Serialize, Default, Debug, Deserialize, Builder, PartialEq)]
+// #[builder(name = "CreateThreadRequestArgs")]
+// #[builder(pattern = "mutable")]
+// #[builder(setter(into, strip_option), default)]
+// #[builder(derive(Debug))]
+// #[builder(build_fn(error = "OpenAIError"))]
+// pub struct AiBuilder {
+//     /// A list of [messages](https://platform.openai.com/docs/api-reference/messages) to start the thread with.
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub messages: Option<Vec<CreateMessageRequest>>,
+//     /// A set of resources that are made available to the assistant's tools in this thread. The resources are specific to the type of tool. For example, the `code_interpreter` tool requires a list of file IDs, while the `file_search` tool requires a list of vector store IDs.
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub tool_resources: Option<CreateAssistantToolResources>,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub metadata: Option<HashMap<String, serde_json::Value>>,
+// }
 
-}
 
-pub async fn get_or_retrieve_thread(asst_thread: Threads<'_, OpenAIConfig>, existing_thread_id: Option<String>) -> Result<ThreadObject, Error> {
+pub async fn get_or_retrieve_thread(
+    asst_thread: Threads<'_, OpenAIConfig>, 
+    existing_thread_id: Option<String>,
+    // thread_identification: HashMap<String, serde_json::Value>
+) -> Result<ThreadObject, Error> {
     if let Some(thread_id) = existing_thread_id {
         Ok(asst_thread.retrieve(&thread_id).await?)
     } else {
         // Create a new thread if none exists
         let thread_request = CreateThreadRequestArgs::default()
+            // .metadata(thread_identification)
             // .tool_resources(CreateAssistantToolResources::from(assistant_tools))
             .build()?;
         let thread = asst_thread.create(thread_request.clone()).await?;
@@ -325,14 +344,20 @@ pub async fn assistant_call_with_response_ai_tools(
     input: &str,
     existing_thread_id: Option<String>,
     response_tx: Sender<ChatMessage>,
+    // thread_identification: HashMap<String, serde_json::Value>
 ) -> Result<(), Error> {
     let assistant_id = "asst_3wOgem2DpYiXkk7x34hVb9My";
     // -- Initialize AI Client
     let oa_client: Arc<Client<OpenAIConfig>> = new_oa_client()?;
+    
     // let assistant_client = oa_client.assistants();
     let asst_thread: Threads<'_, OpenAIConfig> = Threads::new(&oa_client);
     // -- Check if there is an existing thread to use, or create a new one
-    let thread = get_or_retrieve_thread(asst_thread, existing_thread_id).await?;
+    let thread = get_or_retrieve_thread(
+        asst_thread, 
+        existing_thread_id, 
+        // thread_identification
+    ).await?;
 
     let thread_id = thread.id;
     let mut res = ChatMessage { 

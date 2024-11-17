@@ -9,12 +9,12 @@ tokio = ["dep:tokio"]
 wasm = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:web-time"]
 
 [dependencies]
-parking_lot = "0.12.3"
-ewebsock = "0.8.0"
+parking_lot = "0.12"
+ewebsock = "0.8"
 zstd = "0.13"
 reqwest = { version = "0.12", features = ["stream", "json"] }
 rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] }
-rfd = "0.15.0"
+rfd = "0.15"
 tap = "1"
 itertools = "0.13"
 thiserror = "2.0.2"
