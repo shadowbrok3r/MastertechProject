@@ -125,9 +125,9 @@ impl eframe::App for MtechServer {
             );
         }
 
-        if self.context.save_chats {
-            self.context.save_chats = false;
-            if let Some(usr) = &self.context.current_user {
+        if self.context.ai_playground.save_chats {
+            self.context.ai_playground.save_chats = false;
+            if let Some(_usr) = &self.context.current_user {
                 let threads = self.context.ai_playground.get_threads();
                 // for (id, thread) in threads {
                     // thread.messages

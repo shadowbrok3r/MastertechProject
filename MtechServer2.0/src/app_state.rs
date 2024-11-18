@@ -317,8 +317,6 @@ pub struct MtechServerContext {
     /// Just some testing for Ai capabilities
     #[serde(skip)]
     pub ai_playground: AiPlayground,
-    /// Save AI chats to local storage // SurrealDB for persistence
-    pub save_chats: bool
 }
 
 impl MtechServer {
@@ -506,7 +504,6 @@ impl MtechServer {
             stock_channel,
             serial_channel,
             store_selection: 76,
-            save_chats: false
         };
 
         Self {

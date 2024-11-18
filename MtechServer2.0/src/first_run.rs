@@ -282,7 +282,7 @@ impl MtechServer {
 
         if let Ok(thread_obj) = self.context.ai_thread_channel.1.try_recv() {
             let mut thread_map = HashMap::new();
-            self.context.save_chats = true;
+            self.context.ai_playground.save_chats = true;
             thread_map.insert(thread_obj.id.clone(), ChatThread {
                 id: thread_obj.id.clone(),
                 messages: Vec::new(),

@@ -4,7 +4,7 @@ use crate::{
 };
 use async_openai_wasm::Threads;
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget, Window
 };
 
 use crossbeam::channel::{Receiver, Sender};
@@ -15,7 +15,7 @@ use wasm_bindgen_futures::spawn_local;
 use displays::markdown_editor::viewer;
 use bytes::Bytes;
 use core::str;
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 pub struct AiPlayground {
     pub selected_thread: String,
@@ -24,7 +24,9 @@ pub struct AiPlayground {
     threads: HashMap<String, ChatThread>,
 
     response_tx: Sender<ChatMessage>,
-    response_rx: Receiver<ChatMessage>
+    response_rx: Receiver<ChatMessage>,
+    /// Save AI chats to local storage // SurrealDB for persistence
+    pub save_chats: bool
 }
 
 pub type ImageType = (String, Bytes);
@@ -82,6 +84,7 @@ impl Default for AiPlayground {
             chat_title: HashMap::new(),
             edit_title: false,
             response_tx, response_rx,
+            save_chats: false
         }
     }
 }
@@ -337,7 +340,7 @@ impl AiPlayground {
         // Append characters to the current streaming message
         while let Ok(response) = self.response_rx.try_recv() {
             ui.ctx().request_repaint();
-            gloo_console::log!(format!("Response: {response:?}"));
+            gloo_console::log!(format!("Response: {:?}", response.id.clone()));
                     // Ensure the thread exists
             let current_thread = self
                 .threads
@@ -352,13 +355,16 @@ impl AiPlayground {
 
             match response.content {
                 ChatMessageType::Text(ref msg) | ChatMessageType::Code(ref msg) => {
+                    gloo_console::info!(response.id.clone());
                     // Update or add the message in the thread
                     if let Some(existing_message) = current_thread.messages.iter_mut().find(|m| m.id == response.id) {
                         // Append new text to the existing message
                         if let ChatMessageType::Text(existing_content) = &mut existing_message.content {
+                            log::info!("Got msg of type Text: {msg}");
                             existing_content.push_str(msg);
                         }
                     } else {
+                        log::info!("Got msg: {}", response.id);
                         // Add the message if it's not already in the thread
                         current_thread.messages.push(response);
                     }
@@ -376,6 +382,7 @@ impl AiPlayground {
                     current_thread.messages.push(response);
                 }
                 ChatMessageType::Done => {
+                    self.save_chats = true;
                     // Finalize the message, no further action needed
                 }
             }
@@ -556,6 +563,7 @@ impl AiPlayground {
                                 ),
                                 |ui| {
                                     ui.set_width(ui.available_width());
+                                    gloo_console::info!(format!("Got msg: {item:?}"));
                                     match &item.content {
                                         ChatMessageType::Text(msg) => viewer::easy_mark(ui, msg),
                                         ChatMessageType::Code(code) => {
@@ -564,12 +572,31 @@ impl AiPlayground {
                                             let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
                                             code_view_ui(ui, &theme, code, language);
                                         },
-                                        ChatMessageType::Image((_, img)) => {
-                                            gloo_console::info!(format!("Got an img: {img:?}"));
-                                            match str::from_utf8(img) {
-                                                Ok(img) => {ui.image(img);},
-                                                Err(e) => {gloo_console::info!(format!("Utf8Error: {e:?}"));}
+                                        ChatMessageType::Image((file_id, bytes)) => {
+                                            gloo_console::info!(format!("Got an img: {bytes:?}"));
+                                            // Convert `bytes::Bytes` into `Arc<[u8]>` required by `egui::load::Bytes`
+                                            let egui_bytes: eframe::egui::load::Bytes = eframe::egui::load::Bytes::Shared(Arc::from(bytes.to_vec()));
+                                            
+                                            let unique_uri = format!("bytes://{file_id}.png");
+                                            let uri = Cow::from(unique_uri);
+
+                                            let image_source = ImageSource::Bytes {
+                                                uri,
+                                                bytes: egui_bytes,
+                                            };
+
+                                            if ui.image(image_source.clone()).clicked(){
+                                                Window::new("egui-modal").show(ui.ctx(), |ui| {
+                                                    // let modal = egui_modal::Modal::new(ui.ctx(), "nested_modal");
+                                                    // modal.show(|ui| {
+                                                        Image::new(image_source).fit_to_original_size(1.).ui(ui);
+                                                    // });
+                                                });
                                             }
+                                            // match str::from_utf8(img) {
+                                            //     Ok(img) => {ui.image(img);},
+                                            //     Err(e) => {gloo_console::info!(format!("Utf8Error: {e:?}"));}
+                                            // }
                                         },
                                         _ => {}
                                     }
