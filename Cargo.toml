@@ -54,5 +54,8 @@ lto = true
 # opt-level = 2
 
 # [patch.crates-io]
+# arrayvec = "=0.7.6"
+[overrides]
+arrayvec = "0.7.6"
 # libc = { git = "https://github.com/wasix-org/libc", branch = "master" }
 # tokio = { git = "https://github.com/wasix-org/tokio", branch = "wasix-1.24.2" }
