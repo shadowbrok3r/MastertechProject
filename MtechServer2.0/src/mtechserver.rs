@@ -132,7 +132,7 @@ impl eframe::App for MtechServer {
                 // for (id, thread) in threads {
                     // thread.messages
                 // }
-                info!("Saving chats: {:?}", threads);
+                // info!("Saving chats: {:?}", threads);
                 frame.storage_mut().unwrap().set_string(
                     "chat_history",
                     serde_json::to_string(&threads).unwrap(),

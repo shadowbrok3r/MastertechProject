@@ -26,7 +26,8 @@ pub struct AiPlayground {
     response_tx: Sender<ChatMessage>,
     response_rx: Receiver<ChatMessage>,
     /// Save AI chats to local storage // SurrealDB for persistence
-    pub save_chats: bool
+    pub save_chats: bool,
+    image_id: String
 }
 
 pub type ImageType = (String, Bytes);
@@ -84,7 +85,8 @@ impl Default for AiPlayground {
             chat_title: HashMap::new(),
             edit_title: false,
             response_tx, response_rx,
-            save_chats: false
+            save_chats: false,
+            image_id: String::new(),
         }
     }
 }
@@ -242,7 +244,8 @@ impl AiPlayground {
                         let min_width = 200.0;
 
                         // Render all finalized messages
-                        for (thread_id, thread) in self.threads.iter() {
+                        let threads = self.threads.clone();
+                        for (thread_id, thread) in threads.iter() {
                             if thread.messages.is_empty() {
                                 // let query = [("limit", "1")]; // Limit the list responses to 1 message
                                 // let _response: async_openai_wasm::types::ListMessagesResponse = oa_client
@@ -340,7 +343,6 @@ impl AiPlayground {
         // Append characters to the current streaming message
         while let Ok(response) = self.response_rx.try_recv() {
             ui.ctx().request_repaint();
-            gloo_console::log!(format!("Response: {:?}", response.id.clone()));
                     // Ensure the thread exists
             let current_thread = self
                 .threads
@@ -354,21 +356,23 @@ impl AiPlayground {
             );
 
             match response.content {
-                ChatMessageType::Text(ref msg) | ChatMessageType::Code(ref msg) => {
-                    gloo_console::info!(response.id.clone());
+                ChatMessageType::Text(ref msg) => {
+                    gloo_console::info!(format!("msg ID: {}", response.id.clone()));
                     // Update or add the message in the thread
                     if let Some(existing_message) = current_thread.messages.iter_mut().find(|m| m.id == response.id) {
+                        gloo_console::info!(format!("Got existing_message: {}", response.id.clone()));
                         // Append new text to the existing message
                         if let ChatMessageType::Text(existing_content) = &mut existing_message.content {
                             log::info!("Got msg of type Text: {msg}");
                             existing_content.push_str(msg);
                         }
                     } else {
-                        log::info!("Got msg: {}", response.id);
+                        log::info!("We did NOT have an existing message. Pushing response: {:?}", response);
                         // Add the message if it's not already in the thread
                         current_thread.messages.push(response);
                     }
                 }
+                ChatMessageType::Code(_) => current_thread.messages.push(response),
                 ChatMessageType::Image((_, ref img)) => {
                     gloo_console::info!(format!("{img:?}"));
                     // Directly add these types of messages
@@ -391,7 +395,7 @@ impl AiPlayground {
     }
 
     fn render_message(
-        &self,
+        &mut self,
         ui: &mut Ui,
         item: &ChatMessage,
         max_msg_width: f32,
@@ -563,9 +567,11 @@ impl AiPlayground {
                                 ),
                                 |ui| {
                                     ui.set_width(ui.available_width());
-                                    gloo_console::info!(format!("Got msg: {item:?}"));
+                                    // gloo_console::info!(format!("Got msg: {item:?}"));
                                     match &item.content {
-                                        ChatMessageType::Text(msg) => viewer::easy_mark(ui, msg),
+                                        ChatMessageType::Text(msg) 
+                                        | ChatMessageType::FileId(msg) 
+                                        | ChatMessageType::Error(msg) => viewer::easy_mark(ui, msg),
                                         ChatMessageType::Code(code) => {
                                             gloo_console::info!(format!("Got code: {code:?}"));
                                             let language = "python";
@@ -573,7 +579,7 @@ impl AiPlayground {
                                             code_view_ui(ui, &theme, code, language);
                                         },
                                         ChatMessageType::Image((file_id, bytes)) => {
-                                            gloo_console::info!(format!("Got an img: {bytes:?}"));
+                                            // gloo_console::info!(format!("Got an img: {bytes:?}"));
                                             // Convert `bytes::Bytes` into `Arc<[u8]>` required by `egui::load::Bytes`
                                             let egui_bytes: eframe::egui::load::Bytes = eframe::egui::load::Bytes::Shared(Arc::from(bytes.to_vec()));
                                             
@@ -585,17 +591,23 @@ impl AiPlayground {
                                                 bytes: egui_bytes,
                                             };
 
-                                            if ui.image(image_source.clone()).clicked(){
-                                                Window::new("egui-modal").show(ui.ctx(), |ui| {
-                                                    // let modal = egui_modal::Modal::new(ui.ctx(), "nested_modal");
-                                                    // modal.show(|ui| {
-                                                        Image::new(image_source).fit_to_original_size(1.).ui(ui);
-                                                    // });
-                                                });
+                                            let modal = egui_modal::Modal::new(ui.ctx(), "nested_modal")..with_close_on_outside_click(true);
+                                            if Button::new(RichText::new(format!("Image {}", file_id)).color(Color32::from_rgb(155, 12, 165)).strong()).ui(ui).clicked() {
+                                                self.image_id = file_id.to_string();
+                                                modal.open();
+                                            // if Image::new(image_source.clone()).show_loading_spinner(true).max_size(ui.available_size()/2.).fit_to_original_size(0.8).ui(ui).clicked(){
                                             }
-                                            // match str::from_utf8(img) {
-                                            //     Ok(img) => {ui.image(img);},
-                                            //     Err(e) => {gloo_console::info!(format!("Utf8Error: {e:?}"));}
+
+                                            modal.show(|ui| {
+                                                if self.image_id.eq(file_id) {
+                                                    Image::new(image_source).show_loading_spinner(true).fit_to_original_size(0.8).ui(ui);
+                                                }
+                                            });
+                                            // if self.show_modal && !modal.is_open() {
+                                            //     Window::new(format!("Image {file_id}")).show(ui.ctx(), |ui| {
+
+                                                    
+                                            //     });
                                             // }
                                         },
                                         _ => {}
