@@ -4,11 +4,12 @@ use crate::{
 };
 use async_openai_wasm::Threads;
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget, Window
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
 };
 
 use crossbeam::channel::{Receiver, Sender};
 use egui_extras::syntax_highlighting::{code_view_ui, CodeTheme};
+use egui_modal::ModalStyle;
 use log::info;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen_futures::spawn_local;
@@ -591,8 +592,29 @@ impl AiPlayground {
                                                 bytes: egui_bytes,
                                             };
 
-                                            let modal = egui_modal::Modal::new(ui.ctx(), "nested_modal")..with_close_on_outside_click(true);
-                                            if Button::new(RichText::new(format!("Image {}", file_id)).color(Color32::from_rgb(155, 12, 165)).strong()).ui(ui).clicked() {
+                                            let mut style = ModalStyle::default();
+                                            style.default_height = Some(400.);
+                                            style.default_width = Some(500.);
+                                            
+                                            let modal = egui_modal::Modal::new(
+                                                ui.ctx(), 
+                                                "nested_modal"
+                                            )
+                                            .with_style(&style)
+                                            .with_close_on_outside_click(true);
+                                            // .button(ui, "Close")
+
+                                            if Button::new(
+                                                RichText::new(
+                                                    format!("Image {}", file_id)
+                                                )
+                                                .color(
+                                                    Color32::from_rgb(155, 12, 165)
+                                                )
+                                                .strong()
+                                            )
+                                            .ui(ui)
+                                            .clicked() {
                                                 self.image_id = file_id.to_string();
                                                 modal.open();
                                             // if Image::new(image_source.clone()).show_loading_spinner(true).max_size(ui.available_size()/2.).fit_to_original_size(0.8).ui(ui).clicked(){
@@ -600,7 +622,12 @@ impl AiPlayground {
 
                                             modal.show(|ui| {
                                                 if self.image_id.eq(file_id) {
-                                                    Image::new(image_source).show_loading_spinner(true).fit_to_original_size(0.8).ui(ui);
+                                                    Image::new(image_source)
+                                                        .show_loading_spinner(true)
+                                                        .fit_to_original_size(0.8)
+                                                        .max_size(Vec2::new(800., 700.))
+                                                        .ui(ui);
+                                                    gloo_console::info!(format!("Available size: {:?}", ui.available_size()));
                                                 }
                                             });
                                             // if self.show_modal && !modal.is_open() {

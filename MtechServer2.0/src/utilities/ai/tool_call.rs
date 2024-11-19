@@ -4,7 +4,7 @@ use anyhow::{Error, Result};
 use async_openai_wasm::{
     config::OpenAIConfig,
     types::{
-        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, DeltaStepDetails, MessageContent, MessageDeltaContent, MessageRole, RunObject, RunStepDeltaStepDetailsToolCalls, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
+        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent, MessageDeltaContent, MessageRole, RunObject, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
     },
     Client, Threads,
 };

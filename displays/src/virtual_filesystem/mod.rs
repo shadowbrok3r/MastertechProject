@@ -1,21 +1,27 @@
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Id, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
-use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
-use std::{cell::RefCell, collections::{HashMap, HashSet}, iter};
-use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
-use crossbeam::channel::{Receiver, Sender};
-use database::{schema::{Node, User}, STORAGE_URL};
-use futures::{StreamExt, Future};
-use anyhow::{Result, Error};
-use mime_guess::from_path;
-use surrealdb::sql::Uuid;
-use rfd::FileHandle;
-use bytes::Bytes;
-use regex::Regex;
-use log::info;
-
 #[cfg(target_arch="wasm32")]
 #[cfg(feature="wasm")]
-use wasm_bindgen_futures::spawn_local;
+use {
+    mime_guess::from_path,
+    rfd::FileHandle,
+    bytes::Bytes,
+    anyhow::{Result, Error},
+    reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url},
+    rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}},
+    futures::{StreamExt, Future},
+    std::iter,
+    database::STORAGE_URL,
+    wasm_bindgen_futures::spawn_local
+};
+use std::{cell::RefCell, collections::{HashMap, HashSet}};
+use crossbeam::channel::{Receiver, Sender};
+use database::schema::{Node, User};
+
+use surrealdb::sql::Uuid;
+
+
+use regex::Regex;
+use log::info;
 
 #[cfg(feature="tokio")]
 use {
@@ -30,6 +36,7 @@ pub struct FileSystem {
     pub scroll_id: Id,
     pub root: Node,
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
+    #[allow(dead_code)]
     bytes_tx: Sender<(Vec<u8>, u64)>,
     selected_items: RefCell<HashSet<String>>,
     directory_paths: HashSet<String>,
