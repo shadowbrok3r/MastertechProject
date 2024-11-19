@@ -34,8 +34,8 @@ pub enum JsonEditorState {
 impl MtechServerContext {
     pub fn json_viewer(&mut self, ui: &mut Ui) {
         let s_frame = Frame::default();
-        s_frame.inner_margin(Margin::same(20.));
-        s_frame.outer_margin(Margin::same(10.));
+        let _ = s_frame.inner_margin(Margin::same(20.));
+        let _ = s_frame.outer_margin(Margin::same(10.));
         SidePanel::left("left-panel")
             .frame(s_frame)
             .max_width(130.)
@@ -96,7 +96,7 @@ impl MtechServerContext {
                     }
 
                     if self.json_editor.value.is_null() {
-                        self.json_editor.set_value(self.user_settings.clone());
+                        let _ = self.json_editor.set_value(self.user_settings.clone());
                     }
                 });
             });
@@ -106,7 +106,7 @@ impl MtechServerContext {
         });
 
         let c_frame = Frame::default();
-        c_frame.inner_margin(Margin::same(10.));
+        let _ = c_frame.inner_margin(Margin::same(10.));
 
         CentralPanel::default()
             .frame(c_frame)
@@ -154,9 +154,9 @@ impl JsonEditor {
 }
 
 #[derive(Default)]
-struct Editor {
-    edit_events: Vec<EditEvent>,
-    state: Option<EditState>,
+pub struct Editor {
+    pub edit_events: Vec<EditEvent>,
+    pub state: Option<EditState>,
 }
 
 impl Editor {
@@ -518,26 +518,26 @@ impl Editor {
     }
 }
 
-enum EditState {
+pub enum EditState {
     EditObjectKey(EditObjectKeyState),
     EditValue(EditValueState),
 }
 
-struct EditObjectKeyState {
-    key: String,
-    object_pointer: String,
-    new_key_input: String,
-    request_focus: bool,
-    is_new_key: bool,
+pub struct EditObjectKeyState {
+    pub key: String,
+    pub object_pointer: String,
+    pub new_key_input: String,
+    pub request_focus: bool,
+    pub is_new_key: bool,
 }
 
-struct EditValueState {
-    pointer: String,
-    new_value_input: String,
-    request_focus: bool,
+pub struct EditValueState {
+    pub pointer: String,
+    pub new_value_input: String,
+    pub request_focus: bool,
 }
 
-enum EditEvent {
+pub enum EditEvent {
     DeleteFromObject { object_pointer: String, key: String },
     DeleteFromArray { array_pointer: String, idx: usize },
     AddToObject { pointer: String },

@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_must_use)]
+
 pub mod app_state;
 pub mod data;
 pub mod first_run;
@@ -17,7 +20,7 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(start)]
 pub fn run() {
     use eframe::wasm_bindgen::JsCast as _;
-    use log::LevelFilter;
+    // use log::LevelFilter;
     use tabs::logger::logging::builder;
     use web_sys::HtmlCanvasElement;
 
@@ -36,10 +39,10 @@ pub fn run() {
         let canvas = document
             .get_element_by_id("mtech_canvas")
             .expect("Failed to find the_canvas_id")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .dyn_into::<HtmlCanvasElement>()
             .expect("the_canvas_id was not a HtmlCanvasElement");
 
-        let start_result = eframe::WebRunner::new()
+        let _start_result = eframe::WebRunner::new()
             .start(
                 canvas,
                 web_options,

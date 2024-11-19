@@ -59,3 +59,6 @@ lto = true
 arrayvec = "0.7.6"
 # libc = { git = "https://github.com/wasix-org/libc", branch = "master" }
 # tokio = { git = "https://github.com/wasix-org/tokio", branch = "wasix-1.24.2" }
+
+# [lints.clippy]
+# unused = "allow"

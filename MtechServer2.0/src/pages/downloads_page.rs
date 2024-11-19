@@ -100,7 +100,7 @@ impl MtechServer {
                                                     let asset = asset.clone();
                                                     let tx = self.context.bytes_channel.0.clone();
                                                     spawn_local(async move {
-                                                        download_release(asset, tx).await;
+                                                        let _ = download_release(asset, tx).await;
                                                     });
                                                 }
 

@@ -60,7 +60,7 @@ impl MtechServerContext {
             });
 
         let c_frame = Frame::default();
-        c_frame.inner_margin(Margin::same(10.));
+        let _ = c_frame.inner_margin(Margin::same(10.));
 
         CentralPanel::default()
             .frame(c_frame)
@@ -77,7 +77,7 @@ impl MtechServerContext {
                             let mut local_seb = LocalSebData::default();
                             local_seb.ExtendedSeb = Some(ExtendedSeb::default());
 
-                            self.json_editor.set_value(local_seb);
+                            let _ = self.json_editor.set_value(local_seb);
                         }
                         self.json_editor.show(ui);
                     });
