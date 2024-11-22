@@ -1,7 +1,7 @@
 use crate::{app_state::MtechServerContext, tabs::stock::get_extra_stock_info};
 use displays::egui_data_table::Renderer;
 use eframe::egui::{
-    Button, CentralPanel, TextEdit, TopBottomPanel, Ui, Widget,
+    Button, CentralPanel, Color32, Spinner, TextEdit, TopBottomPanel, Ui, Widget
 };
 
 use log::info;
@@ -51,6 +51,13 @@ impl MtechServerContext {
             });
 
         CentralPanel::default().show_inside(ui, |ui| {
+            if self.stock_quantity_table.is_empty() {
+                ui.vertical_centered(|ui| {
+                    ui.label("Loading..");
+                    Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                });
+            }
+
             ui.add(Renderer::new(
                 &mut self.stock_quantity_table,
                 &mut self.stock_quantity_viewer,

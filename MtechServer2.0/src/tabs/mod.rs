@@ -20,9 +20,13 @@ pub mod web_console;
 // pub mod all_tasks;
 
 use super::app_state::MtechServerContext;
-use eframe::egui::{Ui, WidgetText};
+use database::schema::Store;
+use eframe::egui::{Response, Ui, WidgetText};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
+use log::info;
 use logger::logger_ui;
+use stock::{get_extra_stock_info, get_stock};
+use wasm_bindgen_futures::spawn_local;
 
 impl MtechServerContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
@@ -146,4 +150,36 @@ impl TabViewer for MtechServerContext {
             }
         }
     }
+
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &Response) {
+        if response.clicked() && tab.as_str() == "Stock" {
+            if let Some(usr) = &self.current_user {
+                let stock_tx = self.stock_channel.0.clone();
+                let store_selection = match usr.clone().store {
+                    Store::RIV => 76,
+                    Store::LTN => 73,
+                    Store::MUR => 74,
+                    Store::AF => 72,
+                    Store::WJ => 78,
+                    Store::ORE => 75,
+                    Store::SAN => 77,
+                };
+                spawn_local(async move {
+                    let stock = get_stock(stock_tx.clone(), store_selection).await;
+                    info!("Stock call: {stock:?} for Store: {:?}", store_selection);
+                });
+            }
+        } 
+        else if response.clicked() && tab.as_str() == "Stock Quantity" {
+            let ex_stock_tx = self.extra_stock_channel.0.clone();
+            spawn_local(async move {
+                let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
+                info!("Extra Stock {stock_quantities:?}");
+            });
+        }
+        else if response.clicked() && tab.as_str() == "Stock Quantity" {
+        
+        }
+    }
+
 }
