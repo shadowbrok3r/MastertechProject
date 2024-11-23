@@ -144,8 +144,43 @@ pub fn deserialize_command(bytes: &[u8]) -> Cmd {
 
 pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
     debug!("get_tasks");
-    let query = format!("SELECT *, (SELECT * FROM task_note WHERE task_id == $parent.id) AS task_note FROM task FETCH service_ticket, service_ticket.computer, service_ticket.customer");
+    let query = r#"
+        SELECT *, (
+            SELECT * FROM task_note 
+                WHERE task_id == $parent.id
+        ) AS task_note 
+        FROM task 
+        WHERE $this.assignee.store == $auth.store 
+        FETCH 
+            service_ticket, 
+            service_ticket.computer, 
+            service_ticket.customer
+    "#;
     let query_results: Vec<TaskPayload> = DATABASE.query(query).await?.take(0)?;
+    tx.try_send(query_results)?;
+    Ok(())
+}
+
+pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
+    debug!("get_tasks");
+    let query = r#"
+        SELECT *, (
+            SELECT * FROM task_note 
+                WHERE task_id == $parent.id
+        ) AS task_note 
+        FROM task 
+        WHERE $this.assignee.store == $store
+        FETCH 
+            service_ticket, 
+            service_ticket.computer, 
+            service_ticket.customer
+    "#;
+    let query_results: Vec<TaskPayload> = DATABASE
+        .query(query)
+        .bind(("store", store.clone()))
+        .await?
+        .take(0)?;
+    // info!("Tasks for store: {query_results:?}");
     tx.try_send(query_results)?;
     Ok(())
 }
@@ -168,9 +203,9 @@ pub async fn get_associated_task_notes(
 
 pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), Error> {
     debug!("get_store_users");
-    DATABASE.set("store", store).await?;
     let data: Vec<User> = DATABASE
         .query("SELECT * FROM user WHERE store == $store")
+        .bind(("store", store))
         .await?
         .take(0)?;
     tx.try_send(data)?;

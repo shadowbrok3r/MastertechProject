@@ -223,14 +223,22 @@ impl MtechServer {
 
     pub fn receive(&mut self) {
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv() {
+            self.context.tasks.clear();
+            log::info!("Got new tasks: {:?}", &tasks.len());
             self.context.tasks = tasks;
+            self.context.rerun_filtering_store_tasks = true;
+            self.context.rerun_filtering_completed = true;
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv() {
+            self.context.store_users.clear();
             for (_, layout) in self.context.task_layouts.iter_mut() {
                 layout.update_assignees(users.clone());
             }
+            log::info!("Got new users: {:?}", users);
             self.context.store_users = users;
+            self.context.rerun_filtering_store_tasks = true;
+            self.context.rerun_filtering_completed = true;
         }
 
         // if let Ok(live_output) = self.context.live_output_rx.try_recv() {
