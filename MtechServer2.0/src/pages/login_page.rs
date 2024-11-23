@@ -36,6 +36,7 @@ impl Login {
     ) -> Result<(), Error> {
         gloo_console::info!("Logging in");
         let database = Database::new(email, pass, None).await;
+        gloo_console::info!(format!("database: {database:?}"));
         match database {
             Ok(db) => {
                 let database = db.clone();
@@ -62,7 +63,10 @@ impl Login {
                 db_tx.try_send(Ok(db))?;
                 appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
             }
-            Err(e) => appstate_tx.try_send(AppState::NoAuth(e.to_string()))?,
+            Err(e) => {
+                gloo_console::info!(e.to_string());
+                appstate_tx.try_send(AppState::NoAuth(e.to_string()))?;
+            },
         }
         Ok(())
     }
@@ -104,6 +108,7 @@ impl MtechServer {
 
                                             ui.label("Please Login");
                                             ui.add_space(20.0);
+                                            let mut refresh = self.context.refresh.clone();
                                             if let Some(login) = self.login_mut() {
                                                 let text_edit =
                                                     TextEdit::singleline(&mut login.username)
@@ -150,6 +155,7 @@ impl MtechServer {
                                                         && !login.password.is_empty()
                                                         && !login.username.is_empty()
                                                     {
+                                                        refresh = true;
                                                         info!("ENTER PRESSED");
                                                         let user = login.username.clone();
                                                         let pass = login.password.clone();
@@ -219,6 +225,7 @@ impl MtechServer {
                                                     .ui(ui)
                                                     .clicked()
                                                 {
+                                                    refresh = true;
                                                     let user = login.username.clone();
                                                     let pass = login.password.clone();
                                                     let email = format!("{user}@pclaptops.com");
@@ -243,6 +250,11 @@ impl MtechServer {
                                                                 .unwrap(),
                                                         }
                                                     });
+                                                }
+
+                                                if refresh {
+                                                    ui.label("Logging in..");
+                                                    Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
                                                 }
                                             }
                                         });

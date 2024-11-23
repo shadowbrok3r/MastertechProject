@@ -1,7 +1,9 @@
 use crate::app_state::{AppState, MainPages, MtechServer};
+use crate::pages::downloads_page::get_github_releases;
 use crate::utilities::TaskUiActions;
-use database::schema::utilities::NotificationMod;
-use database::schema::{Notification, TaskPayload};
+use database::live_data::listen_data;
+use database::schema::utilities::{get_connected_clients, NotificationMod};
+use database::schema::{Notification, TaskPayload, CONNECTED_CLIENT_TABLE};
 use database::{self, DATABASE};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use eframe::egui::{
@@ -147,6 +149,19 @@ impl MtechServer {
                             ui.vertical_centered_justified(|ui| {
                                 if ui.add(Button::new("Web Console")).clicked() {
                                     self.state = AppState::Authenticated(MainPages::WebConsole);
+                                    let live_clients_tx = self.context.live_clients_tx.clone();
+                                    let tx = self.context.connected_clients_tx.clone();
+                                    if let Some(usr) = self.context.current_user.clone() {
+                                        spawn_local(async move {
+                                            let get_connected_clients = get_connected_clients(tx, usr.clone()).await;
+                                            info!("get_connected_clients: {get_connected_clients:?}");
+                                        });
+                                    }
+                                    spawn_local(async move {
+                                        let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
+                                        info!("listen_clients: {listen_data:?}");
+                                    });
+
                                     match self
                                         .context
                                         .app_state_tx
@@ -159,6 +174,13 @@ impl MtechServer {
 
                                 if ui.add(Button::new("Downloads")).clicked() {
                                     self.state = AppState::Authenticated(MainPages::Downloads);
+                                    
+                                    let github_releases_tx = self.context.github_releases_channel.0.clone();
+                                    spawn_local(async move {
+                                        let get_releases = get_github_releases(github_releases_tx).await;
+                                        info!("get_releases: {get_releases:?}");
+                                    });
+
                                     match self
                                         .context
                                         .app_state_tx

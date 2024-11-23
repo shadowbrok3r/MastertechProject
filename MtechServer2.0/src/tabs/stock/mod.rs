@@ -102,13 +102,14 @@ impl MtechServerContext {
             });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            if self.data_table.is_empty() {
+            if self.data_table.len() < 1 {
                 ui.vertical_centered(|ui| {
-                    ui.label("Loading..");
+                    ui.label("Pulling Store Stock Information..");
                     Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
                 });
+            } else {
+                ui.add(Renderer::new(&mut self.data_table, &mut self.data_viewer));
             }
-            ui.add(Renderer::new(&mut self.data_table, &mut self.data_viewer));
         });
     }
 }

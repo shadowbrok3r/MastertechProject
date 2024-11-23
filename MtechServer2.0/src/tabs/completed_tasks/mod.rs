@@ -1,6 +1,6 @@
 use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks}};
 use std::collections::BTreeMap;
-use eframe::egui::Ui;
+use eframe::egui::{Color32, Spinner, Ui, Widget};
 
 impl MtechServerContext{
     pub fn completed_tasks(&mut self, ui: &mut Ui){ 
@@ -30,6 +30,11 @@ impl MtechServerContext{
                 let layout = TaskLayout::new(map, user_names, self.ui_actions_tx.clone(), users.clone());
                 self.task_layouts.insert(page.to_string(), layout);
             }
-        } 
+        } else {
+            ui.vertical_centered(|ui| {
+                ui.label("Loading..");
+                Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+            });
+        }
     }
 }

@@ -2,18 +2,16 @@ use std::collections::HashMap;
 
 use crate::{
     app_state::{AppState, MtechServer},
-    pages::downloads_page::get_github_releases,
-    tabs::{ai_playground::ChatThread, stock::{get_extra_stock_info, get_stock}},
+    tabs::ai_playground::ChatThread,
 };
 use database::{
     live_data::listen_data,
     schema::{
-        utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks},
-        CONNECTED_CLIENT_TABLE, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
+        utilities::{get_notifications, get_store_users, get_tasks},
+        NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
     },
     DATABASE,
 };
-use database::schema::Store;
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
 use eframe::Frame;
 use egui_dock::DockState;
@@ -31,11 +29,6 @@ use {
 impl MtechServer {
     pub fn first_run(&mut self, frame: &mut Frame) {
         self.context.first_run = false;
-        let github_releases_tx = self.context.github_releases_channel.0.clone();
-        spawn_local(async move {
-            let get_releases = get_github_releases(github_releases_tx).await;
-            info!("get_releases: {get_releases:?}");
-        });
 
         if let Some(storage) = frame.storage_mut() {
             if let Some(settings) = storage.get_string("user_settings") {
@@ -145,13 +138,9 @@ impl MtechServer {
         // get all of our channel Senders from crossbeam to get user/store/completed tasks,
         // as well as store users and live task notifications
         let live_tasks_tx = self.context.live_tasks_tx.clone();
-        let live_clients_tx = self.context.live_clients_tx.clone();
         let initial_tasks_tx = self.context.initial_tasks_tx.clone();
         let store_users_tx = self.context.store_users_tx.clone();
-        let tx = self.context.connected_clients_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
-        // let stock_tx = self.context.stock_channel.0.clone();
-        // let ex_stock_tx = self.context.extra_stock_channel.0.clone();
         let live_notif_tx = self.context.live_notification_tx.clone();
         let notif_tx = self.context.notification_tx.clone();
 
@@ -182,6 +171,17 @@ impl MtechServer {
             //     }
             // }
 
+            if self.context.tasks.is_empty() || self.context.store_users.is_empty() {
+                spawn_local(async move {
+                    let get_tasks = get_tasks(initial_tasks_tx).await;
+                    let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
+                    let notifications = get_notifications(notif_tx.clone(), user.clone().id).await;
+                    info!("Get Notifications: {notifications:?}");
+                    info!("get_store_users: {get_store_users:?}");
+                    info!("get_tasks: {get_tasks:?}");
+                });
+            }
+
             spawn_local(async move {
                 let listen_data = listen_data(notes_tx, TASK_NOTE_TABLE).await;
                 info!("listen_task_notes: {listen_data:?}");
@@ -193,41 +193,9 @@ impl MtechServer {
             });
 
             spawn_local(async move {
-                let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
-                info!("listen_clients: {listen_data:?}");
-            });
-
-            spawn_local(async move {
                 let listen_data = listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await;
                 info!("listen_notifications: {listen_data:?}");
             });
-
-            if self.context.tasks.is_empty() || self.context.store_users.is_empty() {
-                // let store_selection = match usr.clone().store {
-                //     Store::RIV => 76,
-                //     Store::LTN => 73,
-                //     Store::MUR => 74,
-                //     Store::AF => 72,
-                //     Store::WJ => 78,
-                //     Store::ORE => 75,
-                //     Store::SAN => 77,
-                // };
-
-                spawn_local(async move {
-                    let get_tasks = get_tasks(initial_tasks_tx).await;
-                    let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
-                    let get_connected_clients = get_connected_clients(tx, user.clone()).await;
-                    // let stock = get_stock(stock_tx.clone(), store_selection).await;
-                    // let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
-                    let notifications = get_notifications(notif_tx.clone(), user.clone().id).await;
-                    info!("Get Notifications: {notifications:?}");
-                    // info!("Extra Stock {stock_quantities:?}");
-                    // info!("Stock call: {stock:?} for Store: {:?}", store_selection);
-                    info!("get_connected_clients: {get_connected_clients:?}");
-                    info!("get_store_users: {get_store_users:?}");
-                    info!("get_tasks: {get_tasks:?}");
-                });
-            }
 
             // let live_bridge = &self.context.live_bridge;
             // if let Some(live_bridge) = live_bridge {
@@ -276,8 +244,8 @@ impl MtechServer {
         }
 
         if let Ok(state) = self.context.app_state_rx.try_recv() {
-            debug!("Got a new state: {state:?}");
-            self.state = state
+            gloo_console::info!(format!("Got a new state: {state:?}"));
+            self.state = state;
         }
 
         if let Ok(thread_obj) = self.context.ai_thread_channel.1.try_recv() {
