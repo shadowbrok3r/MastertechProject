@@ -317,6 +317,8 @@ pub struct MtechServerContext {
     /// Just some testing for Ai capabilities
     #[serde(skip)]
     pub ai_playground: AiPlayground,
+    /// Do we need to refresh the UI?
+    pub refresh: bool
 }
 
 impl MtechServer {
@@ -504,6 +506,7 @@ impl MtechServer {
             stock_channel,
             serial_channel,
             store_selection: 76,
+            refresh: false,
         };
 
         Self {

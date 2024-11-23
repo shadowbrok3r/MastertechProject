@@ -7,7 +7,7 @@ use eframe::egui::{
 };
 use log::info;
 use std::sync::Arc;
-use wasm_bindgen_futures::spawn_local;
+// use wasm_bindgen_futures::spawn_local;
 
 use crate::app_state;
 
@@ -33,9 +33,9 @@ impl eframe::App for MtechServer {
 
         // do some initial setting up
         if self.context.first_run {
-            spawn_local(async move {
-                gloo_console::info!("Hello from a worker?");
-            });
+            // spawn_local(async move {
+            //     gloo_console::info!("Hello from a worker?");
+            // });
             self.first_run(frame);
         }
 

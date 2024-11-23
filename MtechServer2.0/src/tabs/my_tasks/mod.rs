@@ -3,7 +3,7 @@ use crate::{
     utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks},
 };
 use database::schema::Status;
-use eframe::egui::Ui;
+use eframe::egui::{Color32, Spinner, Ui, Widget};
 use log::info;
 use std::collections::BTreeMap;
 
@@ -75,6 +75,11 @@ impl MtechServerContext {
                     TaskLayout::new(map, col_names, self.ui_actions_tx.clone(), users.clone());
                 self.task_layouts.insert(page.to_string(), layout);
             }
+        } else {
+            ui.vertical_centered(|ui| {
+                ui.label("Loading..");
+                Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+            });
         }
     }
 }

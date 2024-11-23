@@ -94,18 +94,18 @@ impl Database {
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
         match DATABASE.connect::<Wss>(DB_URL).await {
-            Ok(_) => info!("Connected to {DB_URL:?}"),
-            Err(e) => info!("Error connecting to database: {e:?}"),
+            Ok(_) => gloo_console::info!(format!("Connected to {DB_URL:?}")),
+            Err(e) => gloo_console::info!(format!("Error connecting to database: {e:?}")),
         } //(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt {
             Some(jwt) => {
-                info!("Have a JWT, attempting token auth");
+                gloo_console::info!(format!("Have a JWT, attempting token auth"));
                 let auth = DATABASE.authenticate(jwt.clone()).await;
                 match auth {
                     Ok(_) => {
-                        info!("Auth not ok");
+                        gloo_console::info!(format!("Auth not ok"));
                         Ok(Self {
                             jwt: Some(jwt.into()),
                             user: None,
@@ -115,7 +115,7 @@ impl Database {
                 }
             }
             None => {
-                info!("No JWT, sigining in: {:?}", username.clone());
+                gloo_console::info!(format!("No JWT, sigining in: {:?}", username.clone()));
 
                 // Select a specific namespace / database
                 let jwt = DATABASE
@@ -130,17 +130,26 @@ impl Database {
                     })
                     .await?;
 
+                
                 DATABASE
                     .set("email", username.clone().to_lowercase())
                     .await?;
 
-                let user: Option<User> = DATABASE
+                let user: Result<surrealdb::Response, Error> = match DATABASE
                     .query("SELECT * FROM user WHERE email == $email")
-                    .await?
-                    .take(0)?;
+                    .await{
+                        Ok(res) => Ok(res),
+                        Err(e) => {
+                            gloo_console::info!(e.to_string());
+                            Err(e)
+                        },
+                    };
+
+                let usr: Result<Option<User>, Error> = user?.take(0);
+
                 Ok(Self {
                     jwt: Some(jwt),
-                    user,
+                    user: usr?,
                 })
             }
         }
@@ -166,7 +175,7 @@ impl Database {
             })
             .await?;
 
-        info!("signup: {:?}", signup);
+        gloo_console::info!(format!("signup: {:?}", signup));
         let query = "SELECT * FROM user WHERE email == $email";
         DATABASE.set("email", email).await?;
         let user: Option<User> = DATABASE.query(query).await?.take(0)?;

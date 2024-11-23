@@ -51,17 +51,17 @@ impl MtechServerContext {
             });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            if self.stock_quantity_table.is_empty() {
+            if self.stock_quantity_table.len() < 1 {
                 ui.vertical_centered(|ui| {
-                    ui.label("Loading..");
+                    ui.label("Pulling Company Stock Information..");
                     Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
                 });
+            } else {   
+                ui.add(Renderer::new(
+                    &mut self.stock_quantity_table,
+                    &mut self.stock_quantity_viewer,
+                ));
             }
-
-            ui.add(Renderer::new(
-                &mut self.stock_quantity_table,
-                &mut self.stock_quantity_viewer,
-            ));
         });
     }
 }

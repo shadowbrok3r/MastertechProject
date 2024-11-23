@@ -72,7 +72,10 @@ impl TabViewer for MtechServerContext {
             "Lil menu" => self.simple_demo_menu(ui),
             "Terminal" => self.terminal(ui),
             "My Tools" => self.toolbox(ui),
-            "Store Tasks" => self.store_tasks(ui),
+            "Store Tasks" => {
+                ui.ctx().request_repaint();
+                self.store_tasks(ui)
+            },
             "My Tasks" => self.my_tasks(ui),
             "Ai Playground" => self.ai_playground(ui),
             "Web Console" => self.web_console(ui),
