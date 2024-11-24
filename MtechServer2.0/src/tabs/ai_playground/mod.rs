@@ -357,7 +357,7 @@ impl AiPlayground {
             );
 
             match response.content {
-                ChatMessageType::Text(ref msg) => {
+                ChatMessageType::Text(ref msg) | ChatMessageType::Code(ref msg) => {
                     gloo_console::info!(format!("msg ID: {}", response.id.clone()));
                     // Update or add the message in the thread
                     if let Some(existing_message) = current_thread.messages.iter_mut().find(|m| m.id == response.id) {
@@ -373,7 +373,6 @@ impl AiPlayground {
                         current_thread.messages.push(response);
                     }
                 }
-                ChatMessageType::Code(_) => current_thread.messages.push(response),
                 ChatMessageType::Image((_, ref img)) => {
                     gloo_console::info!(format!("{img:?}"));
                     // Directly add these types of messages
