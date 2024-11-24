@@ -4,7 +4,7 @@ use anyhow::{Error, Result};
 use async_openai_wasm::{
     config::OpenAIConfig,
     types::{
-        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, MessageContent, MessageDeltaContent, MessageRole, RunObject, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
+        AssistantStreamEvent, ChatChoice, ChatCompletionToolChoiceOption, CreateChatCompletionRequest, CreateMessageRequestArgs, CreateRunRequestArgs, CreateThreadRequestArgs, DeltaStepDetails, MessageContent, MessageDeltaContent, MessageRole, RunObject, RunStepDeltaStepDetailsToolCalls, SubmitToolOutputsRunRequest, ThreadObject, ToolsOutputs
     },
     Client, Threads,
 };
@@ -459,38 +459,45 @@ pub async fn assistant_call_with_response_ai_tools(
                         }
                     }
                 },
-                // AssistantStreamEvent::ThreadRunStepDelta(run_step_obj) => {
-                //     match run_step_obj.delta.step_details {
-                //         DeltaStepDetails::MessageCreation(run_step_delta_message_obj) => {
-                //             if let Some(_msg) = run_step_delta_message_obj.message_creation {
+                AssistantStreamEvent::ThreadRunStepDelta(run_step_obj) => {
+                    res.id = run_step_obj.id;
+                    match run_step_obj.delta.step_details {
+                        DeltaStepDetails::MessageCreation(run_step_delta_message_obj) => {
+                            if let Some(_msg) = run_step_delta_message_obj.message_creation {
 
-                //             }
-                //         },
-                //         DeltaStepDetails::ToolCalls(run_step_delta_tool_obj) => {
-                //             if let Some(tool_calls) = run_step_delta_tool_obj.tool_calls {
-                //                 for call in tool_calls.iter() {
-                //                     match call {
-                //                         RunStepDeltaStepDetailsToolCalls::CodeInterpreter(run_step_delta_code_object) => {
-                //                             if let Some(code) = &run_step_delta_code_object.code_interpreter {
-                //                                 if let Some(code_output) = &code.outputs {
-                //                                     for _code_out in code_output {
-                //                                         // match code_out {
-                //                                         //     DeltaCodeInterpreterOutput::Logs(run_step_delta_step_details_tool_calls_code_output_logs_object) => todo!(),
-                //                                         //     DeltaCodeInterpreterOutput::Image(run_step_delta_step_details_tool_calls_code_output_image_object) => todo!(),
-                //                                         // }
-                //                                     }
-                //                                 }
-                //                             }
-                //                         },
-                //                         _ => {}
-                //                         // RunStepDeltaStepDetailsToolCalls::FileSearch(run_step_delta_step_details_tool_calls_file_search_object) => todo!(),
-                //                         // RunStepDeltaStepDetailsToolCalls::Function(run_step_delta_step_details_tool_calls_function_object) => todo!(),
-                //                     }
-                //                 }
-                //             }
-                //         },
-                //     }
-                // },
+                            }
+                        },
+                        DeltaStepDetails::ToolCalls(run_step_delta_tool_obj) => {
+                            if let Some(tool_calls) = run_step_delta_tool_obj.tool_calls {
+                                for call in tool_calls.iter() {
+                                    match call {
+                                        RunStepDeltaStepDetailsToolCalls::CodeInterpreter(run_step_delta_code_object) => {
+                                            if let Some(code) = &run_step_delta_code_object.code_interpreter {
+                                                if let Some(input) = &code.input {
+                                                    let mut response = res.clone();
+                                                    response.content = ChatMessageType::Code(input.clone());
+                                                    tx.try_send(response)?;
+                                                }
+
+                                                // if let Some(code_output) = &code.outputs {
+                                                //     for code_out in code_output {
+                                                //         match code_out {
+                                                //             DeltaCodeInterpreterOutput::Logs(run_step_delta_step_details_tool_calls_code_output_logs_object) => todo!(),
+                                                //             DeltaCodeInterpreterOutput::Image(run_step_delta_step_details_tool_calls_code_output_image_object) => todo!(),
+                                                //         }
+                                                //     }
+                                                // }
+                                            }
+                                        },
+                                        _ => {}
+                                        // RunStepDeltaStepDetailsToolCalls::FileSearch(run_step_delta_step_details_tool_calls_file_search_object) => todo!(),
+                                        // RunStepDeltaStepDetailsToolCalls::Function(run_step_delta_step_details_tool_calls_function_object) => todo!(),
+                                    }
+                                }
+                            }
+                        },
+                    }
+                },
                 AssistantStreamEvent::ThreadMessageCompleted(msg_obj) => {
                     res.id = msg_obj.id;
                     if let Some(attachments) = msg_obj.attachments {

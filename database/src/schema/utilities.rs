@@ -180,7 +180,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
         .bind(("store", store.clone()))
         .await?
         .take(0)?;
-    // info!("Tasks for store: {query_results:?}");
+    info!("Tasks for store: {:?}", query_results.iter().map(|f| f.everest_initials.clone() ).collect::<Vec<String>>());
     tx.try_send(query_results)?;
     Ok(())
 }
