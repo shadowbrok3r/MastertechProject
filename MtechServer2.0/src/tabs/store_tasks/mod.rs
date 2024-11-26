@@ -14,7 +14,7 @@ impl MtechServerContext {
             if let Some(layout) = self.task_layouts.get_mut(page) {
                 if self.rerun_filtering_store_tasks {
                     self.rerun_filtering_store_tasks = false;
-                    log::info!("Reruning filters for store tasks: {:?}", self.tasks.len());
+                    log::info!("Reruning filters for STORE tasks: {:?}", self.tasks.len());
                     let mut map = BTreeMap::new();
                     users.iter().for_each(|u| {
                         if u.store == current_user.store && u.email != current_user.email {
@@ -22,7 +22,13 @@ impl MtechServerContext {
                                 self.tasks.filter_by_assignee(u).filter_by_completion(false); //.filter_by_my_store(users, current_user);
                             map.entry(u.everest_initials.to_string())
                                 .or_insert(filtered);
-                            log::info!("map: {:?}", map);
+                            log::info!(
+                                "STORE tasks map: {:?}", 
+                                map
+                                    .iter()
+                                    .map(|m| m.0.clone())
+                                    .collect::<Vec<String>>()
+                            );
                         }
                     });
                     layout.task_map = map;

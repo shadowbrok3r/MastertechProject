@@ -11,15 +11,24 @@ impl MtechServerContext{
             if let Some(layout) = self.task_layouts.get_mut(page){
                 if self.rerun_filtering_completed{
                     self.rerun_filtering_completed = false;
+                    log::info!("Reruning filters for COMPLETED tasks: {:?}", self.tasks.len());
                     let mut map = BTreeMap::new();
                     users.iter().for_each(|u| {
                         let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(true); // .filter_by_my_store(users, current_user);
                         map.entry(u.everest_initials.to_string()).or_insert(filtered);
+                        log::info!(
+                            "COMPLETED tasks map: {:?}", 
+                            map
+                                .iter()
+                                .map(|m| m.0.clone())
+                                .collect::<Vec<String>>()
+                        );
                     });
                     layout.task_map = map;
                 }
                 layout.layout_cols(ui);
             } else {
+                log::info!("No layout");
                 let mut map = BTreeMap::new();
                 users.iter().for_each(|u| {
                     let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(true); // .filter_by_my_store(users, current_user);

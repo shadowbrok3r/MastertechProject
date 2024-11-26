@@ -84,7 +84,7 @@ checksum = "be7f5cf6165be10a54b2655fa2e0e12b2509f38ed6fc43e11c31fdb7ee6230bb"
 dependencies = [
  "accesskit",
  "accesskit_atspi_common",
- "async-channel 2.3.1",
+ "async-channel",
  "async-executor",
  "async-task",
  "atspi",
@@ -329,9 +329,9 @@ checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
 
 [[package]]
 name = "arrayvec"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "as-raw-xcb-connection"
@@ -376,21 +376,10 @@ version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20cd0e2e25ea8e5f7e9df04578dc6cf5c83577fd09b1a46aaf5c85e1c33f2a7e"
 dependencies = [
- "event-listener 5.3.1",
+ "event-listener",
  "event-listener-strategy",
  "futures-core",
  "pin-project-lite",
-]
-
-[[package]]
-name = "async-channel"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81953c529336010edd6d8e358f886d9581267795c61b19475b71314bffa46d35"
-dependencies = [
- "concurrent-queue",
- "event-listener 2.5.3",
- "futures-core",
 ]
 
 [[package]]
@@ -535,7 +524,7 @@ version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff6e472cdea888a4bd64f342f09b3f50e1886d32afe8df3d663c01140b811b18"
 dependencies = [
- "event-listener 5.3.1",
+ "event-listener",
  "event-listener-strategy",
  "pin-project-lite",
 ]
@@ -553,9 +542,9 @@ dependencies = [
 
 [[package]]
 name = "async-openai-wasm"
-version = "0.25.0"
+version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d6fe2b9cf526e7a3240eab3e96ee85534c21567c5a141e4993ed166be2f6507"
+checksum = "964970d7c4c43f6507fb947b801f22debce6c1e3792e98a9c3eeeed90bbdcde4"
 dependencies = [
  "async-convert",
  "base64 0.22.1",
@@ -581,14 +570,14 @@ version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63255f1dc2381611000436537bbedfe83183faa303a5a0edaf191edef06526bb"
 dependencies = [
- "async-channel 2.3.1",
+ "async-channel",
  "async-io",
  "async-lock",
  "async-signal",
  "async-task",
  "blocking",
  "cfg-if",
- "event-listener 5.3.1",
+ "event-listener",
  "futures-lite",
  "rustix",
  "tracing",
@@ -914,7 +903,7 @@ version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703f41c54fc768e63e091340b424302bb1c29ef4aa0c7f10fe849dfb114d29ea"
 dependencies = [
- "async-channel 2.3.1",
+ "async-channel",
  "async-task",
  "futures-io",
  "futures-lite",
@@ -2125,12 +2114,6 @@ checksum = "a5d9305ccc6942a704f4335694ecd3de2ea531b114ac2d51f5f843750787a92f"
 
 [[package]]
 name = "event-listener"
-version = "2.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
-
-[[package]]
-name = "event-listener"
 version = "5.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6032be9bd27023a771701cc49f9f053c751055f71efb2e0ae5c15809093675ba"
@@ -2146,7 +2129,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f214dc438f977e6d4e3500aaa277f5ad94ca83fbbd9b1a15713ce2344ccc5a1"
 dependencies = [
- "event-listener 5.3.1",
+ "event-listener",
  "pin-project-lite",
 ]
 
@@ -6062,12 +6045,12 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surrealdb"
-version = "2.0.4"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "300749e641e2a5546a142333d91b3537969e9c4cbd1fa2d1d10d92f01624d470"
+checksum = "db4a661389d3422f29d675d5b079630b3f133377dec47135cb12f6bf4214954b"
 dependencies = [
  "arrayvec",
- "async-channel 1.9.0",
+ "async-channel",
  "bincode",
  "chrono",
  "dmp",
@@ -6103,16 +6086,16 @@ dependencies = [
 
 [[package]]
 name = "surrealdb-core"
-version = "2.0.4"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5795fca60f099754934069dfb3d20824cfec94b4c13c7130d1cd52e0fcadfc42"
+checksum = "62bf88854d4f929b4f5e1a1027a79b3f2d0799b8d5ac646682efabe7a0b27995"
 dependencies = [
  "addr",
  "ahash 0.8.11",
  "ammonia",
  "any_ascii",
  "argon2",
- "async-channel 1.9.0",
+ "async-channel",
  "async-executor",
  "async-graphql",
  "base64 0.21.7",
@@ -6151,6 +6134,7 @@ dependencies = [
  "quick_cache",
  "radix_trie",
  "rand",
+ "rayon",
  "reblessive",
  "regex",
  "revision",
@@ -6168,6 +6152,7 @@ dependencies = [
  "sha2",
  "snap",
  "storekey",
+ "strsim",
  "subtle",
  "surrealdb-derive",
  "thiserror 1.0.69",
@@ -6178,6 +6163,7 @@ dependencies = [
  "unicase",
  "url",
  "uuid",
+ "vart",
  "wasm-bindgen-futures",
  "wasmtimer",
  "ws_stream_wasm",
@@ -6866,6 +6852,12 @@ dependencies = [
  "num-traits",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "vart"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c92195d375eb94995afddeedfd7f246796eb60b85f727c538e42222c4c9b2d3"
 
 [[package]]
 name = "vcpkg"
@@ -7745,7 +7737,7 @@ dependencies = [
  "async-trait",
  "blocking",
  "enumflags2",
- "event-listener 5.3.1",
+ "event-listener",
  "futures-core",
  "futures-sink",
  "futures-util",
@@ -7783,7 +7775,7 @@ dependencies = [
  "async-trait",
  "blocking",
  "enumflags2",
- "event-listener 5.3.1",
+ "event-listener",
  "futures-core",
  "futures-util",
  "hex",

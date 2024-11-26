@@ -1,12 +1,12 @@
 use self::schema::Record;
 use lazy_static::lazy_static;
-use log::info;
+// use log::info;
 use once_cell::sync::Lazy;
 use schema::User;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, sync::RwLock};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Wss},
+    engine::remote::ws::{Client as WsClient, Ws, Wss},
     opt::{
         auth::{Jwt, Record as SurrealRec},
         capabilities::Capabilities,
@@ -62,7 +62,7 @@ const NS: &str = "Mastertech";
 pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
 pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
 pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
-pub const DB_URL_LOCAL: &str = "localhost:8000";
+pub const DB_URL_LOCAL: &str = "localhost:8000/rpc";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
 pub fn set_db_selection(selection: DatabaseSelection) {
@@ -93,7 +93,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<Wss>(DB_URL).await {
+        match DATABASE.connect::<Ws>(DB_URL_LOCAL).await {
             Ok(_) => gloo_console::info!(format!("Connected to {DB_URL:?}")),
             Err(e) => gloo_console::info!(format!("Error connecting to database: {e:?}")),
         } //(&get_db_url()).await?;
@@ -163,7 +163,7 @@ impl Database {
         let cap = Capabilities::all();
         let config = Config::new().capabilities(cap);
 
-        DATABASE.connect::<Wss>((DB_URL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Ws>((DB_URL_LOCAL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE

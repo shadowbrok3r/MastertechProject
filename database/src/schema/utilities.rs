@@ -169,7 +169,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
                 WHERE task_id == $parent.id
         ) AS task_note 
         FROM task 
-        WHERE $this.assignee.store == $store
+        WHERE $this.assignee.store == $store AND $this.completed IS false
         FETCH 
             service_ticket, 
             service_ticket.computer, 
@@ -180,7 +180,31 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
         .bind(("store", store.clone()))
         .await?
         .take(0)?;
-    info!("Tasks for store: {:?}", query_results.iter().map(|f| f.everest_initials.clone() ).collect::<Vec<String>>());
+    // info!("Tasks for store: {:?}", query_results.iter().map(|f| f.everest_initials.clone() ).collect::<Vec<String>>());
+    tx.try_send(query_results)?;
+    Ok(())
+}
+
+pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
+    debug!("get_completed_tasks");
+    let query = r#"
+        SELECT *, (
+            SELECT * FROM task_note 
+                WHERE task_id == $parent.id
+        ) AS task_note 
+        FROM task 
+        WHERE $this.assignee.store == $store AND $this.completed IS true
+        FETCH 
+            service_ticket, 
+            service_ticket.computer, 
+            service_ticket.customer
+    "#;
+    let query_results: Vec<TaskPayload> = DATABASE
+        .query(query)
+        .bind(("store", store.clone()))
+        .await?
+        .take(0)?;
+    // info!("Tasks for store: {:?}", query_results.iter().map(|f| f.everest_initials.clone() ).collect::<Vec<String>>());
     tx.try_send(query_results)?;
     Ok(())
 }
