@@ -2,7 +2,7 @@ use crate::app_state::{AppState, MainPages, MtechServer};
 use crate::pages::downloads_page::get_github_releases;
 use crate::utilities::TaskUiActions;
 use database::live_data::listen_data;
-use database::schema::utilities::{get_connected_clients, NotificationMod};
+use database::schema::utilities::{get_connected_clients, get_notifications, NotificationMod};
 use database::schema::{Notification, TaskPayload, CONNECTED_CLIENT_TABLE};
 use database::{self, DATABASE};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
@@ -98,6 +98,7 @@ impl MtechServer {
                 });
 
                 if let Some(usr) = &self.context.current_user {
+                    let notif_tx = self.context.notification_tx.clone();
                     ui.add_space(ui.available_width() / 2.8);
                     if ui
                         .add(Button::new(format!(
@@ -245,7 +246,13 @@ impl MtechServer {
                             Separator::default().shrink(20.0).ui(ui);
                             ui.add_space(10.0);
                             ui.vertical_centered(|ui| {
-                                ui.label(RichText::new("Notifications").heading())
+                                if ui.button(RichText::new("Show Notifications").heading()).clicked() {
+                                    let user_id = usr.clone().id;
+                                    spawn_local(async move {
+                                        let notifications = get_notifications(notif_tx.clone(), user_id).await;
+                                        info!("Get Notifications: {notifications:?}");
+                                    });
+                                }
                             });
 
                             ui.horizontal_top(|ui| {

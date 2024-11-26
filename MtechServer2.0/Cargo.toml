@@ -25,7 +25,7 @@ wasm-cookies = { version= "0.2" }
 ewebsock = "0.8"
 egui_plot = "0.29"
 rusty-s3 = { version = "0.5", features = ["wasm_bindgen"] } # default-features = false
-async-openai-wasm = { version = "0.25" }
+async-openai-wasm = { version = "0.26" }
 derive_more = {version = "1", features = ["from"]}
 rpc-router = "0.1"
 schemars = "0.8"

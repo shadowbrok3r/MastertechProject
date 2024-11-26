@@ -20,7 +20,7 @@ pub mod web_console;
 // pub mod all_tasks;
 
 use super::app_state::MtechServerContext;
-use database::schema::{utilities::{get_store_users, get_tasks_for_store}, Store};
+use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};
 use eframe::egui::{ComboBox, Response, Ui, WidgetText};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use log::info;
@@ -103,16 +103,6 @@ impl MtechServerContext {
                 77 => Store::SAN,
                 _ => Store::RIV,
             };
-            for (page, layout) in self.task_layouts.iter_mut() {
-                match page.as_str() {  
-                    "CompletedTasks" | "StoreTasks" => {
-                        layout.task_map.clear();
-                        layout.assignees.clear();
-                        layout.search_inputs.clear();
-                    }
-                    _ => {}
-                }
-            }
             self.store_users.clear();
             self.tasks.clear();
             
@@ -221,33 +211,46 @@ impl TabViewer for MtechServerContext {
     }
 
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &Response) {
-        if response.clicked() && tab.as_str() == "Stock" {
-            if let Some(usr) = &self.current_user {
-                let stock_tx = self.stock_channel.0.clone();
-                let store_selection = match usr.clone().store {
-                    Store::RIV => 76,
-                    Store::LTN => 73,
-                    Store::MUR => 74,
-                    Store::AF => 72,
-                    Store::WJ => 78,
-                    Store::ORE => 75,
-                    Store::SAN => 77,
-                };
-                spawn_local(async move {
-                    let stock = get_stock(stock_tx.clone(), store_selection).await;
-                    info!("Stock call: {stock:?} for Store: {:?}", store_selection);
-                });
+        if response.clicked() {
+            match tab.as_str() {
+                "Stock" => {
+                    if let Some(usr) = &self.current_user {
+                        let stock_tx = self.stock_channel.0.clone();
+                        let store_selection = match usr.clone().store {
+                            Store::RIV => 76,
+                            Store::LTN => 73,
+                            Store::MUR => 74,
+                            Store::AF => 72,
+                            Store::WJ => 78,
+                            Store::ORE => 75,
+                            Store::SAN => 77,
+                        };
+                        spawn_local(async move {
+                            let stock = get_stock(stock_tx.clone(), store_selection).await;
+                            info!("Stock call: {stock:?} for Store: {:?}", store_selection);
+                        });
+                    }
+                },
+                "Stock Quantity" => {
+                    let ex_stock_tx = self.extra_stock_channel.0.clone();
+                    spawn_local(async move {
+                        let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
+                        info!("Extra Stock {stock_quantities:?}");
+                    });
+                },
+                "Completed Tasks" => {
+                    let tasks_tx = self.initial_tasks_tx.clone();
+                    if let Some(usr) = self.current_user.clone() {
+                        let store = usr.store.as_str().to_string().clone();
+                        spawn_local(async move {
+                            let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store).await;
+                            info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
+                        });
+                    }
+                },
+                _ => {}
             }
-        } 
-        else if response.clicked() && tab.as_str() == "Stock Quantity" {
-            let ex_stock_tx = self.extra_stock_channel.0.clone();
-            spawn_local(async move {
-                let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
-                info!("Extra Stock {stock_quantities:?}");
-            });
-        }
-        else if response.clicked() && tab.as_str() == "Stock Quantity" {
-        
+            
         }
     }
 

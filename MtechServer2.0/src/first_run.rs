@@ -7,7 +7,7 @@ use crate::{
 use database::{
     live_data::listen_data,
     schema::{
-        utilities::{get_notifications, get_store_users, get_tasks},
+        utilities::{get_store_users, get_tasks_for_store},
         NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
     },
     DATABASE,
@@ -138,11 +138,8 @@ impl MtechServer {
         // get all of our channel Senders from crossbeam to get user/store/completed tasks,
         // as well as store users and live task notifications
         let live_tasks_tx = self.context.live_tasks_tx.clone();
-        let initial_tasks_tx = self.context.initial_tasks_tx.clone();
-        let store_users_tx = self.context.store_users_tx.clone();
         let notes_tx = self.context.notes_tx.clone();
-        let live_notif_tx = self.context.live_notification_tx.clone();
-        let notif_tx = self.context.notification_tx.clone();
+        let live_notif_tx = self.context.live_notification_tx.clone();        
 
         if let Some(usr) = self.context.current_user.as_ref() {
             info!("Getting Initial data");
@@ -172,12 +169,17 @@ impl MtechServer {
             // }
 
             if self.context.tasks.is_empty() || self.context.store_users.is_empty() {
+                let initial_tasks_tx = self.context.initial_tasks_tx.clone();
+                let store_users_tx = self.context.store_users_tx.clone();
+                let store = usr.store.as_str().to_string().clone();
+
                 spawn_local(async move {
-                    let get_tasks = get_tasks(initial_tasks_tx).await;
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
-                    let notifications = get_notifications(notif_tx.clone(), user.clone().id).await;
-                    info!("Get Notifications: {notifications:?}");
                     info!("get_store_users: {get_store_users:?}");
+                });
+
+                spawn_local(async move {
+                    let get_tasks = get_tasks_for_store(initial_tasks_tx, store).await;
                     info!("get_tasks: {get_tasks:?}");
                 });
             }
@@ -223,22 +225,40 @@ impl MtechServer {
 
     pub fn receive(&mut self) {
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv() {
-            self.context.tasks.clear();
             log::info!("Got new tasks: {:?}", &tasks.len());
-            self.context.tasks = tasks;
             self.context.rerun_filtering_store_tasks = true;
             self.context.rerun_filtering_completed = true;
+            self.context.tasks.clear();
+            for (page, layout) in self.context.task_layouts.iter_mut() {
+                match page.as_str() {  
+                    "CompletedTasks" | "StoreTasks" => {
+                        layout.task_map.clear();
+                        layout.assignees.clear();
+                        layout.search_inputs.clear();
+                    }
+                    _ => {}
+                }
+            }
+            self.context.tasks = tasks;
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv() {
-            self.context.store_users.clear();
-            for (_, layout) in self.context.task_layouts.iter_mut() {
+            for (page, layout) in self.context.task_layouts.iter_mut() {
+                match page.as_str() {  
+                    "CompletedTasks" | "StoreTasks" => {
+                        layout.task_map.clear();
+                        layout.assignees.clear();
+                        layout.search_inputs.clear();
+                    }
+                    _ => {}
+                }
                 layout.update_assignees(users.clone());
             }
             log::info!("Got new users: {:?}", users);
-            self.context.store_users = users;
             self.context.rerun_filtering_store_tasks = true;
             self.context.rerun_filtering_completed = true;
+            self.context.store_users.clear();
+            self.context.store_users = users;
         }
 
         // if let Ok(live_output) = self.context.live_output_rx.try_recv() {
