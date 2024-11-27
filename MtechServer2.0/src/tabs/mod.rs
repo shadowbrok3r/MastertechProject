@@ -103,6 +103,7 @@ impl MtechServerContext {
                 77 => Store::SAN,
                 _ => Store::RIV,
             };
+
             self.store_users.clear();
             self.tasks.clear();
             
@@ -242,6 +243,10 @@ impl TabViewer for MtechServerContext {
                     let tasks_tx = self.initial_tasks_tx.clone();
                     if let Some(usr) = self.current_user.clone() {
                         let store = usr.store.as_str().to_string().clone();
+
+                        self.store_users.clear();
+                        self.tasks.clear();
+                        
                         spawn_local(async move {
                             let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store).await;
                             info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");

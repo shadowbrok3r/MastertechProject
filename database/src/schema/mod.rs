@@ -814,7 +814,7 @@ impl Eq for User {}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct UserSettings {
-    pub color_scheme: ColorSchemes, // ui.color_edit_button_srgba(color)
+    pub color_scheme: Value, // ui.color_edit_button_srgba(color)
     pub startup_tabs: Value,
     pub my_column_layout: String,
     pub opened_tabs: Value,

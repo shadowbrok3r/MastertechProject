@@ -9,7 +9,7 @@ use log::info;
 use std::sync::Arc;
 // use wasm_bindgen_futures::spawn_local;
 
-use crate::app_state;
+use crate::app_state::{self, ThemeConfig};
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
@@ -17,8 +17,17 @@ impl eframe::App for MtechServer {
         // currently this just sets the style of the app, but in the near
         // future i will be making this the setup to allow user customization
         // to the style of any part of the app
-        let arc_style = set_darker_style();
-        ctx.set_style(arc_style);
+        // let arc_style = set_darker_style();
+        // ctx.set_style(arc_style);
+
+        if self.context.modify_theme {
+            Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
+                self.context.theme_config.edit_ui(ui);
+            });
+        }
+
+        let custom_style = set_custom_style(&self.context.theme_config);
+        ctx.set_style((*custom_style).clone());
 
         // This is our 'dummy' worker that retrieves Minio bucket storage
         // contents, then builds our 'virtual' file system ui in the
@@ -246,6 +255,105 @@ fn set_style() -> Arc<Style> {
     let arc_style = Arc::new(custom_style);
     arc_style
 }
+
+pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
+    let theme = CarlDark; // Assuming a theme object or struct
+    let mut custom_style: Style = theme.custom_style();
+    // Font settings
+    let mut font = FontId::default();
+    font.size = 10.5;
+    font.family = FontFamily::Proportional;
+
+    // Assign custom font
+    custom_style.override_font_id = Some(font);
+
+    // Adjust spacing and interactions
+    custom_style.spacing.button_padding = Vec2::new(3.0, 3.0);
+    custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+    custom_style.spacing.combo_height = 55.0;
+    custom_style.spacing.combo_width = 100.0;
+    custom_style.interaction.selectable_labels = true;
+    custom_style.interaction.interact_radius = 10.0;
+
+    custom_style.visuals = Visuals {
+        dark_mode: true,
+        override_text_color: Some(config.text_color),
+        widgets: Widgets {
+            noninteractive: WidgetVisuals {
+                bg_fill: config.widget_bg_fill,
+                weak_bg_fill: config.widget_weak_bg_fill,
+                bg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
+                rounding: config.rounding,
+                fg_stroke: Stroke::new(1.0, config.widget_fg_stroke_color),
+                expansion: 0.0,
+            },
+            inactive: WidgetVisuals {
+                bg_fill: config.widget_bg_fill,
+                weak_bg_fill: Color32::from_rgb(18, 18, 20),
+                bg_stroke: Stroke::new(1.0, Color32::from_rgb(80, 80, 80)),
+                rounding: config.rounding,
+                fg_stroke: Stroke::new(1.0, config.text_color),
+                expansion: 0.0,
+            },
+            hovered: WidgetVisuals {
+                bg_fill: config.hovered_bg_fill,
+                weak_bg_fill: config.hovered_weak_bg_fill,
+                bg_stroke: Stroke::new(0.5, config.hovered_bg_stroke_color),
+                rounding: config.rounding,
+                fg_stroke: Stroke::new(1.0, config.hovered_fg_stroke_color),
+                expansion: 0.1,
+            },
+            active: WidgetVisuals {
+                bg_fill: config.active_bg_fill,
+                weak_bg_fill: config.active_weak_bg_fill,
+                bg_stroke: Stroke::new(1.0, config.active_bg_stroke_color),
+                rounding: config.rounding,
+                fg_stroke: Stroke::new(1.0, config.active_fg_stroke_color),
+                expansion: 0.1,
+            },
+            open: WidgetVisuals {
+                bg_fill: config.open_bg_fill,
+                weak_bg_fill: config.open_weak_bg_fill,
+                bg_stroke: Stroke::new(1.0, config.open_bg_stroke_color),
+                rounding: config.rounding,
+                fg_stroke: Stroke::new(1.0, config.open_fg_stroke_color),
+                expansion: 0.1,
+            },
+        },
+        selection: Selection {
+            bg_fill: config.selection_bg_fill,
+            stroke: Stroke::new(1.0, config.selection_stroke_color),
+        },
+        hyperlink_color: config.link_color,
+        faint_bg_color: config.faint_bg_color,
+        extreme_bg_color: config.extreme_bg_color,
+        code_bg_color: config.code_bg_color,
+        warn_fg_color: config.warn_color,
+        error_fg_color: config.error_color,
+        window_fill: config.background_color,
+        window_stroke: Stroke::new(1.0, config.window_stroke_color),
+        window_rounding: config.rounding,
+        menu_rounding: config.rounding,
+        panel_fill: config.background_color,
+        popup_shadow: Shadow::default(),
+        resize_corner_size: 10.0,
+        text_cursor: TextCursorStyle::default(),
+        clip_rect_margin: 5.0,
+        button_frame: true,
+        collapsing_header_frame: true,
+        indent_has_left_vline: true,
+        striped: true,
+        slider_trailing_fill: true,
+        handle_shape: HandleShape::Circle,
+        interact_cursor: Some(CursorIcon::PointingHand),
+        image_loading_spinners: true,
+        numeric_color_space: NumericColorSpace::Linear, // How numeric values are displayed
+        ..Default::default()
+    };
+
+    Arc::new(custom_style)
+}
+
 
 fn set_darker_style() -> Arc<Style> {
     // Define colors based on "Tokyo Night Dark" theme

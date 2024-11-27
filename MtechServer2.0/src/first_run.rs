@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    app_state::{AppState, MtechServer},
+    app_state::{AppState, MtechServer, ThemeConfig},
     tabs::ai_playground::ChatThread,
 };
 use database::{
@@ -198,6 +198,16 @@ impl MtechServer {
                 let listen_data = listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await;
                 info!("listen_notifications: {listen_data:?}");
             });
+
+            if let Some(settings) = &usr.user_settings {
+                info!("Current Color Settings: {:#?}\n\nNew Settings: {:#?}", self.context.theme_config, settings.color_scheme);
+                match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()){
+                    Ok(color_settings) => {
+                        self.context.theme_config = color_settings;
+                    },
+                    Err(e) => info!("Error setting theme config: {e:?}"),
+                }
+            }
 
             // let live_bridge = &self.context.live_bridge;
             // if let Some(live_bridge) = live_bridge {

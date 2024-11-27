@@ -203,6 +203,10 @@ impl MtechServer {
                                     }
                                 }
 
+                                if ui.add(Button::new("Modify Theme")).clicked() {
+                                    self.context.modify_theme = true;
+                                }
+
                                 if ui.add(Button::new("Refresh Data")).clicked() {
                                     self.context.first_run = true;
                                 }
