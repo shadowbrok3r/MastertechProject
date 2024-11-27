@@ -783,14 +783,19 @@ impl ThemeConfig {
                     let x = final_settings.clone().as_object().unwrap().clone();
                     spawn_local(async move {
                         // info!("settings: {user_settings:?}");
-
-                        match DATABASE
+                        let x = DATABASE
                             .query("UPDATE $auth.id SET user_settings = <object>$color_settings")
                             .bind(("color_settings", x))
-                            .await {
-                                Ok(res) => info!("Result: {res:?}"),
-                                Err(e) => info!("Error updating User Settings: {e:?}"),
-                            }
+                            .await;
+                        match x {
+                            Ok(res) => {
+                                match res.take::<Option<Value>>(0) {
+                                    Ok(y) => info!("Y: {y:?}"),
+                                    Err(e) => info!("Err: {e:?}"),
+                                }
+                            },
+                            Err(e) => info!("Error updating User Settings: {e:?}"),
+                        }
                     });
                 }
             });
