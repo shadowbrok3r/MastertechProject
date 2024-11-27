@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use crossbeam::channel::Sender;
 use database::{self, DATABASE};
 use database::schema::{Priority, Record, TaskPayload, User};
@@ -9,7 +10,7 @@ use wasm_bindgen_futures::spawn_local;
 use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
-use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use egui_extras::{Size, Strip, StripBuilder};
 use crate::utilities::{FilterTasks, Sortable, TaskUiActions, Displayable};
 use structdiff::StructDiff;
@@ -93,6 +94,7 @@ impl TaskLayout {
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
         let x: f32 = ui.available_height() - 40.0;
+        let style = ui.style().clone();
         ScrollArea::horizontal()
             .show_viewport(ui, |ui, _|
         {
@@ -109,7 +111,7 @@ impl TaskLayout {
                     {
                         strip.sizes(column_width, self.column_names.len())
                             .horizontal(
-                                |strip| self.headers(strip)
+                                |strip| self.headers(strip, style.clone())
                             );
                     });
 
@@ -119,7 +121,7 @@ impl TaskLayout {
                     {
                         strip.sizes(column_width, self.column_names.len())
                             .horizontal(
-                                |mut strip| self.columns(strip.borrow_mut())
+                                |mut strip| self.columns(strip.borrow_mut(), style.clone())
                             );
                     });
                 } else { info!("Column_names is empty"); }
@@ -141,13 +143,13 @@ impl TaskLayout {
         None
     }
 
-    fn headers(&mut self, mut s: Strip){
+    fn headers(&mut self, mut s: Strip, style: Arc<Style>){
         let header_frame = Frame::default()
-            .fill(Color32::from_rgb(13, 13, 15))
+            .fill(style.visuals.window_fill) // (Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(8.0, 1.0))
             .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(0.4, Color32::from_rgb(42, 195, 222)));
+            .stroke(style.visuals.window_stroke);
         // if self.task_map.keys().len() == self.column_names.len() {
             for (name, tasks) in self.task_map.iter() {
                 s.cell(|ui|{
@@ -167,9 +169,13 @@ impl TaskLayout {
                                 ui.add_space(ui.available_width() / 3.4);
                                 
                                 let response = Button::new(RichText::new(name.to_owned())
-                                        .color(Color32::from_rgb(191, 33, 101))
+                                        .color(style.visuals.warn_fg_color)
                                         .size(13.0).monospace()
-                                    ).fill(Color32::from_rgb(22,22,22)).rounding(Rounding::same(2.)).min_size(Vec2::new(60.0, 15.0)).ui(ui);
+                                    )
+                                    .fill(style.visuals.noninteractive().bg_fill)
+                                    .rounding(Rounding::same(2.))
+                                    .min_size(Vec2::new(60.0, 15.0))
+                                    .ui(ui);
 
                                 if response.clicked(){
                                     ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
@@ -241,7 +247,7 @@ impl TaskLayout {
                             {
                                 let button = Button::new(
                                     RichText::new("✚")
-                                        .color(Color32::from_rgb(191, 33, 101))
+                                        .color(style.visuals.warn_fg_color)
                                     )
                                     .rounding(Rounding::same(2.))
                                     .fill(Color32::from_rgb(22,22,22))
@@ -276,9 +282,9 @@ impl TaskLayout {
         // }
     }
 
-    fn columns(&mut self, s: &mut Strip) {
+    fn columns(&mut self, s: &mut Strip, style: Arc<Style>) {
         let column_frame = Frame::default()
-            .fill(Color32::from_rgb(12, 12, 14))
+            .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(6.0))
             .rounding(Rounding::same(10.0))
             .stroke(Stroke::new(1.0,  Color32::from_additive_luminance(100)));

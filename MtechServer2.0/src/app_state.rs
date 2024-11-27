@@ -1,38 +1,35 @@
 use crate::{
-    pages::{account_settings_page::AccountMod, downloads_page::GithubRelease},
-    tabs::{
+    mtechserver::set_custom_style, pages::{account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{
         ai_playground::AiPlayground,
         github_issue::GithubIssue,
         json_viewer::{JsonEditor, JsonEditorState},
         stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
         stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer},
-    },
-    utilities::{
+    }, utilities::{
         displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
         ModalTypes,
-    },
+    }
 };
 use async_openai_wasm::types::ThreadObject;
 use crossbeam::channel::{self, Receiver, Sender};
 use database::{
     schema::{
-        prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification,
-        TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings,
+        prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, Record, TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings
     },
-    Database,
+    Database, DATABASE,
 };
 use displays::{
     egui_data_table::DataTable, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem,
 };
 use eframe::{
-    egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId},
+    egui::{scroll_area::ScrollBarVisibility, Align, Align2, Button, Color32, Context, DragValue, FontData, FontDefinitions, FontFamily, FontId, Layout, Rounding, ScrollArea, Stroke, Style, Ui, Vec2, Widget},
     CreationContext,
 };
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 // use gloo_worker::Spawnable;
 // use mtechserver::{webworker::WebWorker};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
 use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
@@ -52,7 +49,7 @@ use crate::{
 use anyhow::Error;
 use displays::channel_manager::ChannelManager;
 use log::{error, info};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize)]
 pub struct MtechServer {
@@ -318,7 +315,13 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub ai_playground: AiPlayground,
     /// Do we need to refresh the UI?
-    pub refresh: bool
+    pub refresh: bool,
+    /// Theme settings
+    pub theme_config: ThemeConfig,
+    /// Button state for modifying theme config
+    pub modify_theme: bool,
+    /// The theme itself
+    pub theme: Arc<Style>
 }
 
 impl MtechServer {
@@ -402,6 +405,8 @@ impl MtechServer {
 
         let mut tasks = Vec::new();
         tasks.push(TaskPayload::default());
+        let theme_config = ThemeConfig::default();
+        let theme = set_custom_style(&theme_config);
 
         let context = MtechServerContext {
             current_user: None,
@@ -507,6 +512,9 @@ impl MtechServer {
             serial_channel,
             store_selection: 76,
             refresh: false,
+            theme_config,
+            theme,
+            modify_theme: false
         };
 
         Self {
@@ -682,6 +690,412 @@ pub fn check_authentication(
     }
     info!("State // user   {:?} // {:?}", state, current_user);
     Ok((state, current_user))
+}
+
+#[derive(Serialize, Clone, Deserialize, Debug)]
+pub struct ThemeConfig {
+    pub background_color: Color32,
+    pub foreground_color: Color32,
+    pub widget_bg_fill: Color32,
+    pub widget_weak_bg_fill: Color32,
+    pub widget_bg_stroke_color: Color32,
+    pub widget_fg_stroke_color: Color32,
+    pub hovered_bg_fill: Color32,
+    pub hovered_weak_bg_fill: Color32,
+    pub hovered_bg_stroke_color: Color32,
+    pub hovered_fg_stroke_color: Color32,
+    pub active_bg_fill: Color32,
+    pub active_weak_bg_fill: Color32,
+    pub active_bg_stroke_color: Color32,
+    pub active_fg_stroke_color: Color32,
+    pub open_bg_fill: Color32,
+    pub open_weak_bg_fill: Color32,
+    pub open_bg_stroke_color: Color32,
+    pub open_fg_stroke_color: Color32,
+    pub selection_bg_fill: Color32,
+    pub selection_stroke_color: Color32,
+    pub faint_bg_color: Color32,
+    pub extreme_bg_color: Color32,
+    pub code_bg_color: Color32,
+    pub border_color: Color32,
+    pub text_color: Color32,
+    pub error_color: Color32,
+    pub warn_color: Color32,
+    pub link_color: Color32,
+    pub window_stroke_color: Color32,
+    pub rounding: Rounding,
+}
+
+impl Default for ThemeConfig {
+    fn default() -> Self {
+        Self {
+            background_color: Color32::from_rgb(10, 10, 13),            // Editor background
+            foreground_color: Color32::from_rgb(169, 177, 214),         // Editor foreground
+            widget_bg_fill: Color32::from_rgb(20, 20, 22),              // Background for inactive widgets
+            widget_weak_bg_fill: Color32::from_rgb(20, 20, 22),         // Weak background for widgets
+            widget_bg_stroke_color: Color32::from_rgb(50, 50, 60),      // Widget background stroke color
+            widget_fg_stroke_color: Color32::from_rgb(169, 177, 214),   // Widget foreground stroke color
+            hovered_bg_fill: Color32::from_rgb(35, 35, 40),             // Background for hovered widgets
+            hovered_weak_bg_fill: Color32::from_rgb(40, 40, 45),        // Weak background for hovered widgets
+            hovered_bg_stroke_color: Color32::from_rgba_premultiplied(120, 20, 120, 100), // Stroke for hovered
+            hovered_fg_stroke_color: Color32::from_rgb(155, 104, 227),  // Foreground for hovered
+            active_bg_fill: Color32::from_rgb(28, 28, 28),              // Background for active widgets
+            active_weak_bg_fill: Color32::from_rgb(28, 28, 28),         // Weak background for active widgets
+            active_bg_stroke_color: Color32::from_rgb(90, 90, 100),     // Stroke for active widgets
+            active_fg_stroke_color: Color32::from_rgb(169, 177, 214),   // Foreground for active widgets
+            open_bg_fill: Color32::from_rgb(30, 30, 35),                // Background for open widgets
+            open_weak_bg_fill: Color32::from_rgb(35, 35, 40),           // Weak background for open widgets
+            open_bg_stroke_color: Color32::from_rgb(100, 100, 110),     // Stroke for open widgets
+            open_fg_stroke_color: Color32::from_rgb(169, 177, 214),     // Foreground for open widgets
+            selection_bg_fill: Color32::from_rgba_premultiplied(90, 55, 88, 90), // Selection background
+            selection_stroke_color: Color32::from_rgba_premultiplied(81, 92, 126, 50), // Selection stroke
+            faint_bg_color: Color32::from_rgb(20, 20, 25),              // Subtle background
+            extreme_bg_color: Color32::from_rgb(15, 15, 20),            // Very dark background for contrast
+            code_bg_color: Color32::from_rgb(20, 20, 27),               // Code block background
+            border_color: Color32::from_rgb(16, 16, 23),                // Border color for windows/panels
+            text_color: Color32::from_rgb(219, 199, 245),               // Default text color
+            error_color: Color32::from_rgb(227, 104, 176),              // Error text color
+            warn_color: Color32::from_rgb(191, 33, 101),                // Warning text color
+            link_color: Color32::from_rgb(155, 104, 227),               // Hyperlink color
+            window_stroke_color: Color32::from_rgb(42, 195, 222),         // Window stroke color
+            rounding: Rounding::same(4.0),                              // Uniform rounding for visuals
+        }
+    }
+}
+
+
+impl ThemeConfig {
+    pub fn edit_ui(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                let reset = Button::new("Reset to Default")
+                    .min_size(Vec2::new(70., 25.))
+                    .stroke(Stroke::new(1., self.warn_color))
+                    .ui(ui);
+                
+                if reset.clicked() {
+                    let color_settings = ThemeConfig::default();
+                    let object = serde_json::to_value(color_settings).unwrap().clone();
+                    let mut user_settings: UserSettings = UserSettings::default();
+                    // info!("Object? {:#?}", object.as_object());
+                    user_settings.color_scheme = object;
+                    let final_settings = serde_json::to_value(user_settings.clone()).unwrap();
+                    let x = final_settings.clone().as_object().unwrap().clone();
+                    spawn_local(async move {
+                        // info!("settings: {user_settings:?}");
+
+                        match DATABASE
+                            .query("UPDATE $auth.id SET user_settings = <object>$color_settings")
+                            .bind(("color_settings", x))
+                            .await {
+                                Ok(res) => info!("Result: {res:?}"),
+                                Err(e) => info!("Error updating User Settings: {e:?}"),
+                            }
+                    });
+                }
+            });
+            ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                let save = Button::new("Save")
+                    .min_size(Vec2::new(70., 25.))
+                    .stroke(Stroke::new(1., self.warn_color))
+                    .ui(ui);
+                
+                if save.clicked() {
+                    let color_settings = self.clone();
+                    let object = serde_json::to_value(color_settings).unwrap().clone();
+                    let mut user_settings = UserSettings::default();
+                    user_settings.color_scheme = object;
+                    let final_settings = Some(user_settings.clone());
+                    spawn_local(async move {
+                        info!("settings: {user_settings:?}");
+
+                        match DATABASE
+                            .query("UPDATE $auth.id SET user_settings = $color_settings")
+                            .bind(("color_settings", final_settings))
+                            .await {
+                                Ok(res) => info!("Result: {res:?}"),
+                                Err(e) => info!("Error updating User Settings: {e:?}"),
+                            }
+                    });
+                }
+            });
+        });
+
+        ui.add_space(10.);
+
+        ScrollArea::vertical()
+            .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
+            .max_height(600.)
+            .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.heading("Widget Colors:");
+            });
+
+            // Widget Colors
+            ui.horizontal(|ui| {
+                ui.label("Widget Background Fill"); 
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.widget_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Widget Weak Background Fill");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.widget_weak_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Widget Background Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.widget_bg_stroke_color);
+                });
+            });
+            ui.horizontal(|ui| {
+                ui.label("Widget Foreground Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.widget_fg_stroke_color);
+                });
+            });
+
+            ui.separator();
+            ui.add_space(10.);
+
+            // Hovered Colors
+            ui.vertical_centered(|ui| {
+                ui.heading("Hovered Colors:");
+            });
+
+            ui.horizontal(|ui| {   
+                ui.label("Hovered Background Fill");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.hovered_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Hovered Weak Background Fill");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.hovered_weak_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Hovered Background Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.hovered_bg_stroke_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Hovered Foreground Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.hovered_fg_stroke_color);
+                });
+            });
+
+            ui.separator();
+            ui.add_space(10.);
+
+            // Active Colors
+            ui.vertical_centered(|ui| {
+                ui.heading("Active Colors:");
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Active Background Fill");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.active_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Active Weak Background Fill");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.active_weak_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Active Background Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.active_bg_stroke_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Active Foreground Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.active_fg_stroke_color);
+                });
+            });
+
+            ui.separator();
+            ui.add_space(10.);
+
+            // Open Colors
+            ui.vertical_centered(|ui| {
+                ui.heading("Open Colors:");
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Open Background Fill");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.open_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Open Weak Background Fill");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.open_weak_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Open Background Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.open_bg_stroke_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Open Foreground Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.open_fg_stroke_color);
+                });
+            });
+
+            ui.separator();
+            ui.add_space(10.);
+
+            // Selection Colors
+            ui.vertical_centered(|ui| {
+                ui.heading("Selection Colors:");
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Selection Background Fill");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.selection_bg_fill);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Selection Stroke Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.selection_stroke_color);
+                });
+            });
+
+            ui.separator();
+            ui.add_space(10.);
+
+            // Other Colors
+            ui.vertical_centered(|ui| {
+                ui.heading("Other Colors:");
+            });
+            
+            ui.horizontal(|ui| {
+                ui.label("Background Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.background_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Foreground Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.foreground_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Border Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.border_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Text Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.text_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Error Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.error_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Warning Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.warn_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Link Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.link_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Faint Background Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.faint_bg_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Extreme Background Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.extreme_bg_color);
+                });
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Code Background Color");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.code_bg_color);
+                });
+            });
+
+            ui.separator();
+            ui.add_space(10.);
+
+            // Strokes
+            ui.vertical_centered(|ui| {
+                ui.heading("Strokes:");
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Window Stroke:");
+                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.color_edit_button_srgba(&mut self.window_stroke_color);
+                });
+            });
+
+            ui.separator();
+            ui.add_space(10.);
+
+            // Rounding
+            ui.vertical_centered(|ui| {
+                ui.heading("Rounding:");
+            });
+            
+            ui.add(DragValue::new(&mut self.rounding.nw).speed(0.1).prefix("NW:"));
+            ui.add(DragValue::new(&mut self.rounding.ne).speed(0.1).prefix("NE:"));
+            ui.add(DragValue::new(&mut self.rounding.sw).speed(0.1).prefix("SW:"));
+            ui.add(DragValue::new(&mut self.rounding.se).speed(0.1).prefix("SE:"));
+        });
+    }
 }
 
 fn setup_custom_fonts(ctx: &Context) {

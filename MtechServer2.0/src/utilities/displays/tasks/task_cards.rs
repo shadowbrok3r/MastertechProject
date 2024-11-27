@@ -3,7 +3,7 @@ use crossbeam::channel::Sender;
 use database::schema::{TaskPayload, User};
 use eframe::egui::Vec2;
 use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
-use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
+use eframe::egui::{Color32, Frame, Layout, Margin, Rounding};
 use eframe::egui::{RichText, Ui};
 use egui_extras::{Size, StripBuilder};
 use log::info;
@@ -12,15 +12,14 @@ use crate::utilities::{Displayable, Interaction, TaskUiActions, Updatable};
 
 impl Displayable for TaskPayload {
     fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>) {
+        let style = ui.style().clone();
+
         Frame::default()
-            .fill(Color32::from_rgb(14, 14, 18))
+            .fill(style.visuals.extreme_bg_color) // (Color32::from_rgb(14, 14, 18))
             .inner_margin(Margin::same(8.0))
             .outer_margin(Margin::same(5.0))
             .rounding(Rounding::same(15.0))
-            .stroke(Stroke::new(
-                0.2,
-                Color32::from_rgba_premultiplied(42, 195, 222, 60),
-            ))
+            .stroke(style.visuals.window_stroke)
             .show(ui, |ui| {
                 ui.set_max_height(300.0);
                 ui.set_min_height(67.0);
@@ -214,7 +213,7 @@ impl Displayable for TaskPayload {
                                                 ui.style_mut().spacing.button_padding.y = 6.0;
                                                 let txt = if count > 0 {
                                                     RichText::new(format!("{} 💬", count))
-                                                        .color(Color32::from_rgb(42, 195, 222))
+                                                        .color(style.visuals.window_stroke.color)
                                                 } else {
                                                     RichText::new("💬").color(Color32::WHITE)
                                                 };
