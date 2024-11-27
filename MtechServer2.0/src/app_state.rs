@@ -788,7 +788,7 @@ impl ThemeConfig {
                             .bind(("color_settings", x))
                             .await;
                         match x {
-                            Ok(res) => {
+                            Ok(mut res) => {
                                 match res.take::<Option<Value>>(0) {
                                     Ok(y) => info!("Y: {y:?}"),
                                     Err(e) => info!("Err: {e:?}"),
