@@ -124,7 +124,7 @@ impl eframe::App for MtechServer {
         // module
         if self.context.update_settings {
             self.context.user_settings.startup_tabs =
-                serde_json::to_value(self.tree.clone()).unwrap();
+                Some(serde_json::to_value(self.tree.clone()).unwrap());
 
             self.context.update_settings = false;
             info!("Saving settings: {:?}", self.context.user_settings.clone());

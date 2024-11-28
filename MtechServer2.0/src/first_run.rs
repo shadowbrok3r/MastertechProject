@@ -35,20 +35,23 @@ impl MtechServer {
                 self.context.user_settings =
                     serde_json::from_str(settings.as_str()).unwrap_or_default();
 
-                let mut startup_tabs = self.context.user_settings.startup_tabs.clone();
-                if let Ok(state) = serde_json::from_value::<DockState<String>>(startup_tabs) {
-                    for x in state.iter_all_tabs() {
-                        info!("All Tabs: {:?}, {:?}, {:?}", x.1, x.0 .0, x.0 .1);
+                let startup_tabs = self.context.user_settings.startup_tabs.clone();
+                if let  Some(mut tabs) = startup_tabs.clone() {
+
+                    if let Ok(state) = serde_json::from_value::<DockState<String>>(tabs) {
+                        for x in state.iter_all_tabs() {
+                            info!("All Tabs: {:?}, {:?}, {:?}", x.1, x.0 .0, x.0 .1);
+                        }
+                        self.tree = state;
+                    } else {
+                        info!("Setting startup tabs: {:?}", self.tree);
+                        tabs = serde_json::to_value(&self.tree).unwrap_or_default();
+                        self.context.user_settings.startup_tabs = Some(tabs);
+                        storage.set_string(
+                            "user_settings",
+                            serde_json::to_string(&self.context.user_settings).unwrap_or_default(),
+                        );
                     }
-                    self.tree = state;
-                } else {
-                    info!("Setting startup tabs: {:?}", self.tree);
-                    startup_tabs = serde_json::to_value(&self.tree).unwrap_or_default();
-                    self.context.user_settings.startup_tabs = startup_tabs;
-                    storage.set_string(
-                        "user_settings",
-                        serde_json::to_string(&self.context.user_settings).unwrap_or_default(),
-                    );
                 }
             }
 

@@ -30,7 +30,7 @@ use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 // use mtechserver::{webworker::WebWorker};
 use serde_json::Value;
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
-use surrealdb::Action;
+use surrealdb::{Action, Object, RecordId};
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
 // use ratatui::Terminal;
@@ -774,26 +774,17 @@ impl ThemeConfig {
                     .ui(ui);
                 
                 if reset.clicked() {
-                    let color_settings = ThemeConfig::default();
-                    let object = serde_json::to_value(color_settings).unwrap().clone();
-                    let mut user_settings: UserSettings = UserSettings::default();
-                    // info!("Object? {:#?}", object.as_object());
-                    user_settings.color_scheme = object;
-                    let final_settings = serde_json::to_value(user_settings.clone()).unwrap();
-                    let x = final_settings.clone().as_object().unwrap().clone();
                     spawn_local(async move {
-                        // info!("settings: {user_settings:?}");
-                        let x = DATABASE
-                            .query("UPDATE $auth.id SET user_settings = <object>$color_settings")
-                            .bind(("color_settings", x))
-                            .await;
-                        match x {
-                            Ok(mut res) => {
-                                match res.take::<Option<Value>>(0) {
-                                    Ok(y) => info!("Y: {y:?}"),
-                                    Err(e) => info!("Err: {e:?}"),
-                                }
-                            },
+                        let theme = ThemeConfig::default();
+                        let color_settings =  serde_json::to_string(&theme.clone()).unwrap();
+                        let x = format!("UPDATE user:jm9a7l3v32gsiccr7pgw SET user_settings.color_scheme = {color_settings}");
+                        info!("X: {x:?}");
+                        match DATABASE // "UPDATE $auth.id SET user_settings.color_scheme = <object>$color_settings"
+                            .query(x)
+                            // .bind(("color_settings", color_settings.clone()))
+                            .await 
+                        {
+                            Ok(res) => info!("Res: {res:?}"),
                             Err(e) => info!("Error updating User Settings: {e:?}"),
                         }
                     });
@@ -807,16 +798,15 @@ impl ThemeConfig {
                 
                 if save.clicked() {
                     let color_settings = self.clone();
-                    let object = serde_json::to_value(color_settings).unwrap().clone();
                     let mut user_settings = UserSettings::default();
+                    let object = serde_json::to_value(color_settings).unwrap().clone();
                     user_settings.color_scheme = object;
-                    let final_settings = Some(user_settings.clone());
                     spawn_local(async move {
                         info!("settings: {user_settings:?}");
 
                         match DATABASE
-                            .query("UPDATE $auth.id SET user_settings = $color_settings")
-                            .bind(("color_settings", final_settings))
+                            .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
+                            .bind(("color_settings", user_settings.color_scheme.clone()))
                             .await {
                                 Ok(res) => info!("Result: {res:?}"),
                                 Err(e) => info!("Error updating User Settings: {e:?}"),
