@@ -13,22 +13,6 @@ use crate::app_state::{self, ThemeConfig};
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
-        // most important part of the whole app.. setting up our styling
-        // currently this just sets the style of the app, but in the near
-        // future i will be making this the setup to allow user customization
-        // to the style of any part of the app
-        // let arc_style = set_darker_style();
-        // ctx.set_style(arc_style);
-
-        if self.context.modify_theme {
-            Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
-                self.context.theme_config.edit_ui(ui);
-            });
-        }
-
-        let custom_style = set_custom_style(&self.context.theme_config);
-        ctx.set_style((*custom_style).clone());
-
         // This is our 'dummy' worker that retrieves Minio bucket storage
         // contents, then builds our 'virtual' file system ui in the
         // crate::tabs::toolbox tab
@@ -41,12 +25,7 @@ impl eframe::App for MtechServer {
         // }
 
         // do some initial setting up
-        if self.context.first_run {
-            // spawn_local(async move {
-            //     gloo_console::info!("Hello from a worker?");
-            // });
-            self.first_run(frame);
-        }
+        if self.context.first_run { self.first_run(frame); }
 
         if self.context.wants_to_undock {
             for client in self.context.clients.clone() {
@@ -149,6 +128,38 @@ impl eframe::App for MtechServer {
             }
         }
 
+        // most important part of the whole app.. setting up our styling
+        // currently this just sets the style of the app, but in the near
+        // future i will be making this the setup to allow user customization
+        // to the style of any part of the app
+        if self.context.modify_theme {
+            Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
+                // info!("Settings: {:?}", self.context.theme_config);
+                let theme = self.context.theme_config.edit_ui(ui);
+                if theme.0 {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        if let Some(user) = self.context.current_user.clone().as_mut() {
+                            wasm_cookies::delete("user");
+                            user.user_settings.as_mut().unwrap().color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
+                            let duration = web_time::Duration::from_secs(172800);
+                            let usr = serde_json::to_string(&user.clone()).unwrap();
+                            let cookie_opts = wasm_cookies::CookieOptions::default()
+                                .with_same_site(wasm_cookies::SameSite::Strict)
+                                .secure()
+                                .expires_after(duration);
+                            wasm_cookies::set("user", &usr, &cookie_opts);
+                        }
+                    }
+                    self.context.theme_config = theme.1;
+                    self.context.modify_theme = false;
+                }
+            });
+        }
+
+        let custom_style = set_custom_style(&self.context.theme_config);
+        ctx.set_style((*custom_style).clone());
+
         // Handle changes to state from various places, such as
         // hitting the login button, clicking the 'home page' button
         // (which is clicking Mtechserver in the top middle of the page),
@@ -207,53 +218,6 @@ impl eframe::App for MtechServer {
     //         }
     //     }
     // }
-}
-
-fn set_style() -> Arc<Style> {
-    let theme = CarlDark;
-    // let theme = TokyoNight;
-    let mut custom_style: Style = theme.custom_style();
-    let mut font = FontId::default();
-    font.size = 10.5;
-    font.family = FontFamily::Proportional;
-
-    custom_style.override_font_id = Some(font);
-    custom_style.spacing.button_padding.x = 3.0;
-    custom_style.spacing.button_padding.y = 3.0;
-    custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
-    custom_style.spacing.combo_height = 55.0;
-    custom_style.spacing.combo_width = 100.0;
-    custom_style.interaction.multi_widget_text_select = false;
-    custom_style.interaction.selectable_labels = true;
-    custom_style.explanation_tooltips = false;
-    custom_style.url_in_tooltip = true;
-    custom_style.interaction.interact_radius = 10.0;
-    custom_style.interaction.resize_grab_radius_side = 10.0;
-    custom_style.interaction.resize_grab_radius_corner = 10.0;
-    custom_style.visuals.window_shadow.spread = 8.0;
-    custom_style.visuals.window_shadow.blur = 10.0;
-    // custom_style.visuals.panel_fill = Color32::from_rgb(16,16,17);
-    // custom_style.visuals.window_fill = Color32::from_rgb(16,16,17);
-    custom_style.visuals.selection.stroke.color =
-        Color32::from_rgba_premultiplied(199, 20, 150, 100);
-    custom_style.visuals.selection.bg_fill = Color32::from_rgba_premultiplied(40, 40, 40, 20);
-    custom_style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(17, 17, 19);
-    custom_style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-    custom_style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
-    custom_style.visuals.widgets.inactive.bg_stroke =
-        Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-    // custom_style.visuals.widgets.open.bg_fill =  Color32::LIGHT_BLUE;
-    // custom_style.visuals.widgets.open.weak_bg_fill =  Color32::LIGHT_BLUE;
-    custom_style.visuals.widgets.active.weak_bg_fill = Color32::from_rgb(28, 28, 28);
-    custom_style.visuals.widgets.active.bg_fill = Color32::LIGHT_GREEN;
-    custom_style.visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(15, 15, 19);
-    // custom_style.visuals.
-    // custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
-    // custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
-    custom_style.visuals.widgets.hovered.bg_stroke =
-        Stroke::new(0.5, Color32::from_rgba_premultiplied(120, 20, 120, 100));
-    let arc_style = Arc::new(custom_style);
-    arc_style
 }
 
 pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
@@ -351,9 +315,12 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
         ..Default::default()
     };
 
+    // info!("config.text_color: {:?} - {:?}", config.text_color, ThemeConfig::default().text_color);
+
     Arc::new(custom_style)
 }
 
+/*
 
 fn set_darker_style() -> Arc<Style> {
     // Define colors based on "Tokyo Night Dark" theme
@@ -468,6 +435,54 @@ fn set_darker_style() -> Arc<Style> {
     Arc::new(custom_style)
 }
 
+fn set_style() -> Arc<Style> {
+    let theme = CarlDark;
+    // let theme = TokyoNight;
+    let mut custom_style: Style = theme.custom_style();
+    let mut font = FontId::default();
+    font.size = 10.5;
+    font.family = FontFamily::Proportional;
+
+    custom_style.override_font_id = Some(font);
+    custom_style.spacing.button_padding.x = 3.0;
+    custom_style.spacing.button_padding.y = 3.0;
+    custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
+    custom_style.spacing.combo_height = 55.0;
+    custom_style.spacing.combo_width = 100.0;
+    custom_style.interaction.multi_widget_text_select = false;
+    custom_style.interaction.selectable_labels = true;
+    custom_style.explanation_tooltips = false;
+    custom_style.url_in_tooltip = true;
+    custom_style.interaction.interact_radius = 10.0;
+    custom_style.interaction.resize_grab_radius_side = 10.0;
+    custom_style.interaction.resize_grab_radius_corner = 10.0;
+    custom_style.visuals.window_shadow.spread = 8.0;
+    custom_style.visuals.window_shadow.blur = 10.0;
+    // custom_style.visuals.panel_fill = Color32::from_rgb(16,16,17);
+    // custom_style.visuals.window_fill = Color32::from_rgb(16,16,17);
+    custom_style.visuals.selection.stroke.color =
+        Color32::from_rgba_premultiplied(199, 20, 150, 100);
+    custom_style.visuals.selection.bg_fill = Color32::from_rgba_premultiplied(40, 40, 40, 20);
+    custom_style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(17, 17, 19);
+    custom_style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+    custom_style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
+    custom_style.visuals.widgets.inactive.bg_stroke =
+        Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
+    // custom_style.visuals.widgets.open.bg_fill =  Color32::LIGHT_BLUE;
+    // custom_style.visuals.widgets.open.weak_bg_fill =  Color32::LIGHT_BLUE;
+    custom_style.visuals.widgets.active.weak_bg_fill = Color32::from_rgb(28, 28, 28);
+    custom_style.visuals.widgets.active.bg_fill = Color32::LIGHT_GREEN;
+    custom_style.visuals.widgets.noninteractive.weak_bg_fill = Color32::from_rgb(15, 15, 19);
+    // custom_style.visuals.
+    // custom_style.visuals.widgets.hovered.weak_bg_fill =  Color32::TRANSPARENT;
+    // custom_style.visuals.widgets.hovered.bg_fill =  Color32::from_rgb(12, 12, 12);
+    custom_style.visuals.widgets.hovered.bg_stroke =
+        Stroke::new(0.5, Color32::from_rgba_premultiplied(120, 20, 120, 100));
+    let arc_style = Arc::new(custom_style);
+    arc_style
+}
+
+
 fn _set_alternative_style() -> Arc<Style> {
     let theme = CarlDark;
     let mut custom_style: Style = theme.custom_style();
@@ -510,3 +525,4 @@ fn _set_alternative_style() -> Arc<Style> {
     let arc_style = Arc::new(custom_style);
     arc_style
 }
+*/

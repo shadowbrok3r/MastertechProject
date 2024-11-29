@@ -14,7 +14,7 @@ use async_openai_wasm::types::ThreadObject;
 use crossbeam::channel::{self, Receiver, Sender};
 use database::{
     schema::{
-        prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, Record, TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings
+        prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings
     },
     Database, DATABASE,
 };
@@ -26,14 +26,11 @@ use eframe::{
     CreationContext,
 };
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-// use gloo_worker::Spawnable;
-// use mtechserver::{webworker::WebWorker};
 use serde_json::Value;
 use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
-use surrealdb::{Action, Object, RecordId};
+use surrealdb::Action;
 use wasm_bindgen_futures::spawn_local;
 use web_time::{Duration, Instant};
-// use ratatui::Terminal;
 use crate::{
     pages::{login_page::Login, signup_page::Signup},
     tabs::{terminal::chart::App, web_console::websockets::WebSocketClient},
@@ -50,6 +47,11 @@ use anyhow::Error;
 use displays::channel_manager::ChannelManager;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
+
+// use gloo_worker::Spawnable;
+// use mtechserver::{webworker::WebWorker};
+// use ratatui::Terminal;
+
 
 #[derive(Serialize)]
 pub struct MtechServer {
@@ -319,6 +321,7 @@ pub struct MtechServerContext {
     /// Theme settings
     pub theme_config: ThemeConfig,
     /// Button state for modifying theme config
+    #[serde(skip)]
     pub modify_theme: bool,
     /// The theme itself
     pub theme: Arc<Style>
@@ -692,80 +695,110 @@ pub fn check_authentication(
     Ok((state, current_user))
 }
 
-#[derive(Serialize, Clone, Deserialize, Debug)]
+#[derive(Serialize, Clone, Deserialize, Debug, PartialEq)]
 pub struct ThemeConfig {
+    /// Editor background
     pub background_color: Color32,
+    /// Editor foreground
     pub foreground_color: Color32,
+    /// Background for inactive widgets
     pub widget_bg_fill: Color32,
+    /// Weak background for widgets
     pub widget_weak_bg_fill: Color32,
+    /// Widget background stroke color
     pub widget_bg_stroke_color: Color32,
+    /// Widget foreground stroke color
     pub widget_fg_stroke_color: Color32,
+    /// Background for hovered widgets
     pub hovered_bg_fill: Color32,
+    /// Weak background for hovered widgets
     pub hovered_weak_bg_fill: Color32,
+    /// Stroke for hovered
     pub hovered_bg_stroke_color: Color32,
+    /// Foreground for hovered
     pub hovered_fg_stroke_color: Color32,
+    /// Background for active widgets
     pub active_bg_fill: Color32,
+    /// Weak background for active widgets
     pub active_weak_bg_fill: Color32,
+    /// Stroke for active widgets
     pub active_bg_stroke_color: Color32,
+    /// Foreground for active widgets
     pub active_fg_stroke_color: Color32,
+    /// Background for open widgets
     pub open_bg_fill: Color32,
+    /// Weak background for open widgets
     pub open_weak_bg_fill: Color32,
+    /// Stroke for open widgets
     pub open_bg_stroke_color: Color32,
+    /// Foreground for open widgets
     pub open_fg_stroke_color: Color32,
+    /// Selection background
     pub selection_bg_fill: Color32,
+    /// Selection stroke
     pub selection_stroke_color: Color32,
+    /// Subtle background
     pub faint_bg_color: Color32,
+    /// Very dark background for contrast
     pub extreme_bg_color: Color32,
+    /// Code block background
     pub code_bg_color: Color32,
+    /// Border color for windows/panels
     pub border_color: Color32,
+    /// Default text color
     pub text_color: Color32,
+    /// Error text color
     pub error_color: Color32,
+    /// Warning text color
     pub warn_color: Color32,
+    /// Hyperlink color
     pub link_color: Color32,
+    /// Window stroke color
     pub window_stroke_color: Color32,
+    /// Uniform rounding for visuals
     pub rounding: Rounding,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            background_color: Color32::from_rgb(10, 10, 13),            // Editor background
-            foreground_color: Color32::from_rgb(169, 177, 214),         // Editor foreground
-            widget_bg_fill: Color32::from_rgb(20, 20, 22),              // Background for inactive widgets
-            widget_weak_bg_fill: Color32::from_rgb(20, 20, 22),         // Weak background for widgets
-            widget_bg_stroke_color: Color32::from_rgb(50, 50, 60),      // Widget background stroke color
-            widget_fg_stroke_color: Color32::from_rgb(169, 177, 214),   // Widget foreground stroke color
-            hovered_bg_fill: Color32::from_rgb(35, 35, 40),             // Background for hovered widgets
-            hovered_weak_bg_fill: Color32::from_rgb(40, 40, 45),        // Weak background for hovered widgets
-            hovered_bg_stroke_color: Color32::from_rgba_premultiplied(120, 20, 120, 100), // Stroke for hovered
-            hovered_fg_stroke_color: Color32::from_rgb(155, 104, 227),  // Foreground for hovered
-            active_bg_fill: Color32::from_rgb(28, 28, 28),              // Background for active widgets
-            active_weak_bg_fill: Color32::from_rgb(28, 28, 28),         // Weak background for active widgets
-            active_bg_stroke_color: Color32::from_rgb(90, 90, 100),     // Stroke for active widgets
-            active_fg_stroke_color: Color32::from_rgb(169, 177, 214),   // Foreground for active widgets
-            open_bg_fill: Color32::from_rgb(30, 30, 35),                // Background for open widgets
-            open_weak_bg_fill: Color32::from_rgb(35, 35, 40),           // Weak background for open widgets
-            open_bg_stroke_color: Color32::from_rgb(100, 100, 110),     // Stroke for open widgets
-            open_fg_stroke_color: Color32::from_rgb(169, 177, 214),     // Foreground for open widgets
-            selection_bg_fill: Color32::from_rgba_premultiplied(90, 55, 88, 90), // Selection background
-            selection_stroke_color: Color32::from_rgba_premultiplied(81, 92, 126, 50), // Selection stroke
-            faint_bg_color: Color32::from_rgb(20, 20, 25),              // Subtle background
-            extreme_bg_color: Color32::from_rgb(15, 15, 20),            // Very dark background for contrast
-            code_bg_color: Color32::from_rgb(20, 20, 27),               // Code block background
-            border_color: Color32::from_rgb(16, 16, 23),                // Border color for windows/panels
-            text_color: Color32::from_rgb(219, 199, 245),               // Default text color
-            error_color: Color32::from_rgb(227, 104, 176),              // Error text color
-            warn_color: Color32::from_rgb(191, 33, 101),                // Warning text color
-            link_color: Color32::from_rgb(155, 104, 227),               // Hyperlink color
-            window_stroke_color: Color32::from_rgb(42, 195, 222),         // Window stroke color
-            rounding: Rounding::same(4.0),                              // Uniform rounding for visuals
+            background_color: Color32::from_rgb(10, 10, 13),
+            foreground_color: Color32::from_rgb(169, 177, 214),
+            widget_bg_fill: Color32::from_rgb(20, 20, 22),
+            widget_weak_bg_fill: Color32::from_rgb(20, 20, 22),
+            widget_bg_stroke_color: Color32::from_rgb(50, 50, 60),
+            widget_fg_stroke_color: Color32::from_rgb(169, 177, 214),
+            hovered_bg_fill: Color32::from_rgb(35, 35, 40),
+            hovered_weak_bg_fill: Color32::from_rgb(40, 40, 45),
+            hovered_bg_stroke_color: Color32::from_rgba_premultiplied(120, 20, 120, 100),
+            hovered_fg_stroke_color: Color32::from_rgb(155, 104, 227),
+            active_bg_fill: Color32::from_rgb(28, 28, 28),
+            active_weak_bg_fill: Color32::from_rgb(28, 28, 28),
+            active_bg_stroke_color: Color32::from_rgb(90, 90, 100),
+            active_fg_stroke_color: Color32::from_rgb(169, 177, 214),
+            open_bg_fill: Color32::from_rgb(30, 30, 35),
+            open_weak_bg_fill: Color32::from_rgb(35, 35, 40),
+            open_bg_stroke_color: Color32::from_rgb(100, 100, 110),
+            open_fg_stroke_color: Color32::from_rgb(169, 177, 214),
+            selection_bg_fill: Color32::from_rgba_premultiplied(90, 55, 88, 90),
+            selection_stroke_color: Color32::from_rgba_premultiplied(81, 92, 126, 50),
+            faint_bg_color: Color32::from_rgb(20, 20, 25),
+            extreme_bg_color: Color32::from_rgb(15, 15, 20),
+            code_bg_color: Color32::from_rgb(20, 20, 27),
+            border_color: Color32::from_rgb(16, 16, 23),
+            text_color: Color32::from_rgb(219, 199, 245),
+            error_color: Color32::from_rgb(227, 104, 176),
+            warn_color: Color32::from_rgb(191, 33, 101),
+            link_color: Color32::from_rgb(155, 104, 227),
+            window_stroke_color: Color32::from_rgb(42, 195, 222),
+            rounding: Rounding::same(4.0),
         }
     }
 }
 
-
 impl ThemeConfig {
-    pub fn edit_ui(&mut self, ui: &mut Ui) {
+    pub fn edit_ui(&mut self, ui: &mut Ui) -> (bool, Self) {
+        let mut ret = (false, self.clone());
         ui.horizontal(|ui| {
             ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
                 let reset = Button::new("Reset to Default")
@@ -776,18 +809,18 @@ impl ThemeConfig {
                 if reset.clicked() {
                     spawn_local(async move {
                         let theme = ThemeConfig::default();
-                        let color_settings =  serde_json::to_string(&theme.clone()).unwrap();
-                        let x = format!("UPDATE user:jm9a7l3v32gsiccr7pgw SET user_settings.color_scheme = {color_settings}");
-                        info!("X: {x:?}");
-                        match DATABASE // "UPDATE $auth.id SET user_settings.color_scheme = <object>$color_settings"
-                            .query(x)
-                            // .bind(("color_settings", color_settings.clone()))
+                        // let x = serde_json::to_value(theme).unwrap();
+                        match DATABASE 
+                            .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
+                            .bind(("color_settings", theme.clone()))
                             .await 
                         {
                             Ok(res) => info!("Res: {res:?}"),
                             Err(e) => info!("Error updating User Settings: {e:?}"),
                         }
                     });
+
+                    ret = (true, ThemeConfig::default());
                 }
             });
             ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
@@ -798,20 +831,16 @@ impl ThemeConfig {
                 
                 if save.clicked() {
                     let color_settings = self.clone();
-                    let mut user_settings = UserSettings::default();
-                    let object = serde_json::to_value(color_settings).unwrap().clone();
-                    user_settings.color_scheme = object;
                     spawn_local(async move {
-                        info!("settings: {user_settings:?}");
-
                         match DATABASE
                             .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
-                            .bind(("color_settings", user_settings.color_scheme.clone()))
+                            .bind(("color_settings", color_settings.clone()))
                             .await {
                                 Ok(res) => info!("Result: {res:?}"),
                                 Err(e) => info!("Error updating User Settings: {e:?}"),
                             }
                     });
+                    ret = (true, self.clone());
                 }
             });
         });
@@ -1090,6 +1119,8 @@ impl ThemeConfig {
             ui.add(DragValue::new(&mut self.rounding.sw).speed(0.1).prefix("SW:"));
             ui.add(DragValue::new(&mut self.rounding.se).speed(0.1).prefix("SE:"));
         });
+
+        ret
     }
 }
 

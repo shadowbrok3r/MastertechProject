@@ -205,6 +205,7 @@ impl MtechServer {
 
                                 if ui.add(Button::new("Modify Theme")).clicked() {
                                     self.context.modify_theme = true;
+                                    ui.close_menu();
                                 }
 
                                 if ui.add(Button::new("Refresh Data")).clicked() {
