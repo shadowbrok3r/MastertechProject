@@ -45,7 +45,7 @@ use crate::{
 };
 use anyhow::Error;
 use displays::channel_manager::ChannelManager;
-use log::{error, info};
+use log::info;
 use serde::{Deserialize, Serialize};
 
 // use gloo_worker::Spawnable;
@@ -666,7 +666,7 @@ impl MtechServerContext {
     }
 }
 
-// #[cfg(target_arch="wasm32")]
+#[cfg(target_arch="wasm32")]
 pub fn check_authentication(
     db_tx: Sender<anyhow::Result<Database, Error>>,
 ) -> Result<(AppState, Option<User>), Error> {
@@ -686,7 +686,7 @@ pub fn check_authentication(
                     info!("Sent DB");
                     drop(db_tx);
                 }
-                Err(err) => error!("sending db connection: {err:?}"),
+                Err(err) => log::error!("sending db connection: {err:?}"),
             }
         });
         state = AppState::Authenticated(MainPages::Tasks);
@@ -809,7 +809,6 @@ impl ThemeConfig {
                 if reset.clicked() {
                     spawn_local(async move {
                         let theme = ThemeConfig::default();
-                        // let x = serde_json::to_value(theme).unwrap();
                         match DATABASE 
                             .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
                             .bind(("color_settings", theme.clone()))

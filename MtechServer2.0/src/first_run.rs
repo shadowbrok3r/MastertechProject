@@ -19,7 +19,7 @@ use log::{debug, error};
 // use mtechserver::webworker::Input;
 use wasm_bindgen_futures::spawn_local;
 
-// #[cfg(target_arch="wasm32")]
+#[cfg(target_arch="wasm32")]
 use {
     crate::app_state::check_authentication,
     // mtechserver::live_worker::LiveInput,
@@ -111,7 +111,7 @@ impl MtechServer {
             }
         }
 
-        // #[cfg(target_arch="wasm32")]
+        #[cfg(target_arch="wasm32")]
         match check_authentication(self.context.db_tx.clone()) {
             Ok(d) => {
                 info!("1");
