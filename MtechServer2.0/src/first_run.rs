@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-
 use crate::{
     app_state::{AppState, MtechServer, ThemeConfig},
     tabs::ai_playground::ChatThread,
@@ -203,10 +202,29 @@ impl MtechServer {
             });
 
             if let Some(settings) = &usr.user_settings {
-                info!("Current Color Settings: {:#?}\n\nNew Settings: {:#?}", self.context.theme_config, settings.color_scheme);
-                match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()){
+                // THIS is completely correct and fine
+                info!("Raw color_scheme value: {:#?}", settings.color_scheme);
+                if !settings.color_scheme.as_object().unwrap().contains_key("text_color") {
+                    info!("Missing key: text_color");
+                }
+                
+                let raw_json = serde_json::to_string(&settings.color_scheme).unwrap();
+                let test_deserialization: Result<ThemeConfig, _> = serde_json::from_str(&raw_json);
+
+                match test_deserialization {
+                    Ok(theme_config) => info!("Test deserialized ThemeConfig: {:#?}", theme_config),
+                    Err(e) => info!("Manual deserialization error: {e:?}"),
+                }
+                match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()) {
                     Ok(color_settings) => {
-                        self.context.theme_config = color_settings;
+
+                            self.context.theme_config = color_settings.clone();
+                            // Both self.context.theme_config.text_color AND color_settings.text_Color are INCORRECT (the default values)
+                            info!(
+                                "Setting user color scheme: \n{:#?}\n\nCOLOR_SETTINGS: \n{:#?}", 
+                                self.context.theme_config.text_color, 
+                                color_settings.text_color
+                            );
                     },
                     Err(e) => info!("Error setting theme config: {e:?}"),
                 }
