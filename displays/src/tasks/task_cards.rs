@@ -305,7 +305,7 @@ pub fn date_colors(date: String, _complete: bool) -> Color32 {
         due_tomorrow = Some(date.clone());
     }
     if let Some(_) = overdue {
-        Color32::from_rgb(199, 30, 60)
+        Color32::from_rgb(199, 30, 60) // ui.style().visuals.error_fg_color
     }
     // Pink
     else if let Some(_) = due_today {

@@ -1,7 +1,7 @@
 use std::mem::{replace, take};
 
 use eframe::egui::{
-    self, Align, Color32, Event, Layout, PointerButton, Rect, Response, RichText, Sense, Stroke,
+    self, Align, Event, Layout, PointerButton, Rect, Response, RichText, Sense, Stroke,
     Widget,
 };
 use egui_extras::Column;
@@ -81,9 +81,9 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
         // 'warn_bg_color', there's no 'green' color which can be acquired from inherent theme.
         // Following logic simply gets 'green' color from current background's brightness.
         let green = if visual.window_fill.g() > 128 {
-            Color32::DARK_GREEN
+            ui.style().visuals.warn_fg_color
         } else {
-            Color32::GREEN
+            ui.style().visuals.hyperlink_color
         };
 
         let mut builder = egui_extras::TableBuilder::new(ui).column(Column::auto());
@@ -123,7 +123,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                                 let asc = &s.sort()[pos].1;
 
                                 ui.colored_label(
-                                    if !asc.0 { Color32::RED } else { green },
+                                    if !asc.0 { ui.style().visuals.error_fg_color } else { green },
                                     RichText::new(format!(
                                         "{}{}",
                                         if asc.0 { "↗" } else { "↘" },
