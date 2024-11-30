@@ -1,6 +1,6 @@
 use self::schema::Record;
 use lazy_static::lazy_static;
-// use log::info;
+use log::info;
 use once_cell::sync::Lazy;
 use schema::User;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -94,18 +94,18 @@ impl Database {
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
         match DATABASE.connect::<Ws>(DB_URL_LOCAL).await {
-            Ok(_) => gloo_console::info!(format!("Connected to {DB_URL:?}")),
-            Err(e) => gloo_console::info!(format!("Error connecting to database: {e:?}")),
+            Ok(_) => info!("Connected to {DB_URL:?}"),
+            Err(e) => info!("Error connecting to database: {e:?}"),
         } //(&get_db_url()).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt {
             Some(jwt) => {
-                gloo_console::info!(format!("Have a JWT, attempting token auth"));
+                info!("Have a JWT, attempting token auth");
                 let auth = DATABASE.authenticate(jwt.clone()).await;
                 match auth {
                     Ok(_) => {
-                        gloo_console::info!(format!("Auth not ok"));
+                        info!("Auth not ok");
                         Ok(Self {
                             jwt: Some(jwt.into()),
                             user: None,
@@ -115,7 +115,7 @@ impl Database {
                 }
             }
             None => {
-                gloo_console::info!(format!("No JWT, sigining in: {:?}", username.clone()));
+                info!("No JWT, sigining in: {:?}", username.clone());
 
                 // Select a specific namespace / database
                 let jwt = DATABASE
@@ -140,7 +140,7 @@ impl Database {
                     .await{
                         Ok(res) => Ok(res),
                         Err(e) => {
-                            gloo_console::info!(e.to_string());
+                            info!("{e:?}");
                             Err(e)
                         },
                     };
@@ -175,7 +175,7 @@ impl Database {
             })
             .await?;
 
-        gloo_console::info!(format!("signup: {:?}", signup));
+        info!("signup: {signup:?}");
         let query = "SELECT * FROM user WHERE email == $email";
         DATABASE.set("email", email).await?;
         let user: Option<User> = DATABASE.query(query).await?.take(0)?;

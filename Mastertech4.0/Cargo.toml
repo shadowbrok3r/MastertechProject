@@ -80,10 +80,10 @@ linked-hash-map = "0.5"
 ewebsock = { version = "0.8", features = [ "tls" ] }
 hex = "0.4.3"
 ring = "0.17.8"
-# egui_tracing = "0.2.2"
 rust-s3 = "0.35"
 evtx = "0.8"
 semver = "1.0.23"
+# egui_tracing = "0.2.2"
 
 
 # egui_ratatui = { workspace=true }
@@ -120,7 +120,7 @@ harness = false
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "2"
-embed-resource = "2.4"
+embed-resource = "3.0.1"
 winres = "0.1"
 # embed-manifest = "1.4.0"
 

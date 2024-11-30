@@ -24,8 +24,9 @@ use regex::Regex;
 use log::info;
 
 #[cfg(feature="tokio")]
+// #[cfg(target_arch="")]
 use {
-    tokio::spawn,
+    // tokio::spawn,
     std::path::PathBuf
 };
 #[cfg(target_arch="wasm32")]
@@ -441,23 +442,23 @@ impl FileSystem {
     }
 
     #[cfg(feature="tokio")]
-    pub fn upload_tokio(&self, path: String) {
-        let task = rfd::AsyncFileDialog::new().pick_files();
-        let secret_key = self.secret_key.clone();
-        let access_key = self.access_key.clone();
-        let name = self.user.email.clone();
-        let parsed = name.split_once('@').unwrap().0.to_string().clone();
-        spawn(async move {
-            let result = Self::perform_upload(
-                &parsed.clone(),
-                &access_key.clone(),
-                &secret_key.clone(),
-                &path.clone(),
-                task
-            ).await;
+    pub fn upload_tokio(&self, _path: String) {
+        // let task = rfd::AsyncFileDialog::new().pick_files();
+        // let secret_key = self.secret_key.clone();
+        // let access_key = self.access_key.clone();
+        // let name = self.user.email.clone();
+        // let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        // spawn(async move {
+        //     let result = Self::perform_upload(
+        //         &parsed.clone(),
+        //         &access_key.clone(),
+        //         &secret_key.clone(),
+        //         &path.clone(),
+        //         task
+        //     ).await;
 
-            info!("Result: {result:?}");
-        });
+        //     info!("Result: {result:?}");
+        // });
     }
     
     #[cfg(target_arch="wasm32")]
@@ -485,26 +486,26 @@ impl FileSystem {
     }
 
     #[cfg(feature="tokio")]
-    fn _download_selection_tokio(&self, path: String, filename: String) {
-        let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
-        let tx = self.bytes_tx.clone();
-        let secret_key = self.secret_key.clone();
-        let access_key = self.access_key.clone();
-        let name = self.user.email.to_lowercase().clone();
-        let parsed = name.split_once('@').unwrap().0.to_string().clone();
-        spawn(async move {
-            let result = Self::perform_download(
-                &parsed.clone(),
-                &access_key,
-                &secret_key,
-                tx.clone(),
-                &path,
-                &filename,
-                task
-            ).await;
+    fn _download_selection_tokio(&self, _path: String, _filename: String) {
+        // let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
+        // let tx = self.bytes_tx.clone();
+        // let secret_key = self.secret_key.clone();
+        // let access_key = self.access_key.clone();
+        // let name = self.user.email.to_lowercase().clone();
+        // let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        // spawn(async move {
+        //     let result = Self::perform_download(
+        //         &parsed.clone(),
+        //         &access_key,
+        //         &secret_key,
+        //         tx.clone(),
+        //         &path,
+        //         &filename,
+        //         task
+        //     ).await;
 
-            info!("Result: {result:?}");
-        });
+        //     info!("Result: {result:?}");
+        // });
     }
 
     // fn delete_selection(&self, path: String, filename: String) {

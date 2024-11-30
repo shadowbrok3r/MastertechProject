@@ -11,6 +11,7 @@ pub mod carl_dark;
 pub mod mention_handler;
 pub mod toasts;
 pub mod tokyo_dark;
+pub mod theme_config;
 
 #[derive(Debug, Clone)]
 pub enum TaskUiActions {

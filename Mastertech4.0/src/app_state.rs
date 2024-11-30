@@ -10,10 +10,10 @@ use database::{
 use displays::{
     channel_manager::ChannelManager,
     egui_data_table::DataTable,
-    ui_tools::{mention_handler::MentionHandler, toasts::Toasts},
+    ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts},
     virtual_filesystem::FileSystem,
 };
-use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke};
+use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Style};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::{
     collections::{HashMap, HashSet},
@@ -225,6 +225,13 @@ pub struct MastertechContext {
     pub stock_quantity_table: DataTable<StockQuantityData>,
     pub store_selection: u64,
     pub json_editor: JsonEditor,
+    /// Theme settings
+    pub theme_config: ThemeConfig,
+    /// Button state for modifying theme config
+    pub modify_theme: bool,
+    /// The theme itself
+    pub theme: Arc<Style>,
+
 }
 
 impl MasterTechApp {
@@ -310,6 +317,10 @@ impl MasterTechApp {
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
+        
+        let theme_config = ThemeConfig::default();
+        let theme = set_custom_style(&theme_config);
+
         let mastertech_context = MastertechContext {
             current_user: None,
             // terminal: Terminal::new(backend).unwrap(),
@@ -447,7 +458,11 @@ impl MasterTechApp {
             extra_stock_channel,
             stock_quantity_viewer: StockQuantityViewer::default(),
             stock_quantity_table: DataTable::<StockQuantityData>::default(),
+            theme,
+            theme_config,
+            modify_theme: false,
         };
+        
         let context = mastertech_context;
 
         Self {
