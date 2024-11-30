@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::{
-    app_state::{AppState, MtechServer, ThemeConfig},
+    app_state::{AppState, MtechServer},
     tabs::ai_playground::ChatThread,
 };
 use database::{
@@ -11,18 +11,17 @@ use database::{
     },
     DATABASE,
 };
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::Frame;
 use egui_dock::DockState;
 use log::info;
 use log::{debug, error};
-// use mtechserver::webworker::Input;
 use wasm_bindgen_futures::spawn_local;
 
 #[cfg(target_arch="wasm32")]
 use {
     crate::app_state::check_authentication,
-    // mtechserver::live_worker::LiveInput,
+    // use mtechserver::{webworker::Input, live_worker::LiveInput}
 };
 
 impl MtechServer {
@@ -202,22 +201,8 @@ impl MtechServer {
             });
 
             if let Some(settings) = &usr.user_settings {
-                // THIS is completely correct and fine
-                info!("Raw color_scheme value: {:#?}", settings.color_scheme);
-                if !settings.color_scheme.as_object().unwrap().contains_key("text_color") {
-                    info!("Missing key: text_color");
-                }
-                
-                let raw_json = serde_json::to_string(&settings.color_scheme).unwrap();
-                let test_deserialization: Result<ThemeConfig, _> = serde_json::from_str(&raw_json);
-
-                match test_deserialization {
-                    Ok(theme_config) => info!("Test deserialized ThemeConfig: {:#?}", theme_config),
-                    Err(e) => info!("Manual deserialization error: {e:?}"),
-                }
                 match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()) {
                     Ok(color_settings) => {
-
                             self.context.theme_config = color_settings.clone();
                             // Both self.context.theme_config.text_color AND color_settings.text_Color are INCORRECT (the default values)
                             info!(

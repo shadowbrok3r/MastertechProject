@@ -65,7 +65,12 @@ impl MasterTechApp {
 
                     if let Some(usr) = self.context.current_user.as_ref() {
                         let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
-                        ui.colored_label(Color32::from_rgb(100, 50, 100), welcome_msg);
+                        ui.menu_button(welcome_msg, |ui| {
+                            if ui.add(Button::new("Modify Theme")).clicked() {
+                                self.context.modify_theme = true;
+                                ui.close_menu();
+                            }
+                        });
                     }
                     if self.context.current_user.is_none() {
                         if Button::new("Login").ui(ui).clicked() {

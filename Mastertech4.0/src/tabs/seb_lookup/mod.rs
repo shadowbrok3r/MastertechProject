@@ -25,7 +25,7 @@ use egui_json_tree::{
     DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
 };
 
-use super::tur_sheet::get_ticket::{request_seb_info, request_seb_info_from_drive};
+use super::tur_sheet::get_ticket::request_seb_info_from_drive;
 
 impl MastertechContext {
     pub fn seb_lookup(&mut self, ui: &mut Ui) {

@@ -1,7 +1,7 @@
 use crate::tabs::tur_sheet::scaffold::AsanaResponse;
 
 use super::utilities::crypto::pass_hash::load_encrypted_user_data;
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use database::schema::{utilities::{get_store_users, get_tasks}, GetKeysResponse};
 use eframe::egui::{Context, ViewportCommand};
 use super::app_state::{AppState, MasterTechApp, MainPages};
@@ -155,6 +155,14 @@ impl MasterTechApp {
                 Ok::<(), Error>(())
             });
 
+            if let Some(settings) = &usr.user_settings {
+                match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()) {
+                    Ok(color_settings) => {
+                        self.context.theme_config = color_settings.clone();
+                    },
+                    Err(e) => info!("Error setting theme config: {e:?}"),
+                }
+            }
             self.context.connect(ctx.clone());
             self.context.show_ws_viewport.store(true, Ordering::Relaxed);
         }
