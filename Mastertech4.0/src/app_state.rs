@@ -1,14 +1,12 @@
 use crossbeam::channel::{Receiver, Sender};
 use database::{
     schema::{
-        prestashop_schema::PrestashopPayload, ComputerData, ConnectedClient, CustomerData,
-        GetKeysResponse, LiveTaskPayload, LocalSebData, TaskNotePayload, TaskPayload, TicketData,
-        User, CONNECTED_CLIENT_TABLE,
+        get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ComputerData, ConnectedClient, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, Notification, TaskNotePayload, TaskPayload, TicketData, User, CONNECTED_CLIENT_TABLE
     },
     Database,
 };
 use displays::{
-    channel_manager::ChannelManager, egui_data_table::DataTable, modals::{modal_types::ModalTypes, task_modal::ModalAction}, ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
+    app_state::SharedContext, channel_manager::ChannelManager, egui_data_table::DataTable, modals::{modal_types::ModalTypes, task_modal::ModalAction}, ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
 };
 use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Stroke, Style};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
@@ -17,7 +15,7 @@ use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
-use surrealdb::{sql::Uuid, RecordId};
+use surrealdb::{sql::Uuid, Action, RecordId};
 // use egui_ratatui::RataguiBackend;
 use anyhow::Error;
 use chrono::{DateTime, Utc};
@@ -50,7 +48,7 @@ use displays::{
         Modal, ModalHandler, TaskModalHandler, ModalType
     },
     tasks::task_layout::TaskLayout,
-    DisplayModal, TaskUiActions,
+    DisplayModal,
 };
 
 pub struct MasterTechApp {
@@ -83,10 +81,10 @@ impl Default for AppState {
 }
 
 pub struct MastertechContext {
+    pub shared_ctx: SharedContext,
     pub app_state_tx: Sender<AppState>,
     pub app_state_rx: Receiver<AppState>,
 
-    pub current_user: Option<User>,
     pub url: Option<String>,
     pub error: String,
     pub frontend: Option<WebConsoleFrontend>,
@@ -131,13 +129,15 @@ pub struct MastertechContext {
     pub get_specs: bool,
     pub send_specs: bool,
     pub spinner: bool,
-
+    pub new_note: bool,
     pub style: Option<egui_dock::Style>,
     pub text_color: Color32,
     pub border_stroke_color: Stroke,
     pub frame_counter: u64,
     pub show_deferred_viewport: Arc<AtomicBool>,
     pub show_ws_viewport: Arc<AtomicBool>,
+    pub read_notifications: bool,
+    pub notifications: Vec<Notification>,
 
     pub task_map: HashMap<String, Vec<TaskPayload>>,
     pub task_layouts: HashMap<String, TaskLayout>,
@@ -146,17 +146,12 @@ pub struct MastertechContext {
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
     pub chat_modal_handler: ChatModalHandler,
     pub chat_modal: Option<ChatView>,
-    pub task_payload: Vec<TaskPayload>,
     pub task_data: LiveTaskPayload,
     pub ticket_data: TicketData,
     pub customer_data: CustomerData,
     pub computer_data: ComputerData,
     // pub computer_data_test: Arc<Mutex<ComputerData>>,
     pub task_notes: Vec<TaskNotePayload>,
-
-    pub rerun_filtering_my_tasks: bool,
-    pub rerun_filtering_store_tasks: bool,
-    pub rerun_filtering_completed: bool,
 
     pub client_uuid: RecordId,
     pub disks: Value,
@@ -182,15 +177,18 @@ pub struct MastertechContext {
     pub db_tx: Sender<anyhow::Result<Database, Error>>,
     pub cps_keys_tx: Sender<GetKeysResponse>,
     pub cps_keys_rx: Receiver<GetKeysResponse>,
-    pub ui_actions_tx: Sender<TaskUiActions>,
-    pub ui_actions_rx: Receiver<TaskUiActions>,
     pub extra_stock_channel: (
         Sender<Vec<ExtraInventoryData>>,
         Receiver<Vec<ExtraInventoryData>>,
     ),
+    pub notes_tx: Sender<(Action, TaskNotePayload)>,
+    pub notes_rx: Receiver<(Action, TaskNotePayload)>,
+    pub new_note_tx: Sender<TaskNotePayload>,
+    pub new_note_rx: Receiver<TaskNotePayload>,
 
     pub store_users: Vec<User>,
     pub store_users_tx: Sender<Vec<User>>,
+    
     pub store_users_rx: Receiver<Vec<User>>,
     pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
     pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
@@ -207,7 +205,16 @@ pub struct MastertechContext {
     pub github_releases: Vec<GithubRelease>,
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
+    pub live_notification_tx: Sender<(Action, Notification)>,
+    pub live_notification_rx: Receiver<(Action, Notification)>,
+    pub notification_tx: Sender<Vec<Notification>>,
+    pub notification_rx: Receiver<Vec<Notification>>,
+    pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
+    pub live_tasks_rx: Receiver<(Action, LiveTaskPayload)>,
+    pub new_ticket_tx: Sender<NewTicketChannel>,
+    pub new_ticket_rx: Receiver<NewTicketChannel>,
 
+    
     pub data_viewer: MyRowViewer,
     pub data_table: DataTable<MyRowData>,
     pub seb_channel: (Sender<Vec<Value>>, Receiver<Vec<Value>>),
@@ -295,7 +302,6 @@ impl MasterTechApp {
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let (connected_clients_tx, connected_clients_rx) =
             crossbeam::channel::unbounded::<Vec<ConnectedClient>>();
-        let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (store_users_tx, store_users_rx) = crossbeam::channel::unbounded::<Vec<User>>();
         let (initial_tasks_tx, initial_tasks_rx) =
             crossbeam::channel::unbounded::<Vec<TaskPayload>>();
@@ -309,6 +315,12 @@ impl MasterTechApp {
         let seb_channel = <Vec<Value>>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
+        let (notes_tx, notes_rx) = crossbeam::channel::unbounded::<(Action, TaskNotePayload)>();
+        let (new_note_tx, new_note_rx) = crossbeam::channel::unbounded::<TaskNotePayload>();
+        let (live_notification_tx, live_notification_rx) = crossbeam::channel::unbounded::<(Action, Notification)>();
+        let (live_tasks_tx, live_tasks_rx) = crossbeam::channel::unbounded::<(Action, LiveTaskPayload)>();
+        let (new_ticket_tx, new_ticket_rx) = crossbeam::channel::unbounded::<NewTicketChannel>();
+        let (notification_tx, notification_rx) = crossbeam::channel::unbounded::<Vec<Notification>>();
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -318,7 +330,7 @@ impl MasterTechApp {
         let theme = set_custom_style(&theme_config);
 
         let mastertech_context = MastertechContext {
-            current_user: None,
+            shared_ctx: SharedContext::default(),
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
             url: None,
@@ -330,17 +342,12 @@ impl MasterTechApp {
                 superanti_key: "SuperAnti Key".to_string(),
             },
 
-            task_payload: Vec::new(),
             task_data: LiveTaskPayload::default(),
             computer_data: ComputerData::default(),
             // computer_data_test: Arc::new(Mutex::new(ComputerData::default())),
             ticket_data: TicketData::default(),
             customer_data: CustomerData::default(),
             task_notes: Vec::new(),
-
-            rerun_filtering_my_tasks: false,
-            rerun_filtering_store_tasks: false,
-            rerun_filtering_completed: false,
 
             seb_info: None,
 
@@ -368,8 +375,6 @@ impl MasterTechApp {
             rx,
 
             task_layouts: HashMap::new(),
-            ui_actions_tx,
-            ui_actions_rx,
             task_map: HashMap::new(),
             //////////////////////////////////////////
             /*          Widgets and UI elements     */
@@ -391,7 +396,9 @@ impl MasterTechApp {
             query_tasks_first_run: true,
             get_specs: false,
             spinner: false,
-
+            new_note: false,
+            read_notifications: false,
+            notifications: Vec::new(),
             style: None,
             text_color: Color32::from_rgb(255, 204, 230),
             border_stroke_color: Stroke::new(1.0, Color32::from_rgb_additive(150, 62, 124)),
@@ -426,8 +433,17 @@ impl MasterTechApp {
             cps_keys_rx,
             copied_items_tx,
             copied_items_rx,
+            notes_tx,
+            notes_rx,
+            new_note_tx,
+            new_note_rx,
             github_releases_channel,
             tur_channel,
+            live_notification_tx,
+            live_notification_rx,
+            live_tasks_tx, live_tasks_rx,
+            new_ticket_tx, new_ticket_rx,
+            notification_tx, notification_rx,
 
             store_users_tx,
             store_users_rx,
@@ -497,7 +513,7 @@ impl MastertechContext {
                     || {
                         CreateTaskModal::new(
                             "Create Task",
-                            self.store_users.clone(),
+                            self.shared_ctx.store_users.clone(),
                             self.tur_channel.0.clone(),
                         )
                         .default_height(600.0)

@@ -83,7 +83,7 @@ impl MtechServer{
         
                                         ui.add_space(20.0);
 
-                                        if let (Some(ref mut usr), Some(acc_mod)) = (self.context.current_user.clone(), self.account_mut()){
+                                        if let (Some(ref mut usr), Some(acc_mod)) = (self.context.shared_ctx.current_user.clone(), self.account_mut()){
                                             let width = ui.available_width() / 3.0 + 10.0;
 
                                                 TextEdit::singleline(&mut usr.name)

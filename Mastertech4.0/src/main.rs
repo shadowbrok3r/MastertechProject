@@ -71,7 +71,7 @@ impl eframe::App for MasterTechApp {
             app_state::AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
-                    if self.context.current_user.is_some() {
+                    if self.context.shared_ctx.current_user.is_some() {
                         self.load_data(ctx);
                     } else {
                         self.context.first_run = true;

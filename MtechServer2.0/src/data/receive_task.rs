@@ -21,10 +21,10 @@ impl MtechServer {
                 }
             } else {
                 info!("Inserting Task: {:?}", new_task.0);
-                self.context.rerun_filtering_completed = true;
-                self.context.rerun_filtering_my_tasks = true;
-                self.context.rerun_filtering_store_tasks = true;
-                if let Err(e) = handle_live_data(new_task.to_owned(), &mut self.context.tasks, None)
+                self.context.shared_ctx.rerun_filtering_completed = true;
+                self.context.shared_ctx.rerun_filtering_my_tasks = true;
+                self.context.shared_ctx.rerun_filtering_store_tasks = true;
+                if let Err(e) = handle_live_data(new_task.to_owned(), &mut self.context.shared_ctx.tasks, None)
                 {
                     error!("Error handling live data: {e:?}");
                 }

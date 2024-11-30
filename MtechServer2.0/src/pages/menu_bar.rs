@@ -55,7 +55,7 @@ impl MtechServer {
 
                     ui.add_space(30.0);
 
-                    for task in self.context.tasks.iter() {
+                    for task in self.context.shared_ctx.tasks.iter() {
                         inputs.insert(task.task_name.clone());
                     }
                     ui.style_mut().visuals.widgets.inactive.bg_stroke =
@@ -81,7 +81,7 @@ impl MtechServer {
                     if result.secondary_clicked() || accepted_by_keyboard && !self.context.search_input.is_empty() {
                         info!("selected? {}", self.context.search_input.clone());
                         if let Some(input) = inputs.get(&self.context.search_input) {
-                            let task = self.context.tasks.iter().find(|&x| {
+                            let task = self.context.shared_ctx.tasks.iter().find(|&x| {
                                 x.task_name == *input
                                     || format!("{}", x.service_number.clone().unwrap_or_default())
                                         == format!("{}", *input)
@@ -90,6 +90,7 @@ impl MtechServer {
                             if let Some(task) = task {
                                 let _ = self
                                     .context
+                                    .shared_ctx
                                     .ui_actions_tx
                                     .try_send(TaskUiActions::OpenTaskModal(task.clone()));
                             }
@@ -97,7 +98,7 @@ impl MtechServer {
                     }
                 });
 
-                if let Some(usr) = &self.context.current_user {
+                if let Some(usr) = &self.context.shared_ctx.current_user {
                     let notif_tx = self.context.notification_tx.clone();
                     ui.add_space(ui.available_width() / 2.8);
                     if ui
@@ -152,7 +153,7 @@ impl MtechServer {
                                     self.state = AppState::Authenticated(MainPages::WebConsole);
                                     let live_clients_tx = self.context.live_clients_tx.clone();
                                     let tx = self.context.connected_clients_tx.clone();
-                                    if let Some(usr) = self.context.current_user.clone() {
+                                    if let Some(usr) = self.context.shared_ctx.current_user.clone() {
                                         spawn_local(async move {
                                             let get_connected_clients = get_connected_clients(tx, usr.clone()).await;
                                             info!("get_connected_clients: {get_connected_clients:?}");
@@ -361,8 +362,8 @@ impl MtechServer {
                                                     ui,
                                                     &notification.notification_description,
                                                     &inputs,
-                                                    self.context.ui_actions_tx.clone(),
-                                                    &self.context.tasks,
+                                                    self.context.shared_ctx.ui_actions_tx.clone(),
+                                                    &self.context.shared_ctx.tasks,
                                                 );
                                             })
                                             .inner;

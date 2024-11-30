@@ -4,7 +4,7 @@ use eframe::egui::Ui;
 impl MtechServerContext{
     pub fn aging_tasks(&mut self, _ui: &mut Ui) {
         // if let Some(tasks) = self.tasks.clone(){
-        //     if let Some(users) = self.store_users.as_ref(){
+        //     if let Some(users) = self.shared_ctx.store_users.as_ref(){
         //         self.my_tasks_opened = true;
         //         let page = "aging_tasks";
         //         let col_names = vec!["> 1 Week".to_string(), "> 1 Month".to_string(), "Everything else".to_string()];

@@ -40,7 +40,7 @@ impl MastertechContext {
         // }
 
         let page = "MyTasks";
-        let current_user = self.current_user.as_ref().unwrap();
+        let current_user = self.shared_ctx.current_user.as_ref().unwrap();
 
         let mut vals = Status::VALUES;
         // Define the custom sort order
@@ -54,11 +54,11 @@ impl MastertechContext {
         vals.sort_unstable_by_key(|x| order(x.clone()));
 
         if let Some(layout) = self.task_layouts.get_mut(page) {
-            if self.rerun_filtering_my_tasks {
-                self.rerun_filtering_my_tasks = false;
+            if self.shared_ctx.rerun_filtering_my_tasks {
+                self.shared_ctx.rerun_filtering_my_tasks = false;
                 let mut map = BTreeMap::new();
                 vals.iter_mut().for_each(|status| {
-                    let filtered = self.task_payload
+                    let filtered = self.shared_ctx.tasks
                         .filter_by_status(&status)
                         .filter_by_assignee(current_user);
                     map.entry(status.as_str().to_string()).or_insert(filtered);
@@ -69,14 +69,14 @@ impl MastertechContext {
         } else {
             let mut map = BTreeMap::new();
             vals.iter_mut().for_each(|status| {
-                let filtered = self.task_payload
+                let filtered = self.shared_ctx.tasks
                     .filter_by_status(&status)
                     .filter_by_assignee(current_user);
                 map.entry(status.as_str().to_string()).or_insert(filtered);
             });
-            let user_names: Vec<String> = self.store_users.iter().map(|u| u.name.clone()).collect();
+            let user_names: Vec<String> = self.shared_ctx.store_users.iter().map(|u| u.name.clone()).collect();
             let layout =
-                TaskLayout::new(map, user_names, self.ui_actions_tx.clone(), self.store_users.clone());
+                TaskLayout::new(map, user_names, self.shared_ctx.ui_actions_tx.clone(), self.shared_ctx.store_users.clone());
             self.task_layouts.insert(page.to_string(), layout);
         }
         

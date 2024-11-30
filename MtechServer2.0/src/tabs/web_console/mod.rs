@@ -25,7 +25,7 @@ impl MtechServerContext {
             ui.vertical_centered(|ui |{
                 if Button::new("Refresh").min_size(Vec2::new(50.0, 15.0)).ui(ui).clicked()
                 {
-                    let usr = self.current_user.clone();
+                    let usr = self.shared_ctx.current_user.clone();
                     if let Some(user) = usr{
                         let tx = self.connected_clients_tx.clone();
                         spawn_local(async move {

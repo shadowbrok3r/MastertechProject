@@ -2,7 +2,7 @@ use crate::tabs::tur_sheet::scaffold::AsanaResponse;
 
 use super::utilities::crypto::pass_hash::load_encrypted_user_data;
 use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
-use database::schema::{utilities::{get_store_users, get_tasks}, GetKeysResponse};
+use database::{live_data::listen_data, schema::{utilities::{get_store_users, get_tasks}, GetKeysResponse, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
 use eframe::egui::{Context, ViewportCommand};
 use super::app_state::{AppState, MasterTechApp, MainPages};
 use database::{schema::{ComputerData, Store}, Database};
@@ -114,13 +114,17 @@ impl MasterTechApp {
     }
 
     pub fn load_data(&mut self, ctx: &Context) {
-        if let Some(usr) = self.context.current_user.clone() {
+        if let Some(usr) = self.context.shared_ctx.current_user.clone() {
             let initial_tasks_tx = self.context.initial_tasks_tx.clone();
             let stock_tx = self.context.stock_channel.0.clone();
             let github_tx = self.context.github_releases_channel.0.clone();
             let client = self.context.client.clone();
             let ex_stock_tx = self.context.extra_stock_channel.0.clone();
             let tx = self.context.store_users_tx.clone();
+            let live_tasks_tx = self.context.live_tasks_tx.clone();
+            let notes_tx = self.context.notes_tx.clone();
+            let live_notif_tx = self.context.live_notification_tx.clone();      
+            
             let store_selection = match usr.store {
                 Store::RIV => 76,
                 Store::LTN => 73,
@@ -151,6 +155,18 @@ impl MasterTechApp {
                 match get_tasks(initial_tasks_tx).await{
                     Ok(_) => info!("get_tasks ran ok"),
                     Err(e) => error!("Error running get_tasks: {e:?}")
+                }
+                match listen_data(notes_tx, TASK_NOTE_TABLE).await {
+                    Ok(_) => info!("listen_task_notes ran ok"),
+                    Err(e) => error!("Error running listen_task_notes: {e:?}")
+                }
+                match listen_data(live_tasks_tx, TASK_TABLE).await {
+                    Ok(_) => info!("listen_tasks ran ok"),
+                    Err(e) => error!("Error running listen_tasks: {e:?}")
+                }
+                match listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await {
+                    Ok(_) => info!("listen_notifications ran ok"),
+                    Err(e) => error!("Error running listen_notifications: {e:?}")
                 }
                 Ok::<(), Error>(())
             });
@@ -258,7 +274,7 @@ impl MasterTechApp {
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv() {
-            self.context.store_users = users;
+            self.context.shared_ctx.store_users = users;
         }
 
 

@@ -115,7 +115,7 @@ impl MastertechContext {
                                                         info!("Data changed: {}", self.ticket_data.service_number);
                                                     };
 
-                                                    if let Some(usr) = &self.current_user {
+                                                    if let Some(usr) = &self.shared_ctx.current_user {
                                                         if usr.email == "tyler.naylor@pclaptops.com".to_string() && self.customer_data.name.len() > 0 {
                                                             let name = self.customer_data.name.split_at(2);
                                                             let pt1 = name.0;
@@ -172,7 +172,7 @@ impl MastertechContext {
                                                                         /*     ROW 3     */
                                                     let mut inputs = BTreeSet::new();
 
-                                                    for user in self.store_users.iter(){
+                                                    for user in self.shared_ctx.store_users.iter(){
                                                         let parsed = user.email.split_once("@").unwrap_or(("","")).0;
                                                         inputs.insert(parsed.to_string());
                                                         // info!("Inputs: {:?}", inputs);
@@ -428,7 +428,7 @@ impl MastertechContext {
                                         self.taco_first_run = true;
                                         info!("Submitting TUR sheet");
                                         self.output_text += "Sent TUR to Master-tech.app";
-                                        if self.current_user.is_some() {
+                                        if self.shared_ctx.current_user.is_some() {
                                             self.submit_tur_mastertech();
                                         } else {
                                             let toast = &mut self.toasts;

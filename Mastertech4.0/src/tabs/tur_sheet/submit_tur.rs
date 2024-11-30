@@ -229,7 +229,7 @@ impl MastertechContext{
                         <li><strong>        Recommendations:        </strong>     \n{recommendations}</li></ul></body>",
             );
 
-            let store: Store = self.current_user.clone().unwrap_or(User::default()).store;
+            let store: Store = self.shared_ctx.current_user.clone().unwrap_or(User::default()).store;
 
             if store.as_str() == "RIV"{
 
