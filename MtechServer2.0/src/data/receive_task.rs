@@ -1,8 +1,8 @@
-use database::live_data::handle_live_data;
+use database::{live_data::handle_live_data, schema::get_data::get_associated_ticket};
 use log::{error, info};
 use wasm_bindgen_futures::spawn_local;
 
-use crate::{utilities::get_data::get_associated_ticket, MtechServer};
+use crate::MtechServer;
 
 impl MtechServer {
     pub fn receive_task(&mut self) {

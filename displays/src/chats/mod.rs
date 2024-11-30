@@ -1,21 +1,18 @@
-use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TopBottomPanel, Ui, Widget
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
 };
-use database::{schema::{Record, TaskId, TaskNotePayload, User}, DATABASE};
-use markdown_editor::{EasyMarkEditor, SHORTCUT_ENTER};
-use crate::utilities::get_data::TaskNoteMod;
-use wasm_bindgen_futures::spawn_local;
-use chrono::{DateTime, Local};
+use database::{live_data::handle_live_delete, schema::{helper_traits::TaskNotePayloadHelper, TaskNotePayload, User}};
+use crate::{PlatformSpawner, Spawner};
+
+use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
+use surrealdb::RecordId;
+use chrono::{DateTime, Local, Utc};
 use eframe::emath::Vec2;
-use log::{debug, error, info};
 use serde::Serialize;
-
+use log::{error, info};
+use structdiff::StructDiff;
 use super::modals::ModalState;
-
-pub mod markdown_editor;
-pub mod highlighter;
-pub mod parser;
-pub mod viewer;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatView{
@@ -26,6 +23,10 @@ pub struct ChatView{
     pub task_id: Option<RecordId>,
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
+    pub delete: Option<TaskNotePayload>,
+    pub users: BTreeSet<String>,
+    pub edit_text: HashMap<String, TaskNotePayload>,
+    pub allow_edit: HashSet<String>
 }
 
 impl Default for ChatView{
@@ -36,43 +37,74 @@ impl Default for ChatView{
             messages: Vec::new(), 
             current_user: None, 
             markdown_editor: EasyMarkEditor::default(),
-            task_id: None
+            task_id: None,
+            delete: None,
+            users: BTreeSet::new(),
+            edit_text: HashMap::new(),
+            allow_edit: HashSet::new(),
+            // save_edit: false,
         }
     }
 }
 
 impl ChatView {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: TaskId) -> Self {
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: RecordId, users: Vec<User>) -> Self {
         // info!("Before messages: {messages:?}");
+        let mut users_set = BTreeSet::new();
+        for user in users {
+            let parsed_email = user.email.split_once('@');
+            if let Some(email) = parsed_email {
+                users_set.insert(format!("@{}", email.0));
+            }
+        }
+        let mut note_ids = HashMap::new();
+
+        for message in messages.iter() {
+            note_ids.insert(message.id.to_string(), message.clone());
+        }
+
         ChatView {
             current_user: Some(current_user),
             messages,
             state: ModalState::default(),
             title: "Chat".to_string(),
-            markdown_editor: EasyMarkEditor::default(),
-            task_id: Some(task_id)
+            markdown_editor: EasyMarkEditor::new(),
+            task_id: Some(task_id),
+            delete: None,
+            users: users_set,
+            edit_text: note_ids,
+            allow_edit: HashSet::new()
         }
     }
 
-    pub fn insert_note(&mut self, new_note: TaskNotePayload){
-        let x = new_note.note.is_empty();
-        let y = new_note.created_at.is_empty();
-        let z = new_note.everest_initials.is_empty();
-        info!("X {x} // Y {y} // Z {z}");
-        if self.messages.iter().any(|note| {
-            if let (Some(new_id), Some(existing_id)) = (new_note.id.as_ref(), note.id.as_ref()) {
-                new_id.key().to_string() != existing_id.key().to_string() && !x && !y && !z
-            } else { false }
-        }) {
-            info!("new_note {:?} // {:?}", new_note.everest_initials, new_note.created_at);
-            self.messages.push(new_note);
+    pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
+        if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id .clone()) {
+            // Apply diffs to the existing note
+            let diffs = existing_note.diff(&new_note);
+            existing_note.apply_mut(diffs);
+            info!("Updated existing note: {:?}", existing_note);
+        } else {
+            self.messages.push(new_note.clone());
+        }
+    }
+
+    pub fn delete_note(&mut self, note_to_delete: &TaskNotePayload){
+        let index = self.messages.iter().position(|n| n == note_to_delete);
+        if let Some(idx) = index {
+            info!("Deleting Note @ {idx}");
+            self.messages.remove(idx);
         }
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Option<String>{
-        
         let mut new_msg: Option<String> = None;
 
+        if let Some(note) = std::mem::take(&mut self.delete) {
+            let deletion = handle_live_delete(&mut self.messages, note.clone());
+            if let Err(e) = deletion {
+                error!("Error deleting note: {e:?}");
+            }
+        }
         let mut shadow = Shadow::default();
         shadow.blur = 10.0;
         shadow.spread = 5.0;
@@ -85,7 +117,7 @@ impl ChatView {
         let color = Color32::from_rgb(6,6,10);
 
         let markdown_editor = &mut self.markdown_editor;
-
+        markdown_editor.inputs = self.users.clone();
         let central_panel_frame = Frame::none().fill(color)
             .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
             .inner_margin(Margin::same(6.0)).rounding(Rounding::same(10.0));
@@ -114,14 +146,39 @@ impl ChatView {
                     new_msg = Some(txt.clone());
 
                     if let Some(usr) = self.current_user.clone(){
-                        
-                        let new_note = TaskNotePayload { everest_initials: usr.everest_initials, note: txt, task_id: self.task_id.clone(), ..Default::default() };
+                        let username = usr.email.split_once('@').map_or_else(String::new, |(name, _)| name.to_string());
 
-                        spawn_local(async move {
-                            let query = format!("CREATE task_note CONTENT $note");
-                            DATABASE.set("note", new_note).await.unwrap();
-                            let update_task_note: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-                            info!("Update_note: {:?}", update_task_note);
+                        // Extract the first customer thread ID if available
+                        let id_customer_thread = self
+                            .messages
+                            .iter()
+                            .filter_map(|m| m.id_customer_thread.clone())
+                            .next();
+
+                        let employee_id = usr.id_prestashop.clone().unwrap_or_default();
+                        let id_employee = Some(employee_id.to_string());
+                        let mut new_note = TaskNotePayload {
+                            everest_initials: usr.everest_initials, 
+                            note: txt, 
+                            task_id: self.task_id.clone(), 
+                            username,
+                            user: Some(usr.id),
+                            id_employee,
+                            id_customer_thread,
+                            ..Default::default() 
+                        };
+
+                        // If there are multiple threads, assign each as needed (retain only the last)
+                        for thread in self.messages.iter().filter_map(|m| m.id_customer_thread.clone()) {
+                            new_note.id_customer_thread = Some(thread);
+                        }
+                        info!("new_note: {new_note:?}");
+                        PlatformSpawner::spawn(async move {
+                            if let Err(e) = new_note.create_task_note().await {
+                                error!("Failed to create task note: {:?}", e);
+                            } else {
+                                info!("Task note successfully created.");
+                            }
                         });
                     }
                 }
@@ -145,10 +202,17 @@ impl ChatView {
                 let fixed_height = 50.0;
                 let min_width = 200.0;
                 let other = min_width - 30.0;
+                self.messages.sort_by_key(|message| 
+                    DateTime::parse_from_rfc3339(&message.created_at.clone())
+                        .unwrap_or_default()
+                        .with_timezone(&Utc)
+                    );
                 for item in self.messages.iter_mut(){
                     let mut is_message_from_myself = false;
                     if let Some(user) = &self.current_user{
-                        is_message_from_myself = if item.everest_initials == user.everest_initials{
+                        let email = user.email.split_once('@').clone();
+                        let username = email.unwrap_or_default().0.to_string();
+                        is_message_from_myself = if item.username == username {
                             true
                         } else { false };
                     }
@@ -205,7 +269,7 @@ impl ChatView {
                                         .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
                                         .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
 
-                                    let from = RichText::new(&item.everest_initials).strong().monospace().color(Color32::LIGHT_BLUE);
+                                    let from = RichText::new(&item.username).strong().monospace().color(Color32::LIGHT_BLUE);
 
                                     if is_message_from_myself {
                                         ui.with_layout(Layout::from_main_dir_and_cross_align(
@@ -222,14 +286,57 @@ impl ChatView {
                                         
                                             let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
                                             ui.label(RichText::new(formatted_date).weak());
-                                            ui.add_space(15.0);
+                                            ui.add_space(20.0);
                                             ui.add_space(other);
-                                            let btn = Button::new(RichText::new("X").small().weak().color(Color32::LIGHT_RED))
+
+                                            let id = &item.id;
+
+                                            if self.allow_edit.contains(&id.to_string()) {
+                                                let save_btn = Button::new(RichText::new("Save").weak().color(Color32::LIGHT_RED))
+                                                    .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                                if save_btn.clicked(){
+                                                    if self.allow_edit.contains(&id.to_string()) {
+                                                        if let Some(msg) = self.edit_text.get_mut(&id.to_string()){
+                                                            let mut task_note = msg.clone();
+                                                            PlatformSpawner::spawn(async move {
+                                                                match task_note.modify_prestashop_note().await {
+                                                                    Ok(res) => info!("Modify note response:: {res:?}"),
+                                                                    Err(e) => error!("Error modifying note: {e:?}"),
+                                                                }
+                                                            });
+                                                            item.note = msg.note.clone();
+                                                        }
+                                                    }
+                                                    self.allow_edit.remove(&id.to_string());
+                                                }
+                                            } else {
+                                                let edit_btn = Button::new(RichText::new("🖊").weak().color(Color32::LIGHT_RED))
+                                                    .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                                if edit_btn.clicked(){
+                                                    self.allow_edit.insert(item.id.to_string()); 
+                                                }
+
+                                            }
+
+
+                                            let copy_btn = Button::new(RichText::new("🗐").weak().color(Color32::LIGHT_RED))
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                            if copy_btn.clicked(){
+                                                ui.ctx().copy_text(item.note.clone());
+                                            }
+
+                                            ui.add_space(6.0);
+
+                                            let btn = Button::new(RichText::new("🗙").weak().color(Color32::LIGHT_RED))
                                                 .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
 
                                             if btn.clicked(){
+                                                self.delete = Some(item.clone());
                                                 let mut item = item.clone();
-                                                spawn_local(async move {
+                                                PlatformSpawner::spawn(async move {
                                                     match item.delete_note().await{
                                                         Ok(_) => info!("Deleted Note"),
                                                         Err(e) => error!("Error deleting note: {e:?}"),
@@ -251,8 +358,15 @@ impl ChatView {
                                                 .with_timezone(&Local);
                                         
                                             let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
-                                            ui.label(RichText::new(formatted_date).small().weak());
-                                            // ui.add_space(15.0);
+                                            ui.label(RichText::new(formatted_date).weak());
+                                            
+                                            ui.add_space(10.0);
+                                            let copy_btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                            if copy_btn.clicked(){
+                                                ui.ctx().copy_text(item.note.clone());
+                                            }
                                         });
                                     }
                                     note_frame.show(ui, |ui| {
@@ -261,7 +375,14 @@ impl ChatView {
                                             Align::Center,
                                         ), |ui| {
                                             ui.set_width(ui.available_width());
-                                            viewer::easy_mark(ui, &item.note);
+                                            
+                                            if self.allow_edit.contains(&item.id.to_string()) {
+                                                if let Some(msg) = self.edit_text.get_mut(&item.id.to_string()){
+                                                    TextEdit::multiline(&mut msg.note).show(ui);
+                                                }
+                                            } else {
+                                                viewer::easy_mark(ui, &item.note);
+                                            }
                                         });
                                     });
                                 });

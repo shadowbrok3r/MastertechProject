@@ -1,17 +1,19 @@
+use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
+use crate::{FilterTasks, Sortable, TaskUiActions, Displayable};
+use database::schema::{Priority, Record, TaskPayload, User};
+use egui_extras::{Size, Strip, StripBuilder};
 use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
-use database::{self, DATABASE};
-use database::schema::{Priority, Record, TaskPayload, User};
-use log::info;
-use surrealdb::sql::{Id, Thing};
-use wasm_bindgen_futures::spawn_local;
-use std::borrow::BorrowMut;
 use std::collections::BTreeSet;
+use database::{self, DATABASE};
+use structdiff::Difference;
+use std::borrow::BorrowMut;
 use chrono::{DateTime, Utc};
-use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget};
-use egui_extras::{Size, Strip, StripBuilder};
-use crate::utilities::{FilterTasks, Sortable, TaskUiActions, Displayable};
 use structdiff::StructDiff;
+use surrealdb::RecordId;
+use std::sync::Arc;
+use log::info;
+use crate::{PlatformSpawner, Spawner};
 
 // use super::sub_menu::sub_menu;
 
@@ -35,7 +37,7 @@ pub struct TaskLayout{
     pub open_menu: bool,
     #[difference(skip)]
     pub action: TaskUiActions,
-    pub task: Option<Id>,
+    pub task: Option<String>,
     #[difference(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
 }
@@ -91,11 +93,12 @@ impl TaskLayout {
     pub fn layout_cols(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
-        
+        let x: f32 = ui.available_height() - 40.0;
+        let style = ui.style().clone();
         ScrollArea::horizontal()
             .show_viewport(ui, |ui, _|
         {
-            let x: f32 = ui.available_height() - 40.0;
+            
             StripBuilder::new(ui)
                 .cell_layout(Layout::top_down_justified(Align::Center))
                 .size(Size::exact(30.0))
@@ -103,32 +106,35 @@ impl TaskLayout {
                 .size(Size::exact(x))
                 .vertical(|mut strip| 
             {
-                strip.strip(|strip| 
-                {
-                    strip.sizes(column_width, self.column_names.len()).horizontal( |strip| self.headers(strip));
-                });
-                
-                strip.empty();
-                
-                strip.strip(|strip| 
-                {
-                    strip.sizes(column_width, self.column_names.len()).horizontal( |mut strip| 
+                if self.column_names.len() > 0 {
+                    strip.strip(|strip| 
                     {
-                        // for (name, tasks) in self.task_map.iter_mut() {
-                            self.columns(strip.borrow_mut());
-                        // }
+                        strip.sizes(column_width, self.column_names.len())
+                            .horizontal(
+                                |strip| self.headers(strip, style.clone())
+                            );
                     });
-                });
+
+                    strip.empty();
+
+                    strip.strip(|strip| 
+                    {
+                        strip.sizes(column_width, self.column_names.len())
+                            .horizontal(
+                                |mut strip| self.columns(strip.borrow_mut(), style.clone())
+                            );
+                    });
+                } else { info!("Column_names is empty"); }
             });
         });
     }
 
-    pub fn begin_edit(&mut self, task_id: &Id) -> Option<&mut TaskPayload>{
+    pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
         info!("Finding ID: {task_id:?}");
         // Search for the task by ID
         for (_, tasks) in self.task_map.iter_mut(){
             for task in tasks.iter_mut(){
-                if task.id.as_ref().unwrap().id == *task_id{
+                if task.id.key().to_string() == *task_id{
                     info!("Got a match");
                     return Some(task);
                 }
@@ -137,198 +143,198 @@ impl TaskLayout {
         None
     }
 
-    fn headers(&mut self, mut s: Strip){
+    fn headers(&mut self, mut s: Strip, style: Arc<Style>){
         let header_frame = Frame::default()
-            .fill(Color32::from_rgb(13, 13, 15))
+            .fill(style.visuals.window_fill) // (Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(8.0, 1.0))
             .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(0.4, Color32::WHITE));
-
-        for (name, tasks) in self.task_map.iter(){
-            s.cell(|ui|{
-                header_frame.show(ui, |ui|
-                {
-                    ui.horizontal_top(|ui| 
+            .stroke(style.visuals.window_stroke);
+        // if self.task_map.keys().len() == self.column_names.len() {
+            for (name, tasks) in self.task_map.iter() {
+                s.cell(|ui|{
+                    header_frame.show(ui, |ui|
                     {
-                        ui.with_layout(Layout::left_to_right(Align::Min), |ui| 
+                        ui.horizontal_top(|ui| 
                         {
-                            let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
-                            let mut margin = Margin::default();
-                            margin.top = 6.0;
-                            margin.left = 4.0;
-                            
-                            TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
-
-                            ui.add_space(ui.available_width() / 3.4);
-                            
-                            let response = Button::new(RichText::new(name.to_owned())
-                                    .color(Color32::from_rgb(191, 33, 101))
-                                    .size(13.0).monospace()
-                                ).fill(Color32::from_rgb(22,22,22)).rounding(Rounding::same(2.)).min_size(Vec2::new(60.0, 15.0)).ui(ui);
-
-                            if response.clicked(){
-                                ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
-                            }
-                            
-                            let res = popup_below_widget(
-                                ui, 
-                                format!("sub_menu-{:?}",name).into(), 
-                                &response, 
-                                PopupCloseBehavior::CloseOnClickOutside, 
-                                |ui| 
+                            ui.with_layout(Layout::left_to_right(Align::Min), |ui| 
                             {
-                                ui.vertical_centered_justified(|ui| {
-                                    ui.set_width(200.0);
-                                    if ui.button("Mark all Complete").clicked(){
-                                        return TaskActions::MarkComplete;
-                                    }
-                                    ui.add_space(5.0);
-                                    if ui.button("Mark all Incomplete").clicked(){
-                                        return TaskActions::MarkIncomplete;
-                                    }
-                                    ui.add_space(5.0);
-                                    if ui.button("Mark all Due Today").clicked(){
-                                        return TaskActions::MarkDueToday;
-                                    }
-                                    TaskActions::None
-                                }).inner
-                            });
+                                let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
+                                let mut margin = Margin::default();
+                                margin.top = 6.0;
+                                margin.left = 4.0;
+                                
+                                TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
 
-                            if let Some(action) = res{
-                                let ids = tasks.iter().map(|t| t.id.clone().0).collect::<Vec<RecordId>>();
-                                match action{
-                                    TaskActions::MarkComplete => {
-                                        spawn_local(async move {
-                                            for id in ids{
-                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                    .bind(("record", id.clone()))
-                                                    .bind(("completion", true))
-                                                    .await.unwrap().take(0).unwrap();
-                                            }
-                                        });
-                                    },
-                                    TaskActions::MarkIncomplete => {
-                                        
-                                        spawn_local(async move {
-                                            for id in ids{
-                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                    .bind(("record", id.clone()))
-                                                    .bind(("completion", false))
-                                                    .await.unwrap().take(0).unwrap();
-                                            }
-                                        });
-                                    },
-                                    TaskActions::MarkDueToday => {
-                                        spawn_local(async move {
-                                            for id in ids{
-                                                let query = "fn::mark_all_due_today($id)";
-                                                info!("ID: {:?}", id.clone());
-                                                let _ = DATABASE.set("id", id).await.unwrap();
-                                                match DATABASE.query(query).await{
-                                                    Ok(query_res) => {
-                                                        match query_res.take(0){
-                                                            Some(res) => info!("There was a record: {res:?}"),
-                                                            None => info!("There was no record")
-                                                        }
-                                                    },
-                                                    Err(e) =>  error!("{e:?}")
+                                ui.add_space(ui.available_width() / 3.4);
+                                
+                                let response = Button::new(RichText::new(name.to_owned())
+                                        .color(style.visuals.warn_fg_color)
+                                        .size(13.0).monospace()
+                                    )
+                                    .fill(style.visuals.noninteractive().bg_fill)
+                                    .rounding(Rounding::same(2.))
+                                    .min_size(Vec2::new(60.0, 15.0))
+                                    .ui(ui);
+
+                                if response.clicked(){
+                                    ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
+                                }
+                                
+                                let res = popup_below_widget(
+                                    ui, 
+                                    format!("sub_menu-{:?}",name).into(), 
+                                    &response, 
+                                    PopupCloseBehavior::CloseOnClickOutside, 
+                                    |ui| 
+                                {
+                                    ui.vertical_centered_justified(|ui| {
+                                        ui.set_width(200.0);
+                                        if ui.button("Mark all Complete").clicked(){
+                                            return TaskActions::MarkComplete;
+                                        }
+                                        ui.add_space(5.0);
+                                        if ui.button("Mark all Incomplete").clicked(){
+                                            return TaskActions::MarkIncomplete;
+                                        }
+                                        ui.add_space(5.0);
+                                        if ui.button("Mark all Due Today").clicked(){
+                                            return TaskActions::MarkDueToday;
+                                        }
+                                        TaskActions::None
+                                    }).inner
+                                });
+
+                                if let Some(action) = res{
+                                    let ids = tasks.iter().map(|t| t.id.clone()).collect::<Vec<RecordId>>();
+                                    match action{
+                                        TaskActions::MarkComplete => {
+                                            PlatformSpawner::spawn(async move {
+                                                for id in ids{
+                                                    let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                        .bind(("record", id.clone()))
+                                                        .bind(("completion", true))
+                                                        .await.unwrap().take(0).unwrap();
                                                 }
-                                            }
-                                        });
-                                    }, _ => {}
+                                            });
+                                        },
+                                        TaskActions::MarkIncomplete => {
+                                            
+                                            PlatformSpawner::spawn(async move {
+                                                for id in ids{
+                                                    let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                        .bind(("record", id.clone()))
+                                                        .bind(("completion", false))
+                                                        .await.unwrap().take(0).unwrap();
+                                                }
+                                            });
+                                        },
+                                        TaskActions::MarkDueToday => {
+                                            PlatformSpawner::spawn(async move {
+                                                for id in ids{
+                                                    let query = "fn::mark_all_due_today($id)";
+                                                    info!("ID: {:?}", id.clone());
+                                                    let _ = DATABASE.set("id", id).await.unwrap();
+                                                    let _x: Option<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+                                                }
+                                            });
+                                        }, _ => {}
+                                    }
                                 }
-                            }
-                        });
-                        
-                        ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
-                        {
-                            let button = Button::new(
-                                RichText::new("✚")
-                                    .color(Color32::from_rgb(191, 33, 101))
-                                )
-                                .rounding(Rounding::same(2.))
-                                .fill(Color32::from_rgb(22,22,22))
-                                .min_size(Vec2::new(30.0, 15.0))
-                                .ui(ui);
+                            });
+                            
+                            ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
+                            {
+                                let button = Button::new(
+                                    RichText::new("✚")
+                                        .color(style.visuals.warn_fg_color)
+                                    )
+                                    .rounding(Rounding::same(2.))
+                                    .fill(Color32::from_rgb(22,22,22))
+                                    .min_size(Vec2::new(30.0, 15.0))
+                                    .ui(ui);
 
-                            ui.add_space(30.0);
+                                ui.add_space(30.0);
 
-                            if button.clicked(){
-                                let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
-                            }
-
-                            let mut count = 0;
-                            let current_date = Utc::now().date_naive();
-                            for task in tasks{
-                                let due_date = DateTime::parse_from_rfc3339(&task.due_date);
-                                if let Ok(date) = due_date {
-                                    let date = date.with_timezone(&Utc).date_naive();
-                                    if date < current_date && !task.completed{ count += 1; }
+                                if button.clicked(){
+                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
                                 }
-                            }
-                            if count > 0 {
-                                ui.label("Overdue");
-                                ui.add_space(5.0);
-                                ui.colored_label(Color32::DARK_RED, format!("{count}"));
-                            }
+
+                                let mut count = 0;
+                                let current_date = Utc::now().date_naive();
+                                for task in tasks{
+                                    let due_date = DateTime::parse_from_rfc3339(&task.due_date);
+                                    if let Ok(date) = due_date {
+                                        let date = date.with_timezone(&Utc).date_naive();
+                                        if date < current_date && !task.completed{ count += 1; }
+                                    }
+                                }
+                                if count > 0 {
+                                    ui.label("Overdue");
+                                    ui.add_space(5.0);
+                                    ui.colored_label(Color32::DARK_RED, format!("{count}"));
+                                }
+                            });
                         });
                     });
                 });
-            });
-        }
+            }
+        // }
     }
 
-    fn columns(&mut self, s: &mut Strip) {
+    fn columns(&mut self, s: &mut Strip, style: Arc<Style>) {
         let column_frame = Frame::default()
-            .fill(Color32::from_rgb(12, 12, 14))
-            .inner_margin(Margin::same(8.0))
+            .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
+            .inner_margin(Margin::same(6.0))
             .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(70)));
+            .stroke(Stroke::new(1.0,  Color32::from_additive_luminance(100)));
 
         let mut inputs = BTreeSet::new();
 
-        for (name, tasks) in self.task_map.iter_mut(){
-            tasks.sort_task_payloads();
-            for task in tasks.iter(){
-                inputs.insert(task.task_name.clone());
-                inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
-            }
+        // if self.task_map.keys().len() == self.column_names.len() {
+            for (name, tasks) in self.task_map.iter_mut(){
+                tasks.sort_task_payloads();
+                for task in tasks.iter(){
+                    inputs.insert(task.task_name.clone());
+                    inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
+                }
 
-            s.cell(|ui| {
-                column_frame.show(ui, |ui| {
-                    ui.vertical_centered_justified(|ui| {
-                        ScrollArea::vertical()
-                            .auto_shrink(false)
-                            .show_rows(ui, 80.0, tasks.len(), |ui, _range|
-                        {
-                            // info!("Row {}/{}", row + 1, total_rows);
-                            let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
-                            if !search_input.is_empty(){
-                                for mut task in tasks.filter_by_task_name(inputs.clone(), search_input.clone()){
-                                    task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                    // if let Some(action) = action{
-                                    //     self.action = action.clone();
-                                    //     self.ui_actions_tx.try_send(action).unwrap();
-                                    // }
-                                }
-                            }else{
-                                for task in &mut *tasks {
-                                    task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                    // if let Some(action) = action{
-                                    //     // if !TaskUiActions::None = action{
-                                    //         self.action = action.clone();
-                                    //         info!("self.action {:?}", self.action.clone());
-                                    //         self.ui_actions_tx.try_send(action).unwrap();
-                                    //     // }
-                                    // }
-                                }
-                            }
+                s.cell(|ui| {
+                    column_frame.show(ui, |ui| {
+                        ui.vertical_centered_justified(|ui| {
+                            let row_height = 140.;
+                            let total_rows = tasks.len(); 
+                            let scroll_area = ScrollArea::vertical().auto_shrink(false);
+                            ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
+
+                            scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                // ui.scroll_with_delta(Vec2::new(0.0, 300.));
+                                // Retrieve search input for the current context, or default to an empty string.
+                                let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
+
+                                // Filter tasks based on search input.
+                                let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
+                                    tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
+                                } else {
+                                    tasks.iter().cloned().collect()
+                                };
+
+                                // Iterate only over the rows in the current viewport range.
+                                for row in row_range {
+                                    if !search_input.is_empty() {
+                                        ui.scroll_to_cursor(Some(Align::BOTTOM));
+                                    }
+                                    if let Some(task) = filtered_tasks.get_mut(row) {
+                                        task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
+                                    }
+                                }                        
+                            });
+                            
                         });
                     });
                 });
-            });
-        }
+            }
+        // }
     }
 }
 pub enum TaskActions{

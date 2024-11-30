@@ -1,5 +1,6 @@
-use crate::{app_state::MtechServerContext, utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks}};
+use crate::app_state::MtechServerContext;
 use std::collections::BTreeMap;
+use displays::{tasks::task_layout::TaskLayout, FilterTasks};
 use eframe::egui::{Color32, Spinner, Ui, Widget};
 
 impl MtechServerContext{

@@ -1,34 +1,14 @@
 
-use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, Response, RichText, Rounding, Shape, Stroke, Ui, Vec2, Widget, Window};
-use database::schema::{CustomerData, Priority, SpecialPartOrder, TaskId, TaskNotePayload, TaskPayload, TicketData, User};
+use create_task_modal::CreateTaskModal;
+use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, RichText, Rounding, Shape, Stroke, Ui, Vec2, Widget, Window};
 use modal_types::ModalTypes;
-use crate::markdown_editor::EasyMarkEditor;
-use surrealdb::{sql::Id as SurrealId, RecordId};
+use crate::chats::ChatView;
 use serde::Serialize;
-use chrono::NaiveDate;
+use task_modal::{ModalAction, TaskModal};
 
 pub mod modal_types;
-// mod task_modal;
-// pub mod create_task_modal;
-// pub mod task_modal;
-// pub mod ai_chat; 
-
-
-pub trait DisplayModal{
-    fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction>;
-}
-
-
-#[derive(Debug, Clone)]
-pub enum TaskUiActions{
-    OpenTaskModal(TaskPayload),
-    CreateTaskModal,
-    OpenChatModal((TaskId, Vec<TaskNotePayload>)),
-    Response(Response),
-    Editing(SurrealId),
-    CommitChanges(SurrealId),
-    None
-}
+pub mod task_modal;
+pub mod create_task_modal;
 
 #[derive(Serialize, Default, Clone, Debug)]
 pub enum ModalType{
@@ -37,106 +17,6 @@ pub enum ModalType{
     ChatView(ChatView),
     #[default]
     Null,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ChatView{
-    pub state: ModalState,
-    pub title: String,
-    pub messages: Vec<TaskNotePayload>,
-    pub current_user: Option<User>,
-    pub task_id: Option<RecordId>,
-    #[serde(skip)]
-    pub markdown_editor: EasyMarkEditor,
-}
-
-impl Default for ChatView{
-    fn default() -> Self {
-        Self { 
-            state: ModalState::default(), 
-            title: "Chat".to_string(), 
-            messages: Vec::new(), 
-            current_user: None, 
-            markdown_editor: EasyMarkEditor::default(),
-            task_id: None
-        }
-    }
-}
-
-#[derive(Serialize, Default, Debug, Clone)]
-pub struct CreateTaskModal{
-    pub title: String,
-    pub min_width: Option<f32>,
-    pub min_height: Option<f32>,
-    pub default_height: Option<f32>,
-    pub full_span_content: bool,  
-    pub store_users: Vec<User>,
-
-    pub ticket_data: TicketData,
-    pub task_data: TaskPayload,
-    pub customer_data: CustomerData,
-    pub task_notes: TaskNotePayload,
-
-    pub task_name: String,
-    pub task_priority: Priority,
-    pub due_date: NaiveDate,
-    pub description: String,
-    pub assignee: Option<User>,
-    #[serde(skip)]
-    pub state: ModalState
-}
-
-#[derive(Serialize, Clone, Debug, Default)]
-pub struct TaskModal{
-    pub title: String,
-    pub task: TaskPayload,
-    #[serde(skip)]
-    pub chat_view: ChatView,
-    pub min_width: Option<f32>,
-    pub min_height: Option<f32>,
-    pub default_height: Option<f32>,
-    pub full_span_content: bool,
-
-    pub state: ModalState,
-    pub spo: SpecialPartOrder,
-}
-
-impl TaskModal{
-    pub fn new(chat_view: ChatView, task: TaskPayload) -> Self {
-        Self {
-            title: "Task Details".to_string(),
-            task,
-            min_width: Some(600.0),
-            min_height: Some(600.0),
-            default_height: Some(800.0),
-            full_span_content: false,
-            state: ModalState::default(),
-            chat_view,
-            spo: SpecialPartOrder::default()
-        }
-    }
-}
-
-impl ModalTypes for TaskModal{
-    fn modal_state(&mut self) -> &mut ModalState {
-        &mut self.state
-    }
-    fn title(mut self, title: String) -> Self {
-        self.modal_state().title = Some(title);
-        self
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Default)]
-pub enum ModalAction{
-    TicketInfoPage,
-    PartOrderPage,
-    ComputerInfoPage,
-    TaskNotePage,
-    ImportTask,
-    Close,
-    #[default]
-    None
 }
 
 #[derive(Default, Serialize)]
@@ -154,7 +34,7 @@ pub struct ModalState {
     pub default_height: Option<f32>,
     pub full_span_content: bool,
     #[serde(skip)]
-    pub page_state: ModalAction
+    pub page_state: ModalAction,
 }
 
 /// Response returned by [`Modal::ui`].

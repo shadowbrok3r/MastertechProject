@@ -1,15 +1,61 @@
 use crate::{
-    schema::{Record, TaskNotePayload, TaskPayload, User, TASK_NOTE_TABLE},
+    schema::{Record, TaskNotePayload, TaskPayload, User, TASK_NOTE_TABLE, LiveTaskPayload, TicketPayload},
     DATABASE,
 };
-use anyhow::{Error, Result};
-use async_trait::async_trait;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use surrealdb::RecordId;
 
 use super::utilities::Task;
+
+use anyhow::{Error, Result};
+use async_trait::async_trait;
+use crossbeam::channel::Sender;
+use surrealdb::Action;
+
+pub struct NewTicketChannel {
+    pub new_ticket: TicketPayload,
+    pub new_task: (Action, LiveTaskPayload),
+}
+
+
+pub async fn get_associated_ticket(
+    tx: Sender<NewTicketChannel>,
+    new_task: (Action, LiveTaskPayload),
+) -> Result<(), Error> {
+    debug!("get_associated_ticket");
+    let service_num = new_task.1.clone().service_number.unwrap_or_default();
+    DATABASE.set("service_num", service_num).await?;
+    let ticket: Option<TicketPayload> = DATABASE.query(format!("SELECT * FROM service_order WHERE service_number == $service_num FETCH computer, customer")).await?.take(0)?;
+    debug!("ticket: {:?}", ticket);
+    let new_ticket = ticket.unwrap_or_default();
+    let chnnl = NewTicketChannel {
+        new_ticket,
+        new_task,
+    };
+    tx.try_send(chnnl)?;
+    Ok(())
+}
+
+// pub async fn get_customer_data(tx: Sender<LiveOutput>) -> Result<(), Error> {
+// tx: Sender<CustomerData>
+// debug!("get_customers");
+// let customers: Vec<CustomerData> = DATABASE.query("SELECT * FROM customer").await?.take(0)?;
+// DATABASE.set("id", "value").await?;
+// let computers: Vec<ComputerData> = DATABASE.query("SELECT * FROM computer").await?.take(0)?;
+// let tickets: Vec<TicketData> = DATABASE
+//     .query("SELECT * FROM service_order")
+//     .await?
+//     .take(0)?;
+// let output = LiveOutput {
+//     customers,
+//     computers,
+//     tickets,
+// };
+//     tx.try_send(output)?;
+//     Ok(())
+// }
 
 pub async fn get_user_from_email(email: String) -> Result<Option<User>, Error> {
     DATABASE.set("email", email).await?;
@@ -36,6 +82,7 @@ impl TaskNoteMod for TaskNotePayload {
             .delete((TASK_NOTE_TABLE, id.key().to_string()))
             .await?;
         info!("Deleted note: {:?}", y);
+
         Ok(())
     }
 }
@@ -65,7 +112,7 @@ impl Task for TaskPayload {
         let query = format!(
             "SELECT service_ticket.computer FROM task WHERE id={id} FETCH service_ticket.computer"
         );
-        let get_data: Option<T> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
@@ -77,7 +124,7 @@ impl Task for TaskPayload {
         let query = format!(
             "SELECT service_ticket.customer FROM task WHERE id={id} FETCH service_ticket.customer"
         );
-        let get_data: Option<T> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
@@ -87,7 +134,7 @@ impl Task for TaskPayload {
     ) -> Result<Option<T>, Error> {
         let id: RecordId = self.id.clone();
         let query = format!("SELECT * FROM task_note WHERE id={id}");
-        let get_data: Option<T> = DATABASE.query(query).await.unwrap().take(0).unwrap();
+        let get_data: Option<T> = DATABASE.query(query).await?.take(0)?;
         debug!("get_data: {get_data:#?}");
         Ok(get_data)
     }
@@ -98,10 +145,13 @@ impl Task for TaskPayload {
         let id: RecordId = self.id.clone();
 
         let get_data: Option<T> = DATABASE
-                .query(format!("SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id={id}"))
-                .await
-                .unwrap()
-                .take(0).unwrap();
+                .query(
+                    "SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id == $id"
+                )
+                .bind(("id", id))
+                .await?
+                .take(0)?;
         Ok(get_data)
     }
+
 }

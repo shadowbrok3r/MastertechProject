@@ -1,8 +1,6 @@
-use crate::{
-    app_state::MtechServerContext,
-    utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks},
-};
+use crate::app_state::MtechServerContext;
 use database::schema::Status;
+use displays::{tasks::task_layout::TaskLayout, FilterTasks};
 use eframe::egui::{Color32, Spinner, Ui, Widget};
 use log::info;
 use std::collections::BTreeMap;

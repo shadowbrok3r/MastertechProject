@@ -1,9 +1,9 @@
 use database::live_data::handle_live_notes;
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use displays::{modals::ModalType, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
 use log::info;
 use surrealdb::Action;
 
-use crate::{utilities::ModalType, MtechServer};
+use crate::MtechServer;
 
 impl MtechServer {
     pub fn receive_notes(&mut self) {
