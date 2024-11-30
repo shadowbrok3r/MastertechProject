@@ -1,15 +1,6 @@
+use crate::app_state::MtechServer;
+use displays::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
 use log::info;
-
-use crate::{
-    app_state::MtechServer,
-    utilities::{
-        displays::{
-            chats::ChatView,
-            modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal},
-        },
-        ModalType, TaskUiActions,
-    },
-};
 
 impl MtechServer {
     pub fn receive_ui_action(&mut self) {

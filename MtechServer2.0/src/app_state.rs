@@ -1,55 +1,35 @@
 use crate::{
-        pages::{account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{
+    pages::{login_page::Login, signup_page::Signup, account_settings_page::AccountMod, downloads_page::GithubRelease}, 
+    tabs::{
         ai_playground::AiPlayground,
         github_issue::GithubIssue,
         json_viewer::{JsonEditor, JsonEditorState},
         stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
         stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer},
-    }, utilities::{
-        displays::modals::{create_task_modal::Tur, ChatModalHandler, Modal, TaskModalHandler},
-        ModalTypes,
+        terminal::chart::App, 
+        web_console::websockets::WebSocketClient
     }
 };
-use async_openai_wasm::types::ThreadObject;
-use crossbeam::channel::{self, Receiver, Sender};
-use database::{
-    schema::{
-        prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, TicketPayload, User, UserSettings
-    },
-    Database,
-};
 use displays::{
-    egui_data_table::DataTable, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem,
-};
-use eframe::{
-    egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId, Style},
-    CreationContext,
-};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use serde_json::Value;
-use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
-use surrealdb::Action;
-use web_time::{Duration, Instant};
-use crate::{
-    pages::{login_page::Login, signup_page::Signup},
-    tabs::{terminal::chart::App, web_console::websockets::WebSocketClient},
-    utilities::{
-        displays::{
-            chats::ChatView,
-            modals::{create_task_modal::CreateTaskModal, task_modal::ModalAction, ModalHandler},
-            tasks::task_layout::TaskLayout,
-        },
-        DisplayModal, ModalType, TaskUiActions,
+    channel_manager::ChannelManager,
+    modals::{
+        ModalHandler, ModalType, modal_types::ModalTypes, task_modal::ModalAction, 
+        create_task_modal::{Tur, CreateTaskModal}, ChatModalHandler, Modal, TaskModalHandler
     },
+    tasks::task_layout::TaskLayout, TaskUiActions, chats::ChatView,egui_data_table::DataTable, DisplayModal,
+    ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
 };
-use anyhow::Error;
-use displays::channel_manager::ChannelManager;
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User, UserSettings}, Database};
+use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId, Style}, CreationContext};
+use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
+use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
+use crossbeam::channel::{self, Receiver, Sender};
+use async_openai_wasm::types::ThreadObject;
+use web_time::{Duration, Instant};
+use surrealdb::Action;
+use serde_json::Value;
 use serde::Serialize;
-
-// use gloo_worker::Spawnable;
-// use mtechserver::{webworker::WebWorker};
-// use ratatui::Terminal;
-
+use anyhow::Error;
 
 #[derive(Serialize)]
 pub struct MtechServer {
@@ -85,11 +65,6 @@ impl Default for AppState {
     fn default() -> Self {
         Self::NoAuth("Not Authenticated".to_string())
     }
-}
-
-pub struct NewTicketChannel {
-    pub new_ticket: TicketPayload,
-    pub new_task: (Action, LiveTaskPayload),
 }
 
 #[derive(Serialize)]

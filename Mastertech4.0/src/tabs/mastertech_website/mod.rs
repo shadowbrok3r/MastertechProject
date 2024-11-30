@@ -1,18 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::{
-    app_state::MastertechContext,
-    utilities::{displays::tasks::task_layout::TaskLayout, FilterTasks},
-};
+use crate::app_state::MastertechContext;
 use database::schema::Status;
+use displays::{tasks::task_layout::TaskLayout, FilterTasks};
 use eframe::egui::Ui;
-// use log::{debug, error};
-// use tokio::spawn;
-// use tracing::info;
-
-pub mod filter;
-pub mod interact_tasks;
-pub mod sortable;
 
 impl MastertechContext {
     pub fn mastertech_website(&mut self, ui: &mut Ui) {
@@ -48,37 +39,23 @@ impl MastertechContext {
         //     });
         // }
 
+        let page = "MyTasks";
+        let current_user = self.current_user.as_ref().unwrap();
 
+        let mut vals = Status::VALUES;
+        // Define the custom sort order
+        let order = |name: Status| match name.as_str() {
+            "Todo" => 1,
+            "In Repair" => 2,
+            "Complete" => 3,
+            _ => 4, // Default case if there are other unexpected items
+        };
 
-        if let Some(users) = self.store_users.as_ref() {
-            let page = "MyTasks";
-            let current_user = self.current_user.as_ref().unwrap();
+        vals.sort_unstable_by_key(|x| order(x.clone()));
 
-            let mut vals = Status::VALUES;
-            // Define the custom sort order
-            let order = |name: Status| match name.as_str() {
-                "Todo" => 1,
-                "In Repair" => 2,
-                "Complete" => 3,
-                _ => 4, // Default case if there are other unexpected items
-            };
-
-            vals.sort_unstable_by_key(|x| order(x.clone()));
-
-            if let Some(layout) = self.task_layouts.get_mut(page) {
-                if self.rerun_filtering_my_tasks {
-                    self.rerun_filtering_my_tasks = false;
-                    let mut map = BTreeMap::new();
-                    vals.iter_mut().for_each(|status| {
-                        let filtered = self.task_payload
-                            .filter_by_status(&status)
-                            .filter_by_assignee(current_user);
-                        map.entry(status.as_str().to_string()).or_insert(filtered);
-                    });
-                    layout.task_map = map;
-                }
-                layout.layout_cols(ui);
-            } else {
+        if let Some(layout) = self.task_layouts.get_mut(page) {
+            if self.rerun_filtering_my_tasks {
+                self.rerun_filtering_my_tasks = false;
                 let mut map = BTreeMap::new();
                 vals.iter_mut().for_each(|status| {
                     let filtered = self.task_payload
@@ -86,12 +63,23 @@ impl MastertechContext {
                         .filter_by_assignee(current_user);
                     map.entry(status.as_str().to_string()).or_insert(filtered);
                 });
-                let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();
-                let layout =
-                    TaskLayout::new(map, user_names, self.ui_actions_tx.clone(), users.clone());
-                self.task_layouts.insert(page.to_string(), layout);
+                layout.task_map = map;
             }
+            layout.layout_cols(ui);
+        } else {
+            let mut map = BTreeMap::new();
+            vals.iter_mut().for_each(|status| {
+                let filtered = self.task_payload
+                    .filter_by_status(&status)
+                    .filter_by_assignee(current_user);
+                map.entry(status.as_str().to_string()).or_insert(filtered);
+            });
+            let user_names: Vec<String> = self.store_users.iter().map(|u| u.name.clone()).collect();
+            let layout =
+                TaskLayout::new(map, user_names, self.ui_actions_tx.clone(), self.store_users.clone());
+            self.task_layouts.insert(page.to_string(), layout);
         }
+        
     }
 }
 

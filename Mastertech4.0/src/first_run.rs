@@ -258,8 +258,7 @@ impl MasterTechApp {
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv() {
-            // info!("Store Users: {users:?}");
-            self.context.store_users = Some(users);
+            self.context.store_users = users;
         }
 
 

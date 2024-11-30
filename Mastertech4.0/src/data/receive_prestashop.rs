@@ -85,16 +85,14 @@ impl MasterTechApp {
                         task_id: Some(task.id.clone()),
                         ..Default::default()
                     };
-                    if let Some(users) = self.context.store_users.as_ref() {
-                        for user in users {
-                            if let Some(presta_id) = user.id_prestashop {
-                                if msg.id_employee == presta_id.to_string() {
-                                    task_note_payload.everest_initials = user.everest_initials.clone();
-                                    task_note_payload.user = Some(user.id.clone());
-                                }
+                    for user in self.context.store_users.iter() {
+                        if let Some(presta_id) = user.id_prestashop {
+                            if msg.id_employee == presta_id.to_string() {
+                                task_note_payload.everest_initials = user.everest_initials.clone();
+                                task_note_payload.user = Some(user.id.clone());
                             }
                         }
-                    };
+                    }
                     task_notes.push(task_note_payload);
                 }
             }

@@ -1,5 +1,6 @@
-use crate::{app_state::MtechServer, utilities::ModalType};
+use crate::app_state::MtechServer;
 use database::schema::{TaskNotePayload, TICKET_TABLE};
+use displays::modals::ModalType;
 use log::info;
 use surrealdb::RecordId;
 

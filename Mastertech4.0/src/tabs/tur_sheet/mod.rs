@@ -171,62 +171,46 @@ impl MastertechContext {
 
                                                                         /*     ROW 3     */
                                                     let mut inputs = BTreeSet::new();
-                                                    if let Some(users) = &self.store_users{
 
-                                                        for user in users.iter(){
-                                                            let parsed = user.email.split_once("@").unwrap_or(("","")).0;
-                                                            inputs.insert(parsed.to_string());
-                                                            // info!("Inputs: {:?}", inputs);
-                                                        }
-                                                        let size = vec2( self.widget_size + 2.0, 14.0 );
-                                                        let _result = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
-                                                            .highlight_matches(true)
-                                                            .max_suggestions(3)
-                                                            .set_text_edit_properties(move |text_edit| 
-                                                        {
-                                                            text_edit
-                                                                .hint_text("Assignee")
-                                                                .min_size(size)
-                                                                .font(FontId::proportional(12.0))
-                                                                .frame(true)
-                                                                .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
-                                                                // .horizontal_align(egui::Align::Center)
-                                                        })
-                                                        .ui(ui);
-
-                                                        // info!("AutoCompleteTextEdit result Assignee: {:?}", result);
-                                                        let _result2 = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
-                                                            .highlight_matches(true)
-                                                            .max_suggestions(3)
-                                                            .set_text_edit_properties(move |text_edit| 
-                                                        {
-                                                            text_edit
-                                                                .hint_text("Tech")
-                                                                .min_size(size)
-                                                                .font(FontId::proportional(12.0))
-                                                                .frame(true)
-                                                                .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
-                                                                // .horizontal_align(egui::Align::Center)
-                                                        })
-                                                        .ui(ui);
-                                                        // info!("AutoCompleteTextEdit result Tech: {:?}", result2);
-
-                                                    } else {
-
-                                                        TextEdit::singleline(&mut self.ticket_data.salesman)
-                                                            .hint_text("Assignee")
-                                                            .vertical_align(Align::Center)
-                                                            .margin(vec2(4.0, 4.0))
-                                                            .min_size(vec2(self.widget_size+2.0,14.0))
-                                                            .ui(ui);
-                                                        
-                                                        TextEdit::singleline(&mut self.ticket_data.tech)
-                                                            .hint_text("Tech")
-                                                            .vertical_align(Align::Center)
-                                                            .margin(vec2(4.0, 4.0))
-                                                            .min_size(vec2(self.widget_size+2.0,14.0))
-                                                            .ui(ui);
+                                                    for user in self.store_users.iter(){
+                                                        let parsed = user.email.split_once("@").unwrap_or(("","")).0;
+                                                        inputs.insert(parsed.to_string());
+                                                        // info!("Inputs: {:?}", inputs);
                                                     }
+                                                    let size = vec2( self.widget_size + 2.0, 14.0 );
+                                                    let _result = AutoCompleteTextEdit::new(&mut self.ticket_data.salesman, inputs.clone())
+                                                        .highlight_matches(true)
+                                                        .max_suggestions(3)
+                                                        .set_text_edit_properties(move |text_edit| 
+                                                    {
+                                                        text_edit
+                                                            .hint_text("Assignee")
+                                                            .min_size(size)
+                                                            .font(FontId::proportional(12.0))
+                                                            .frame(true)
+                                                            .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
+                                                            // .horizontal_align(egui::Align::Center)
+                                                    })
+                                                    .ui(ui);
+
+                                                    // info!("AutoCompleteTextEdit result Assignee: {:?}", result);
+                                                    let _result2 = AutoCompleteTextEdit::new(&mut self.ticket_data.tech, inputs.clone())
+                                                        .highlight_matches(true)
+                                                        .max_suggestions(3)
+                                                        .set_text_edit_properties(move |text_edit| 
+                                                    {
+                                                        text_edit
+                                                            .hint_text("Tech")
+                                                            .min_size(size)
+                                                            .font(FontId::proportional(12.0))
+                                                            .frame(true)
+                                                            .return_key(Some(KeyboardShortcut::new(Modifiers::CTRL, Key::Enter)))
+                                                            // .horizontal_align(egui::Align::Center)
+                                                    })
+                                                    .ui(ui);
+                                                    // info!("AutoCompleteTextEdit result Tech: {:?}", result2);
+
+                                                    
                                                     
                                                     ui.end_row();
                                                                         /*     ROW 4     */
@@ -287,10 +271,6 @@ impl MastertechContext {
                                                     }
 
                                                     ui.end_row();
-                                                    if let Some(_users) = &self.store_users{
-                                                        // let names = users.iter().
-                                                        // ui.add(self.mention_handler);
-                                                    }
                                                 }); // grid
                                             });
                                         }); // v center justified

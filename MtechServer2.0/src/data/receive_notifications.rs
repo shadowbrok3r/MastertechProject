@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
-use crate::{app_state::MtechServer, utilities::TaskUiActions};
+use crate::app_state::MtechServer;
 use database::{
     live_data::{handle_live_delete, update_or_insert_anything},
     schema::TaskPayload,
 };
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use displays::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
 use eframe::egui::{Button, Color32, FontId, Margin, RichText, Rounding, Ui, Widget};
 use log::info;
 use regex::Regex;

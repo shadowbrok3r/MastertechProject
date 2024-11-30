@@ -1,11 +1,11 @@
 use crate::app_state::{AppState, MainPages, MtechServer};
 use crate::pages::downloads_page::get_github_releases;
-use crate::utilities::TaskUiActions;
 use database::live_data::listen_data;
 use database::schema::utilities::{get_connected_clients, get_notifications, NotificationMod};
 use database::schema::{Notification, TaskPayload, CONNECTED_CLIENT_TABLE};
 use database::{self, DATABASE};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
+use displays::TaskUiActions;
 use eframe::egui::{
     menu, Align, Context, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit,
 };

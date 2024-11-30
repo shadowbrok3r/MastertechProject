@@ -8,12 +8,9 @@ use database::{
     Database,
 };
 use displays::{
-    channel_manager::ChannelManager,
-    egui_data_table::DataTable,
-    ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts},
-    virtual_filesystem::FileSystem,
+    channel_manager::ChannelManager, egui_data_table::DataTable, modals::{modal_types::ModalTypes, task_modal::ModalAction}, ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
 };
-use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Style};
+use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Stroke, Style};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::{
     collections::{HashMap, HashSet},
@@ -25,7 +22,6 @@ use surrealdb::{sql::Uuid, RecordId};
 use anyhow::Error;
 use chrono::{DateTime, Utc};
 use egui_file::FileDialog;
-use log::info;
 use serde_json::Value;
 
 #[cfg(target_os = "windows")]
@@ -45,18 +41,16 @@ use crate::{
             scaffold::{self, HardwareTest},
         },
         websockets::WebConsoleFrontend,
+    }
+};
+use displays::{
+    chats::ChatView,
+    modals::{
+        create_task_modal::CreateTaskModal, task_modal::SpecialPartOrder, ChatModalHandler,
+        Modal, ModalHandler, TaskModalHandler, ModalType
     },
-    utilities::{
-        displays::{
-            chats::ChatView,
-            modals::{
-                create_task_modal::CreateTaskModal, task_modal::SpecialPartOrder, ChatModalHandler,
-                Modal, ModalHandler, TaskModalHandler,
-            },
-            tasks::task_layout::TaskLayout,
-        },
-        DisplayModal, ModalType, TaskUiActions,
-    },
+    tasks::task_layout::TaskLayout,
+    DisplayModal, TaskUiActions,
 };
 
 pub struct MasterTechApp {
@@ -195,13 +189,14 @@ pub struct MastertechContext {
         Receiver<Vec<ExtraInventoryData>>,
     ),
 
-    pub store_users: Option<Vec<User>>,
+    pub store_users: Vec<User>,
     pub store_users_tx: Sender<Vec<User>>,
     pub store_users_rx: Receiver<Vec<User>>,
     pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
     pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
+    pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     pub scripts: Scripts,
     pub progress: (f32, f32),
     pub special_part_order: SpecialPartOrder,
@@ -313,6 +308,7 @@ impl MasterTechApp {
         let serial_channel = <SerialData>::create_unbounded_channel();
         let seb_channel = <Vec<Value>>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
+        let tur_channel = PrestashopPayload::create_unbounded_channel();
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
@@ -350,7 +346,7 @@ impl MasterTechApp {
 
             disks: Value::Array(vec![]),
             disk_num: 0,
-            store_users: None,
+            store_users: Vec::new(),
             scaffold_request: SendRequest { tx: tx_scaffold },
             client: reqwest::Client::new(),
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
@@ -431,6 +427,7 @@ impl MasterTechApp {
             copied_items_tx,
             copied_items_rx,
             github_releases_channel,
+            tur_channel,
 
             store_users_tx,
             store_users_rx,
@@ -479,50 +476,54 @@ impl MastertechContext {
         match &mut self.current_modal {
             ModalType::TaskModal(task_modal) => {
                 let task_name = task_modal.task.task_name.clone();
-                if !task_modal.task.task_note.is_empty() {
-                    // info!("Notes: {:?}", notes);
-                }
-
                 self.task_modal_handler.ui(
                     ctx,
-                    || Modal::new(&task_name).default_height(600.0),
-                    move |ui, _stay_open, page_state| {
+                    || Modal::new(&task_name).default_height(600.0).min_width(680.),
+                    move |ui, open, page_state| {
+                        ui.set_max_width(500.);
                         let action = task_modal.display(ui, page_state.to_owned());
-                        // info!("Modal stuff");
-                        // if let Some(notes) = &task_modal.task.task_note{
-                        //     info!("Notes: {:?}", notes);
-                        // }
                         if let Some(action) = action {
+                            if let ModalAction::Close = action {
+                                *open = false;
+                            }
                             *page_state = action;
                         }
                     },
                 );
             }
             ModalType::CreateTaskModal(create_task_modal) => {
-                let response = self.create_task_modal_handler.ui(
+                self.create_task_modal_handler.ui(
                     ctx,
-                    || CreateTaskModal::new("Create Task", self.store_users.clone()),
-                    |ui, _stay_open, page_state| {
-                        create_task_modal.display(ui, page_state.to_owned())
+                    || {
+                        CreateTaskModal::new(
+                            "Create Task",
+                            self.store_users.clone(),
+                            self.tur_channel.0.clone(),
+                        )
+                        .default_height(600.0)
+                        .min_width(680.)
+                    },
+                    |ui, open, page_state| {
+                        let action = create_task_modal.display(ui, page_state.to_owned());
+                        if let Some(action) = action {
+                            // This will allow me to close the modal
+                            // upon ModalAction::Close (when creating a task)
+                            if let ModalAction::Close = action {
+                                *open = false;
+                            }
+                            // Otherwise, handle the according ModalAction
+                            *page_state = action;
+                        }
                     },
                 );
-
-                if let Some(response) = response {
-                    if let Some(_action) = response {
-                        // create_task_modal.set_state(action);
-                    }
-                }
             }
             ModalType::ChatView(chat_modal) => {
-                info!("opening chat");
                 self.chat_modal_handler.ui(
                     ctx,
-                    || Modal::new("Chats").default_height(600.0),
+                    || Modal::new("Chats"),
                     move |ui, _stay_open, _page_state| {
-                        if let Some(_new_message) = chat_modal.ui(ui) {
-                            // spawn(async move { });
-                            // let _ = update_task_notes(new_message).await;
-                        } // task_modal.chat_view.insert_note(payload.1);
+                        ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
+                        if let Some(_new_message) = chat_modal.ui(ui) {}
                     },
                 );
             }

@@ -3,21 +3,23 @@ use crossbeam::channel::Sender;
 use database::schema::{TaskPayload, User};
 use eframe::egui::Vec2;
 use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
-use eframe::egui::{Color32, Frame, Layout, Margin, Rounding, Stroke};
+use eframe::egui::{Color32, Frame, Layout, Margin, Rounding};
 use eframe::egui::{RichText, Ui};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 
-use crate::utilities::{Displayable, Interaction, TaskUiActions, Updatable};
+use crate::{Displayable, Interaction, TaskUiActions, Updatable};
 
 impl Displayable for TaskPayload {
     fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>) {
+        let style = ui.style().clone();
+
         Frame::default()
-            .fill(Color32::from_rgb(14, 14, 18))
+            .fill(style.visuals.extreme_bg_color) // (Color32::from_rgb(14, 14, 18))
             .inner_margin(Margin::same(8.0))
             .outer_margin(Margin::same(5.0))
             .rounding(Rounding::same(15.0))
-            .stroke(Stroke::new(0.2, Color32::from_additive_luminance(100)))
+            .stroke(style.visuals.window_stroke)
             .show(ui, |ui| {
                 ui.set_max_height(300.0);
                 ui.set_min_height(67.0);
@@ -36,7 +38,6 @@ impl Displayable for TaskPayload {
                                 .cell_layout(Layout::left_to_right(Align::Min))
                                 .cell_layout(Layout::left_to_right(Align::Center))
                                 .cell_layout(Layout::left_to_right(Align::Max))
-                                .size(Size::relative(0.1))
                                 .size(Size::remainder())
                                 .size(Size::relative(0.1))
                                 .size(Size::relative(0.1))
@@ -45,48 +46,17 @@ impl Displayable for TaskPayload {
                                         ui.with_layout(
                                             Layout::centered_and_justified(Direction::TopDown),
                                             |ui| {
-                                                let response = self
-                                                    .interact_assignee_initials(ui, store_users);
-                                                if response.secondary_clicked() {
-                                                    let _ =
-                                                        tx.try_send(TaskUiActions::OpenTaskModal(
-                                                            self.to_owned(),
-                                                        ));
-                                                }
-                                                if response.has_focus()
-                                                    || response.changed()
-                                                    || response.clicked()
-                                                {
-                                                    info!("assignee initials changed");
-                                                    let _ = tx.try_send(TaskUiActions::Editing(
-                                                        self.id.clone().id,
-                                                    ));
-                                                } else if response.lost_focus() {
-                                                    info!("assignee initials lost_focus");
-                                                    let _ =
-                                                        tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.clone().id,
-                                                        ));
-                                                }
-                                            },
-                                        );
-                                    });
-
-                                    s.cell(|ui| {
-                                        ui.with_layout(
-                                            Layout::centered_and_justified(Direction::TopDown),
-                                            |ui| {
                                                 let response = self.interact_task_name(ui);
                                                 if response.has_focus() && response.changed() {
                                                     info!("task_name changed");
                                                     let _ = tx.try_send(TaskUiActions::Editing(
-                                                        self.id.clone().id,
+                                                        self.id.clone(),
                                                     ));
                                                 } else if response.lost_focus() {
                                                     info!("task_name lost_focus");
                                                     let _ =
                                                         tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.clone().id,
+                                                            self.id.clone(),
                                                         ));
                                                 }
                                             },
@@ -127,7 +97,7 @@ impl Displayable for TaskPayload {
                                                     }
                                                     let _ =
                                                         tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.clone().id,
+                                                            self.id.clone(),
                                                         ));
                                                 }
                                             },
@@ -140,38 +110,75 @@ impl Displayable for TaskPayload {
 
                         strip.strip(|strip| {
                             strip
-                                .cell_layout(Layout::left_to_right(Align::Min))
+                                .cell_layout(Layout::left_to_right(Align::Center))
+                                .cell_layout(Layout::left_to_right(Align::Center))
                                 .cell_layout(Layout::left_to_right(Align::Center))
                                 .cell_layout(Layout::left_to_right(Align::Max))
-                                .size(Size::remainder())
-                                .size(Size::remainder())
-                                .size(Size::remainder())
-                                .size(Size::exact(30.0))
+                                .cell_layout(Layout::left_to_right(Align::Max))
+                                .size(Size::exact(70.))
+                                .size(Size::exact(90.))
+                                .size(Size::exact(90.))
+                                .size(Size::exact(80.))
+                                .size(Size::exact(50.))
                                 .horizontal(|mut s| {
                                     s.cell(|ui| {
-                                        ui.with_layout(
-                                            Layout::centered_and_justified(Direction::LeftToRight),
-                                            |ui| {
-                                                let response = self.interact_priority(ui);
-                                                if response.has_focus()
-                                                    || response.changed()
-                                                    || response.clicked()
-                                                {
-                                                    info!("interact_priority changed");
-                                                    let _ = tx.try_send(TaskUiActions::Editing(
-                                                        self.id.as_ref().unwrap().id.clone(),
-                                                    ));
-                                                } else if response.lost_focus() {
-                                                    info!("interact_priority lost focus");
-                                                    let _ =
-                                                        tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.as_ref().unwrap().id.clone(),
-                                                        ));
-                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().id))
-                                                }
-                                            },
-                                        );
+                                        let response =
+                                            self.interact_assignee_initials(ui, store_users);
+                                        if response.secondary_clicked() {
+                                            let _ = tx.try_send(TaskUiActions::OpenTaskModal(
+                                                self.to_owned(),
+                                            ));
+                                        }
+                                        if response.has_focus()
+                                            || response.changed()
+                                            || response.clicked()
+                                        {
+                                            info!("assignee initials changed");
+                                            let _ = tx.try_send(TaskUiActions::Editing(
+                                                self.id.clone(),
+                                            ));
+                                        } else if response.lost_focus() {
+                                            info!("assignee initials lost_focus");
+                                            let _ = tx.try_send(TaskUiActions::CommitChanges(
+                                                self.id.clone(),
+                                            ));
+                                        }
                                     });
+                                    s.cell(|ui| {
+                                        let response = self.interact_priority(ui);
+                                        if response.has_focus()
+                                            || response.changed()
+                                            || response.clicked()
+                                        {
+                                            info!("interact_priority changed");
+                                            let _ = tx.try_send(TaskUiActions::Editing(
+                                                self.id.clone(),
+                                            ));
+                                        } else if response.lost_focus() {
+                                            info!("interact_priority lost focus");
+                                            let _ = tx.try_send(TaskUiActions::CommitChanges(
+                                                self.id.clone(),
+                                            ));
+                                            // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone()))
+                                        }
+                                    });
+                                    s.cell(|ui| {
+                                        let response = self.interact_status(ui);
+
+                                        if response.changed() {
+                                            info!("interact_status changed");
+                                            let _ = tx.try_send(TaskUiActions::Editing(
+                                                self.id.clone(),
+                                            ));
+                                        } else if response.lost_focus() {
+                                            info!("interact_status lost focus");
+                                            let _ = tx.try_send(TaskUiActions::CommitChanges(
+                                                self.id.clone(),
+                                            ));
+                                            // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone()))
+                                        }
+                                    });
+
                                     s.cell(|ui| {
                                         ui.with_layout(
                                             Layout::centered_and_justified(Direction::TopDown),
@@ -180,56 +187,33 @@ impl Displayable for TaskPayload {
                                                 if response.changed() {
                                                     info!("interact_due_date changed");
                                                     let _ = tx.try_send(TaskUiActions::Editing(
-                                                        self.id.as_ref().unwrap().id.clone(),
+                                                        self.id.clone(),
                                                     ));
                                                 }
                                                 if response.lost_focus() {
                                                     info!("interact_due_date lost focus");
                                                     let _ =
                                                         tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.as_ref().unwrap().id.clone(),
+                                                            self.id.clone(),
                                                         ));
-                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().id))
+                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone()))
                                                 }
                                             },
                                         );
                                     });
                                     s.cell(|ui| {
                                         ui.with_layout(
-                                            Layout::centered_and_justified(Direction::LeftToRight),
-                                            |ui| {
-                                                ui.add_space(8.0);
-                                                let response = self.interact_status(ui);
-
-                                                if response.changed() {
-                                                    info!("interact_status changed");
-                                                    let _ = tx.try_send(TaskUiActions::Editing(
-                                                        self.id.as_ref().unwrap().id.clone(),
-                                                    ));
-                                                } else if response.lost_focus() {
-                                                    info!("interact_status lost focus");
-                                                    let _ =
-                                                        tx.try_send(TaskUiActions::CommitChanges(
-                                                            self.id.as_ref().unwrap().id.clone(),
-                                                        ));
-                                                    // let _ = tx.try_send(Some(TaskUiActions::CommitChanges(self.id.clone().id))
-                                                }
-                                            },
-                                        );
-                                    });
-                                    s.cell(|ui| {
-                                        ui.with_layout(
-                                            Layout::centered_and_justified(Direction::RightToLeft),
+                                            Layout::centered_and_justified(Direction::TopDown),
                                             |ui| {
                                                 let mut count = 0;
-                                                if let Some(task_notes) = &self.task_note {
-                                                    count = task_notes.len();
+                                                if !self.task_note.is_empty() {
+                                                    count = self.task_note.len();
                                                 }
                                                 ui.style_mut().spacing.button_padding.x = 6.0;
                                                 ui.style_mut().spacing.button_padding.y = 6.0;
                                                 let txt = if count > 0 {
                                                     RichText::new(format!("{} 💬", count))
-                                                        .color(Color32::from_rgb(42, 195, 222))
+                                                        .color(style.visuals.window_stroke.color)
                                                 } else {
                                                     RichText::new("💬").color(Color32::WHITE)
                                                 };
@@ -241,10 +225,8 @@ impl Displayable for TaskPayload {
                                                 {
                                                     let _ = tx.try_send(
                                                         TaskUiActions::OpenChatModal((
-                                                            self.id.as_ref().unwrap().clone(),
-                                                            self.task_note
-                                                                .clone()
-                                                                .unwrap_or(Vec::new()),
+                                                            self.id.clone(),
+                                                            self.task_note.clone(),
                                                         )),
                                                     );
                                                 }
@@ -262,7 +244,7 @@ impl Displayable for TaskPayload {
                                     s.cell(|ui| {
                                         let task_descrip_header = ui.make_persistent_id(format!(
                                             "task_description {:?}",
-                                            self.id.as_ref().unwrap().id
+                                            self.id.clone()
                                         ));
                                         let task_descrip_head =
                                             CollapsingHeader::new("Task Description")
@@ -271,12 +253,12 @@ impl Displayable for TaskPayload {
                                             let response = self.interact_task_description(ui);
                                             if response.changed() {
                                                 let _ = tx.try_send(TaskUiActions::Editing(
-                                                    self.id.as_ref().unwrap().id.clone(),
+                                                    self.id.clone(),
                                                 ));
                                             }
                                             if response.lost_focus() {
                                                 let _ = tx.try_send(TaskUiActions::CommitChanges(
-                                                    self.id.as_ref().unwrap().id.clone(),
+                                                    self.id.clone(),
                                                 ));
                                             }
                                         });
@@ -305,7 +287,7 @@ pub fn date_colors(date: String, _complete: bool) -> Color32 {
         due_tomorrow = Some(date.clone());
     }
     if let Some(_) = overdue {
-        Color32::from_rgb(199, 30, 60) // ui.style().visuals.error_fg_color
+        Color32::from_rgb(199, 30, 60)
     }
     // Pink
     else if let Some(_) = due_today {
@@ -320,4 +302,3 @@ pub fn date_colors(date: String, _complete: bool) -> Color32 {
         Color32::from_rgb(199, 48, 103)
     } // Pink
 }
-
