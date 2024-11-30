@@ -110,7 +110,7 @@ impl eframe::App for MtechServer {
 
         if self.context.ai_playground.save_chats {
             self.context.ai_playground.save_chats = false;
-            if let Some(_usr) = &self.context.current_user {
+            if let Some(_usr) = &self.context.shared_ctx.current_user {
                 let threads = self.context.ai_playground.get_threads();
                 // for (id, thread) in threads {
                     // thread.messages
@@ -134,7 +134,7 @@ impl eframe::App for MtechServer {
                 if theme.0 {
                     #[cfg(target_arch = "wasm32")]
                     {
-                        if let Some(user) = self.context.current_user.clone().as_mut() {
+                        if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
                             wasm_cookies::delete("user");
                             user.user_settings.as_mut().unwrap().color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
                             let duration = web_time::Duration::from_secs(172800);
@@ -177,7 +177,7 @@ impl eframe::App for MtechServer {
             AppState::NoAuth(reason) => {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
-                    if self.context.current_user.is_some() {
+                    if self.context.shared_ctx.current_user.is_some() {
                         self.load_data(frame);
                     } else {
                         self.context.first_run = true;

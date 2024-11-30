@@ -19,7 +19,7 @@ impl MastertechContext{
         if !self.show_ws_viewport.load(Ordering::Relaxed) {
             let _db_tx = self.db_tx.clone();
 
-            if self.current_user.is_none(){
+            if self.shared_ctx.current_user.is_none(){
                 let _ = self.app_state_tx.send(crate::app_state::AppState::NoAuth("No User".to_string()));
             }
             
@@ -80,7 +80,7 @@ impl MastertechContext{
             id: self.client_uuid.clone(),
             client_hash,
             connected: true,
-            assigned_user: Some(self.current_user.as_ref().unwrap().id.clone()),
+            assigned_user: Some(self.shared_ctx.current_user.as_ref().unwrap().id.clone()),
             connection_string: url_string.clone(),
             ..Default::default()
         };

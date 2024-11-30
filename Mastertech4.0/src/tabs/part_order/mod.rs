@@ -5,7 +5,7 @@ impl MastertechContext{
     pub fn special_part_order(&mut self, ui: &mut Ui) {
         let size_before_wrap = ui.available_size_before_wrap();
         let avail_size = [size_before_wrap.x - 30.0, size_before_wrap.y - 30.0];
-        if let Some(usr) = &self.current_user {
+        if let Some(usr) = &self.shared_ctx.current_user {
 
             self.special_part_order.display_part_order_page(ui, avail_size.into(), usr.store);
             

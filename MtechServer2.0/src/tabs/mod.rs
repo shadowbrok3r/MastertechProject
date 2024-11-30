@@ -1,17 +1,17 @@
 pub mod aging_tasks;
 pub mod ai_playground;
+pub mod my_tasks;
+pub mod store_tasks;
 pub mod completed_tasks;
 pub mod customer;
 pub mod github_issue;
 pub mod json_viewer;
 pub mod logger;
-pub mod my_tasks;
 pub mod query_builder;
 pub mod quote_fulfilled_tasks;
 pub mod seb_lookup;
 pub mod stock;
 pub mod stock_quantities;
-pub mod store_tasks;
 pub mod task_audit;
 pub mod terminal;
 pub mod toolbox;
@@ -104,8 +104,8 @@ impl MtechServerContext {
                 _ => Store::RIV,
             };
 
-            self.store_users.clear();
-            self.tasks.clear();
+            self.shared_ctx.store_users.clear();
+            self.shared_ctx.tasks.clear();
             
             info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
             spawn_local(async move {
@@ -130,12 +130,12 @@ impl TabViewer for MtechServerContext {
             "My Tools" => self.toolbox(ui),
             "Store Tasks" => {
                 ui.ctx().request_repaint();
-                self.store_tasks(ui)
+                self.shared_ctx.store_tasks(ui)
             },
-            "My Tasks" => self.my_tasks(ui),
+            "My Tasks" => self.shared_ctx.my_tasks(ui),
             "Ai Playground" => self.ai_playground(ui),
             "Web Console" => self.web_console(ui),
-            "Completed Tasks" => self.completed_tasks(ui),
+            "Completed Tasks" => self.shared_ctx.completed_tasks(ui),
             "Bug Report" => self.github(ui),
             // "Customers" => self.customer_view(ui),
             "Logs" => logger_ui().show(ui),
@@ -215,7 +215,7 @@ impl TabViewer for MtechServerContext {
         if response.clicked() {
             match tab.as_str() {
                 "Stock" => {
-                    if let Some(usr) = &self.current_user {
+                    if let Some(usr) = &self.shared_ctx.current_user {
                         let stock_tx = self.stock_channel.0.clone();
                         let store_selection = match usr.clone().store {
                             Store::RIV => 76,
@@ -241,11 +241,11 @@ impl TabViewer for MtechServerContext {
                 },
                 "Completed Tasks" => {
                     let tasks_tx = self.initial_tasks_tx.clone();
-                    if let Some(usr) = self.current_user.clone() {
+                    if let Some(usr) = self.shared_ctx.current_user.clone() {
                         let store = usr.store.as_str().to_string().clone();
 
-                        self.store_users.clear();
-                        self.tasks.clear();
+                        self.shared_ctx.store_users.clear();
+                        self.shared_ctx.tasks.clear();
                         
                         spawn_local(async move {
                             let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store).await;

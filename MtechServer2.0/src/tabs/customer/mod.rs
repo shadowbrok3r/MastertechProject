@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 // impl MtechServerContext{
 //     pub fn customer_view(&mut self, ui: &mut Ui){
-//         // let _users = self.store_users.clone();
+//         // let _users = self.shared_ctx.store_users.clone();
 //         ui.horizontal(|ui| ui.add_space(ui.available_width() / 3.0));
 //         ui.vertical_centered_justified( |ui| {
 //             ui.style_mut().override_font_id = Some(FontId::proportional(15.0));

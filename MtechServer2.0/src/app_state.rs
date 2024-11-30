@@ -11,13 +11,9 @@ use crate::{
     }
 };
 use displays::{
-    channel_manager::ChannelManager,
-    modals::{
-        ModalHandler, ModalType, modal_types::ModalTypes, task_modal::ModalAction, 
-        create_task_modal::{Tur, CreateTaskModal}, ChatModalHandler, Modal, TaskModalHandler
-    },
-    tasks::task_layout::TaskLayout, TaskUiActions, chats::ChatView,egui_data_table::DataTable, DisplayModal,
-    ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
+    app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, egui_data_table::DataTable, modals::{
+        create_task_modal::{CreateTaskModal, Tur}, modal_types::ModalTypes, task_modal::ModalAction, ChatModalHandler, Modal, ModalHandler, ModalType, TaskModalHandler
+    }, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem, DisplayModal
 };
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User, UserSettings}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId, Style}, CreationContext};
@@ -69,12 +65,8 @@ impl Default for AppState {
 
 #[derive(Serialize)]
 pub struct MtechServerContext {
+    pub shared_ctx: SharedContext,
     // User and Client Related Fields
-    /// {Currently logged-in user}
-    #[serde(skip)]
-    pub current_user: Option<User>,
-    /// {Users in the store}
-    pub store_users: Vec<User>,
     /// {Sends users from database}
     #[serde(skip)]
     pub store_users_tx: Sender<Vec<User>>,
@@ -101,8 +93,6 @@ pub struct MtechServerContext {
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
     /// {Live task payload from database}
     pub live_tasks: Option<LiveTaskPayload>,
-    /// {All task data}
-    pub tasks: Vec<TaskPayload>,
     /// {Task transmission channel over crossbeam}
     #[serde(skip)]
     pub tasks_tx: Sender<(Action, TaskPayload)>,
@@ -164,12 +154,7 @@ pub struct MtechServerContext {
     pub seb_email: String,
     pub client_search_inputs: HashMap<String, String>,
     pub edited_task: TaskPayload,
-    /// {Task layouts for different tabs}
-    #[serde(skip)]
-    pub task_layouts: HashMap<String, TaskLayout>,
-    pub rerun_filtering_my_tasks: bool,
-    pub rerun_filtering_store_tasks: bool,
-    pub rerun_filtering_completed: bool,
+
     /// {Current UI modal}
     #[serde(skip)]
     pub current_modal: ModalType,
@@ -208,13 +193,6 @@ pub struct MtechServerContext {
     /// Data for Stock Quantities tab
     #[serde(skip)]
     pub stock_quantity_table: DataTable<StockQuantityData>,
-
-    // Ui State Management Channels
-    /// {UI actions channel for communication between UI components and main function}
-    #[serde(skip)]
-    pub ui_actions_tx: Sender<TaskUiActions>,
-    #[serde(skip)]
-    pub ui_actions_rx: Receiver<TaskUiActions>,
 
     // System Data and Settings
     pub user_settings: UserSettings,
@@ -358,7 +336,7 @@ impl MtechServer {
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
-        let (ui_actions_tx, ui_actions_rx) = channel::unbounded::<TaskUiActions>();
+        
         let (connected_clients_tx, connected_clients_rx) =
             channel::unbounded::<Vec<ConnectedClient>>();
         let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
@@ -379,21 +357,17 @@ impl MtechServer {
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
 
-        let mut tasks = Vec::new();
-        tasks.push(TaskPayload::default());
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
 
+
         let context = MtechServerContext {
-            current_user: None,
+            shared_ctx: SharedContext::default(),
             first_run: true,
             clients: Vec::new(),
 
             task_map: BTreeMap::new(),
             live_tasks: None,
-            tasks,
-            // data_output: LiveOutput::default(),
-            store_users: Vec::new(),
 
             // CHANNEL SENDERS / RECEIVERS
             db_tx,
@@ -410,8 +384,6 @@ impl MtechServer {
             app_state_rx,
             store_users_tx,
             store_users_rx,
-            ui_actions_tx,
-            ui_actions_rx,
             connected_clients_tx,
             connected_clients_rx,
             new_ticket_tx,
@@ -435,10 +407,6 @@ impl MtechServer {
             tur: Tur::default(),
             ai_playground: AiPlayground::default(),
             edited_task: TaskPayload::default(),
-            task_layouts: HashMap::new(),
-            rerun_filtering_my_tasks: false,
-            rerun_filtering_store_tasks: false,
-            rerun_filtering_completed: false,
             current_modal: ModalType::Null,
             task_modal_handler: TaskModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
@@ -599,7 +567,7 @@ impl MtechServerContext {
                     || {
                         CreateTaskModal::new(
                             "Create Task",
-                            self.store_users.clone(),
+                            self.shared_ctx.store_users.clone(),
                             self.tur_channel.0.clone(),
                         )
                         .default_height(600.0)

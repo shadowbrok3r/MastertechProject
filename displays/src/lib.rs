@@ -19,6 +19,9 @@ pub mod views;
 pub mod virtual_filesystem;
 pub mod tasks;
 pub mod chats;
+pub mod tabs;
+pub mod app_state;
+pub mod data;
 
 pub use platform::PlatformSpawner;
 

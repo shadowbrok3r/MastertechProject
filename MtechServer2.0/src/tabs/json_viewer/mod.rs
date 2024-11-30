@@ -83,7 +83,7 @@ impl MtechServerContext {
                         self.user_settings = serde_json::from_value(self.json_editor.value.clone())
                             .unwrap_or_default();
 
-                        if let Some(mut usr) = self.current_user.clone() {
+                        if let Some(mut usr) = self.shared_ctx.current_user.clone() {
                             usr.user_settings = Some(self.user_settings.clone());
                             self.update_settings = true;
                             spawn_local(async move {

@@ -1,20 +1,19 @@
-use crate::MtechServer;
 use database::live_data::{handle_live_delete, update_or_insert_anything};
-use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
 use eframe::egui::{Color32, RichText};
 use log::info;
 use surrealdb::Action;
 
-impl MtechServer {
+impl SharedContext {
     pub fn receive_client(&mut self) {
-        if let Ok((action, new_client)) = self.context.live_clients_rx.try_recv() {
+        if let Ok((action, new_client)) = self.live_clients_rx.try_recv() {
             info!("new_client: {action:?} // {new_client:?}");
 
             if let (Some(usr), Some(current_user)) =
-                (&new_client.assigned_user, &self.context.shared_ctx.current_user)
+                (&new_client.assigned_user, &self.current_user)
             {
                 if usr == &current_user.id {
-                    let toast = &mut self.context.toasts;
+                    let toast = &mut self.toasts;
                     let txt = match action {
                         Action::Create => RichText::new(format!(
                             "Client has connected: {}",
@@ -51,24 +50,24 @@ impl MtechServer {
 
             match action {
                 Action::Create => {
-                    update_or_insert_anything(&mut self.context.clients, new_client.clone())
+                    update_or_insert_anything(&mut self.clients, new_client.clone())
                         .unwrap_or(())
                 }
                 Action::Update => {
-                    update_or_insert_anything(&mut self.context.clients, new_client.clone())
+                    update_or_insert_anything(&mut self.clients, new_client.clone())
                         .unwrap_or(())
                 }
                 Action::Delete => {
-                    handle_live_delete(&mut self.context.clients, new_client.clone()).unwrap_or(())
+                    handle_live_delete(&mut self.clients, new_client.clone()).unwrap_or(())
                 }
                 _ => (),
             };
         }
 
-        if let Ok(connected_clients) = self.context.connected_clients_rx.try_recv() {
-            self.context.clients = connected_clients.clone();
+        if let Ok(connected_clients) = self.connected_clients_rx.try_recv() {
+            self.clients = connected_clients.clone();
             for client in connected_clients {
-                self.context
+                self
                     .undock_client
                     .insert(client.connection_string, false);
             }

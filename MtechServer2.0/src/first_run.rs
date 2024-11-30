@@ -116,7 +116,7 @@ impl MtechServer {
                 info!("1");
                 self.state = d.0;
                 if let Some(ref usr) = d.1 {
-                    self.context.current_user = Some(usr.clone());
+                    self.context.shared_ctx.current_user = Some(usr.clone());
                     self.context.file_system.set_user(usr.clone());
                     spawn_local(async move {
                         match DATABASE.health().await {
@@ -130,7 +130,7 @@ impl MtechServer {
                 info!("2");
                 error!("Error with auth: {e:?}");
                 self.state = AppState::NoAuth(e.to_string());
-                self.context.current_user = None;
+                self.context.shared_ctx.current_user = None;
             }
         };
     }
@@ -142,7 +142,7 @@ impl MtechServer {
         let notes_tx = self.context.notes_tx.clone();
         let live_notif_tx = self.context.live_notification_tx.clone();        
 
-        if let Some(usr) = self.context.current_user.as_ref() {
+        if let Some(usr) = self.context.shared_ctx.current_user.as_ref() {
             info!("Getting Initial data");
             let user = usr.clone();
             let name = usr.name.clone();
@@ -169,7 +169,7 @@ impl MtechServer {
             //     }
             // }
 
-            if self.context.tasks.is_empty() || self.context.store_users.is_empty() {
+            if self.context.shared_ctx.tasks.is_empty() || self.context.shared_ctx.store_users.is_empty() {
                 let initial_tasks_tx = self.context.initial_tasks_tx.clone();
                 let store_users_tx = self.context.store_users_tx.clone();
                 let store = usr.store.as_str().to_string().clone();
@@ -242,10 +242,10 @@ impl MtechServer {
     pub fn receive(&mut self) {
         if let Ok(tasks) = self.context.initial_tasks_rx.try_recv() {
             log::info!("Got new tasks: {:?}", &tasks.len());
-            self.context.rerun_filtering_store_tasks = true;
-            self.context.rerun_filtering_completed = true;
-            self.context.tasks.clear();
-            for (page, layout) in self.context.task_layouts.iter_mut() {
+            self.context.shared_ctx.rerun_filtering_store_tasks = true;
+            self.context.shared_ctx.rerun_filtering_completed = true;
+            self.context.shared_ctx.tasks.clear();
+            for (page, layout) in self.context.shared_ctx.task_layouts.iter_mut() {
                 match page.as_str() {  
                     "CompletedTasks" | "StoreTasks" => {
                         layout.task_map.clear();
@@ -255,11 +255,11 @@ impl MtechServer {
                     _ => {}
                 }
             }
-            self.context.tasks = tasks;
+            self.context.shared_ctx.tasks = tasks;
         }
 
         if let Ok(users) = self.context.store_users_rx.try_recv() {
-            for (page, layout) in self.context.task_layouts.iter_mut() {
+            for (page, layout) in self.context.shared_ctx.task_layouts.iter_mut() {
                 match page.as_str() {  
                     "CompletedTasks" | "StoreTasks" => {
                         layout.task_map.clear();
@@ -271,10 +271,10 @@ impl MtechServer {
                 layout.update_assignees(users.clone());
             }
             log::info!("Got new users: {:?}", users);
-            self.context.rerun_filtering_store_tasks = true;
-            self.context.rerun_filtering_completed = true;
-            self.context.store_users.clear();
-            self.context.store_users = users;
+            self.context.shared_ctx.rerun_filtering_store_tasks = true;
+            self.context.shared_ctx.rerun_filtering_completed = true;
+            self.context.shared_ctx.store_users.clear();
+            self.context.shared_ctx.store_users = users;
         }
 
         // if let Ok(live_output) = self.context.live_output_rx.try_recv() {

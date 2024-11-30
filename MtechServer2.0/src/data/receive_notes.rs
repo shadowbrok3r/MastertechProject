@@ -21,6 +21,7 @@ impl MtechServer {
             } else if let ModalType::ChatView(chat_view) = &mut self.context.current_modal {
                 let task = self
                     .context
+                    .shared_ctx
                     .tasks
                     .iter_mut()
                     .find(|task| task.id == chat_view.task_id.clone().unwrap());
@@ -36,9 +37,9 @@ impl MtechServer {
             }
             if let Action::Create = payload.0 {
                 if let (Some(id), Some(user)) =
-                    (&payload.1.clone().task_id, &self.context.current_user)
+                    (&payload.1.clone().task_id, &self.context.shared_ctx.current_user)
                 {
-                    if let Some(task) = self.context.tasks.iter().find(|task| {
+                    if let Some(task) = self.context.shared_ctx.tasks.iter().find(|task| {
                         task.id == id.clone() && task.assignee == user.id && !task.completed
                     }) {
                         // This should work with ID and not initials

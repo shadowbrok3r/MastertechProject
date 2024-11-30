@@ -187,7 +187,7 @@ impl MastertechContext{
             _specs = "Computer information was not sent with ticket".to_string();
         }
         
-        let store: &Store = &self.current_user.clone().unwrap_or(User::default()).store; // &self.ticket_data.dep
+        let store: &Store = &self.shared_ctx.current_user.clone().unwrap_or(User::default()).store; // &self.ticket_data.dep
 
         let _mtech_username = dotenv::var("MTECH_EMAIL").unwrap_or("not provided".to_string());
         let _mtech_password = dotenv::var("MTECH_PASS").unwrap_or("not provided".to_string());

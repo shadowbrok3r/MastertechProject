@@ -63,7 +63,7 @@ impl MasterTechApp {
                     }
                     ui.add_space(20.0);
 
-                    if let Some(usr) = self.context.current_user.as_ref() {
+                    if let Some(usr) = self.context.shared_ctx.current_user.as_ref() {
                         let welcome_msg = RichText::new(format!("Welcome, {}", usr.name));
                         ui.menu_button(welcome_msg, |ui| {
                             if ui.add(Button::new("Modify Theme")).clicked() {
@@ -72,7 +72,7 @@ impl MasterTechApp {
                             }
                         });
                     }
-                    if self.context.current_user.is_none() {
+                    if self.context.shared_ctx.current_user.is_none() {
                         if Button::new("Login").ui(ui).clicked() {
                             let _ = self
                                 .context

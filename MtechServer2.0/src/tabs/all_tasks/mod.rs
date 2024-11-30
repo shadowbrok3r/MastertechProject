@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 impl MtechServerContext {
     pub fn company_tasks(&mut self, ui: &mut Ui) {
-        if !self.store_users.is_empty() {
+        if !self.shared_ctx.store_users.is_empty() {
             let page = "Company Tasks";
             let mut vals = Status::VALUES;
             // let current_user = self.current_user.as_ref().unwrap();

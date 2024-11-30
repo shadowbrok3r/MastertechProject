@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 pub mod file_browser;
 pub mod github;
 pub mod logger;
-pub mod mastertech_website;
+pub mod my_tasks;
 #[cfg(target_os = "windows")]
 pub mod minidump;
 pub mod output_console;

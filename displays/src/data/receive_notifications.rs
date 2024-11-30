@@ -1,22 +1,22 @@
 use std::collections::BTreeSet;
 
-use crate::app_state::MtechServer;
+use crate::app_state::SharedContext;
 use database::{
     live_data::{handle_live_delete, update_or_insert_anything},
     schema::TaskPayload,
 };
-use displays::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
+use crate::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, TaskUiActions};
 use eframe::egui::{Button, Color32, FontId, Margin, RichText, Rounding, Ui, Widget};
 use log::info;
 use regex::Regex;
 use surrealdb::Action;
 
-impl MtechServer {
+impl SharedContext {
     pub fn receive_notification(&mut self) {
-        if let Ok((action, notification)) = self.context.live_notification_rx.try_recv() {
+        if let Ok((action, notification)) = self.live_notification_rx.try_recv() {
             // Test text
             let mut inputs = BTreeSet::new();
-            for task in self.context.shared_ctx.tasks.iter() {
+            for task in self.tasks.iter() {
                 inputs.insert(task.task_name.clone());
             }
 
@@ -26,7 +26,7 @@ impl MtechServer {
                     let username_regex = Regex::new(r"tagged (\w+\.\w+)").unwrap();
                     let task_name_regex = Regex::new(r"in task (.+)").unwrap();
 
-                    if let Some(usr) = self.context.shared_ctx.current_user.as_ref() {
+                    if let Some(usr) = self.current_user.as_ref() {
                         // Find the username
                         if let Some(captures) =
                             username_regex.captures(&notification.notification_description)
@@ -51,8 +51,8 @@ impl MtechServer {
                             info!("Task name not found");
                         }
                         if notification.user == usr.id {
-                            self.context.read_notifications = false;
-                            let toast = &mut self.context.toasts;
+                            self.read_notifications = false;
+                            let toast = &mut self.toasts;
                             let auth_toast = Toast {
                                 kind: ToastKind::Info,
                                 text: RichText::new(format!(
@@ -68,23 +68,23 @@ impl MtechServer {
                         }
                     }
 
-                    update_or_insert_anything(&mut self.context.notifications, notification.clone())
+                    update_or_insert_anything(&mut self.notifications, notification.clone())
                         .unwrap_or(())
                 }
                 Action::Update => {
-                    update_or_insert_anything(&mut self.context.notifications, notification.clone())
+                    update_or_insert_anything(&mut self.notifications, notification.clone())
                         .unwrap_or(())
                 }
                 Action::Delete => {
-                    handle_live_delete(&mut self.context.notifications, notification.clone())
+                    handle_live_delete(&mut self.notifications, notification.clone())
                         .unwrap_or(())
                 }
                 _ => (),
             };
         }
 
-        if let Ok(notification) = self.context.notification_rx.try_recv() {
-            self.context.notifications = notification;
+        if let Ok(notification) = self.notification_rx.try_recv() {
+            self.notifications = notification;
         }
     }
 }
