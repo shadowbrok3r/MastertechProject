@@ -1,6 +1,4 @@
-use super::{
-    modal_types::ModalTypes, task_modal::{display_ticket_page, ModalAction}, ModalState
-};
+use super::task_modal::{display_ticket_page, ModalAction};
 use database::schema::get_data::get_user_from_email;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use crossbeam::channel::Sender;
@@ -28,6 +26,7 @@ use surrealdb::RecordId;
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct CreateTaskModal {
     pub title: String,
+    pub current_page_state: ModalAction,
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
@@ -42,8 +41,6 @@ pub struct CreateTaskModal {
     pub tur: Tur,
     #[serde(skip)]
     pub prestashop_api_tx: Option<Sender<PrestashopPayload>>,
-    #[serde(skip)]
-    pub state: ModalState,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -69,7 +66,6 @@ impl CreateTaskModal {
             min_height: Some(600.0),
             default_height: Some(800.0),
             full_span_content: false,
-            state: ModalState::default(),
             due_date: Utc::now().date_naive(),
             store_users,
             prestashop_api_tx: Some(prestashop_api_tx),
@@ -83,18 +79,18 @@ impl CreateTaskModal {
     }
 }
 
-impl ModalTypes for CreateTaskModal {
-    fn modal_state(&mut self) -> &mut ModalState {
-        &mut self.state
-    }
-    fn title(mut self, title: String) -> Self {
-        self.modal_state().title = Some(title);
-        self
-    }
-}
+// impl ModalTypes for CreateTaskModal {
+//     fn modal_state(&mut self) -> &mut ModalState {
+//         &mut self.state
+//     }
+//     fn title(mut self, title: String) -> Self {
+//         self.modal_state().title = Some(title);
+//         self
+//     }
+// }
 
 impl DisplayModal for CreateTaskModal {
-    fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction> {
+    fn display(&mut self, ui: &mut Ui) -> Option<ModalAction> {
         let mut response: Option<ModalAction> = None;
         let avail_size = Vec2::new(680., 580.);
 
@@ -118,7 +114,7 @@ impl DisplayModal for CreateTaskModal {
                                 ui.horizontal_top(|ui| {
                                     let mut main_page = false;
                                     let mut import_task_page = false;
-                                    match current_page_state {
+                                    match self.current_page_state {
                                         ModalAction::TicketInfoPage => main_page = true,
                                         ModalAction::ImportTask => import_task_page = true,
                                         _ => main_page = true,
@@ -152,7 +148,7 @@ impl DisplayModal for CreateTaskModal {
                         .size(Size::exact(avail_size.x))
                         .horizontal(|mut strip| {
                             strip.strip(|s| {
-                                let size = if let ModalAction::ImportTask = current_page_state {
+                                let size = if let ModalAction::ImportTask = self.current_page_state {
                                     Size::exact(avail_size.x - 15.0)
                                 } else {
                                     Size::exact(avail_size.x / 2.0)
@@ -169,7 +165,7 @@ impl DisplayModal for CreateTaskModal {
                                         s.cell(|ui| {
                                             // ui.style_mut().override_font_id =
                                             //     Some(FontId::proportional(13.0));
-                                            match current_page_state {
+                                            match self.current_page_state {
                                                 ModalAction::TicketInfoPage => {
                                                     if let Some(tx) = self.prestashop_api_tx.clone()
                                                     {

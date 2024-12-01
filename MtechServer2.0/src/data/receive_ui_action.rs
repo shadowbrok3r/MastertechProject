@@ -29,8 +29,8 @@ impl MtechServer {
                             )
                         };
                         self.context.opened_modals
-                            .get(&format!("{} - Task Modal", task_modal.title))
-                            .get_or_insert(&ModalType::TaskModal(task_modal));
+                            .entry(format!("{} - Task Modal", task_modal.title))
+                            .or_insert(ModalType::TaskModal(task_modal));
                     }
                 }
                 TaskUiActions::CreateTaskModal => {
@@ -40,8 +40,8 @@ impl MtechServer {
                         self.context.tur_channel.0.clone(),
                     );
                     self.context.opened_modals
-                        .get(&format!("{} - Create Task Modal", create_modal.title))
-                        .get_or_insert(&ModalType::CreateTaskModal(create_modal));
+                        .entry(create_modal.title.clone())
+                        .or_insert(ModalType::CreateTaskModal(create_modal));
                 }
                 TaskUiActions::OpenChatModal(pld) => {
                     info!("Got Chat action");
@@ -52,10 +52,23 @@ impl MtechServer {
                             pld.0.clone(),
                             self.context.shared_ctx.store_users.clone(),
                         );
-                        
+                        let task = self
+                            .context
+                            .shared_ctx
+                            .tasks
+                            .iter()
+                            .find(|task| task.id == pld.0.clone());
+
+                        let title = if let Some(task) = task {
+                            task.task_name.clone()
+                        } else {
+                            "New Chat".to_string()
+                        };
+
                         self.context.opened_modals
-                            .get(&format!("{} - Chat Modal", chat_modal.title))
-                            .get_or_insert(&ModalType::ChatView(chat_modal));
+                            .entry(title)
+                            .or_insert(ModalType::ChatView(chat_modal));
+                        // info!("self.context.opened_modals: {:?}", self.context.opened_modals);
                     }
                 }
                 TaskUiActions::Response(_res) => (),

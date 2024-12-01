@@ -12,11 +12,9 @@ use eframe::emath::Vec2;
 use serde::Serialize;
 use log::{error, info};
 use structdiff::StructDiff;
-use super::modals::ModalState;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatView{
-    pub state: ModalState,
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
     pub current_user: Option<User>,
@@ -32,7 +30,6 @@ pub struct ChatView{
 impl Default for ChatView{
     fn default() -> Self {
         Self { 
-            state: ModalState::default(), 
             title: "Chat".to_string(), 
             messages: Vec::new(), 
             current_user: None, 
@@ -66,7 +63,6 @@ impl ChatView {
         ChatView {
             current_user: Some(current_user),
             messages,
-            state: ModalState::default(),
             title: "Chat".to_string(),
             markdown_editor: EasyMarkEditor::new(),
             task_id: Some(task_id),

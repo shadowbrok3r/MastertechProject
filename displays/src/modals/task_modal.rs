@@ -23,11 +23,12 @@ use std::sync::Mutex;
 #[cfg(not(target_arch="wasm32"))]
 use tokio::sync::Mutex;
 
-use super::ModalState;
+// use super::ModalState;
 
 #[derive(Serialize, Clone, Debug)]
 pub struct TaskModal {
     pub title: String,
+    pub current_page_state: ModalAction,
     pub task: TaskPayload,
     #[serde(skip)]
     pub chat_view: ChatView,
@@ -35,8 +36,6 @@ pub struct TaskModal {
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
     pub full_span_content: bool,
-
-    pub state: ModalState,
     pub spo: SpecialPartOrder,
 }
 
@@ -62,7 +61,7 @@ impl Default for TaskModal {
             min_height: Some(600.0),
             default_height: Some(800.0),
             full_span_content: false,
-            state: ModalState::default(),
+            current_page_state: ModalAction::None,
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
         }
@@ -72,13 +71,13 @@ impl Default for TaskModal {
 impl TaskModal {
     pub fn new(chat_view: ChatView, task: TaskPayload) -> Self {
         Self {
-            title: "Task Details".to_string(),
+            title: task.task_name.clone(),
+            current_page_state: ModalAction::None,
             task,
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
             full_span_content: false,
-            state: ModalState::default(),
             chat_view,
             spo: SpecialPartOrder::default(),
         }
@@ -108,7 +107,7 @@ pub struct SpecialPartOrder {
 }
 
 impl DisplayModal for TaskModal {
-    fn display(&mut self, ui: &mut Ui, current_page_state: ModalAction) -> Option<ModalAction> {
+    fn display(&mut self, ui: &mut Ui) -> Option<ModalAction> {
         let mut response: Option<ModalAction> = None;
         let avail_size = Vec2::new(680.0, 620.0);
 
@@ -127,7 +126,7 @@ impl DisplayModal for TaskModal {
                                 let mut computer_info_page = false;
                                 let mut task_note_page = false;
                                 let mut task_page = false;
-                                match current_page_state {
+                                match self.current_page_state {
                                     ModalAction::TicketInfoPage => ticket_page = true,
                                     ModalAction::PartOrderPage => part_order_page = true,
                                     ModalAction::ComputerInfoPage => computer_info_page = true,
@@ -235,7 +234,7 @@ impl DisplayModal for TaskModal {
                                             ui.horizontal_centered(|ui| {
                                                 ui.style_mut().override_font_id =
                                                     Some(FontId::proportional(13.0));
-                                                match current_page_state {
+                                                match self.current_page_state {
                                                     ModalAction::TicketInfoPage => {
                                                         display_ticket_page(
                                                             ui,
@@ -286,8 +285,8 @@ impl DisplayModal for TaskModal {
                         });
                 });
             });
-
-        response
+        self.current_page_state = response.unwrap_or(ModalAction::None);
+        Some(self.current_page_state.clone())
     }
 }
 
