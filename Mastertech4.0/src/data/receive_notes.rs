@@ -9,7 +9,7 @@ impl MasterTechApp {
         if let Ok(mut payload) = self.context.notes_rx.try_recv() {
             info!("{:?}", payload);
             self.context.new_note = true;
-            if let ModalType::TaskModal(task_modal) = &mut self.context.current_modal {
+            if let ModalType::TaskModal(task_modal) = &mut self.context.opened_modals {
                 handle_live_notes(payload.clone(), &mut task_modal.task).unwrap_or(());
 
                 if let Action::Delete = payload.0 {
@@ -17,7 +17,7 @@ impl MasterTechApp {
                 } else {
                     task_modal.chat_view.insert_note(&mut payload.1);
                 }
-            } else if let ModalType::ChatView(chat_view) = &mut self.context.current_modal {
+            } else if let ModalType::ChatView(chat_view) = &mut self.context.opened_modals {
                 let task = self
                     .context
                     .shared_ctx

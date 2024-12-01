@@ -1,4 +1,6 @@
 
+use std::ops::{Deref, DerefMut};
+
 use create_task_modal::CreateTaskModal;
 use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, RichText, Rounding, Shape, Stroke, Ui, Vec2, Widget, Window};
 use modal_types::ModalTypes;
@@ -16,7 +18,19 @@ pub enum ModalType{
     TaskModal(TaskModal),
     ChatView(ChatView),
     #[default]
-    Null,
+    Null
+}
+
+impl Deref for ModalType{
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            ModalType::CreateTaskModal(create_task_modal) => &create_task_modal.title,
+            ModalType::TaskModal(task_modal) => &task_modal.title,
+            ModalType::ChatView(chat_view) => &chat_view.title,
+            ModalType::Null => "",
+        }
+    }
 }
 
 #[derive(Default, Serialize)]
@@ -48,7 +62,7 @@ pub struct ModalResponse<R> {
 
 impl Default for ModalState {
     fn default() -> Self {
-        Self { title: Some("Create Task".to_string()), min_width: None, min_height: None, default_height: None, full_span_content: false, page_state: ModalAction::default()}
+        Self { title: Some("Create Task".to_string()), min_width: None, min_height: Some(700.), default_height: Some(800.), full_span_content: false, page_state: ModalAction::default()}
     }
 }
 
