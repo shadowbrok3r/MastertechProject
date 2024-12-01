@@ -27,7 +27,7 @@ impl MasterTechApp {
                                 task.clone(),
                             )
                         };
-                        self.context.current_modal = ModalType::TaskModal(task_modal);
+                        self.context.opened_modals = ModalType::TaskModal(task_modal);
                         self.context.task_modal_handler.open();
                     }
                 }
@@ -37,7 +37,7 @@ impl MasterTechApp {
                         self.context.shared_ctx.store_users.clone(),
                         self.context.tur_channel.0.clone(),
                     );
-                    self.context.current_modal = ModalType::CreateTaskModal(create_modal);
+                    self.context.opened_modals = ModalType::CreateTaskModal(create_modal);
                     self.context.create_task_modal_handler.open();
                 }
                 TaskUiActions::Response(_res) => {}
@@ -50,7 +50,7 @@ impl MasterTechApp {
                             pld.0.clone(),
                             self.context.shared_ctx.store_users.clone(),
                         );
-                        self.context.current_modal = ModalType::ChatView(chat_modal);
+                        self.context.opened_modals = ModalType::ChatView(chat_modal);
                         self.context.chat_modal_handler.open();
                     } // self.context.chat = ModalType::ChatView(pld);
                 }

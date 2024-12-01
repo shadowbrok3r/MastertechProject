@@ -86,14 +86,11 @@ impl MtechServer {
 
             task.service_ticket = Some(ticket.clone());
 
-            if let ModalType::CreateTaskModal(ref mut create_task_modal) =
-                self.context.current_modal
-            {
-                info!("Updating modal data");
-                info!("{:?}", ticket.clone());
-                info!("{:?}", customer.clone());
-                info!("{:?}", task_notes.clone());
-                create_task_modal.tur = self.context.tur.clone();
+            for (title, modal) in self.context.opened_modals.iter_mut() {
+                if let ModalType::CreateTaskModal(ref mut create_task_modal) = modal {
+                    info!("Updating modal data for {title}");
+                    create_task_modal.tur = self.context.tur.clone();
+                }
             }
         }
     }

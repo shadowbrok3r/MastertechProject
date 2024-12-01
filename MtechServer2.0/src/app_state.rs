@@ -12,12 +12,12 @@ use crate::{
 };
 use displays::{
     app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, egui_data_table::DataTable, modals::{
-        create_task_modal::{CreateTaskModal, Tur}, modal_types::ModalTypes, task_modal::ModalAction, ChatModalHandler, Modal, ModalHandler, ModalType, TaskModalHandler
+        create_task_modal::{CreateTaskModal, Tur}, task_modal::ModalAction, ChatModalHandler, Modal, ModalHandler, ModalType, TaskModalHandler
     }, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem, DisplayModal
 };
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User, UserSettings}, Database};
-use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, FontId, Style}, CreationContext};
-use std::{collections::{BTreeMap, HashMap, HashSet}, sync::Arc};
+use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style, Vec2, Window}, CreationContext};
+use std::{collections::{BTreeMap, HashMap, HashSet}, ops::Deref, sync::Arc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{self, Receiver, Sender};
 use async_openai_wasm::types::ThreadObject;
@@ -157,7 +157,7 @@ pub struct MtechServerContext {
 
     /// {Current UI modal}
     #[serde(skip)]
-    pub current_modal: ModalType,
+    pub opened_modals: HashMap<String, ModalType>,
     #[serde(skip)]
     pub task_modal_handler: TaskModalHandler,
     pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
@@ -407,7 +407,7 @@ impl MtechServer {
             tur: Tur::default(),
             ai_playground: AiPlayground::default(),
             edited_task: TaskPayload::default(),
-            current_modal: ModalType::Null,
+            opened_modals: HashMap::new(),
             task_modal_handler: TaskModalHandler::default(),
             create_task_modal_handler: ModalHandler::default(),
             chat_modal: None,
@@ -543,66 +543,83 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
 
 impl MtechServerContext {
     pub fn handle_modals(&mut self, ctx: &Context) {
-        match &mut self.current_modal {
-            ModalType::TaskModal(task_modal) => {
-                let task_name = task_modal.task.task_name.clone();
-                self.task_modal_handler.ui(
-                    ctx,
-                    || Modal::new(&task_name).default_height(600.0).min_width(680.),
-                    move |ui, open, page_state| {
-                        ui.set_max_width(500.);
-                        let action = task_modal.display(ui, page_state.to_owned());
-                        if let Some(action) = action {
-                            if let ModalAction::Close = action {
-                                *open = false;
+        for (title, modal_type) in self.opened_modals.iter_mut() {
+            let s = modal_type.deref().to_string();
+            match modal_type {
+                ModalType::TaskModal(task_modal) => {
+                    let task_name = task_modal.task.task_name.clone();
+                    self.task_modal_handler.ui(
+                        ctx,
+                        || Modal::new(&task_name).default_height(600.0).min_width(680.),
+                        move |ui, open, page_state| {
+                            ui.set_max_width(500.);
+                            let action = task_modal.display(ui, page_state.to_owned());
+                            if let Some(action) = action {
+                                if let ModalAction::Close = action {
+                                    *open = false;
+                                }
+                                *page_state = action;
                             }
-                            *page_state = action;
-                        }
-                    },
-                );
-            }
-            ModalType::CreateTaskModal(create_task_modal) => {
-                self.create_task_modal_handler.ui(
-                    ctx,
-                    || {
-                        CreateTaskModal::new(
-                            "Create Task",
-                            self.shared_ctx.store_users.clone(),
-                            self.tur_channel.0.clone(),
-                        )
-                        .default_height(600.0)
-                        .min_width(680.)
-                    },
-                    |ui, open, page_state| {
-                        let action = create_task_modal.display(ui, page_state.to_owned());
-                        if let Some(action) = action {
-                            // This will allow me to close the modal
-                            // upon ModalAction::Close (when creating a task)
-                            if let ModalAction::Close = action {
-                                *open = false;
-                            }
-                            // Otherwise, handle the according ModalAction
-                            *page_state = action;
-                        }
-                    },
-                );
-            }
-            ModalType::ChatView(chat_modal) => {
-                self.chat_modal_handler.ui(
-                    ctx,
-                    || Modal::new("Chats"),
-                    move |ui, _stay_open, _page_state| {
-                        // ui.set_min_size(Vec2::new(600., 600.));
-                        // ui.set_max_size(Vec2::new(800., 800.));
-                        ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
-
-                        if let Some(_new_message) = chat_modal.ui(ui) {
-                            // spawn_local(async move {});
-                        }
-                    },
-                );
-            }
-            _ => {}
+                        },
+                    );
+                }
+                ModalType::CreateTaskModal(create_task_modal) => {
+                    let title = create_task_modal.title.clone();
+                    let window = Window::new(title)
+                        .default_size(Vec2::new(750., 850.))
+                        .show(ctx, |ui| 
+                    {
+    
+                        // create_task_modal.ui(
+                        //     ctx, 
+                        //     |ui, open, page_state| 
+                        //     {
+                        //         if let Some(action) = create_task_modal
+                        //             .display(ui, page_state.to_owned()) 
+                        //         {
+                        //             This will allow me to close the modal
+                        //             upon ModalAction::Close (when creating a task)
+                        //             if let ModalAction::Close = action {
+                                        
+                        //             }
+                        //         }                            
+                        //     }
+                        // );
+                    });
+                    
+                    // self.create_task_modal_handler.ui(
+                    //     ctx,
+                    //     || {
+                    //         CreateTaskModal::new(
+                    //             "Create Task",
+                    //             self.shared_ctx.store_users.clone(),
+                    //             self.tur_channel.0.clone(),
+                    //         )
+                    //         .default_height(600.0)
+                    //         .min_width(680.)
+                    //     },
+                    //     |ui, open, page_state| {
+                    //         let action = create_task_modal.display(ui, page_state.to_owned());
+                    //         if let Some(action) = action {
+                    //             // This will allow me to close the modal
+                    //             // upon ModalAction::Close (when creating a task)
+                    //             if let ModalAction::Close = action {
+                    //                 *open = false;
+                    //             }
+                    //             // Otherwise, handle the according ModalAction
+                    //             *page_state = action;
+                    //         }
+                    //     });
+                }
+                ModalType::ChatView(chat_modal) => {
+                    let title = chat_modal.title.clone();
+    
+                    Window::new(title)
+                        .default_size(Vec2::new(750., 850.))
+                        .show(ctx, |ui| chat_modal.ui(ui));
+                }
+                _ => {}
+            }       
         }
     }
 }

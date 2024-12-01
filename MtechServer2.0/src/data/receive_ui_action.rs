@@ -9,13 +9,14 @@ impl MtechServer {
                 TaskUiActions::OpenTaskModal(task) => {
                     if let Some(usr) = self.context.shared_ctx.current_user.clone() {
                         let task_modal = if !task.task_note.is_empty() {
-                            let chat_modal = ChatView::new(
-                                task.task_note.clone(),
-                                usr,
-                                task.id.clone(),
-                                self.context.shared_ctx.store_users.clone(),
-                            );
-                            TaskModal::new(chat_modal, task.clone())
+                            TaskModal::new(ChatView::new(
+                                    task.task_note.clone(),
+                                    usr,
+                                    task.id.clone(),
+                                    self.context.shared_ctx.store_users.clone()
+                                ),
+                                task.clone()
+                            )
                         } else {
                             TaskModal::new(
                                 ChatView::new(
@@ -24,11 +25,12 @@ impl MtechServer {
                                     task.id.clone(),
                                     self.context.shared_ctx.store_users.clone(),
                                 ),
-                                task.clone(),
+                                task.clone()
                             )
                         };
-                        self.context.current_modal = ModalType::TaskModal(task_modal);
-                        self.context.task_modal_handler.open();
+                        self.context.opened_modals
+                            .get(&format!("{} - Task Modal", task_modal.title))
+                            .get_or_insert(&ModalType::TaskModal(task_modal));
                     }
                 }
                 TaskUiActions::CreateTaskModal => {
@@ -37,10 +39,10 @@ impl MtechServer {
                         self.context.shared_ctx.store_users.clone(),
                         self.context.tur_channel.0.clone(),
                     );
-                    self.context.current_modal = ModalType::CreateTaskModal(create_modal);
-                    self.context.create_task_modal_handler.open();
+                    self.context.opened_modals
+                        .get(&format!("{} - Create Task Modal", create_modal.title))
+                        .get_or_insert(&ModalType::CreateTaskModal(create_modal));
                 }
-                TaskUiActions::Response(_res) => {}
                 TaskUiActions::OpenChatModal(pld) => {
                     info!("Got Chat action");
                     if let Some(current_user) = self.context.shared_ctx.current_user.as_ref() {
@@ -50,12 +52,18 @@ impl MtechServer {
                             pld.0.clone(),
                             self.context.shared_ctx.store_users.clone(),
                         );
-                        self.context.current_modal = ModalType::ChatView(chat_modal);
-                        self.context.chat_modal_handler.open();
-                    } // self.context.chat = ModalType::ChatView(pld);
+                        
+                        self.context.opened_modals
+                            .get(&format!("{} - Chat Modal", chat_modal.title))
+                            .get_or_insert(&ModalType::ChatView(chat_modal));
+                    }
                 }
-                _ => (),
-            }
+                TaskUiActions::Response(_res) => (),
+                TaskUiActions::Editing(_record_id) => (),
+                TaskUiActions::CommitChanges(_record_id) => (),
+                TaskUiActions::None => (),
+                
+            };
         }
     }
 }
