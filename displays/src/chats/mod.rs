@@ -121,8 +121,13 @@ impl ChatView {
         let bottom_panel_frame = Frame::none().fill(color)
             .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(c_panel_marg)
             .inner_margin(Margin::same(6.0)).rounding(Rounding::same(10.0));
+        let id = if let Some(task_id) = self.task_id.clone() {
+            ui.auto_id_with(task_id)
+        } else {
+            ui.auto_id_with("Chat Salt")
+        };
 
-        TopBottomPanel::bottom("ChatPageBottomPanel")
+        TopBottomPanel::bottom(id)
             .frame(bottom_panel_frame)
             .default_height(300.0)
             .resizable(true)

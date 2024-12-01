@@ -35,8 +35,12 @@ pub struct TaskModal {
     pub min_width: Option<f32>,
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
-    pub full_span_content: bool,
     pub spo: SpecialPartOrder,
+    pub computer_info_page: bool,
+    pub task_page: bool,
+    pub task_note_page: bool,
+    pub ticket_page: bool,
+    pub part_page: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -60,10 +64,14 @@ impl Default for TaskModal {
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
-            full_span_content: false,
             current_page_state: ModalAction::None,
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
+            computer_info_page: false,
+            task_page: false,
+            part_page: false,
+            task_note_page: false,
+            ticket_page: false,
         }
     }
 }
@@ -77,7 +85,11 @@ impl TaskModal {
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
-            full_span_content: false,
+            computer_info_page: false,
+            task_page: false,
+            task_note_page: false,
+            ticket_page: false,
+            part_page: false,
             chat_view,
             spo: SpecialPartOrder::default(),
         }
@@ -121,26 +133,6 @@ impl DisplayModal for TaskModal {
                     strip.size(Size::remainder()).horizontal(|mut strip| {
                         strip.cell(|ui| {
                             ui.horizontal(|ui| {
-                                let mut ticket_page = false;
-                                let mut part_order_page = false;
-                                let mut computer_info_page = false;
-                                let mut task_note_page = false;
-                                let mut task_page = false;
-                                match self.current_page_state {
-                                    ModalAction::TicketInfoPage => ticket_page = true,
-                                    ModalAction::PartOrderPage => part_order_page = true,
-                                    ModalAction::ComputerInfoPage => computer_info_page = true,
-                                    ModalAction::TaskNotePage => task_note_page = true,
-                                    ModalAction::TaskPage => task_page = true,
-                                    _ => {
-                                        if self.task.service_ticket.is_some() {
-                                            ticket_page = true;
-                                        } else {
-                                            task_page = true;
-                                        }
-                                    }
-                                };
-
                                 let delete_btn = Button::new(
                                     RichText::new("Delete Task").color(Color32::LIGHT_RED),
                                 )
@@ -175,23 +167,25 @@ impl DisplayModal for TaskModal {
 
                                 if self.task.service_ticket.is_some() {
                                     if ui
-                                        .selectable_label(ticket_page, RichText::new("🖹").heading())
+                                        .selectable_label(self.ticket_page, RichText::new("🖹").heading())
                                         .clicked()
                                     {
+                                        self.ticket_page = true;
                                         response = Some(ModalAction::TicketInfoPage);
                                     };
                                     if ui
                                         .selectable_label(
-                                            computer_info_page,
+                                            self.computer_info_page,
                                             RichText::new("🖥").heading(),
                                         )
                                         .clicked()
                                     {
+                                        self.computer_info_page = true;
                                         response = Some(ModalAction::ComputerInfoPage);
                                     };
                                     if ui
                                         .selectable_label(
-                                            part_order_page,
+                                            self.part_page,
                                             RichText::new("🔫").heading(),
                                         )
                                         .clicked()
@@ -200,14 +194,14 @@ impl DisplayModal for TaskModal {
                                     };
                                 } else {
                                     if ui
-                                        .selectable_label(task_page, RichText::new("🖹").heading())
+                                        .selectable_label(self.task_page, RichText::new("🖹").heading())
                                         .clicked()
                                     {
                                         response = Some(ModalAction::TaskPage);
                                     };
                                 }
                                 if ui
-                                    .selectable_label(task_note_page, RichText::new("💬").heading())
+                                    .selectable_label(self.task_note_page, RichText::new("💬").heading())
                                     .clicked()
                                 {
                                     response = Some(ModalAction::TaskNotePage);
