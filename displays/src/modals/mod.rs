@@ -1,14 +1,11 @@
 
-use std::ops::{Deref, DerefMut};
-
-use create_task_modal::CreateTaskModal;
-use eframe::egui::{vec2, Align, Align2, Button, Color32, Context, Frame, Id, Key, LayerId, Layout, Margin, NumExt, Order, Painter, Pos2, Rect, RichText, Rounding, Shape, Stroke, Ui, Vec2, Widget, Window};
-use modal_types::ModalTypes;
-use crate::chats::ChatView;
-use serde::Serialize;
+use eframe::egui::{Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, RichText, Rounding, Ui, Widget, Window};
+use crate::{chats::ChatView, DisplayModal};
 use task_modal::{ModalAction, TaskModal};
+use create_task_modal::CreateTaskModal;
+use serde::Serialize;
+use std::ops::Deref;
 
-pub mod modal_types;
 pub mod task_modal;
 pub mod create_task_modal;
 
@@ -33,251 +30,23 @@ impl Deref for ModalType{
     }
 }
 
-#[derive(Default, Serialize)]
-pub struct ModalHandler<M: ModalTypes>{
-    modal: Option<M>,
-    should_open: bool,
-    page_state: ModalAction,
-}
-
-#[derive(Serialize, Clone, Debug)]
-pub struct ModalState {
-    pub title: Option<String>,
-    pub min_width: Option<f32>,
-    pub min_height: Option<f32>,
-    pub default_height: Option<f32>,
-    pub full_span_content: bool,
-    #[serde(skip)]
-    pub page_state: ModalAction,
-}
-
-/// Response returned by [`Modal::ui`].
-pub struct ModalResponse<R> {
-    /// What the content closure returned, if it was actually run.
-    pub inner: Option<R>,
-    /// Whether the modal should remain open.
-    pub open: bool,
-    pub page_state: ModalAction,
-}
-
-impl Default for ModalState {
-    fn default() -> Self {
-        Self { title: Some("Create Task".to_string()), min_width: None, min_height: Some(700.), default_height: Some(800.), full_span_content: false, page_state: ModalAction::default()}
-    }
-}
-
-impl <M: ModalTypes>ModalHandler<M> {
-    /// Open the model next time the [`ModalHandler::ui`] method is called.
-    pub fn open(&mut self) {
-        self.should_open = true;
-    }
-
-    /// Draw the modal window, creating/destroying it as required.
-    pub fn ui<R>(
-        &mut self,
-        ctx: &Context,
-        make_modal: impl FnOnce() -> M,
-        content_ui: impl FnMut(&mut Ui, &mut bool, &mut ModalAction) -> R,
-    ) -> Option<R> {
-        if self.modal.is_none() && self.should_open {
-            self.modal = Some(make_modal());
-            self.should_open = false;
-        }
-        if let Some(modal) = &mut self.modal {
-            let ModalResponse { inner, open , page_state} = modal.ui(ctx, content_ui);
-            if !open {
-                self.modal = None;
-            }
-            self.page_state = page_state;
-
-            inner
-        } else {
-            None
-        }
-    }
-}
-
-
-pub struct ChatModalResponse<R> {
-    /// What the content closure returned, if it was actually run.
-    pub inner: Option<R>,
-    /// Whether the modal should remain open.
-    pub open: bool,
-    pub page_state: ModalAction
-}
-#[derive(Default)]
-pub struct ChatModalHandler{
-    modal: Option<Modal>,
-    should_open: bool,
-    #[allow(dead_code)]
-    page_state: ModalAction
-}
-
-#[derive(Default)]
-pub struct TaskModalHandler{
-    modal: Option<Modal>,
-    should_open: bool,
-    #[allow(dead_code)]
-    page_state: ModalAction
-}
-
-pub struct Modal {
-    title: String,
-    min_width: Option<f32>,
-    min_height: Option<f32>,
-    default_height: Option<f32>,
-    full_span_content: bool,
-    page_state: ModalAction
-}
-
-impl TaskModalHandler{
-    /// Open the model next time the [`ModalHandler::ui`] method is called.
-    pub fn open(&mut self) {
-        self.should_open = true;
-    }
-
-    /// Draw the modal window, creating/destroying it as required.
-    pub fn ui<R>(
-        &mut self,
-        ctx: &Context,
-        make_modal: impl FnOnce() -> Modal,
-        content_ui: impl FnMut(&mut Ui, &mut bool, &mut ModalAction) -> R,
-    ) -> Option<R> {
-        if self.modal.is_none() && self.should_open {
-            self.modal = Some(make_modal());
-            self.should_open = false;
-        }
-        if let Some(modal) = &mut self.modal {
-            let ChatModalResponse { inner, open, page_state: _ } = modal.ui_modal(ctx, content_ui);
-            if !open {
-                self.modal = None;
-            }
-
-            inner
-        } else {
-            None
-        }
-    }
-}
-
-impl ChatModalHandler {
-    /// Open the model next time the [`ModalHandler::ui`] method is called.
-    pub fn open(&mut self) {
-        self.should_open = true;
-    }
-
-    /// Draw the modal window, creating/destroying it as required.
-    pub fn ui<R>(
-        &mut self,
-        ctx: &Context,
-        make_modal: impl FnOnce() -> Modal,
-        content_ui: impl FnMut(&mut Ui, &mut bool, &mut ModalAction) -> R,
-    ) -> Option<R> {
-        if self.modal.is_none() && self.should_open {
-            self.modal = Some(make_modal());
-            self.should_open = false;
-        }
-        if let Some(modal) = &mut self.modal {
-            let ChatModalResponse { inner, open, page_state: _ } = modal.ui_modal(ctx, content_ui);
-            if !open {
-                self.modal = None;
-            }
-
-            inner
-        } else {
-            None
-        }
-    }
-}
-
-impl Modal {
-    /// Create a new modal with the given title.
-    pub fn new(title: &str) -> Self {
-        Self {
-            title: title.to_owned(),
-            min_width: None,
-            min_height: None,
-            default_height: None,
-            full_span_content: false,
-            page_state: ModalAction::None
-        }
-    }
-
-    pub fn title(mut self, title: String) -> Self {
-        self.title = title;
-        self
-    }
-
-    /// Set the minimum width of the modal window.
-    pub fn min_width(mut self, min_width: f32) -> Self {
-        self.min_width = Some(min_width);
-        self
-    }
-
-    /// Set the minimum height of the modal window.
-    pub fn min_height(mut self, min_height: f32) -> Self {
-        self.min_height = Some(min_height);
-        self
-    }
-
-    /// Set the default height of the modal window.
-    pub fn default_height(mut self, default_height: f32) -> Self {
-        self.default_height = Some(default_height);
-        self
-    }
-
-    /// Configure the content area of the modal for full span highlighting.
-    /// This includes:
-    /// - setting the vertical spacing to 0.0
-    /// - removing any padding at the bottom of the area
-    /// In this mode, the user code is responsible for adding spacing between items.
-    pub fn full_span_content(mut self, full_span_content: bool) -> Self {
-        self.full_span_content = full_span_content;
-        self
-    }
-
-    /// Show the modal window.
-    /// Typically called by [`ModalHandler::ui`].
-    fn ui_modal<R>(&mut self, ctx: &Context, content_ui: impl FnOnce(&mut Ui, &mut bool, &mut ModalAction) -> R) -> ChatModalResponse<R> {
-
-        // Implementation for showing the modal
-        Self::dim_background(ctx);
-
+impl ModalWindow for ModalType {
+    fn ui(&mut self, ctx: &Context, title: String, _min_width: f32, _min_height: f32) -> Option<ModalAction> {
         let mut open = ctx.input(|i| !i.key_pressed(Key::Escape));
-
-        let screen_height = ctx.screen_rect().height();
-        let _screen_width = ctx.screen_rect().width();
-        let modal_vertical_margins = (75.0).at_most(screen_height * 0.1);
-
-        let mut window = Window::new(self.title.clone())
+        let style= &ctx.style().visuals;
+        
+        let window = Window::new(title.clone())
             .frame(
                 Frame::default()
-                .inner_margin(Margin::symmetric(0.0, 0.0))
-                .outer_margin(Margin::same(30.0))
-                .stroke(Stroke::new(2.0, Color32::from_additive_luminance(150)))
-                .rounding(Rounding::same(15.0))
+                .inner_margin(Margin::symmetric(4., 4.))
+                .stroke(style.window_stroke)
+                .fill(style.window_fill)
+                .rounding(style.menu_rounding)
             )
             .pivot(Align2::CENTER_TOP)
-            .fixed_pos(ctx.screen_rect().center_top() + vec2(0.0, modal_vertical_margins))
-            .constrain_to(ctx.screen_rect())
-            .max_height(600.0)
-            .max_width(680.0)
             .default_width(680.0)
-            .collapsible(false)
-            .resizable(true)
-            .title_bar(false);
-
-        if let Some(min_width) = self.min_width {
-            window = window.min_width(min_width);
-        }
-
-        if let Some(min_height) = self.min_height {
-            window = window.min_height(min_height);
-        }
-
-        if let Some(default_height) = self.default_height {
-            window = window.default_height(default_height);
-        }
+            .open(&mut open)
+            .title_bar(true);
 
         let response = window.show(ctx, |ui| {
             
@@ -289,7 +58,6 @@ impl Modal {
                 ..Default::default()
             }
             .show(ui, |ui| {
-                Self::title_bar(ui, &self.title, &mut open);
                 ui.add_space(item_spacing_y);
 
                 Frame {
@@ -298,48 +66,32 @@ impl Modal {
                 }
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = item_spacing_y;
-                    content_ui(ui, &mut open, &mut self.page_state)
+                    match self {
+                        ModalType::CreateTaskModal(create_task_modal) => create_task_modal.display(ui),
+                        ModalType::TaskModal(task_modal) => task_modal.display(ui),
+                        ModalType::ChatView(chat_view) => {
+                            chat_view.ui(ui);
+                            None
+                        },
+                        ModalType::Null => None,
+                    }
                 })
                 .inner
             })
             .inner
         });
 
-        let cursor_was_over_window = response
-            .as_ref()
-            .and_then(|response| {
-                ctx.input(|i| i.pointer.interact_pos())
-                    .map(|interact_pos| {
-                        let pos_x = interact_pos.x;
-                        let pos_y = interact_pos.y;
-                        let final_pos = Pos2::new(pos_x - 10.0, pos_y - 10.0);
-                        response.response.rect.contains(final_pos)
-                    })
-            })
-            .unwrap_or(false);
-        if !cursor_was_over_window && ctx.input(|i| i.pointer.any_pressed()) {
-            open = false;
+        if open.eq(&false){
+            return Some(ModalAction::Close)
         }
 
-        ChatModalResponse {
-            inner: response.and_then(|response| response.inner),
-            open,
-            page_state: self.page_state.clone()
-        }
+        response.and_then(|response| response.inner.and(Some(ModalAction::None)))
     }
+}
 
-    fn dim_background(ctx: &Context) {
-        let painter = Painter::new(
-            ctx.clone(),
-            LayerId::new(Order::PanelResizeLine, Id::new("DimLayer")),
-            Rect::EVERYTHING,
-        );
-        painter.add(Shape::rect_filled(
-            ctx.screen_rect(),
-            Rounding::ZERO,
-            Color32::from_black_alpha(240),
-        ));
-    }
+
+pub trait ModalWindow {
+    fn ui(&mut self, ctx: &Context, title: String, min_width: f32, min_height: f32) -> Option<ModalAction>;
 
     fn title_bar(ui: &mut Ui, title: &str, open: &mut bool) {
         let t: RichText = RichText::new(title).heading().strong();
@@ -354,7 +106,7 @@ impl Modal {
             .with_layout(
                 Layout::top_down(Align::Max), 
             |ui|{
-                if Button::new(" X ").min_size(Vec2::new(15.0, 15.0)).rounding(Rounding::same(f32::INFINITY))
+                if Button::new(" X ").rounding(Rounding::same(10.0))
                 .fill(Color32::BLACK)
                     .ui(ui)
                     .clicked(){
@@ -370,4 +122,3 @@ impl Modal {
         ui.separator();
     }
 }
-
