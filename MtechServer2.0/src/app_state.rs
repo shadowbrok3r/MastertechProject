@@ -16,7 +16,7 @@ use displays::{
     }, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
 };
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User, UserSettings}, Database};
-use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
+use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, RawInput, Style}, CreationContext};
 use log::info;
 use std::{collections::{BTreeMap, HashMap, HashSet},sync::Arc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
@@ -537,15 +537,22 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
 
 impl MtechServerContext {
     pub fn handle_modals(&mut self, ctx: &Context) {
+
         for (title, modal_type) in self.opened_modals.iter_mut() {
-            info!("Got a new modal: {title:?}");
-            let action = modal_type.ui(ctx, title.clone(), 750., 850.);
-            if let Some(action) = action {
-                if let ModalAction::Close = action {
-                    self.close_modal = Some(title.clone());
+            // let input = RawInput::default();
+            // let full_output = ctx.run(input, |ctx| {
+                // info!("Got a new modal: {title:?}");
+                let action = modal_type.ui(ctx, title.clone(), 750., 850.);
+                if let Some(action) = action {
+                    if let ModalAction::Close = action {
+                        self.close_modal = Some(title.clone());
+                    }
                 }
-            }
-        
+            // });
+            
+            // for (x, _y) in full_output.viewport_output.iter() {
+            //     info!("Viewport ID: {x:?}");
+            // }
         }
         if let Some(modal) = &self.close_modal {
             self.opened_modals.remove_entry(modal);

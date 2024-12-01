@@ -96,11 +96,31 @@ impl MtechServer {
                             }
                         }
                     }
+                
+                    ui.add_space(50.);
+                    if ui.button("Organize Windows").clicked() {
+                        // ctx.send_viewport_cmd(command);
+
+                        //let organize_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::O);
+                        // if ctx.input_mut(|i| i.consume_shortcut(&organize_shortcut)) {}
+                        ctx.memory_mut(|mem| mem.reset_areas());
+
+                        ctx.memory_mut(|mem| {
+                            
+                            for layer in mem.areas_mut().visible_layer_ids().iter() {
+                                info!("Visible layers: {layer:?}");
+                            }
+                        })
+                    }
+                    ui.add_space(20.);
+                    if ui.button("Reset Mem").clicked() {
+                        ctx.memory_mut(|mem| *mem = Default::default());
+                    }
                 });
 
                 if let Some(usr) = &self.context.shared_ctx.current_user {
                     let notif_tx = self.context.notification_tx.clone();
-                    ui.add_space(ui.available_width() / 2.8);
+                    ui.add_space(ui.available_width() / 3.);
                     if ui
                         .add(Button::new(format!(
                             "Mastertech Server {}",
