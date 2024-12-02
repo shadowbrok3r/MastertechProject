@@ -16,8 +16,7 @@ use displays::{
     }, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
 };
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User, UserSettings}, Database};
-use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, RawInput, Style}, CreationContext};
-use log::info;
+use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use std::{collections::{BTreeMap, HashMap, HashSet},sync::Arc};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{self, Receiver, Sender};
