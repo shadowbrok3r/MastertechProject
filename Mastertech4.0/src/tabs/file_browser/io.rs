@@ -1,7 +1,6 @@
 use futures_util::future::join_all;
 use tokio::{fs, sync::mpsc::{error::SendError, UnboundedSender}};
 use num_format::{Locale, ToFormattedString};
-use eframe::egui::widgets::text_edit::*;
 use std::{io::Error, sync::{Arc, Mutex}, path::PathBuf};
 use rayon::prelude::*;
 
@@ -118,7 +117,7 @@ pub fn format_path_metadata(mut path_size: u64) -> String{
             let two_decimal_places = (x*100.0).round() / 100.0;
             let x_as_string = two_decimal_places.to_string();
             let y: Vec<&str> = x_as_string.split(".").collect();
-            let decimal = y[1].as_str();
+            let decimal = y[1];
             let new_path_size = x.clone() as u64;
             _formatted_size = format!("{}.{decimal} Gb", new_path_size.to_formatted_string(&Locale::en));
         }

@@ -1,9 +1,11 @@
 use crate::{app_state::SharedContext, tasks::task_layout::TaskLayout, FilterTasks};
+use database::schema::Store;
 use eframe::egui::{Color32, Spinner, Ui, Widget};
 use std::collections::BTreeMap;
 
 impl SharedContext {
     pub fn store_tasks(&mut self, ui: &mut Ui) {
+        ui.ctx().request_repaint();
         if !self.store_users.is_empty() {
             let users = &self.store_users;
             let page = "StoreTasks";
@@ -14,18 +16,19 @@ impl SharedContext {
                     log::info!("Reruning filters for STORE tasks: {:?}", self.tasks.len());
                     let mut map = BTreeMap::new();
                     users.iter().for_each(|u| {
-                        if u.store == current_user.store && u.email != current_user.email {
-                            let filtered =
-                                self.tasks.filter_by_assignee(u).filter_by_completion(false); //.filter_by_my_store(users, current_user);
-                            map.entry(u.everest_initials.to_string())
-                                .or_insert(filtered);
-                            log::info!(
-                                "STORE tasks map: {:?}", 
-                                map
-                                    .iter()
-                                    .map(|m| m.0.clone())
-                                    .collect::<Vec<String>>()
-                            );
+                        if u.email != current_user.email { // u.store == current_user.store && 
+                            let store_sel = self.store_selection.clone();
+                            let store_selection = std::convert::Into::<Store>::into(store_sel);
+                            let filtered = self
+                                .tasks
+                                .filter_by_assignee(u)
+                                .filter_by_completion(false)
+                                .filter_by_store(u, &store_selection);
+                            
+                            if !filtered.is_empty() {
+                                map.entry(u.everest_initials.to_string())
+                                    .or_insert(filtered);
+                            }
                         }
                     });
                     layout.task_map = map;
@@ -37,9 +40,18 @@ impl SharedContext {
                 let mut map = BTreeMap::new();
                 users.iter().for_each(|u| {
                     if u.store == current_user.store && u.email != current_user.email {
-                        let filtered = self.tasks.filter_by_assignee(u).filter_by_completion(false); //.filter_by_my_store(users, current_user);
-                        map.entry(u.everest_initials.to_string())
-                            .or_insert(filtered);
+                        let store_sel = self.store_selection.clone();
+                        let store_selection = std::convert::Into::<Store>::into(store_sel);
+                        let filtered = self
+                            .tasks
+                            .filter_by_assignee(u)
+                            .filter_by_completion(false)
+                            .filter_by_store(u, &store_selection);
+
+                        if !filtered.is_empty() {
+                            map.entry(u.everest_initials.to_string())
+                                .or_insert(filtered);
+                        }
                     }
                 });
                 let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();

@@ -8,6 +8,38 @@ use log::info;
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        // most important part of the whole app.. setting up our styling
+        // currently this just sets the style of the app, but in the near
+        // future i will be making this the setup to allow user customization
+        // to the style of any part of the app
+        if self.context.modify_theme {
+            Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
+                // info!("Settings: {:?}", self.context.theme_config);
+                let theme = self.context.theme_config.edit_ui(ui);
+                if theme.0 {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
+                            wasm_cookies::delete("user");
+                            user.user_settings.as_mut().unwrap().color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
+                            let duration = web_time::Duration::from_secs(172800);
+                            let usr = serde_json::to_string(&user.clone()).unwrap();
+                            let cookie_opts = wasm_cookies::CookieOptions::default()
+                                .with_same_site(wasm_cookies::SameSite::Strict)
+                                .secure()
+                                .expires_after(duration);
+                            wasm_cookies::set("user", &usr, &cookie_opts);
+                        }
+                    }
+                    self.context.theme_config = theme.1;
+                    self.context.modify_theme = false;
+                }
+            });
+        }
+
+        let custom_style = set_custom_style(&self.context.theme_config);
+        ctx.set_style((*custom_style).clone());
+
         // This is our 'dummy' worker that retrieves Minio bucket storage
         // contents, then builds our 'virtual' file system ui in the
         // crate::tabs::toolbox tab
@@ -122,38 +154,6 @@ impl eframe::App for MtechServer {
                 );
             }
         }
-
-        // most important part of the whole app.. setting up our styling
-        // currently this just sets the style of the app, but in the near
-        // future i will be making this the setup to allow user customization
-        // to the style of any part of the app
-        if self.context.modify_theme {
-            Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
-                // info!("Settings: {:?}", self.context.theme_config);
-                let theme = self.context.theme_config.edit_ui(ui);
-                if theme.0 {
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                            wasm_cookies::delete("user");
-                            user.user_settings.as_mut().unwrap().color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
-                            let duration = web_time::Duration::from_secs(172800);
-                            let usr = serde_json::to_string(&user.clone()).unwrap();
-                            let cookie_opts = wasm_cookies::CookieOptions::default()
-                                .with_same_site(wasm_cookies::SameSite::Strict)
-                                .secure()
-                                .expires_after(duration);
-                            wasm_cookies::set("user", &usr, &cookie_opts);
-                        }
-                    }
-                    self.context.theme_config = theme.1;
-                    self.context.modify_theme = false;
-                }
-            });
-        }
-
-        let custom_style = set_custom_style(&self.context.theme_config);
-        ctx.set_style((*custom_style).clone());
 
         // Handle changes to state from various places, such as
         // hitting the login button, clicking the 'home page' button

@@ -34,7 +34,7 @@ impl MtechServerContext {
 
                 ui.add_space(10.);
 
-                let selected = &mut self.store_selection;
+                let selected = &mut self.shared_ctx.store_selection;
 
                 let mut usr = self.shared_ctx.current_user.clone().unwrap_or_default();
                 let selected_text = usr.get_store_from_odoo_id().unwrap_or_default();

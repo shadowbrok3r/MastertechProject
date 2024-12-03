@@ -1,4 +1,4 @@
-use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Stroke, Style, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Stroke, Style, TextEdit, Ui, Vec2, Widget};
 use crate::{FilterTasks, Sortable, TaskUiActions, Displayable};
 use database::schema::{Priority, Record, TaskPayload, User};
 use egui_extras::{Size, Strip, StripBuilder};
@@ -124,7 +124,12 @@ impl TaskLayout {
                                 |mut strip| self.columns(strip.borrow_mut(), style.clone())
                             );
                     });
-                } else { info!("Column_names is empty"); }
+                } else { 
+                    strip.cell(|ui| {
+                        ui.label("Loading..");
+                        Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                    });
+                 }
             });
         });
     }
@@ -292,6 +297,7 @@ impl TaskLayout {
         let mut inputs = BTreeSet::new();
 
         // if self.task_map.keys().len() == self.column_names.len() {
+            // if self.task_map.iter().map(|m| m.1.iter().map(|i| i.))
             for (name, tasks) in self.task_map.iter_mut(){
                 tasks.sort_task_payloads();
                 for task in tasks.iter(){
@@ -307,29 +313,37 @@ impl TaskLayout {
                             let scroll_area = ScrollArea::vertical().auto_shrink(false);
                             ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
 
-                            scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
-                                // ui.scroll_with_delta(Vec2::new(0.0, 300.));
-                                // Retrieve search input for the current context, or default to an empty string.
-                                let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
-
-                                // Filter tasks based on search input.
-                                let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
-                                    tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
-                                } else {
-                                    tasks.iter().cloned().collect()
-                                };
-
-                                // Iterate only over the rows in the current viewport range.
-                                for row in row_range {
-                                    if !search_input.is_empty() {
-                                        ui.scroll_to_cursor(Some(Align::BOTTOM));
-                                    }
-                                    if let Some(task) = filtered_tasks.get_mut(row) {
-                                        task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                    }
-                                }                        
-                            });
-                            
+                            if total_rows.ne(&0) {
+                                scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                    // ui.scroll_with_delta(Vec2::new(0.0, 300.));
+                                    // Retrieve search input for the current context, or default to an empty string.
+                                    let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
+    
+                                    // Filter tasks based on search input.
+                                    let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
+                                        tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
+                                    } else {
+                                        tasks.iter().cloned().collect()
+                                    };
+    
+                                    // Iterate only over the rows in the current viewport range.
+                                    for row in row_range {
+                                        if !search_input.is_empty() {
+                                            ui.scroll_to_cursor(Some(Align::BOTTOM));
+                                        }
+                                        if let Some(task) = filtered_tasks.get_mut(row) {
+                                            task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
+                                        }
+                                    }                        
+                                });
+                            } 
+                            else {
+                                info!("NO TASKS;");
+                                ui.vertical_centered(|ui| {
+                                    ui.label("Loading..");
+                                    Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
+                                });
+                            }
                         });
                     });
                 });

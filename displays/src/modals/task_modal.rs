@@ -36,14 +36,9 @@ pub struct TaskModal {
     pub min_height: Option<f32>,
     pub default_height: Option<f32>,
     pub spo: SpecialPartOrder,
-    pub computer_info_page: bool,
-    pub task_page: bool,
-    pub task_note_page: bool,
-    pub ticket_page: bool,
-    pub part_page: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
 pub enum ModalAction {
     TicketInfoPage,
     PartOrderPage,
@@ -67,11 +62,6 @@ impl Default for TaskModal {
             current_page_state: ModalAction::None,
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
-            computer_info_page: false,
-            task_page: false,
-            part_page: false,
-            task_note_page: false,
-            ticket_page: false,
         }
     }
 }
@@ -85,11 +75,6 @@ impl TaskModal {
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
-            computer_info_page: false,
-            task_page: false,
-            task_note_page: false,
-            ticket_page: false,
-            part_page: false,
             chat_view,
             spo: SpecialPartOrder::default(),
         }
@@ -120,7 +105,6 @@ pub struct SpecialPartOrder {
 
 impl DisplayModal for TaskModal {
     fn display(&mut self, ui: &mut Ui) -> Option<ModalAction> {
-        let mut response: Option<ModalAction> = None;
         let avail_size = Vec2::new(680.0, 620.0);
 
         StripBuilder::new(ui)
@@ -140,71 +124,56 @@ impl DisplayModal for TaskModal {
                                 .on_hover_text("Double Click To Delete Task");
 
                                 if delete_btn.double_clicked() {
-                                    // let mut ids = Vec::new();
-                                    // let _task_id = self.task.id.as_ref().unwrap().clone();
-                                    // let _ticket_id = if let Some(ticket) = &self.task.service_ticket{
-                                    //     Some(ticket.id.clone())
-                                    // } else{ None };
-
-                                    // for message in self.chat_view.messages.iter(){
-                                    //     if let Some(id) = &message.id.clone(){
-                                    //         ids.push(id.0.clone());
-                                    //     }
-                                    // };
                                     let task_id = self.task.id.clone();
-
-                                    let id = task_id.clone();
                                     PlatformSpawner::spawn(async move {
-                                        match delete_task(id).await {
+                                        match delete_task(task_id).await {
                                             Ok(_) => info!("Deleted task"),
                                             Err(e) => info!("Error: {e:?}"),
                                         }
                                     });
-                                    response = Some(ModalAction::Close);
+                                    self.current_page_state = ModalAction::Close;
                                 }
 
                                 ui.add_space(200.0);
 
                                 if self.task.service_ticket.is_some() {
                                     if ui
-                                        .selectable_label(self.ticket_page, RichText::new("🖹").heading())
+                                        .selectable_label(self.current_page_state == ModalAction::TicketInfoPage, RichText::new("🖹").heading())
                                         .clicked()
                                     {
-                                        self.ticket_page = true;
-                                        response = Some(ModalAction::TicketInfoPage);
+                                        self.current_page_state = ModalAction::TicketInfoPage;
                                     };
                                     if ui
                                         .selectable_label(
-                                            self.computer_info_page,
+                                            self.current_page_state == ModalAction::ComputerInfoPage,
                                             RichText::new("🖥").heading(),
                                         )
                                         .clicked()
                                     {
-                                        self.computer_info_page = true;
-                                        response = Some(ModalAction::ComputerInfoPage);
+                                        self.current_page_state = ModalAction::ComputerInfoPage;
                                     };
                                     if ui
                                         .selectable_label(
-                                            self.part_page,
+                                            self.current_page_state == ModalAction::PartOrderPage,
                                             RichText::new("🔫").heading(),
                                         )
                                         .clicked()
                                     {
-                                        response = Some(ModalAction::PartOrderPage);
+                                        self.current_page_state = ModalAction::PartOrderPage;
                                     };
                                 } else {
                                     if ui
-                                        .selectable_label(self.task_page, RichText::new("🖹").heading())
+                                        .selectable_label(self.current_page_state == ModalAction::TaskPage, RichText::new("🖹").heading())
                                         .clicked()
                                     {
-                                        response = Some(ModalAction::TaskPage);
+                                        self.current_page_state = ModalAction::TaskPage;
                                     };
                                 }
                                 if ui
-                                    .selectable_label(self.task_note_page, RichText::new("💬").heading())
+                                    .selectable_label(self.current_page_state == ModalAction::TaskNotePage, RichText::new("💬").heading())
                                     .clicked()
                                 {
-                                    response = Some(ModalAction::TaskNotePage);
+                                    self.current_page_state = ModalAction::TaskNotePage;
                                 };
                             });
                         });
@@ -279,7 +248,7 @@ impl DisplayModal for TaskModal {
                         });
                 });
             });
-        self.current_page_state = response.unwrap_or(ModalAction::None);
+        
         Some(self.current_page_state.clone())
     }
 }

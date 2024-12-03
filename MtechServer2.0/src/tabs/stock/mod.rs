@@ -43,7 +43,7 @@ impl MtechServerContext {
 
                     ui.add_space(10.);
 
-                    let selected = &mut self.store_selection;
+                    let selected = &mut self.shared_ctx.store_selection;
                     let current = selected.clone();
 
                     let selected_text = match selected {
@@ -71,7 +71,7 @@ impl MtechServerContext {
 
                     if *selected != current {
                         let stock_tx = self.stock_channel.0.clone();
-                        let store_selection = self.store_selection;
+                        let store_selection = self.shared_ctx.store_selection;
                         spawn_local(async move {
                             info!("Store: {:?}", store_selection);
                             let stock = get_stock(stock_tx.clone(), store_selection).await;
@@ -82,7 +82,7 @@ impl MtechServerContext {
 
                     if Button::new("Refresh").ui(ui).clicked() {
                         let stock_tx = self.stock_channel.0.clone();
-                        let store_selection = self.store_selection;
+                        let store_selection = self.shared_ctx.store_selection;
                         spawn_local(async move {
                             let stock = get_stock(stock_tx.clone(), store_selection).await;
                             info!("Stock call: {stock:?}");
