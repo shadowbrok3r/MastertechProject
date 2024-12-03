@@ -6,9 +6,9 @@ use database::{
     Database,
 };
 use displays::{
-    app_state::SharedContext, channel_manager::ChannelManager, egui_data_table::DataTable, modals::{modal_types::ModalTypes, task_modal::ModalAction}, ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
+    app_state::SharedContext, channel_manager::ChannelManager, egui_data_table::DataTable, ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
 };
-use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, FontId, Stroke, Style};
+use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Style};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::{
     collections::{HashMap, HashSet},
@@ -43,12 +43,9 @@ use crate::{
 };
 use displays::{
     chats::ChatView,
-    modals::{
-        create_task_modal::CreateTaskModal, task_modal::SpecialPartOrder, ChatModalHandler,
-        Modal, ModalHandler, TaskModalHandler, ModalType
-    },
+    modals::{task_modal::SpecialPartOrder, ModalType},
     tasks::task_layout::TaskLayout,
-    DisplayModal,
+    // DisplayModal,
 };
 
 pub struct MasterTechApp {
@@ -142,9 +139,6 @@ pub struct MastertechContext {
     pub task_map: HashMap<String, Vec<TaskPayload>>,
     pub task_layouts: HashMap<String, TaskLayout>,
     pub current_modal: ModalType,
-    pub task_modal_handler: TaskModalHandler,
-    pub create_task_modal_handler: ModalHandler<CreateTaskModal>,
-    pub chat_modal_handler: ChatModalHandler,
     pub chat_modal: Option<ChatView>,
     pub task_data: LiveTaskPayload,
     pub ticket_data: TicketData,
@@ -410,10 +404,7 @@ impl MasterTechApp {
             added_nodes: Vec::new(),
 
             current_modal: ModalType::Null,
-            task_modal_handler: TaskModalHandler::default(),
-            create_task_modal_handler: ModalHandler::default(),
             chat_modal: None,
-            chat_modal_handler: ChatModalHandler::default(),
 
             db_data_receiver,
             db_data_sender,
@@ -488,63 +479,8 @@ impl MasterTechApp {
 }
 
 impl MastertechContext {
-    pub fn handle_modals(&mut self, ctx: &Context) {
-        match &mut self.current_modal {
-            ModalType::TaskModal(task_modal) => {
-                let task_name = task_modal.task.task_name.clone();
-                self.task_modal_handler.ui(
-                    ctx,
-                    || Modal::new(&task_name).default_height(600.0).min_width(680.),
-                    move |ui, open, page_state| {
-                        ui.set_max_width(500.);
-                        let action = task_modal.display(ui, page_state.to_owned());
-                        if let Some(action) = action {
-                            if let ModalAction::Close = action {
-                                *open = false;
-                            }
-                            *page_state = action;
-                        }
-                    },
-                );
-            }
-            ModalType::CreateTaskModal(create_task_modal) => {
-                self.create_task_modal_handler.ui(
-                    ctx,
-                    || {
-                        CreateTaskModal::new(
-                            "Create Task",
-                            self.shared_ctx.store_users.clone(),
-                            self.tur_channel.0.clone(),
-                        )
-                        .default_height(600.0)
-                        .min_width(680.)
-                    },
-                    |ui, open, page_state| {
-                        let action = create_task_modal.display(ui, page_state.to_owned());
-                        if let Some(action) = action {
-                            // This will allow me to close the modal
-                            // upon ModalAction::Close (when creating a task)
-                            if let ModalAction::Close = action {
-                                *open = false;
-                            }
-                            // Otherwise, handle the according ModalAction
-                            *page_state = action;
-                        }
-                    },
-                );
-            }
-            ModalType::ChatView(chat_modal) => {
-                self.chat_modal_handler.ui(
-                    ctx,
-                    || Modal::new("Chats"),
-                    move |ui, _stay_open, _page_state| {
-                        ui.style_mut().override_font_id = Some(FontId::proportional(13.0));
-                        if let Some(_new_message) = chat_modal.ui(ui) {}
-                    },
-                );
-            }
-            _ => {}
-        }
+    pub fn handle_modals(&mut self, _ctx: &Context) {
+
     }
 }
 /// Private method to access login state only within NoAuth context

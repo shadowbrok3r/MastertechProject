@@ -181,8 +181,6 @@ pub struct MtechServerContext {
     /// generic data table (currently used for inventory tab)
     #[serde(skip)]
     pub data_table: DataTable<MyRowData>,
-    /// store selection for inventory view
-    pub store_selection: u64,
     /// Data viewer for Stock Quantities tab
     #[serde(skip)]
     pub stock_quantity_viewer: StockQuantityViewer,
@@ -447,7 +445,6 @@ impl MtechServer {
             data_viewer,
             stock_channel,
             serial_channel,
-            store_selection: 76,
             refresh: false,
             theme_config,
             theme,
@@ -555,6 +552,7 @@ impl MtechServerContext {
         }
         if let Some(modal) = &self.close_modal {
             self.opened_modals.remove_entry(modal);
+            self.close_modal = None;
         }
     }
 }

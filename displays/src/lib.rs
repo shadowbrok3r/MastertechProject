@@ -21,7 +21,7 @@ pub mod tasks;
 pub mod chats;
 pub mod tabs;
 pub mod app_state;
-pub mod data;
+// pub mod ui_data;
 
 pub use platform::PlatformSpawner;
 
@@ -134,7 +134,7 @@ pub trait FilterTasks {
     fn filter_by_status(&self, status: &Status) -> Vec<TaskPayload>;
     fn filter_by_priority(&self, priority: &Priority) -> Vec<TaskPayload>;
     fn filter_by_date(&self, date: &String) -> Vec<TaskPayload>;
-    fn filter_by_my_store(&self, assignees: &Vec<User>, current_user: &User) -> Vec<TaskPayload>;
+    fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<TaskPayload>;
     /// Filters a list of tasks by their name based on a fuzzy search input.
     /// # Parameters
     /// - `search`: An iterator over items of type `S` where `S` can be referenced as a string slice.

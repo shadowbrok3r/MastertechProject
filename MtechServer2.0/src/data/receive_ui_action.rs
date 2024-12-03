@@ -28,9 +28,15 @@ impl MtechServer {
                                 task.clone()
                             )
                         };
-                        self.context.opened_modals
-                            .entry(format!("{} - Task Modal", task_modal.title))
-                            .or_insert(ModalType::TaskModal(task_modal));
+                        let title = format!("{} - Task Modal", task_modal.title);
+
+                        if self.context.opened_modals.get(&title).is_some() {
+                            self.context.opened_modals.remove_entry(&title);
+                        } else {
+                            self.context.opened_modals
+                                .entry(title)
+                                .or_insert(ModalType::TaskModal(task_modal));
+                        }
                     }
                 }
                 TaskUiActions::CreateTaskModal => {
@@ -39,9 +45,14 @@ impl MtechServer {
                         self.context.shared_ctx.store_users.clone(),
                         self.context.tur_channel.0.clone(),
                     );
-                    self.context.opened_modals
-                        .entry(create_modal.title.clone())
-                        .or_insert(ModalType::CreateTaskModal(create_modal));
+
+                    if self.context.opened_modals.get(&create_modal.title).is_some() {
+                        self.context.opened_modals.remove_entry(&create_modal.title);
+                    } else {
+                        self.context.opened_modals
+                            .entry(create_modal.title.clone())
+                            .or_insert(ModalType::CreateTaskModal(create_modal));
+                    }
                 }
                 TaskUiActions::OpenChatModal(pld) => {
                     info!("Got Chat action");
@@ -65,9 +76,13 @@ impl MtechServer {
                             "New Chat".to_string()
                         };
 
-                        self.context.opened_modals
-                            .entry(title)
-                            .or_insert(ModalType::ChatView(chat_modal));
+                        if self.context.opened_modals.get(&title).is_some() {
+                            self.context.opened_modals.remove_entry(&title);
+                        } else {
+                            self.context.opened_modals
+                                .entry(title)
+                                .or_insert(ModalType::ChatView(chat_modal));
+                        }
                         // info!("self.context.opened_modals: {:?}", self.context.opened_modals);
                     }
                 }

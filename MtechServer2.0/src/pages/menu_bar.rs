@@ -1,13 +1,13 @@
 use crate::app_state::{AppState, MainPages, MtechServer};
 use crate::pages::downloads_page::get_github_releases;
 use database::live_data::listen_data;
-use database::schema::utilities::{get_connected_clients, get_notifications, NotificationMod};
-use database::schema::{Notification, TaskPayload, CONNECTED_CLIENT_TABLE};
+use database::schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod};
+use database::schema::{Notification, Store, TaskPayload, CONNECTED_CLIENT_TABLE};
 use database::{self, DATABASE};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use displays::TaskUiActions;
 use eframe::egui::{
-    menu, Align, Context, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit,
+    menu, Align, ComboBox, Context, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit
 };
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Ui, Widget};
 use log::{error, info};
@@ -120,12 +120,14 @@ impl MtechServer {
 
                 if let Some(usr) = &self.context.shared_ctx.current_user {
                     let notif_tx = self.context.notification_tx.clone();
-                    ui.add_space(ui.available_width() / 3.);
+                    ui.add_space(ui.available_width() / 5.);
+                    let txt = RichText::new(format!(
+                        "Mastertech Server {}",
+                        env!("CARGO_PKG_VERSION")
+                    )).heading().color(Color32::WHITE);
+
                     if ui
-                        .add(Button::new(format!(
-                            "Mastertech Server {}",
-                            env!("CARGO_PKG_VERSION")
-                        )))
+                        .add(Button::new(txt))
                         .clicked()
                     {
                         self.state = AppState::Authenticated(MainPages::Tasks);
@@ -150,16 +152,68 @@ impl MtechServer {
                         self.context.download_progress = 0.0;
                         self.context.total_download_size = 0.0;
                     }
+                    
+
+                    if self.context.download_progress.ne(&0.0) {
+                        ui.add_space(30.);
+                        ProgressBar::new(
+                            self.context.download_progress / self.context.total_download_size,
+                        )
+                        .fill(Color32::from_rgba_premultiplied(50, 10, 50, 65))
+                        .show_percentage()
+                        .desired_width(150.0)
+                        .ui(ui);
+                    }
 
                     ui.add_space(50.0);
 
-                    ProgressBar::new(
-                        self.context.download_progress / self.context.total_download_size,
-                    )
-                    .fill(Color32::from_rgba_premultiplied(50, 10, 50, 65))
-                    .show_percentage()
-                    .desired_width(150.0)
-                    .ui(ui);
+                    let selected = &mut self.context.shared_ctx.store_selection;
+                    let current = selected.clone();
+            
+                    let selected_text = match selected {
+                        76 => Store::RIV.as_str(),
+                        73 => Store::LTN.as_str(),
+                        74 => Store::MUR.as_str(),
+                        78 => Store::WJ.as_str(),
+                        75 => Store::ORE.as_str(),
+                        72 => Store::AF.as_str(),
+                        77 => Store::SAN.as_str(),
+                        _ => Store::RIV.as_str(),
+                    };
+            
+                    ComboBox::new("Store_Selection", "")
+                        .selected_text(selected_text)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(selected, 76, "RIV");
+                            ui.selectable_value(selected, 73, "LTN");
+                            ui.selectable_value(selected, 74, "MUR");
+                            ui.selectable_value(selected, 78, "WJ");
+                            ui.selectable_value(selected, 75, "ORE");
+                            ui.selectable_value(selected, 72, "AF");
+                            ui.selectable_value(selected, 77, "SAN");
+                        });
+            
+                    if *selected != current {
+                        self.context.task_map.clear();
+                        self.context.shared_ctx.store_users.clear();
+                        self.context.shared_ctx.tasks.clear();
+                        self.context.task_map.clear();
+                        self.context.shared_ctx.task_layouts.clear();
+                        let tasks_tx = self.context.initial_tasks_tx.clone();
+                        let store_users_tx = self.context.store_users_tx.clone();
+                        let store_selection = std::convert::Into::<Store>::into(*selected);
+                        
+                        info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
+                        spawn_local(async move {
+                            let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                            let get_store_users = get_store_users(store_users_tx, store_selection).await;
+            
+                            info!("get_tasks_for_store: {store_tasks:?}");
+                            info!("get_store_users: {get_store_users:?}");
+                        });
+                    }
+
+                    
 
                     ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                         ui.add_space(20.0);

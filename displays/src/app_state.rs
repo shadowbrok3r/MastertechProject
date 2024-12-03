@@ -51,6 +51,8 @@ pub struct SharedContext {
     /// {UI actions channel for communication between UI components and main function}
     #[serde(skip)]
     pub ui_actions_rx: Receiver<TaskUiActions>,
+    /// store selection for inventory view
+    pub store_selection: u64,
 }
 
 impl Default for SharedContext {
@@ -67,6 +69,7 @@ impl Default for SharedContext {
             rerun_filtering_my_tasks: false,
             rerun_filtering_store_tasks: false,
             rerun_filtering_completed: false,
+            store_selection: 76
         }
     }
 }

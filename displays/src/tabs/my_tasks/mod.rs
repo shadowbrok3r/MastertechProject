@@ -39,12 +39,21 @@ impl SharedContext {
                             let filtered = self
                                 .tasks
                                 .filter_by_status(&status)
-                                .filter_by_assignee(current_user); //.filter_by_my_store(users, current_user);
-                            map.entry(status.as_str().to_string()).or_insert(filtered);
+                                .filter_by_assignee(current_user);
+                            
+                            if !filtered.is_empty() {
+                                map.entry(status.as_str().to_string()).or_insert(filtered);
+                            }
                         }
                     });
-                    // layout.update_tasks(map);
-                    layout.task_map = map;
+                    if layout.task_map.is_empty(){
+                        ui.vertical_centered(|ui| {
+                            ui.label("Loading..");
+                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
+                        });
+                    } else {
+                        layout.layout_cols(ui);
+                    }
                 }
                 layout.layout_cols(ui);
             } else {
@@ -54,20 +63,24 @@ impl SharedContext {
                     .iter_mut()
                     .filter(|s| user_settings.iter_mut().any(|st| st == *s))
                     .collect::<Vec<&mut Status>>();
+
                 statuses.iter_mut().for_each(|status| {
                     if Status::Complete != **status {
                         let filtered = self
                             .tasks
                             .filter_by_status(&status)
-                            .filter_by_assignee(current_user); //.filter_by_my_store(users, current_user);
-                        map.entry(status.as_str().to_string()).or_insert(filtered);
+                            .filter_by_assignee(current_user);
+
+                        if !filtered.is_empty() {
+                            map.entry(status.as_str().to_string()).or_insert(filtered);
+                        }
                     }
                 });
                 let col_names = vals
                     .iter()
                     .map(|v| v.as_str().to_string())
                     .collect::<Vec<String>>();
-                // let user_names: Vec<String> = users.iter().map(|u| u.name.clone()).collect();
+
                 let layout =
                     TaskLayout::new(map, col_names, self.ui_actions_tx.clone(), users.clone());
                 self.task_layouts.insert(page.to_string(), layout);

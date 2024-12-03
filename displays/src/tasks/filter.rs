@@ -1,5 +1,5 @@
 use crate::{FilterClients, FilterTasks};
-use database::schema::{ConnectedClient, Priority, Status, TaskPayload, User};
+use database::schema::{ConnectedClient, Priority, Status, Store, TaskPayload, User};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use std::cmp::Reverse;
 
@@ -39,12 +39,10 @@ impl FilterTasks for Vec<TaskPayload> {
             .collect()
     }
 
-    fn filter_by_my_store(&self, assignees: &Vec<User>, current_user: &User) -> Vec<TaskPayload> {
+    fn filter_by_store(&self, assignee: &User, store: &Store) -> Vec<TaskPayload> {
         self.into_iter()
             .filter(|task| {
-                assignees.into_iter().any(|user| {
-                    user.store == current_user.store && task.assignee.key().to_string() == user.id.key().to_string()
-                })
+                assignee.store == *store && task.assignee.key().to_string() == assignee.id.key().to_string()
             })
             .cloned()
             .collect()

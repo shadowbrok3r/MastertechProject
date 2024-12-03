@@ -1,8 +1,5 @@
 pub mod aging_tasks;
 pub mod ai_playground;
-pub mod my_tasks;
-pub mod store_tasks;
-pub mod completed_tasks;
 pub mod customer;
 pub mod github_issue;
 pub mod json_viewer;
@@ -21,6 +18,7 @@ pub mod web_console;
 
 use super::app_state::MtechServerContext;
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};
+use displays::FilterTasks;
 use eframe::egui::{ComboBox, Response, Ui, WidgetText};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
 use log::info;
@@ -64,7 +62,7 @@ impl MtechServerContext {
     }
 
     pub fn store_selection_menu(&mut self, ui: &mut Ui) {
-        let selected = &mut self.store_selection;
+        let selected = &mut self.shared_ctx.store_selection;
         let current = selected.clone();
 
         let selected_text = match selected {
@@ -128,10 +126,7 @@ impl TabViewer for MtechServerContext {
             "Lil menu" => self.simple_demo_menu(ui),
             "Terminal" => self.terminal(ui),
             "My Tools" => self.toolbox(ui),
-            "Store Tasks" => {
-                ui.ctx().request_repaint();
-                self.shared_ctx.store_tasks(ui)
-            },
+            "Store Tasks" => self.shared_ctx.store_tasks(ui),
             "My Tasks" => self.shared_ctx.my_tasks(ui),
             "Ai Playground" => self.ai_playground(ui),
             "Web Console" => self.web_console(ui),
@@ -161,7 +156,6 @@ impl TabViewer for MtechServerContext {
             "Store Tasks" => self.store_selection_menu(ui),
             _ => {
                 ui.label(tab.to_string());
-                ui.label("This is a context menu");
             }
         }
     }
@@ -179,7 +173,7 @@ impl TabViewer for MtechServerContext {
         self.added_nodes.push((surface_index, node_index));
     }
 
-    fn add_popup(&mut self, ui: &mut Ui, _surface_index: SurfaceIndex, _node_index: NodeIndex) {
+    fn add_popup(&mut self, ui: &mut Ui, surface_index: SurfaceIndex, node_index: NodeIndex) {
         ui.set_width(100.0);
         let tabs = &[
             &"Bug Report".to_string(),
@@ -205,7 +199,7 @@ impl TabViewer for MtechServerContext {
                 .clicked()
             {
                 if !self.open_tabs.contains(*tab) {
-                    self.on_add(SurfaceIndex::main(), NodeIndex::root());
+                    self.on_add(surface_index, node_index);
                 }
             }
         }
@@ -240,18 +234,38 @@ impl TabViewer for MtechServerContext {
                     });
                 },
                 "Completed Tasks" => {
-                    let tasks_tx = self.initial_tasks_tx.clone();
-                    if let Some(usr) = self.shared_ctx.current_user.clone() {
-                        let store = usr.store.as_str().to_string().clone();
-
-                        self.shared_ctx.store_users.clear();
-                        self.shared_ctx.tasks.clear();
+                    // First, make sure there are no completed tasks loaded.
+                    // If there no completed tasks, then load them.
+                    // Otherwise, make sure the tasks that are completed 
+                    // are for the correct selected store. 
+                    if self.shared_ctx.tasks.filter_by_completion(true).is_empty() {
+                        let tasks_tx = self.initial_tasks_tx.clone();
+                        let store_sel = self.shared_ctx.store_selection;
+                        let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
                         
                         spawn_local(async move {
-                            let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store).await;
+                            let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store_selection).await;
                             info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
                         });
                     }
+                    
+                },
+                "Store Tasks" => {
+                    // First, make sure there are no store tasks loaded.
+                    // If there no store tasks, then load them.
+                    // Otherwise, make sure the tasks that are loaded 
+                    // for the selected store are for the CORRECT selected store. 
+                    if self.shared_ctx.tasks.filter_by_completion(false).is_empty() {
+                        let tasks_tx = self.initial_tasks_tx.clone();
+                        let store_sel = self.shared_ctx.store_selection;
+                        let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
+                        
+                        spawn_local(async move {
+                            let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection).await;
+                            info!("get_tasks_for_store: {get_tasks_for_store:?}");
+                        });
+                    }
+                    
                 },
                 _ => {}
             }

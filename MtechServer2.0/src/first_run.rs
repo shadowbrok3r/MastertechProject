@@ -240,23 +240,32 @@ impl MtechServer {
     }
 
     pub fn receive(&mut self) {
-        if let Ok(tasks) = self.context.initial_tasks_rx.try_recv() {
+        if let Ok(mut tasks) = self.context.initial_tasks_rx.try_recv() {
             log::info!("Got new tasks: {:?}", &tasks.len());
+        
+            // Indicate that filtering needs to be rerun
             self.context.shared_ctx.rerun_filtering_store_tasks = true;
             self.context.shared_ctx.rerun_filtering_completed = true;
-            self.context.shared_ctx.tasks.clear();
+        
+            // Clear layout-related data for specific pages
             for (page, layout) in self.context.shared_ctx.task_layouts.iter_mut() {
-                match page.as_str() {  
-                    "CompletedTasks" | "StoreTasks" => {
-                        layout.task_map.clear();
-                        layout.assignees.clear();
-                        layout.search_inputs.clear();
-                    }
-                    _ => {}
+                if page == "CompletedTasks" || page == "StoreTasks" {
+                    layout.task_map.clear();
+                    layout.assignees.clear();
+                    layout.search_inputs.clear();
                 }
             }
-            self.context.shared_ctx.tasks = tasks;
+        
+            // Filter and append new tasks
+            let existing_tasks = &mut self.context.shared_ctx.tasks;
+            for new_task in tasks.drain(..) {
+                // Avoid duplicates by checking if the new task already exists
+                if !existing_tasks.iter().any(|task| task == &new_task) {
+                    existing_tasks.push(new_task);
+                }
+            }
         }
+        
 
         if let Ok(users) = self.context.store_users_rx.try_recv() {
             for (page, layout) in self.context.shared_ctx.task_layouts.iter_mut() {
