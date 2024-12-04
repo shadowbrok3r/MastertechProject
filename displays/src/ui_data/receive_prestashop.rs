@@ -1,4 +1,4 @@
-use crate::app_state::SharedContext;
+use crate::{app_state::SharedContext, modals::ModalType};
 use database::schema::{TaskNotePayload, TICKET_TABLE};
 use log::info;
 use surrealdb::RecordId;
@@ -85,14 +85,11 @@ impl SharedContext {
 
             task.service_ticket = Some(ticket.clone());
 
-            if let ModalType::CreateTaskModal(ref mut create_task_modal) =
-                self.current_modal
-            {
-                info!("Updating modal data");
-                info!("{:?}", ticket.clone());
-                info!("{:?}", customer.clone());
-                info!("{:?}", task_notes.clone());
-                create_task_modal.tur = self.tur.clone();
+            for (title, modal) in self.opened_modals.iter_mut() {
+                if let ModalType::CreateTaskModal(ref mut create_task_modal) = modal {
+                    info!("Updating modal data for {title}");
+                    create_task_modal.tur = self.tur.clone();
+                }
             }
         }
     }

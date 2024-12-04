@@ -1,6 +1,4 @@
 pub mod receive_client;
-pub mod receive_database;
-// pub mod receive_inventory;
 pub mod receive_notes;
 pub mod receive_notifications;
 pub mod receive_prestashop;
