@@ -1,4 +1,5 @@
-use crate::{app_state::SharedContext, chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
+use crate::app_state::SharedContext;
+use crate::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
 use log::info;
 
 impl SharedContext {
@@ -8,13 +9,14 @@ impl SharedContext {
                 TaskUiActions::OpenTaskModal(task) => {
                     if let Some(usr) = self.current_user.clone() {
                         let task_modal = if !task.task_note.is_empty() {
-                            let chat_modal = ChatView::new(
-                                task.task_note.clone(),
-                                usr,
-                                task.id.clone(),
-                                self.store_users.clone(),
-                            );
-                            TaskModal::new(chat_modal, task.clone())
+                            TaskModal::new(ChatView::new(
+                                    task.task_note.clone(),
+                                    usr,
+                                    task.id.clone(),
+                                    self.store_users.clone()
+                                ),
+                                task.clone()
+                            )
                         } else {
                             TaskModal::new(
                                 ChatView::new(
@@ -23,11 +25,18 @@ impl SharedContext {
                                     task.id.clone(),
                                     self.store_users.clone(),
                                 ),
-                                task.clone(),
+                                task.clone()
                             )
                         };
-                        self.current_modal = ModalType::TaskModal(task_modal);
-                        self.task_modal_handler.open();
+                        let title = format!("{} - Task Modal", task_modal.title);
+
+                        if self.opened_modals.get(&title).is_some() {
+                            self.opened_modals.remove_entry(&title);
+                        } else {
+                            self.opened_modals
+                                .entry(title)
+                                .or_insert(ModalType::TaskModal(task_modal));
+                        }
                     }
                 }
                 TaskUiActions::CreateTaskModal => {
@@ -36,10 +45,15 @@ impl SharedContext {
                         self.store_users.clone(),
                         self.tur_channel.0.clone(),
                     );
-                    self.current_modal = ModalType::CreateTaskModal(create_modal);
-                    self.create_task_modal_handler.open();
+
+                    if self.opened_modals.get(&create_modal.title).is_some() {
+                        self.opened_modals.remove_entry(&create_modal.title);
+                    } else {
+                        self.opened_modals
+                            .entry(create_modal.title.clone())
+                            .or_insert(ModalType::CreateTaskModal(create_modal));
+                    }
                 }
-                TaskUiActions::Response(_res) => {}
                 TaskUiActions::OpenChatModal(pld) => {
                     info!("Got Chat action");
                     if let Some(current_user) = self.current_user.as_ref() {
@@ -49,12 +63,33 @@ impl SharedContext {
                             pld.0.clone(),
                             self.store_users.clone(),
                         );
-                        self.current_modal = ModalType::ChatView(chat_modal);
-                        self.chat_modal_handler.open();
-                    } // self.chat = ModalType::ChatView(pld);
+                        let task = self
+                            .tasks
+                            .iter()
+                            .find(|task| task.id == pld.0.clone());
+
+                        let title = if let Some(task) = task {
+                            task.task_name.clone()
+                        } else {
+                            "New Chat".to_string()
+                        };
+
+                        if self.opened_modals.get(&title).is_some() {
+                            self.opened_modals.remove_entry(&title);
+                        } else {
+                            self.opened_modals
+                                .entry(title)
+                                .or_insert(ModalType::ChatView(chat_modal));
+                        }
+                        // info!("self.opened_modals: {:?}", self.opened_modals);
+                    }
                 }
-                _ => (),
-            }
+                TaskUiActions::Response(_res) => (),
+                TaskUiActions::Editing(_record_id) => (),
+                TaskUiActions::CommitChanges(_record_id) => (),
+                TaskUiActions::None => (),
+                
+            };
         }
     }
 }

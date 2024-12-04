@@ -22,7 +22,7 @@ impl SharedContext {
                 self.rerun_filtering_completed = true;
                 self.rerun_filtering_my_tasks = true;
                 self.rerun_filtering_store_tasks = true;
-                if let Err(e) = handle_live_data(new_task.to_owned(), &mut self.shared_ctx.tasks, None)
+                if let Err(e) = handle_live_data(new_task.to_owned(), &mut self.tasks, None)
                 {
                     error!("Error handling live data: {e:?}");
                 }

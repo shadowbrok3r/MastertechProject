@@ -588,7 +588,7 @@ pub fn check_authentication(
 
 fn setup_custom_fonts(ctx: &Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
-    let mut fonts = FontDefinitions::default();
+    let mut fonts: FontDefinitions = FontDefinitions::default();
 
     fonts.font_data.insert(
         "Monaspace".to_owned(),
