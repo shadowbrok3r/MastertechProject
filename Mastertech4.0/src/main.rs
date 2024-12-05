@@ -51,16 +51,16 @@ impl eframe::App for MasterTechApp {
         }
 
         self.receive_database(ctx);
-        self.receive_other(ctx);
+        self.receive(ctx);
         self.receive_github();
         self.receive_inventory();
-        self.receive_ui_action();
-        self.receive_prestashop();
-        self.receive_task();
-        self.receive_notes();
-        self.receive_notification();
-        self.context.handle_modals(ctx);
-        self.context.toasts.show(ctx);
+        
+        self.context.shared_ctx.receive_ui_action();
+        self.context.shared_ctx.receive_prestashop();
+        self.context.shared_ctx.receive_task();
+        self.context.shared_ctx.receive_ticket();
+        self.context.shared_ctx.receive_notes();
+        self.context.shared_ctx.receive_notification();
 
         match &self.state {
             app_state::AppState::Authenticated(page) => match page {
@@ -93,9 +93,9 @@ impl eframe::App for MasterTechApp {
             ),
             _ => {}
         }
-
-        self.context.handle_modals(ctx);
-        self.context.toasts.show(ctx);
+        
+        self.context.shared_ctx.handle_modals(ctx);
+        self.context.shared_ctx.toasts.show(ctx);
         self.viewport_loader(ctx);
     }
 

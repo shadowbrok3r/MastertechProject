@@ -8,7 +8,7 @@ use database::{
 use displays::{
     app_state::SharedContext, channel_manager::ChannelManager, egui_data_table::DataTable, ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
 };
-use eframe::egui::{Align2, Color32, Context, FontData, FontDefinitions, FontFamily, Stroke, Style};
+use eframe::egui::{Align2, Color32, Context, Stroke, Style};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::{
     collections::{HashMap, HashSet},
@@ -232,7 +232,6 @@ pub struct MastertechContext {
 
 impl MasterTechApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        setup_custom_fonts(&cc.egui_ctx);
 
         let mut tree = DockState::new(vec![
             "TUR Sheet".to_owned(),
@@ -324,7 +323,7 @@ impl MasterTechApp {
         let theme = set_custom_style(&theme_config);
 
         let mastertech_context = MastertechContext {
-            shared_ctx: SharedContext::default(),
+            shared_ctx: SharedContext::new(cc),
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
             url: None,
@@ -478,11 +477,6 @@ impl MasterTechApp {
     }
 }
 
-impl MastertechContext {
-    pub fn handle_modals(&mut self, _ctx: &Context) {
-
-    }
-}
 /// Private method to access login state only within NoAuth context
 impl MasterTechApp {
     pub fn login_mut(&mut self) -> Option<&mut Login> {
@@ -492,40 +486,4 @@ impl MasterTechApp {
             _ => None,
         }
     }
-}
-
-fn setup_custom_fonts(ctx: &Context) {
-    // Start with the default fonts (we will be adding to them rather than replacing them).
-    let mut fonts = FontDefinitions::default();
-
-    fonts.font_data.insert(
-        "Monaspace".to_owned(),
-        FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Light.otf")),
-    ); // .ttf and .otf supported
-
-    // Put my font first (highest priority):
-    fonts
-        .families
-        .get_mut(&FontFamily::Proportional)
-        .unwrap()
-        .insert(0, "Monaspace".to_owned());
-
-    fonts.font_data.insert(
-        "Regular".to_owned(),
-        FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Regular.otf")),
-    );
-    fonts.families.insert(
-        FontFamily::Name("Regular".into()),
-        vec!["Regular".to_owned()],
-    );
-    fonts.font_data.insert(
-        "Bold".to_owned(),
-        FontData::from_static(include_bytes!("./assets/fonts/MonaspaceNeon-Bold.otf")),
-    );
-    fonts
-        .families
-        .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
-
-    // Tell egui to use these fonts:
-    ctx.set_fonts(fonts);
 }

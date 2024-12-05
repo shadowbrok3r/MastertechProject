@@ -184,7 +184,7 @@ impl MasterTechApp {
         }
     }
 
-    pub fn receive_other(&mut self, ctx: &Context) {
+    pub fn receive(&mut self, ctx: &Context) {
         while let Ok(message) = self.context.rx.try_recv() {
             if let Ok(info) = serde_json::from_str::<GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty() {

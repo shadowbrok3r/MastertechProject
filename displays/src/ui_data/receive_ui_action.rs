@@ -1,6 +1,8 @@
 use crate::app_state::SharedContext;
 use crate::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
+use database::schema::TaskNotePayload;
 use log::info;
+use tokio::task::spawn_local;
 
 impl SharedContext {
     pub fn receive_ui_action(&mut self) {
@@ -56,6 +58,11 @@ impl SharedContext {
                 }
                 TaskUiActions::OpenChatModal(pld) => {
                     info!("Got Chat action");
+
+                    let notes = 
+                    spawn_local(async move {
+
+                    });
                     if let Some(current_user) = self.current_user.as_ref() {
                         let chat_modal = ChatView::new(
                             pld.1.to_owned(),
@@ -92,4 +99,14 @@ impl SharedContext {
             };
         }
     }
+}
+
+
+async fn get_or_insert_notes(notes: Vec<TaskNotePayload>) -> anyhow::Result<(), anyhow::Error> {
+    // I will probably want to do this manually opposed to using TaskNotePayload::get_thread_id_from_order(&self)
+    // Because, that will have to make a separate API call for every single note, since &Self, in the 
+    // TaskNotePayloadHelper is TaskNotePayload, not Vec<TaskNotePayload>. so I will just want to 
+    // take a order number, query all the notes, see if all the notes in the db match all the notes
+    // in prestashop, and if not, sync the two databases.
+    Ok(())
 }

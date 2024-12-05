@@ -22,6 +22,7 @@ pub mod chats;
 pub mod tabs;
 pub mod app_state;
 pub mod ui_data;
+pub mod first_run;
 
 pub use platform::PlatformSpawner;
 

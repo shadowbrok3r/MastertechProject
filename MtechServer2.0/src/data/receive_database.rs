@@ -1,23 +1,22 @@
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
-use eframe::Frame;
 use log::info;
 
 use crate::app_state::{AppState, MainPages, MtechServer};
 
 impl MtechServer {
-    pub fn receive_database(&mut self, frame: &mut Frame) {
+    pub fn receive_database(&mut self) {
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.context.db_rx.try_recv() {
             match db {
                 Ok(_db) => {
                     info!("3");
-                    self.load_data(frame);
+                    self.context.shared_ctx.load_data();
                 }
                 Err(e) => {
                     info!("6");
                     if e.to_string().contains("Already connected") {
                         info!("7");
-                        self.load_data(frame);
+                        self.context.shared_ctx.load_data();
                         self.state = AppState::Authenticated(MainPages::Tasks);
                         let toast = &mut self.context.toasts;
                         let auth_toast = Toast {

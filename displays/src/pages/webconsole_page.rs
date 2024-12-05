@@ -202,7 +202,7 @@ impl MtechServer {
                     {
                         let usr = self.context.shared_ctx.current_user.clone();
                         if let Some(user) = usr {
-                            let tx = self.context.shared_ctx.connected_clients_tx.clone();
+                            let tx = self.context.connected_clients_tx.clone();
                             spawn_local(async move {
                                 get_connected_clients(tx, user).await.unwrap();
                             });

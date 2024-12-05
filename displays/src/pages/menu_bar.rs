@@ -119,7 +119,7 @@ impl MtechServer {
                 });
 
                 if let Some(usr) = &self.context.shared_ctx.current_user {
-                    let notif_tx = self.context.shared_ctx.notification_tx.clone();
+                    let notif_tx = self.context.notification_tx.clone();
                     ui.add_space(ui.available_width() / 5.);
                     let txt = RichText::new(format!(
                         "Mastertech Server {}",
@@ -199,8 +199,8 @@ impl MtechServer {
                         self.context.shared_ctx.tasks.clear();
                         self.context.task_map.clear();
                         self.context.shared_ctx.task_layouts.clear();
-                        let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
-                        let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
+                        let tasks_tx = self.context.initial_tasks_tx.clone();
+                        let store_users_tx = self.context.store_users_tx.clone();
                         let store_selection = std::convert::Into::<Store>::into(*selected);
                         
                         info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
@@ -225,8 +225,8 @@ impl MtechServer {
                             ui.vertical_centered_justified(|ui| {
                                 if ui.add(Button::new("Web Console")).clicked() {
                                     self.state = AppState::Authenticated(MainPages::WebConsole);
-                                    let live_clients_tx = self.context.shared_ctx.live_clients_tx.clone();
-                                    let tx = self.context.shared_ctx.connected_clients_tx.clone();
+                                    let live_clients_tx = self.context.live_clients_tx.clone();
+                                    let tx = self.context.connected_clients_tx.clone();
                                     if let Some(usr) = self.context.shared_ctx.current_user.clone() {
                                         spawn_local(async move {
                                             let get_connected_clients = get_connected_clients(tx, usr.clone()).await;
@@ -279,7 +279,7 @@ impl MtechServer {
                                 }
 
                                 if ui.add(Button::new("Modify Theme")).clicked() {
-                                    self.context.shared_ctx.modify_theme = true;
+                                    self.context.modify_theme = true;
                                     ui.close_menu();
                                 }
 
