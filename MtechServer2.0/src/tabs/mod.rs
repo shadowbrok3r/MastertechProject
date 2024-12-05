@@ -89,8 +89,8 @@ impl MtechServerContext {
             });
 
         if *selected != current {
-            let tasks_tx = self.initial_tasks_tx.clone();
-            let store_users_tx = self.store_users_tx.clone();
+            let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
+            let store_users_tx = self.shared_ctx.store_users_tx.clone();
             let store_selection = match selected.clone() {
                 76 => Store::RIV,
                 73 => Store::LTN,
@@ -239,7 +239,7 @@ impl TabViewer for MtechServerContext {
                     // Otherwise, make sure the tasks that are completed 
                     // are for the correct selected store. 
                     if self.shared_ctx.tasks.filter_by_completion(true).is_empty() {
-                        let tasks_tx = self.initial_tasks_tx.clone();
+                        let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
                         let store_sel = self.shared_ctx.store_selection;
                         let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
                         
@@ -256,7 +256,7 @@ impl TabViewer for MtechServerContext {
                     // Otherwise, make sure the tasks that are loaded 
                     // for the selected store are for the CORRECT selected store. 
                     if self.shared_ctx.tasks.filter_by_completion(false).is_empty() {
-                        let tasks_tx = self.initial_tasks_tx.clone();
+                        let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
                         let store_sel = self.shared_ctx.store_selection;
                         let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
                         

@@ -12,17 +12,16 @@ use crate::{
 };
 use displays::{
     app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, egui_data_table::DataTable, modals::{
-        create_task_modal::Tur, ModalWindow, task_modal::ModalAction, ModalType
-    }, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
+        create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow
+    }, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem
 };
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User, UserSettings}, Database};
-use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
-use std::{collections::{BTreeMap, HashMap, HashSet},sync::Arc};
+use database::{schema::{prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskPayload, UserSettings}, Database};
+use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily}, CreationContext};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{self, Receiver, Sender};
 use async_openai_wasm::types::ThreadObject;
 use web_time::{Duration, Instant};
-use surrealdb::Action;
 use serde_json::Value;
 use serde::Serialize;
 use anyhow::Error;
@@ -40,7 +39,7 @@ pub struct MtechServer {
     pub tree: DockState<String>,
 }
 
-#[derive(Default, Serialize, Debug, PartialEq)]
+#[derive(Serialize, Default, Debug, PartialEq)]
 pub enum MainPages {
     #[default]
     Tasks,
@@ -66,24 +65,12 @@ impl Default for AppState {
 #[derive(Serialize)]
 pub struct MtechServerContext {
     pub shared_ctx: SharedContext,
-    // User and Client Related Fields
-    /// {Sends users from database}
     #[serde(skip)]
-    pub store_users_tx: Sender<Vec<User>>,
-    /// {Receives users from database}
+    pub app_state_tx: Sender<AppState>,
     #[serde(skip)]
-    pub store_users_rx: Receiver<Vec<User>>,
+    pub app_state_rx: Receiver<AppState>,
     /// {Connected clients}
     pub clients: Vec<ConnectedClient>,
-    /// {Transmits connected clients over crossbeam channel}
-    #[serde(skip)]
-    pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
-    #[serde(skip)]
-    pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
-    #[serde(skip)]
-    pub live_clients_tx: Sender<(Action, ConnectedClient)>,
-    #[serde(skip)]
-    pub live_clients_rx: Receiver<(Action, ConnectedClient)>,
     /// {WebSocket clients by ID}
     #[serde(skip)]
     pub ws_clients: HashMap<String, WebSocketClient>,
@@ -93,31 +80,6 @@ pub struct MtechServerContext {
     pub task_map: BTreeMap<String, Vec<TaskPayload>>,
     /// {Live task payload from database}
     pub live_tasks: Option<LiveTaskPayload>,
-    /// {Task transmission channel over crossbeam}
-    #[serde(skip)]
-    pub tasks_tx: Sender<(Action, TaskPayload)>,
-    #[serde(skip)]
-    pub tasks_rx: Receiver<(Action, TaskPayload)>,
-    #[serde(skip)]
-    pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
-    #[serde(skip)]
-    pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
-    #[serde(skip)]
-    pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
-    #[serde(skip)]
-    pub live_tasks_rx: Receiver<(Action, LiveTaskPayload)>,
-    #[serde(skip)]
-    pub new_ticket_tx: Sender<NewTicketChannel>,
-    #[serde(skip)]
-    pub new_ticket_rx: Receiver<NewTicketChannel>,
-    #[serde(skip)]
-    pub notes_tx: Sender<(Action, TaskNotePayload)>,
-    #[serde(skip)]
-    pub notes_rx: Receiver<(Action, TaskNotePayload)>,
-    #[serde(skip)]
-    pub new_note_tx: Sender<TaskNotePayload>,
-    #[serde(skip)]
-    pub new_note_rx: Receiver<TaskNotePayload>,
 
     // Communication with other Services
     /// {Database communication channel}
@@ -224,19 +186,6 @@ pub struct MtechServerContext {
     /// The result of querying github for Mastertech releases
     pub github_releases: Vec<GithubRelease>,
 
-    // Notifications and App State
-    #[serde(skip)]
-    pub notification_tx: Sender<Vec<Notification>>,
-    #[serde(skip)]
-    pub notification_rx: Receiver<Vec<Notification>>,
-    #[serde(skip)]
-    pub live_notification_tx: Sender<(Action, Notification)>,
-    #[serde(skip)]
-    pub live_notification_rx: Receiver<(Action, Notification)>,
-    #[serde(skip)]
-    pub app_state_tx: Sender<AppState>,
-    #[serde(skip)]
-    pub app_state_rx: Receiver<AppState>,
 
     // // Webworker Communication
     // /// Data from our Dummy Worker
@@ -263,19 +212,11 @@ pub struct MtechServerContext {
     pub ai_playground: AiPlayground,
     /// Do we need to refresh the UI?
     pub refresh: bool,
-    /// Theme settings
-    pub theme_config: ThemeConfig,
-    /// Button state for modifying theme config
-    #[serde(skip)]
-    pub modify_theme: bool,
-    /// The theme itself
-    pub theme: Arc<Style>
 }
 
 impl MtechServer {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
-        setup_custom_fonts(&cc.egui_ctx);
 
         // let mut tree = DockState::new(vec![
         //     "Store Tasks".to_owned(),
@@ -324,21 +265,7 @@ impl MtechServer {
         //     .spawn("./dummy_worker.js");
 
         let (db_tx, db_rx) = channel::unbounded();
-        let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
-        let (store_users_tx, store_users_rx) = channel::unbounded::<Vec<User>>();
-        let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
-        let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
-        let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
-        
-        let (connected_clients_tx, connected_clients_rx) =
-            channel::unbounded::<Vec<ConnectedClient>>();
-        let (notes_tx, notes_rx) = channel::unbounded::<(Action, TaskNotePayload)>();
-        let (new_ticket_tx, new_ticket_rx) = channel::unbounded::<NewTicketChannel>();
-        let (new_note_tx, new_note_rx) = channel::unbounded::<TaskNotePayload>();
-        let (live_notification_tx, live_notification_rx) =
-            channel::unbounded::<(Action, Notification)>();
-        let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
@@ -351,12 +278,8 @@ impl MtechServer {
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
 
-        let theme_config = ThemeConfig::default();
-        let theme = set_custom_style(&theme_config);
-
-
         let context = MtechServerContext {
-            shared_ctx: SharedContext::default(),
+            shared_ctx: SharedContext::new(cc),
             first_run: true,
             clients: Vec::new(),
 
@@ -366,30 +289,8 @@ impl MtechServer {
             // CHANNEL SENDERS / RECEIVERS
             db_tx,
             db_rx,
-            live_tasks_tx,
-            live_tasks_rx,
-            live_clients_tx,
-            live_clients_rx,
-            tasks_tx,
-            tasks_rx,
-            initial_tasks_tx,
-            initial_tasks_rx,
             app_state_tx,
             app_state_rx,
-            store_users_tx,
-            store_users_rx,
-            connected_clients_tx,
-            connected_clients_rx,
-            new_ticket_tx,
-            new_ticket_rx,
-            notes_tx,
-            notes_rx,
-            new_note_tx,
-            new_note_rx,
-            notification_tx,
-            notification_rx,
-            live_notification_tx,
-            live_notification_rx,
             github_releases_channel,
             bytes_channel,
             tur_channel,
@@ -446,9 +347,6 @@ impl MtechServer {
             stock_channel,
             serial_channel,
             refresh: false,
-            theme_config,
-            theme,
-            modify_theme: false
         };
 
         Self {
@@ -545,7 +443,6 @@ impl MtechServerContext {
                     }
                 }
             // });
-            
             // for (x, _y) in full_output.viewport_output.iter() {
             //     info!("Viewport ID: {x:?}");
             // }
@@ -560,11 +457,13 @@ impl MtechServerContext {
 #[cfg(target_arch="wasm32")]
 pub fn check_authentication(
     db_tx: Sender<anyhow::Result<Database, Error>>,
-) -> Result<(AppState, Option<User>), Error> {
+) -> Result<(AppState, Option<database::schema::User>), Error> {
+    
+
     let cookie = wasm_cookies::get("jwt");
     let user_cookie = wasm_cookies::get("user");
     let mut state = AppState::default();
-    let mut current_user: Option<User> = None;
+    let mut current_user: Option<database::schema::User> = None;
     if let (Some(cookie), Some(usr)) = (cookie, user_cookie) {
         current_user = Some(serde_json::from_str(usr?.as_str())?);
         let _user = current_user.clone();

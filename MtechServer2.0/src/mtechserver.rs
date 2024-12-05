@@ -12,10 +12,10 @@ impl eframe::App for MtechServer {
         // currently this just sets the style of the app, but in the near
         // future i will be making this the setup to allow user customization
         // to the style of any part of the app
-        if self.context.modify_theme {
+        if self.context.shared_ctx.modify_theme {
             Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
                 // info!("Settings: {:?}", self.context.theme_config);
-                let theme = self.context.theme_config.edit_ui(ui);
+                let theme = self.context.shared_ctx.theme_config.edit_ui(ui);
                 if theme.0 {
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -31,13 +31,13 @@ impl eframe::App for MtechServer {
                             wasm_cookies::set("user", &usr, &cookie_opts);
                         }
                     }
-                    self.context.theme_config = theme.1;
-                    self.context.modify_theme = false;
+                    self.context.shared_ctx.theme_config = theme.1;
+                    self.context.shared_ctx.modify_theme = false;
                 }
             });
         }
 
-        let custom_style = set_custom_style(&self.context.theme_config);
+        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
         ctx.set_style((*custom_style).clone());
 
         // This is our 'dummy' worker that retrieves Minio bucket storage
@@ -102,17 +102,18 @@ impl eframe::App for MtechServer {
         // being received have literally one line in them that i dont want to
         // justify creating a separate file / module for
         self.receive();
-        self.receive_database(frame);
-        self.receive_client();
+        self.context.shared_ctx.receive();
+        self.receive_database();
         self.receive_inventory();
-        self.receive_ui_action();
-        self.receive_prestashop();
-        self.receive_task();
-        self.receive_ticket();
-        self.receive_notes();
-        self.receive_notification();
+        self.context.shared_ctx.receive_client();
+        self.context.shared_ctx.receive_ui_action();
+        self.context.shared_ctx.receive_prestashop();
+        self.context.shared_ctx.receive_task();
+        self.context.shared_ctx.receive_ticket();
+        self.context.shared_ctx.receive_notes();
+        self.context.shared_ctx.receive_notification();
         self.menu_bar(ctx);
-        self.context.handle_modals(ctx);
+        self.context.shared_ctx.handle_modals(ctx);
         self.context.toasts.show(ctx);
 
         // Get User settings from local storage
@@ -178,7 +179,7 @@ impl eframe::App for MtechServer {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
                     if self.context.shared_ctx.current_user.is_some() {
-                        self.load_data(frame);
+                        self.context.shared_ctx.load_data();
                     } else {
                         self.context.first_run = true;
                         self.first_run(frame)

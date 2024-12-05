@@ -1,38 +1,13 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Error;
 use crossbeam::channel::{self, Receiver, Sender};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
-use eframe::egui::Align2;
+use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use serde::Serialize;
 use surrealdb::Action;
 
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, ModalType}, tasks::task_layout::TaskLayout, ui_tools::toasts::Toasts, TaskUiActions};
-
-
-
-
-#[derive(Default, Debug, PartialEq)]
-pub enum MainPages {
-    #[default]
-    Tasks,
-    Downloads,
-    WebConsole,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum AppState {
-    Authenticated(MainPages),
-    CreateAccount,
-    NoAuth(String),
-    Login,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self::NoAuth("Not Authenticated".to_string())
-    }
-}
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, TaskUiActions};
 
 #[derive(Serialize)]
 pub struct SharedContext {
@@ -135,10 +110,6 @@ pub struct SharedContext {
     pub live_notification_tx: Sender<(Action, Notification)>,
     #[serde(skip)]
     pub live_notification_rx: Receiver<(Action, Notification)>,
-    #[serde(skip)]
-    pub app_state_tx: Sender<AppState>,
-    #[serde(skip)]
-    pub app_state_rx: Receiver<AppState>,
     
     /// {UI actions channel for communication between UI components and main function}
     #[serde(skip)]
@@ -160,14 +131,22 @@ pub struct SharedContext {
     pub undock_client: HashMap<String, bool>,
     /// The undock button was clicked for a ConnectedClient
     pub wants_to_undock: bool,
+    /// Theme settings
+    pub theme_config: ThemeConfig,
+    /// Button state for modifying theme config
+    #[serde(skip)]
+    pub modify_theme: bool,
+    /// The theme itself
+    pub theme: Arc<Style>,
     // Other Components
     pub tur: Tur,
+    pub close_modal: Option<String>,
 }
 
-impl Default for SharedContext {
-    fn default() -> Self {
+impl SharedContext {
+    pub fn new(cc: &CreationContext<'_>) -> Self {
 
-        // setup_custom_fonts(&cc.egui_ctx);
+        setup_custom_fonts(&cc.egui_ctx);
 
 
         // let open_tabs = HashSet::new();
@@ -179,7 +158,6 @@ impl Default for SharedContext {
         let (initial_tasks_tx, initial_tasks_rx) = channel::bounded::<Vec<TaskPayload>>(2);
         let (store_users_tx, store_users_rx) = channel::unbounded::<Vec<User>>();
         let (tasks_tx, tasks_rx) = channel::unbounded::<(Action, TaskPayload)>();
-        let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let (live_tasks_tx, live_tasks_rx) = channel::unbounded::<(Action, LiveTaskPayload)>();
         let (live_clients_tx, live_clients_rx) = channel::unbounded::<(Action, ConnectedClient)>();
         
@@ -203,9 +181,9 @@ impl Default for SharedContext {
         // let mut data_viewer = MyRowViewer::default();
         // data_viewer.stock_tx = Some(serial_channel.0.clone());
 
-        // let theme_config = ThemeConfig::default();
-        // let theme = set_custom_style(&theme_config);
-
+        let theme_config = ThemeConfig::default();
+        let theme = set_custom_style(&theme_config);
+        
         Self {
             current_user: None,
             tasks: Vec::new(),
@@ -230,8 +208,6 @@ impl Default for SharedContext {
             tasks_rx,
             initial_tasks_tx,
             initial_tasks_rx,
-            app_state_tx,
-            app_state_rx,
             store_users_tx,
             store_users_rx,
             connected_clients_tx,
@@ -264,42 +240,64 @@ impl Default for SharedContext {
 
                 // Other Components
             tur: Tur::default(),
+            close_modal: None,
+            theme_config,
+            theme,
+            modify_theme: false,
+        }
+    }
+
+    pub fn handle_modals(&mut self, ctx: &Context) {
+
+        for (title, modal_type) in self.opened_modals.iter_mut() {
+            // let input = RawInput::default();
+            // let full_output = ctx.run(input, |ctx| {
+                // info!("Got a new modal: {title:?}");
+                let action = modal_type.ui(ctx, title.clone(), 750., 850.);
+                if let Some(action) = action {
+                    if let ModalAction::Close = action {
+                        self.close_modal = Some(title.clone());
+                    }
+                }
+            // });
+            // for (x, _y) in full_output.viewport_output.iter() {
+            //     info!("Viewport ID: {x:?}");
+            // }
+        }
+        if let Some(modal) = &self.close_modal {
+            self.opened_modals.remove_entry(modal);
+            self.close_modal = None;
         }
     }
 }
-
-// fn setup_custom_fonts(ctx: &Context) {
-//     // Start with the default fonts (we will be adding to them rather than replacing them).
-//     let mut fonts = FontDefinitions::default();
-
-//     fonts.font_data.insert(
-//         "Monaspace".to_owned(),
-//         FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf")),
-//     ); // .ttf and .otf supported
-
-//     // Put my font first (highest priority):
-//     fonts
-//         .families
-//         .get_mut(&FontFamily::Proportional)
-//         .unwrap()
-//         .insert(0, "Monaspace".to_owned());
-
-//     fonts.font_data.insert(
-//         "Regular".to_owned(),
-//         FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf")),
-//     );
-//     fonts.families.insert(
-//         FontFamily::Name("Regular".into()),
-//         vec!["Regular".to_owned()],
-//     );
-//     fonts.font_data.insert(
-//         "Bold".to_owned(),
-//         FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Bold.otf")),
-//     );
-//     fonts
-//         .families
-//         .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
-
-//     // Tell egui to use these fonts:
-//     ctx.set_fonts(fonts);
-// }
+fn setup_custom_fonts(ctx: &Context) {
+    // Start with the default fonts (we will be adding to them rather than replacing them).
+    let mut fonts = FontDefinitions::default();
+    fonts.font_data.insert(
+        "Monaspace".to_owned(),
+        FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Regular.otf")),
+    ); // .ttf and .otf supported
+    // Put my font first (highest priority):
+    fonts
+        .families
+        .get_mut(&FontFamily::Proportional)
+        .unwrap()
+        .insert(0, "Monaspace".to_owned());
+    fonts.font_data.insert(
+        "Regular".to_owned(),
+        FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Regular.otf")),
+    );
+    fonts.families.insert(
+        FontFamily::Name("Regular".into()),
+        vec!["Regular".to_owned()],
+    );
+    fonts.font_data.insert(
+        "Bold".to_owned(),
+        FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Bold.otf")),
+    );
+    fonts
+        .families
+        .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
+    // Tell egui to use these fonts:
+    ctx.set_fonts(fonts);
+}
