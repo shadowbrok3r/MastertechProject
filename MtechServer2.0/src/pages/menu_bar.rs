@@ -95,8 +95,8 @@ impl MtechServer {
                         }
                     }
                 
-                    ui.add_space(50.);
-                    if Button::new(RichText::new("Organize Windows")).ui(ui).clicked() {
+                    ui.add_space(20.);
+                    if Button::new(RichText::new("Organize Windows").code()).ui(ui).clicked() {
                         // ctx.send_viewport_cmd(command);
 
                         //let organize_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::O);
@@ -111,7 +111,7 @@ impl MtechServer {
                         })
                     }
                     ui.add_space(20.);
-                    if ui.button("Reset Mem").clicked() {
+                    if Button::new(RichText::new("Reset Memory").code()).ui(ui).clicked() {
                         ctx.memory_mut(|mem| *mem = Default::default());
                     }
                 });
