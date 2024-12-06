@@ -7,7 +7,7 @@ use database::{self, DATABASE};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use displays::TaskUiActions;
 use eframe::egui::{
-    menu, Align, ComboBox, Context, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit
+    menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit
 };
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Ui, Widget};
 use log::{error, info};
@@ -58,11 +58,9 @@ impl MtechServer {
                     for task in self.context.shared_ctx.tasks.iter() {
                         inputs.insert(task.task_name.clone());
                     }
-                    ui.style_mut().visuals.widgets.inactive.bg_stroke =
-                        Stroke::new(2.0, Color32::from_rgb(50, 2, 43));
-                    ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
-                    ui.visuals_mut().widgets.inactive.bg_fill =
-                        Color32::from_additive_luminance(100);
+                    ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
+                    // ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
+                    ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
                     let result =
                         AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
                             .highlight_matches(true)
@@ -98,7 +96,7 @@ impl MtechServer {
                     }
                 
                     ui.add_space(50.);
-                    if ui.button("Organize Windows").clicked() {
+                    if Button::new(RichText::new("Organize Windows")).ui(ui).clicked() {
                         // ctx.send_viewport_cmd(command);
 
                         //let organize_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::O);
@@ -181,7 +179,10 @@ impl MtechServer {
                         _ => Store::RIV.as_str(),
                     };
             
-                    ComboBox::new("Store_Selection", "")
+                    ui.label("Show tasks for: ");
+                    ui.add_space(5.);
+                    Frame::default().stroke(ui.style().visuals.window_stroke).rounding(Rounding::same(5.0)).show(ui, |ui| {
+                        ComboBox::new("Store_Selection", "")                    
                         .selected_text(selected_text)
                         .show_ui(ui, |ui| {
                             ui.selectable_value(selected, 76, "RIV");
@@ -193,27 +194,27 @@ impl MtechServer {
                             ui.selectable_value(selected, 77, "SAN");
                         });
             
-                    if *selected != current {
-                        self.context.task_map.clear();
-                        self.context.shared_ctx.store_users.clear();
-                        self.context.shared_ctx.tasks.clear();
-                        self.context.task_map.clear();
-                        self.context.shared_ctx.task_layouts.clear();
-                        let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
-                        let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
-                        let store_selection = std::convert::Into::<Store>::into(*selected);
-                        
-                        info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
-                        spawn_local(async move {
-                            let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                            let get_store_users = get_store_users(store_users_tx, store_selection).await;
-            
-                            info!("get_tasks_for_store: {store_tasks:?}");
-                            info!("get_store_users: {get_store_users:?}");
-                        });
-                    }
+                        if *selected != current {
+                            self.context.task_map.clear();
+                            self.context.shared_ctx.store_users.clear();
+                            self.context.shared_ctx.tasks.clear();
+                            self.context.task_map.clear();
+                            self.context.shared_ctx.task_layouts.clear();
+                            let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
+                            let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
+                            let store_selection = std::convert::Into::<Store>::into(*selected);
+                            
+                            info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
+                            spawn_local(async move {
+                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                let get_store_users = get_store_users(store_users_tx, store_selection).await;
+                
+                                info!("get_tasks_for_store: {store_tasks:?}");
+                                info!("get_store_users: {get_store_users:?}");
+                            });
+                        }
 
-                    
+                    });
 
                     ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
                         ui.add_space(20.0);

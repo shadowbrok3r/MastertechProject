@@ -1,9 +1,9 @@
-use crate::Sortable;
+use crate::{SortDirection, Sortable};
 use chrono::{DateTime, Timelike};
 use database::schema::{Priority, TaskPayload};
 
 impl Sortable for Vec<TaskPayload> {
-    fn sort_task_payloads(&mut self) -> &mut Vec<TaskPayload> {
+    fn default_sort(&mut self) -> &mut Vec<TaskPayload> {
         let priority_mapping = |priority: &Priority| -> i32 {
             match priority {
                 Priority::Express => 2,
@@ -31,6 +31,39 @@ impl Sortable for Vec<TaskPayload> {
 
         self
     }
+    fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<TaskPayload>{
+        self.sort_by(|a: &TaskPayload, b: &TaskPayload| {
+            let date_a = get_date_without_time(a);
+            let date_b = get_date_without_time(b);
+            
+            let ordering = date_a.cmp(&date_b);
+            
+            match sort_direction {
+                SortDirection::Asc => ordering,               // Use default ordering for ascending
+                SortDirection::Desc => ordering.reverse(),    // Reverse ordering for descending
+            }
+        });
+    
+        self
+    }
+
+    fn sort_by_name(&mut self, sort_direction: SortDirection) -> &mut Vec<TaskPayload> {
+        self.sort_by(|a, b| {
+            let name_a = &a.task_name.to_lowercase();
+            let name_b = &b.task_name.to_lowercase();
+            
+            let ordering = name_a.cmp(name_b);
+    
+            match sort_direction {
+                SortDirection::Asc => ordering,              // Default alphabetical ordering (A-Z)
+                SortDirection::Desc => ordering.reverse(),   // Reverse alphabetical ordering (Z-A)
+            }
+        });
+    
+        self
+    }
+    
+
 }
 
 fn get_date_without_time(task: &TaskPayload) -> chrono::prelude::DateTime<chrono::prelude::Utc> {

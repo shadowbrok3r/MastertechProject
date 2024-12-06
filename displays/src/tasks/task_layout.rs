@@ -1,6 +1,6 @@
-use eframe::egui::{popup_below_widget, Align, Button, Color32, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Stroke, Style, TextEdit, Ui, Vec2, Widget};
-use crate::{FilterTasks, Sortable, TaskUiActions, Displayable};
-use database::schema::{Priority, Record, TaskPayload, User};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Stroke, Style, TextEdit, Ui, Vec2, Widget};
+use crate::{Displayable, FilterTasks, SortDirection, Sortable, TaskUiActions};
+use database::schema::{Record, TaskPayload, User};
 use egui_extras::{Size, Strip, StripBuilder};
 use std::collections::{BTreeMap, HashMap};
 use crossbeam::channel::Sender;
@@ -14,16 +14,6 @@ use surrealdb::RecordId;
 use std::sync::Arc;
 use log::info;
 use crate::{PlatformSpawner, Spawner};
-
-// use super::sub_menu::sub_menu;
-
-pub struct SortTasks{
-    pub sort_by_status: bool,
-    pub sort_by_priority: Option<Priority>,
-    pub sort_by_complete: Option<bool>,
-    pub sort_by_current_user: Option<User> 
-}
-
 
 #[derive(Difference)]
 pub struct TaskLayout{
@@ -40,6 +30,25 @@ pub struct TaskLayout{
     pub task: Option<String>,
     #[difference(skip)]
     pub ui_actions_tx: Sender<TaskUiActions>,
+    #[difference(skip)]
+    pub sort_by: HashMap<String, SortOptions>,
+    #[difference(skip)]
+    pub last_sort_field: Option<SortField>,    
+}
+
+
+#[derive(Clone, Default, PartialEq)]
+pub struct SortOptions {
+    pub field: SortField,
+    pub direction: SortDirection,
+}
+
+#[derive(Clone, Default, PartialEq)]
+pub enum SortField {
+    #[default]
+    Default,
+    Date,
+    Name,
 }
 
 impl TaskLayout { 
@@ -53,7 +62,9 @@ impl TaskLayout {
             search_inputs: HashMap::new(), 
             open_menu: false, 
             action: TaskUiActions::None,
-            task: None
+            task: None,
+            sort_by: HashMap::new(),
+            last_sort_field: None
         }
     }
 
@@ -171,8 +182,23 @@ impl TaskLayout {
                                 
                                 TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
 
-                                ui.add_space(ui.available_width() / 3.4);
+                                ui.add_space(15.);
                                 
+                                let mut count = 0;
+                                let current_date = Utc::now().date_naive();
+                                for task in tasks{
+                                    let due_date = DateTime::parse_from_rfc3339(&task.due_date);
+                                    if let Ok(date) = due_date {
+                                        let date = date.with_timezone(&Utc).date_naive();
+                                        if date < current_date && !task.completed{ count += 1; }
+                                    }
+                                }
+                                if count > 0 {
+                                    ui.small("Overdue");
+                                    ui.add_space(5.0);
+                                    ui.colored_label(Color32::DARK_RED, RichText::new(format!("{count}")).small());
+                                }
+                                ui.add_space(15.);
                                 let response = Button::new(RichText::new(name.to_owned())
                                         .color(style.visuals.warn_fg_color)
                                         .size(13.0).monospace()
@@ -259,26 +285,78 @@ impl TaskLayout {
                                     .min_size(Vec2::new(30.0, 15.0))
                                     .ui(ui);
 
-                                ui.add_space(30.0);
+                                ui.add_space(20.0);
 
                                 if button.clicked(){
                                     let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
                                 }
 
-                                let mut count = 0;
-                                let current_date = Utc::now().date_naive();
-                                for task in tasks{
-                                    let due_date = DateTime::parse_from_rfc3339(&task.due_date);
-                                    if let Ok(date) = due_date {
-                                        let date = date.with_timezone(&Utc).date_naive();
-                                        if date < current_date && !task.completed{ count += 1; }
-                                    }
-                                }
-                                if count > 0 {
-                                    ui.label("Overdue");
-                                    ui.add_space(5.0);
-                                    ui.colored_label(Color32::DARK_RED, format!("{count}"));
-                                }
+                                let selected = self.sort_by.entry(name.clone()).or_default();
+                                let txt = match selected.direction {
+                                    SortDirection::Asc => ("↗", ui.style().visuals.window_stroke.color),
+                                    SortDirection::Desc => ("↘", ui.style().visuals.error_fg_color),
+                                };
+                                let selected_text = match selected.field {
+                                    SortField::Default => RichText::new(format!("Priority {}", txt.0)).color(txt.1).small(),
+                                    SortField::Date => RichText::new(format!("Date {}", txt.0)).color(txt.1).small(),
+                                    SortField::Name => RichText::new(format!("Name {}", txt.0)).color(txt.1).small(),
+                                };
+                                ComboBox::new(format!("SortBy for {name:?}"), "")
+                                    .selected_text(selected_text)
+                                    .width(70.)
+                                    .show_ui(ui, |ui| {
+                                        if ui.selectable_value(
+                                            &mut selected.field, 
+                                            SortField::Default, 
+                                            RichText::new(format!("Priority {}", txt.0)).color(txt.1).small())
+                                        .clicked() {
+                                            if let Some(last_field) = self.last_sort_field.clone() {
+                                                if last_field == SortField::Default {
+                                                    // Toggle the direction if the same field is clicked again
+                                                    selected.direction = match selected.direction {
+                                                        SortDirection::Asc => SortDirection::Desc,
+                                                        SortDirection::Desc => SortDirection::Asc,
+                                                    };
+                                                }
+                                            }
+                                            // Update the last selected field
+                                            self.last_sort_field = Some(SortField::Default);
+                                        }
+                                        if ui.selectable_value(
+                                            &mut selected.field, 
+                                            SortField::Name, 
+                                            RichText::new(format!("Name {}", txt.0)).color(txt.1).small())
+                                        .clicked() {
+                                            if let Some(last_field) = self.last_sort_field.clone() {
+                                                if last_field == SortField::Name {
+                                                    // Toggle the direction if the same field is clicked again
+                                                    selected.direction = match selected.direction {
+                                                        SortDirection::Asc => SortDirection::Desc,
+                                                        SortDirection::Desc => SortDirection::Asc,
+                                                    };
+                                                }
+                                            }
+                                            // Update the last selected field
+                                            self.last_sort_field = Some(SortField::Name);
+                                        }
+                                        if ui.selectable_value(
+                                            &mut selected.field, 
+                                            SortField::Date, 
+                                            RichText::new(format!("Date {}", txt.0)).color(txt.1).small())
+                                        .clicked() {
+                                            if let Some(last_field) = self.last_sort_field.clone() {
+                                                if last_field == SortField::Date {
+                                                    // Toggle the direction if the same field is clicked again
+                                                    selected.direction = match selected.direction {
+                                                        SortDirection::Asc => SortDirection::Desc,
+                                                        SortDirection::Desc => SortDirection::Asc,
+                                                    };
+                                                }
+                                            }
+                                            // Update the last selected field
+                                            self.last_sort_field = Some(SortField::Date);
+                                        }
+                                });
                             });
                         });
                     });
@@ -298,56 +376,63 @@ impl TaskLayout {
 
         // if self.task_map.keys().len() == self.column_names.len() {
             // if self.task_map.iter().map(|m| m.1.iter().map(|i| i.))
-            for (name, tasks) in self.task_map.iter_mut(){
-                tasks.sort_task_payloads();
-                for task in tasks.iter(){
-                    inputs.insert(task.task_name.clone());
-                    inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
-                }
+        for (name, tasks) in self.task_map.iter_mut(){
+            let sort_by = self.sort_by.entry(name.clone()).or_default();
+            let direction = &sort_by.direction;
+            match sort_by.field {
+                SortField::Default => tasks.default_sort(),
+                SortField::Date => tasks.sort_by_date(direction.clone()),
+                SortField::Name => tasks.sort_by_name(direction.clone()),
+            };
+            
+            for task in tasks.iter(){
+                inputs.insert(task.task_name.clone());
+                inputs.insert(format!("{}",task.service_number.clone().unwrap_or_default()));
+            }
 
-                s.cell(|ui| {
-                    column_frame.show(ui, |ui| {
-                        ui.vertical_centered_justified(|ui| {
-                            let row_height = 140.;
-                            let total_rows = tasks.len(); 
-                            let scroll_area = ScrollArea::vertical().auto_shrink(false);
-                            ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
+            s.cell(|ui| {
+                column_frame.show(ui, |ui| {
+                    ui.vertical_centered_justified(|ui| {
+                        let row_height = 140.;
+                        let total_rows = tasks.len(); 
+                        let scroll_area = ScrollArea::vertical().auto_shrink(false);
+                        ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
 
-                            if total_rows.ne(&0) {
-                                scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
-                                    // ui.scroll_with_delta(Vec2::new(0.0, 300.));
-                                    // Retrieve search input for the current context, or default to an empty string.
-                                    let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
-    
-                                    // Filter tasks based on search input.
-                                    let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
-                                        tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
-                                    } else {
-                                        tasks.iter().cloned().collect()
-                                    };
-    
-                                    // Iterate only over the rows in the current viewport range.
-                                    for row in row_range {
-                                        if !search_input.is_empty() {
-                                            ui.scroll_to_cursor(Some(Align::BOTTOM));
-                                        }
-                                        if let Some(task) = filtered_tasks.get_mut(row) {
-                                            task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                        }
-                                    }                        
-                                });
-                            } 
-                            else {
-                                info!("NO TASKS;");
-                                ui.vertical_centered(|ui| {
-                                    ui.label("Loading..");
-                                    Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
-                                });
-                            }
-                        });
+                        if total_rows.ne(&0) {
+                            scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+                                // ui.scroll_with_delta(Vec2::new(0.0, 300.));
+                                // Retrieve search input for the current context, or default to an empty string.
+                                let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
+
+                                // Filter tasks based on search input.
+                                let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
+                                    tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
+                                } else {
+                                    tasks.iter().cloned().collect()
+                                };
+
+                                // Iterate only over the rows in the current viewport range.
+                                for row in row_range {
+                                    if !search_input.is_empty() {
+                                        ui.scroll_to_cursor(Some(Align::BOTTOM));
+                                    }
+                                    if let Some(task) = filtered_tasks.get_mut(row) {
+                                        task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
+                                    }
+                                }                        
+                            });
+                        } 
+                        else {
+                            info!("NO TASKS;");
+                            ui.vertical_centered(|ui| {
+                                ui.label("Loading..");
+                                Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
+                            });
+                        }
                     });
                 });
-            }
+            });
+        }
         // }
     }
 }
