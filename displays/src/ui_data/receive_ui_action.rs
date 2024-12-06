@@ -30,7 +30,7 @@ impl SharedContext {
                                 task.clone()
                             )
                         };
-                        let title = format!("{} - Task Modal", task_modal.title);
+                        let title = format!("{} Task View", task_modal.title);
 
                         if self.opened_modals.get(&title).is_some() {
                             self.opened_modals.remove_entry(&title);
