@@ -130,7 +130,7 @@ impl SharedContext {
                 }
                 layout.update_assignees(users.clone());
             }
-            log::info!("Got new users: {:?}", users);
+            // log::info!("Got new users: {:?}", users);
             self.rerun_filtering_store_tasks = true;
             self.rerun_filtering_completed = true;
             self.store_users.clear();
