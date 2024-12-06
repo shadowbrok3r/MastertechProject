@@ -589,6 +589,9 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
     async fn get_order_by_task_id(&mut self) -> Result<String> {
         if let Some(id) = self.task_id.clone() {
+            // I cannot do this at the moment because GetAssociatedData requires + Send
+            // let task: TaskPayload = id.get_associated_data::<TaskPayload>().await?;
+            // let order_number = task.service_number;
             let order_number: Option<String> = DATABASE
                 .query("SELECT VALUE service_number FROM task WHERE id == $task_id")
                 .bind(("task_id", id.clone()))
@@ -609,19 +612,18 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         let mut threads = Vec::new();
         if let Ok(order_number) = self.get_order_by_task_id().await {
             info!("Calling API for thread ID");
-            let api_call = Prestashop::default();
-            let mut query: HashMap<&str, &str> = HashMap::new();
-
-            query.insert("filter[id_order]", &order_number);
-            query.insert("output_format", "JSON");
-
+            
             if !order_number.is_empty() {
+                let api_call = Prestashop::default();
+                let mut query: HashMap<&str, &str> = HashMap::new();
+    
+                query.insert("filter[id_order]", &order_number);
+                query.insert("output_format", "JSON");
+
                 let customer_threads: Vec<CustomerThread> = api_call
                     .request_resources_wasm("customer_threads", query.clone())
                     .await?;
-                // .map_err(|e| {
-                //     info!("ERROR getting customer threads: {e:?}\nContinue from here to create task note");
-                // })?;
+                
                 info!("Got customer threads: {customer_threads:?}");
                 for thread in customer_threads {
                     for msg in thread.associations.customer_messages.iter() {
@@ -857,6 +859,11 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         Ok(())
     }
 }
+
+pub trait GetRec {
+    
+}
+
 
 impl EmployeeHelper for Employee {
     async fn find_user(&mut self) -> Result<Option<User>, Error> {
