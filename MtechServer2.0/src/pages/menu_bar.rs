@@ -1,6 +1,7 @@
-use crate::app_state::{AppState, MainPages, MtechServer};
+use crate::app_state::{default_tree, AppState, MainPages, MtechServer};
 use crate::pages::downloads_page::get_github_releases;
 use database::live_data::listen_data;
+use database::schema::helper_traits::UserHelper;
 use database::schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod};
 use database::schema::{Notification, Store, TaskPayload, CONNECTED_CLIENT_TABLE};
 use database::{self, DATABASE};
@@ -12,7 +13,7 @@ use eframe::egui::{
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Ui, Widget};
 use log::{error, info};
 use regex::Regex;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use wasm_bindgen_futures::spawn_local;
 
 impl MtechServer {
@@ -61,6 +62,7 @@ impl MtechServer {
                     ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
                     // ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
                     ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
+                    
                     let result =
                         AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
                             .highlight_matches(true)
@@ -96,7 +98,7 @@ impl MtechServer {
                     }
                 
                     ui.add_space(20.);
-                    if Button::new(RichText::new("Organize Windows").code()).ui(ui).clicked() {
+                    if Button::new(RichText::new("Organize Windows").monospace()).ui(ui).clicked() {
                         // ctx.send_viewport_cmd(command);
 
                         //let organize_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::O);
@@ -111,14 +113,14 @@ impl MtechServer {
                         })
                     }
                     ui.add_space(20.);
-                    if Button::new(RichText::new("Reset Memory").code()).ui(ui).clicked() {
+                    if Button::new(RichText::new("Reset Memory").monospace()).ui(ui).clicked() {
                         ctx.memory_mut(|mem| *mem = Default::default());
                     }
                 });
 
                 if let Some(usr) = &self.context.shared_ctx.current_user {
                     let notif_tx = self.context.shared_ctx.notification_tx.clone();
-                    ui.add_space(ui.available_width() / 5.);
+                    ui.add_space(ui.available_width() / 6.);
                     let txt = RichText::new(format!(
                         "Mastertech Server {}",
                         env!("CARGO_PKG_VERSION")
@@ -163,7 +165,7 @@ impl MtechServer {
                         .ui(ui);
                     }
 
-                    ui.add_space(ui.available_width()/2.0);
+                    ui.add_space(ui.available_width()/6.0);
 
                     let selected = &mut self.context.shared_ctx.store_selection;
                     let current = selected.clone();
@@ -179,10 +181,11 @@ impl MtechServer {
                         _ => Store::RIV.as_str(),
                     };
             
-                    ui.label("Show tasks for: ");
+                    ui.label("Show tasks in: ");
                     ui.add_space(5.);
                     Frame::default().stroke(ui.style().visuals.window_stroke).rounding(Rounding::same(5.0)).show(ui, |ui| {
                         ComboBox::new("Store_Selection", "")                    
+                        .width(60.)
                         .selected_text(selected_text)
                         .show_ui(ui, |ui| {
                             ui.selectable_value(selected, 76, "RIV");
@@ -217,7 +220,7 @@ impl MtechServer {
                     });
 
                     ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                        ui.add_space(20.0);
+                        ui.add_space(8.0);
                         let txt =
                             RichText::new(usr.name.clone()).color(Color32::from_rgb(100, 50, 100));
                         ui.menu_button(txt, |ui| {
@@ -228,12 +231,11 @@ impl MtechServer {
                                     self.state = AppState::Authenticated(MainPages::WebConsole);
                                     let live_clients_tx = self.context.shared_ctx.live_clients_tx.clone();
                                     let tx = self.context.shared_ctx.connected_clients_tx.clone();
-                                    if let Some(usr) = self.context.shared_ctx.current_user.clone() {
-                                        spawn_local(async move {
-                                            let get_connected_clients = get_connected_clients(tx, usr.clone()).await;
-                                            info!("get_connected_clients: {get_connected_clients:?}");
-                                        });
-                                    }
+                                    let user = usr.clone();
+                                    spawn_local(async move {
+                                        let get_connected_clients = get_connected_clients(tx, user.clone()).await;
+                                        info!("get_connected_clients: {get_connected_clients:?}");
+                                    });
                                     spawn_local(async move {
                                         let listen_data = listen_data(live_clients_tx, CONNECTED_CLIENT_TABLE).await;
                                         info!("listen_clients: {listen_data:?}");
@@ -446,24 +448,91 @@ impl MtechServer {
                                 }
                             });
                         });
-                        ui.add_space(5.0);
+                        ui.add_space(3.0);
                         ui.label("Welcome, ");
 
-                        let submit = Button::new("Save Ui Layout").ui(ui);
+                        ui.add_space(20.);
+                        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
+                        ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
+                        let reset_ui = Button::new(RichText::new("Reset Ui Layout").color(Color32::LIGHT_RED).monospace()).ui(ui);
+
+                        if reset_ui.clicked() {
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let mut user = usr.clone();
+                                self.context.user_settings.ui_layout = None;
+                                user.user_settings = Some(self.context.user_settings.clone());
+                                wasm_cookies::delete("user");
+                                let usr = serde_json::to_string(&user.clone()).unwrap();
+                                let duration = web_time::Duration::from_secs(172800);
+                                let cookie_opts = wasm_cookies::CookieOptions::default()
+                                    .with_same_site(wasm_cookies::SameSite::Strict)
+                                    .secure()
+                                    .expires_after(duration);
+                            
+                                use brotli::CompressorReader;
+                                use base64::{engine::general_purpose, Engine as _};
+        
+                                fn compress_string(input: &str) -> Vec<u8> {
+                                    let mut compressed = Vec::new();
+                                    {
+                                        let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
+                                        std::io::copy(&mut compressor, &mut compressed).unwrap();
+                                    }
+                                    compressed
+                                }
+        
+                                let compressed: Vec<u8> = compress_string(&usr);
+                                let encoded: String = general_purpose::STANDARD.encode(&compressed);
+                                info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
+                                wasm_cookies::set("user", &encoded, &cookie_opts);
+                            }
+                            let open_tabs = HashSet::new();
+                            let tree = default_tree(open_tabs.clone());
+                            self.tree = tree;
+                        }
+                        ui.add_space(5.);
+                        // ui.spacing().button_padding
+                        let submit = Button::new(RichText::new("Save Ui Layout").monospace()).ui(ui);
                         if submit.clicked() {
-                            // self.user_settings = serde_json::from_value(self.json_editor.value.clone())
-                            //     .unwrap_or_default();
-    
-                            // if let Some(mut usr) = self.shared_ctx.current_user.clone() {
-                            //     usr.user_settings = Some(self.user_settings.clone());
-                            //     self.update_settings = true;
-                            //     spawn_local(async move {
-                            //         match usr.save_user_settings().await {
-                            //             Ok(_) => info!("Updated User Settings"),
-                            //             Err(e) => info!("Error updating User Settings: {e:?}"),
-                            //         }
-                            //     });
-                            // }
+                            let mut user = usr.clone();
+                            self.context.user_settings.ui_layout = Some(serde_json::to_value(self.tree.clone()).unwrap());
+                            user.user_settings = Some(self.context.user_settings.clone());
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                wasm_cookies::delete("user");
+                                let usr = serde_json::to_string(&user.clone()).unwrap();
+                                let duration = web_time::Duration::from_secs(172800);
+                                let cookie_opts = wasm_cookies::CookieOptions::default()
+                                    .with_same_site(wasm_cookies::SameSite::Strict)
+                                    .secure()
+                                    .expires_after(duration);
+                            
+                                use brotli::CompressorReader;
+                                use base64::{engine::general_purpose, Engine as _};
+        
+                                fn compress_string(input: &str) -> Vec<u8> {
+                                    let mut compressed = Vec::new();
+                                    {
+                                        let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
+                                        std::io::copy(&mut compressor, &mut compressed).unwrap();
+                                    }
+                                    compressed
+                                }
+        
+                                let compressed: Vec<u8> = compress_string(&usr);
+                                let encoded: String = general_purpose::STANDARD.encode(&compressed);
+                                info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
+                                wasm_cookies::set("user", &encoded, &cookie_opts);
+                            }
+                        
+                            spawn_local(async move {
+                                match user.save_user_ui_layout().await {
+                                    Ok(_) => info!("Updated User Settings"),
+                                    Err(e) => info!("Error updating User Settings: {e:?}"),
+                                }
+                            });
+                            self.context.update_settings = true;
                         }
                     });
                 } else {

@@ -817,7 +817,7 @@ pub struct UserSettings {
     pub color_scheme: Value, // ui.color_edit_button_srgba(color)
     pub startup_tabs: Option<Value>,
     pub opened_tabs: Option<Value>,
-    pub my_column_layout: Option<String>,
+    pub ui_layout: Option<Value>,
     pub filters: Option<String>,
     pub saved_queries: Option<String>,
 }

@@ -4,6 +4,7 @@ use eframe::egui::{
     Color32, Context, Frame, Margin, Rounding, Stroke,
     Vec2, Window,
 };
+use egui_dock::DockState;
 use log::info;
 
 impl eframe::App for MtechServer {
@@ -28,7 +29,23 @@ impl eframe::App for MtechServer {
                                 .with_same_site(wasm_cookies::SameSite::Strict)
                                 .secure()
                                 .expires_after(duration);
-                            wasm_cookies::set("user", &usr, &cookie_opts);
+                        
+                            use brotli::CompressorReader;
+                            use base64::{engine::general_purpose, Engine as _};
+    
+                            fn compress_string(input: &str) -> Vec<u8> {
+                                let mut compressed = Vec::new();
+                                {
+                                    let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
+                                    std::io::copy(&mut compressor, &mut compressed).unwrap();
+                                }
+                                compressed
+                            }
+    
+                            let compressed: Vec<u8> = compress_string(&usr);
+                            let encoded: String = general_purpose::STANDARD.encode(&compressed);
+                            info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
+                            wasm_cookies::set("user", &encoded, &cookie_opts);
                         }
                     }
                     self.context.shared_ctx.theme_config = theme.1;
@@ -103,7 +120,7 @@ impl eframe::App for MtechServer {
         // justify creating a separate file / module for
         self.receive();
         self.context.shared_ctx.receive();
-        self.receive_database();
+        self.receive_database(frame);
         self.receive_inventory();
         self.context.shared_ctx.receive_client();
         self.context.shared_ctx.receive_ui_action();
@@ -119,10 +136,18 @@ impl eframe::App for MtechServer {
         // Get User settings from local storage
         // this bool gets switched via button click
         // in the crate::tabs::json_viewer module
-        if self.context.get_settings {
-            if let Some(storage) = frame.storage() {
-                if let Some(_settings) = storage.get_string("user_settings") {}
-            }
+        if let Some(user) = &self.context.shared_ctx.current_user {
+            if self.context.get_settings {
+                self.context.get_settings = false;
+                if let Some(settings) = &user.user_settings {
+                    if let Some(layout) = &settings.ui_layout {
+                        match serde_json::from_value::<DockState<String>>(layout.clone()){
+                            Ok(dock_state) => self.tree = dock_state,
+                            Err(e) => info!("Could not get UI layout from user: {e:?}"),
+                        }
+                    }
+                }
+            } 
         }
 
         // Get User settings from local storage
@@ -130,9 +155,6 @@ impl eframe::App for MtechServer {
         // the submit button in the crate::tabs::json_viewer
         // module
         if self.context.update_settings {
-            self.context.user_settings.startup_tabs =
-                Some(serde_json::to_value(self.tree.clone()).unwrap());
-
             self.context.update_settings = false;
             info!("Saving settings: {:?}", self.context.user_settings.clone());
             frame.storage_mut().unwrap().set_string(
@@ -179,7 +201,11 @@ impl eframe::App for MtechServer {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
                     if self.context.shared_ctx.current_user.is_some() {
-                        self.context.shared_ctx.load_data();
+                        if !self.context.shared_ctx.load_data() {
+                            self.context.first_run = true;
+                            self.first_run(frame);
+                            self.state = AppState::NoAuth("No user detected".to_string());
+                        }
                     } else {
                         self.context.first_run = true;
                         self.first_run(frame)
