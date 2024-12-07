@@ -815,11 +815,7 @@ impl Eq for User {}
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct UserSettings {
     pub color_scheme: Value, // ui.color_edit_button_srgba(color)
-    pub startup_tabs: Option<Value>,
-    pub opened_tabs: Option<Value>,
     pub ui_layout: Option<Value>,
-    pub filters: Option<String>,
-    pub saved_queries: Option<String>,
 }
 
 impl Priority {

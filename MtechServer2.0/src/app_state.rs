@@ -216,42 +216,7 @@ pub struct MtechServerContext {
 
 impl MtechServer {
     pub fn new(cc: &CreationContext<'_>) -> Self {
-        // if let Some(storage) = cc.storage {return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();}
-
-        // let mut tree = DockState::new(vec![
-        //     "Store Tasks".to_owned(),
-        //     "Completed Tasks".to_owned(),
-        //     "Customers".to_owned(),
-        //     "Json Viewer".to_owned(),
-        //     "Query Builder".to_owned(),
-        // ]);
-
-        let open_tabs = HashSet::new();
-        let tree = default_tree(open_tabs.clone());
-
-        // if let Some(existing_dock_state) = cc.storage {
-        //     if let Some(settings) = existing_dock_state.get_string("user_settings") {
-        //         if let Ok(user_settings) = serde_json::from_str::<UserSettings>(&settings) {
-        //             info!("Got user settings");
-        //             let startup_tabs = user_settings.startup_tabs;
-        //             if let Ok(state) = serde_json::from_value::<DockState<String>>(startup_tabs) {
-        //                 info!("Got DockState");
-        //                 for x in state.iter_all_nodes() {
-        //                     info!("All Tabs: {:?}, {:?}", x.1, x.0);
-        //                 }
-        //                 tree = state;
-        //             } else {
-        //                 tree = default_tree(open_tabs.clone());
-        //             }
-        //         } else {
-        //             info!("No user settings, using default UI layout");
-        //             tree = default_tree(open_tabs.clone());
-        //         }
-        //     }
-        // } else {
-        //     info!("No user settings, using default UI layout");
-        //     tree = default_tree(open_tabs.clone());
-        // }
+        let tree = default_tree();
 
         // let ctx = cc.egui_ctx.clone();
         // let data_update = Rc::new(std::cell::Cell::new(None));
@@ -325,7 +290,7 @@ impl MtechServer {
             search_input: String::new(),
             client_search_input: String::new(),
             client_search_inputs: HashMap::new(),
-            open_tabs,
+            open_tabs: tree.1,
             style: None,
             added_nodes: Vec::new(),
             new_note: false,
@@ -355,7 +320,7 @@ impl MtechServer {
             account_mod: AccountMod::default(),
             state: AppState::default(),
             context,
-            tree,
+            tree: tree.0,
         }
     }
 
@@ -382,7 +347,8 @@ impl MtechServer {
     }
 }
 
-pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
+pub fn default_tree() -> (DockState<String>, HashSet<String>) {
+    let mut open_tabs = HashSet::new();
     let mut tree = DockState::new(vec![
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
@@ -426,7 +392,7 @@ pub fn default_tree(mut open_tabs: HashSet<String>) -> DockState<String> {
         }
     }
 
-    tree
+    (tree, open_tabs)
 }
 
 impl MtechServerContext {
