@@ -163,7 +163,7 @@ impl MtechServer {
                         .ui(ui);
                     }
 
-                    ui.add_space(50.0);
+                    ui.add_space(ui.available_width()/2.0);
 
                     let selected = &mut self.context.shared_ctx.store_selection;
                     let current = selected.clone();
@@ -448,6 +448,23 @@ impl MtechServer {
                         });
                         ui.add_space(5.0);
                         ui.label("Welcome, ");
+
+                        let submit = Button::new("Save Ui Layout").ui(ui);
+                        if submit.clicked() {
+                            // self.user_settings = serde_json::from_value(self.json_editor.value.clone())
+                            //     .unwrap_or_default();
+    
+                            // if let Some(mut usr) = self.shared_ctx.current_user.clone() {
+                            //     usr.user_settings = Some(self.user_settings.clone());
+                            //     self.update_settings = true;
+                            //     spawn_local(async move {
+                            //         match usr.save_user_settings().await {
+                            //             Ok(_) => info!("Updated User Settings"),
+                            //             Err(e) => info!("Error updating User Settings: {e:?}"),
+                            //         }
+                            //     });
+                            // }
+                        }
                     });
                 } else {
                     ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
