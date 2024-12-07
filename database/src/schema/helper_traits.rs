@@ -75,7 +75,7 @@ pub trait UserHelper {
     /// # Returns
     /// - `Ok(())` on success.
     /// - `Err(Error)` if an error occurs while saving the settings.
-    async fn save_user_settings(&mut self) -> Result<(), Error>;
+    async fn save_user_ui_layout(&mut self) -> Result<(), Error>;
 
     /// Retrieves the store number from the Odoo system.
     ///
@@ -90,7 +90,11 @@ pub trait UserHelper {
     /// - `Ok(Store)` containing the store information on success.
     /// - `Err(Error)` if the store cannot be found or an error occurs.
     fn get_store_from_odoo_id(&mut self) -> Result<Store, Error>;
+
+    // async fn save_theme_config() -> Result<(), Error>;
 }
+
+
 /// A trait for assisting with operations involving the ComputerData struct
 #[async_trait(?Send)]
 pub trait ComputerDataHelper {
@@ -1024,27 +1028,35 @@ impl UserHelper for User {
         Ok(employee)
     }
 
-    async fn save_user_settings(&mut self) -> Result<(), Error> {
-        let user_settings = serde_json::to_value(self.user_settings.clone())?;
+    async fn save_user_ui_layout(&mut self) -> Result<(), Error> {
 
-        info!(
-            "User Settings to apply: {user_settings:?}\nTo User: {:?}",
-            self.id.clone()
-        );
+        // info!(
+        //     "User Settings to apply: {user_settings:?}\nTo User: {:?}",
+        //     self.id.clone()
+        // );
 
         match DATABASE
-            .query("UPDATE user SET user_settings = $settings WHERE id == $user")
-            .bind(("settings", user_settings))
-            .bind(("user", self.id.clone()))
+            .query("UPDATE $auth.id SET user_settings.ui_layout = $settings")
+            .bind(("settings", self.user_settings.clone().unwrap().ui_layout))
             .await
         {
-            Ok(res) => {
-                info!("Result: {res:?}");
-            }
+            Ok(res) => info!("Result: {res:?}"),
             Err(e) => info!("Error updating User Settings: {e:?}"),
         }
         Ok(())
     }
+
+    // async fn save_theme_config(theme: ThemeConfig) -> Result<(), Error> {
+    //     match DATABASE 
+    //         .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
+    //         .bind(("color_settings", theme.clone()))
+    //         .await 
+    //     {
+    //         Ok(res) => info!("Res: {res:?}"),
+    //         Err(e) => info!("Error updating User Settings: {e:?}"),
+    //     }
+    //     Ok(())
+    // }
 
     fn get_odoo_store_number(&mut self) -> Result<u64, Error> {
         let store = match self.store {

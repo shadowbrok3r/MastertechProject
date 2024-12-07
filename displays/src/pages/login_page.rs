@@ -45,13 +45,38 @@ impl Login {
                     #[cfg(target_arch = "wasm32")]
                     {
                         let duration = web_time::Duration::from_secs(172800);
-                        let usr = serde_json::to_string(&usr)?;
                         let cookie_opts = CookieOptions::default()
                             .with_same_site(wasm_cookies::SameSite::Strict)
                             .secure()
                             .expires_after(duration);
+
+                        let usr_json = serde_json::to_string(&usr)?;
+                    
+                        use brotli::CompressorReader;
+                        use base64::{engine::general_purpose, Engine as _};
+
+                        fn compress_string(input: &str) -> Vec<u8> {
+                            let mut compressed = Vec::new();
+                            {
+                                let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
+                                std::io::copy(&mut compressor, &mut compressed).unwrap();
+                            }
+                            compressed
+                        }
+                        
+                        fn decompress_string(input: &[u8]) -> String {
+                            let mut decompressed = Vec::new();
+                            let mut decompressor = brotli::Decompressor::new(input, 4096);
+                            std::io::copy(&mut decompressor, &mut decompressed).unwrap();
+                            String::from_utf8(decompressed).unwrap()
+                        }
+
+                        let compressed: Vec<u8> = compress_string(&usr_json);
+                        let encoded: String = general_purpose::STANDARD.encode(&compressed);
+                        gloo_console::info!(format!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr_json.len()));
+
                         wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
-                        wasm_cookies::set("user", &usr, &cookie_opts);
+                        wasm_cookies::set("user", &encoded, &cookie_opts);
                     }
                     info!("set cookies");
                 } else {

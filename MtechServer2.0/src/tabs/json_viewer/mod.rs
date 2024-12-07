@@ -87,7 +87,7 @@ impl MtechServerContext {
                             usr.user_settings = Some(self.user_settings.clone());
                             self.update_settings = true;
                             spawn_local(async move {
-                                match usr.save_user_settings().await {
+                                match usr.save_user_ui_layout().await {
                                     Ok(_) => info!("Updated User Settings"),
                                     Err(e) => info!("Error updating User Settings: {e:?}"),
                                 }

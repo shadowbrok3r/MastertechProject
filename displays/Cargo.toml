@@ -35,6 +35,7 @@ bytes = { workspace=true }
 regex = { workspace=true }
 structdiff = { workspace=true }
 async-trait = { workspace = true }
+egui_dock = {workspace = true}
 # egui_struct = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

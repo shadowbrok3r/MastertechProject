@@ -57,16 +57,9 @@ impl SharedContext {
             });
 
             if let Some(settings) = &usr.user_settings {
+
                 match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()) {
-                    Ok(color_settings) => {
-                            self.theme_config = color_settings.clone();
-                            // Both self.theme_config.text_color AND color_settings.text_Color are INCORRECT (the default values)
-                            info!(
-                                "Setting user color scheme: \n{:#?}\n\nCOLOR_SETTINGS: \n{:#?}", 
-                                self.theme_config.text_color, 
-                                color_settings.text_color
-                            );
-                    },
+                    Ok(color_settings) => self.theme_config = color_settings.clone(),
                     Err(e) => info!("Error setting theme config: {e:?}"),
                 }
             }
@@ -83,9 +76,6 @@ impl SharedContext {
             true
         } else {
             info!("4");
-            // self.context.first_run = true;
-            // self.first_run(frame);
-            // self.state = AppState::NoAuth("No user detected".to_string());
             false
         }
     }

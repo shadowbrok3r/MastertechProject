@@ -338,7 +338,7 @@ impl MtechServer {
             json_editor_state: JsonEditorState::SettingsPage,
             user_settings: UserSettings::default(),
             update_settings: false,
-            get_settings: false,
+            get_settings: true,
             data_table: DataTable::<MyRowData>::default(),
             stock_quantity_viewer: StockQuantityViewer::default(),
             stock_quantity_table: DataTable::<StockQuantityData>::default(),
@@ -458,14 +458,26 @@ impl MtechServerContext {
 pub fn check_authentication(
     db_tx: Sender<anyhow::Result<Database, Error>>,
 ) -> Result<(AppState, Option<database::schema::User>), Error> {
-    
-
     let cookie = wasm_cookies::get("jwt");
-    let user_cookie = wasm_cookies::get("user");
+    let user_cookie: Option<Result<String, wasm_cookies::FromUrlEncodingError>> = wasm_cookies::get("user");
     let mut state = AppState::default();
     let mut current_user: Option<database::schema::User> = None;
-    if let (Some(cookie), Some(usr)) = (cookie, user_cookie) {
-        current_user = Some(serde_json::from_str(usr?.as_str())?);
+    if let (Some(cookie), Some(Ok(usr))) = (cookie, user_cookie) {
+        use base64::{engine::general_purpose, Engine as _};
+        fn decompress_string(input: &[u8]) -> String {
+            let mut decompressed = Vec::new();
+            let mut decompressor = brotli::Decompressor::new(input, 4096);
+            std::io::copy(&mut decompressor, &mut decompressed).unwrap();
+            String::from_utf8(decompressed).unwrap()
+        }
+
+        
+        let decoded = general_purpose::STANDARD.decode(&usr)?;
+        let decompressed = decompress_string(&decoded);
+        
+        current_user = Some(serde_json::from_str(&decompressed)?);
+        log::info!("Deompressed data: {}\nDecoded: {}\nOriginal: {}", decompressed.len(), decoded.len(), usr.len());
+        
         let _user = current_user.clone();
         let db_tx = db_tx.clone();
         wasm_bindgen_futures::spawn_local(async move {
