@@ -1,13 +1,12 @@
-use std::{collections::HashMap, sync::Arc};
-
-use anyhow::Error;
-use crossbeam::channel::{self, Receiver, Sender};
+use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
-use serde::Serialize;
+use crossbeam::channel::{self, Receiver, Sender};
+use std::{collections::HashMap, sync::Arc};
 use surrealdb::Action;
+use serde::Serialize;
+use anyhow::Error;
 
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, TaskUiActions};
 
 #[derive(Serialize)]
 pub struct SharedContext {
@@ -145,13 +144,7 @@ pub struct SharedContext {
 
 impl SharedContext {
     pub fn new(cc: &CreationContext<'_>) -> Self {
-
         setup_custom_fonts(&cc.egui_ctx);
-
-
-        // let open_tabs = HashSet::new();
-        // let tree = default_tree(open_tabs.clone());
-
 
         let (ui_actions_tx, ui_actions_rx) = crossbeam::channel::unbounded::<TaskUiActions>();
         let (db_tx, db_rx) = channel::unbounded();
@@ -169,9 +162,9 @@ impl SharedContext {
         let (live_notification_tx, live_notification_rx) =
             channel::unbounded::<(Action, Notification)>();
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
-        // let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
+        // let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         // let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
         // let serial_channel = <SerialData>::create_unbounded_channel();
         // let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();

@@ -13,7 +13,7 @@ use eframe::egui::{
 use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Ui, Widget};
 use log::{error, info};
 use regex::Regex;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use wasm_bindgen_futures::spawn_local;
 
 impl MtechServer {
@@ -21,104 +21,103 @@ impl MtechServer {
         let mut inputs = BTreeSet::new();
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             menu::bar(ui, |ui| {
-                ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-                    ui.add_space(10.0);
-                    ui.menu_button("View", |ui| {
-                        // allow certain tabs to be toggled
-                        for tab in &[
-                            &"Store Tasks".to_string(),
-                            &"My Tasks".to_string(),
-                            &"Terminal".to_string(),
-                            &"Web Console".to_string(),
-                            &"Completed Tasks".to_string(),
-                            &"Bug Report".to_string(),
-                            &"Ai Playground".to_string(),
-                            &"Json Viewer".to_string(),
-                            &"Query Builder".to_string(),
-                            &"Stock".to_string(),
-                            &"Logs".to_string(),
-                            &"Task Audit".to_string(),
-                        ] {
-                            if ui
-                                .selectable_label(self.context.open_tabs.contains(*tab), *tab)
-                                .clicked()
-                            {
-                                if let Some(index) = self.tree.find_tab(&tab.to_string()) {
-                                    self.tree.remove_tab(index);
-                                    self.context.open_tabs.remove(*tab);
-                                } else {
-                                    self.tree.push_to_focused_leaf(tab.to_string());
+                if let Some(usr) = self.context.shared_ctx.current_user.as_mut() {
+                    ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                        ui.add_space(1.0);
+                        ui.menu_button(RichText::new("View"), |ui| {
+                            // allow certain tabs to be toggled
+                            for tab in &[
+                                &"Store Tasks".to_string(),
+                                &"My Tasks".to_string(),
+                                &"Terminal".to_string(),
+                                &"Web Console".to_string(),
+                                &"Completed Tasks".to_string(),
+                                &"Bug Report".to_string(),
+                                &"Ai Playground".to_string(),
+                                &"Json Viewer".to_string(),
+                                &"Query Builder".to_string(),
+                                &"Stock".to_string(),
+                                &"Logs".to_string(),
+                                &"Task Audit".to_string(),
+                            ] {
+                                if ui
+                                    .selectable_label(self.context.open_tabs.contains(*tab), *tab)
+                                    .clicked()
+                                {
+                                    if let Some(index) = self.tree.find_tab(&tab.to_string()) {
+                                        self.tree.remove_tab(index);
+                                        self.context.open_tabs.remove(*tab);
+                                    } else {
+                                        self.tree.push_to_focused_leaf(tab.to_string());
+                                    }
+                                    ui.close_menu();
                                 }
-                                ui.close_menu();
                             }
+                        });
+
+                        ui.add_space(30.0);
+
+                        for task in self.context.shared_ctx.tasks.iter() {
+                            inputs.insert(task.task_name.clone());
+                        }
+                        ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
+                        ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
+                        
+                        let result =
+                            AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
+                                .highlight_matches(true)
+                                .max_suggestions(10)
+                                .set_text_edit_properties(|text_edit: TextEdit<'_>| {
+                                    text_edit
+                                        .hint_text("Search for task")
+                                        .desired_width(150.0)
+                                        .font(FontId::proportional(12.0))
+                                        .frame(true)
+                                })
+                                .ui(ui);
+
+                        let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
+
+                        if result.secondary_clicked() || accepted_by_keyboard && !self.context.search_input.is_empty() {
+                            info!("selected? {}", self.context.search_input.clone());
+                            if let Some(input) = inputs.get(&self.context.search_input) {
+                                let task = self.context.shared_ctx.tasks.iter().find(|&x| {
+                                    x.task_name == *input
+                                        || format!("{}", x.service_number.clone().unwrap_or_default())
+                                            == format!("{}", *input)
+                                });
+
+                                if let Some(task) = task {
+                                    let _ = self
+                                        .context
+                                        .shared_ctx
+                                        .ui_actions_tx
+                                        .try_send(TaskUiActions::OpenTaskModal(task.clone()));
+                                }
+                            }
+                        }
+                    
+                        ui.add_space(20.);
+                        if Button::new(RichText::new("Organize Windows").monospace()).ui(ui).clicked() {
+                            // ctx.send_viewport_cmd(command);
+
+                            //let organize_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::O);
+                            // if ctx.input_mut(|i| i.consume_shortcut(&organize_shortcut)) {}
+                            ctx.memory_mut(|mem| mem.reset_areas());
+
+                            ctx.memory_mut(|mem| {
+                                
+                                for layer in mem.areas_mut().visible_layer_ids().iter() {
+                                    info!("Visible layers: {layer:?}");
+                                }
+                            })
+                        }
+                        ui.add_space(20.);
+                        if Button::new(RichText::new("Reset Memory").monospace()).ui(ui).clicked() {
+                            ctx.memory_mut(|mem| *mem = Default::default());
                         }
                     });
 
-                    ui.add_space(30.0);
-
-                    for task in self.context.shared_ctx.tasks.iter() {
-                        inputs.insert(task.task_name.clone());
-                    }
-                    ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
-                    // ui.visuals_mut().extreme_bg_color = Color32::from_rgb(12, 12, 14);
-                    ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                    
-                    let result =
-                        AutoCompleteTextEdit::new(&mut self.context.search_input, inputs.clone())
-                            .highlight_matches(true)
-                            .max_suggestions(10)
-                            .set_text_edit_properties(|text_edit: TextEdit<'_>| {
-                                text_edit
-                                    .hint_text("Search for task")
-                                    .desired_width(150.0)
-                                    .font(FontId::proportional(12.0))
-                                    .frame(true)
-                            })
-                            .ui(ui);
-
-                    let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
-
-                    if result.secondary_clicked() || accepted_by_keyboard && !self.context.search_input.is_empty() {
-                        info!("selected? {}", self.context.search_input.clone());
-                        if let Some(input) = inputs.get(&self.context.search_input) {
-                            let task = self.context.shared_ctx.tasks.iter().find(|&x| {
-                                x.task_name == *input
-                                    || format!("{}", x.service_number.clone().unwrap_or_default())
-                                        == format!("{}", *input)
-                            });
-
-                            if let Some(task) = task {
-                                let _ = self
-                                    .context
-                                    .shared_ctx
-                                    .ui_actions_tx
-                                    .try_send(TaskUiActions::OpenTaskModal(task.clone()));
-                            }
-                        }
-                    }
-                
-                    ui.add_space(20.);
-                    if Button::new(RichText::new("Organize Windows").monospace()).ui(ui).clicked() {
-                        // ctx.send_viewport_cmd(command);
-
-                        //let organize_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::O);
-                        // if ctx.input_mut(|i| i.consume_shortcut(&organize_shortcut)) {}
-                        ctx.memory_mut(|mem| mem.reset_areas());
-
-                        ctx.memory_mut(|mem| {
-                            
-                            for layer in mem.areas_mut().visible_layer_ids().iter() {
-                                info!("Visible layers: {layer:?}");
-                            }
-                        })
-                    }
-                    ui.add_space(20.);
-                    if Button::new(RichText::new("Reset Memory").monospace()).ui(ui).clicked() {
-                        ctx.memory_mut(|mem| *mem = Default::default());
-                    }
-                });
-
-                if let Some(usr) = &self.context.shared_ctx.current_user {
                     let notif_tx = self.context.shared_ctx.notification_tx.clone();
                     ui.add_space(ui.available_width() / 6.);
                     let txt = RichText::new(format!(
@@ -219,7 +218,7 @@ impl MtechServer {
 
                     });
 
-                    ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                         ui.add_space(8.0);
                         let txt =
                             RichText::new(usr.name.clone()).color(Color32::from_rgb(100, 50, 100));
@@ -448,7 +447,7 @@ impl MtechServer {
                                 }
                             });
                         });
-                        ui.add_space(3.0);
+                        ui.add_space(1.0);
                         ui.label("Welcome, ");
 
                         ui.add_space(20.);
@@ -487,21 +486,24 @@ impl MtechServer {
                                 info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
                                 wasm_cookies::set("user", &encoded, &cookie_opts);
                             }
-                            let open_tabs = HashSet::new();
-                            let tree = default_tree(open_tabs.clone());
-                            self.tree = tree;
+                            let tree = default_tree();
+                            self.tree = tree.0;
+                            self.context.open_tabs = tree.1;
                         }
                         ui.add_space(5.);
                         // ui.spacing().button_padding
                         let submit = Button::new(RichText::new("Save Ui Layout").monospace()).ui(ui);
                         if submit.clicked() {
-                            let mut user = usr.clone();
-                            self.context.user_settings.ui_layout = Some(serde_json::to_value(self.tree.clone()).unwrap());
-                            user.user_settings = Some(self.context.user_settings.clone());
+                            // self.context.user_settings.ui_layout = Some(serde_json::to_value(self.tree.clone()).unwrap());
+                            // usr.user_settings.as_mut().unwrap_or(&mut self.context.user_settings.clone()).ui_layout = self.context.user_settings.ui_layout.clone();
+                            let user_settings = usr.user_settings.as_mut().unwrap();
+                            user_settings.ui_layout = Some(serde_json::to_value(self.tree.clone()).unwrap());
+                            // user_settings.color_scheme = 
+                            info!("self.context.user_settings: {:?}\nusr.user_settings: {:?}", self.context.user_settings, usr.user_settings);
                             #[cfg(target_arch = "wasm32")]
                             {
                                 wasm_cookies::delete("user");
-                                let usr = serde_json::to_string(&user.clone()).unwrap();
+                                let usr = serde_json::to_string(&usr.clone()).unwrap();
                                 let duration = web_time::Duration::from_secs(172800);
                                 let cookie_opts = wasm_cookies::CookieOptions::default()
                                     .with_same_site(wasm_cookies::SameSite::Strict)
@@ -525,7 +527,7 @@ impl MtechServer {
                                 info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
                                 wasm_cookies::set("user", &encoded, &cookie_opts);
                             }
-                        
+                            let mut user = usr.clone();
                             spawn_local(async move {
                                 match user.save_user_ui_layout().await {
                                     Ok(_) => info!("Updated User Settings"),

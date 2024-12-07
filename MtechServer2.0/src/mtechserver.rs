@@ -18,11 +18,15 @@ impl eframe::App for MtechServer {
                 // info!("Settings: {:?}", self.context.theme_config);
                 let theme = self.context.shared_ctx.theme_config.edit_ui(ui);
                 if theme.0 {
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
+                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
+                        let user_settings = user.user_settings.as_mut().unwrap();
+                        user_settings.color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
+                        if let Some(storage) = frame.storage_mut() {
+                            storage.set_string("user_settings", serde_json::to_string(&user_settings).unwrap_or_default());
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        {
                             wasm_cookies::delete("user");
-                            user.user_settings.as_mut().unwrap().color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
                             let duration = web_time::Duration::from_secs(172800);
                             let usr = serde_json::to_string(&user.clone()).unwrap();
                             let cookie_opts = wasm_cookies::CookieOptions::default()
@@ -134,8 +138,6 @@ impl eframe::App for MtechServer {
         self.context.toasts.show(ctx);
 
         // Get User settings from local storage
-        // this bool gets switched via button click
-        // in the crate::tabs::json_viewer module
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {
                 self.context.get_settings = false;
@@ -157,10 +159,10 @@ impl eframe::App for MtechServer {
         if self.context.update_settings {
             self.context.update_settings = false;
             info!("Saving settings: {:?}", self.context.user_settings.clone());
-            frame.storage_mut().unwrap().set_string(
-                "user_settings",
-                serde_json::to_string(&self.context.user_settings).unwrap(),
-            );
+            // frame.storage_mut().unwrap().set_string(
+            //     "user_settings",
+            //     serde_json::to_string(&self.context.user_settings).unwrap(),
+            // );
         }
 
         if self.context.ai_playground.save_chats {
