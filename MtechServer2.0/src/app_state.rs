@@ -16,7 +16,7 @@ use displays::{
     }, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem
 };
 use database::{schema::{prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskPayload, UserSettings}, Database};
-use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily}, CreationContext};
+use eframe::{egui::{Align2, Context}, CreationContext};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -461,40 +461,4 @@ pub fn check_authentication(
     }
     log::info!("State // user   {:?} // {:?}", state, current_user);
     Ok((state, current_user))
-}
-
-fn setup_custom_fonts(ctx: &Context) {
-    // Start with the default fonts (we will be adding to them rather than replacing them).
-    let mut fonts: FontDefinitions = FontDefinitions::default();
-
-    fonts.font_data.insert(
-        "Monaspace".to_owned(),
-        FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf")),
-    ); // .ttf and .otf supported
-
-    // Put my font first (highest priority):
-    fonts
-        .families
-        .get_mut(&FontFamily::Proportional)
-        .unwrap()
-        .insert(0, "Monaspace".to_owned());
-
-    fonts.font_data.insert(
-        "Regular".to_owned(),
-        FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf")),
-    );
-    fonts.families.insert(
-        FontFamily::Name("Regular".into()),
-        vec!["Regular".to_owned()],
-    );
-    fonts.font_data.insert(
-        "Bold".to_owned(),
-        FontData::from_static(include_bytes!("../assets/fonts/MonaspaceNeon-Bold.otf")),
-    );
-    fonts
-        .families
-        .insert(FontFamily::Name("Bold".into()), vec!["Bold".to_owned()]);
-
-    // Tell egui to use these fonts:
-    ctx.set_fonts(fonts);
 }

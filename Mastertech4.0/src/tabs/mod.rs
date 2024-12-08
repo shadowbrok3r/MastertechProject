@@ -1,13 +1,19 @@
 use crate::app_state::MastertechContext;
 use crate::tabs::logger::logger_ui;
+use anyhow::Error;
+use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, Store};
+use displays::FilterTasks;
 use eframe::egui::{Ui, WidgetText};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
+use github::get_github_releases;
+use log::{error, info};
+use stock::{get_extra_stock_info, get_stock};
+use tokio::spawn;
 use std::sync::atomic::Ordering;
 
 pub mod file_browser;
 pub mod github;
 pub mod logger;
-pub mod my_tasks;
 #[cfg(target_os = "windows")]
 pub mod minidump;
 pub mod output_console;
@@ -77,7 +83,9 @@ impl TabViewer for MastertechContext {
             #[cfg(target_os = "windows")]
             "Minidump Analysis" => self.mini_dump(ui),
             "QC ☑️" => self.quality_check(ui),
-            "Tasks" => self.mastertech_website(ui),
+            "My Tasks" => self.shared_ctx.my_tasks(ui),
+            "Store Tasks" => self.shared_ctx.store_tasks(ui),
+            "Completed Tasks" => self.shared_ctx.completed_tasks(ui),
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),
@@ -125,5 +133,90 @@ impl TabViewer for MastertechContext {
 
     fn on_add(&mut self, surface_index: SurfaceIndex, node_index: NodeIndex) {
         self.added_nodes.push((surface_index, node_index));
+    }
+
+    fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &eframe::egui::Response) {
+        if response.clicked() {
+            match tab.as_str() {
+                "Stock" => {
+                    if let Some(usr) = &self.shared_ctx.current_user {
+                        let stock_tx = self.stock_channel.0.clone();
+                        let store_selection = match usr.clone().store {
+                            Store::RIV => 76,
+                            Store::LTN => 73,
+                            Store::MUR => 74,
+                            Store::AF => 72,
+                            Store::WJ => 78,
+                            Store::ORE => 75,
+                            Store::SAN => 77,
+                        };
+                        spawn(async move {
+                            match get_stock(stock_tx.clone(), store_selection).await{
+                                Ok(_) => info!("get_stock ran ok"),
+                                Err(e) => error!("Error getting Stock: {e:?}")
+                            }
+                        });
+                    }
+                },
+                "Stock Quantity" => {
+                    let ex_stock_tx = self.extra_stock_channel.0.clone();
+                    spawn(async move {
+
+                        match get_extra_stock_info(ex_stock_tx).await{
+                            Ok(_) => info!("get_extra_stock_info ran ok"),
+                            Err(e) => error!("Error getting Extra Stock info: {e:?}")
+                        }
+                    });
+                },
+                "Completed Tasks" => {
+                    // First, make sure there are no completed tasks loaded.
+                    // If there no completed tasks, then load them.
+                    // Otherwise, make sure the tasks that are completed 
+                    // are for the correct selected store. 
+                    if self.shared_ctx.tasks.filter_by_completion(true).is_empty() {
+                        let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
+                        let store_sel = self.shared_ctx.store_selection;
+                        let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
+                        
+                        spawn(async move {
+                            let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store_selection).await;
+                            info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
+                        });
+                    }
+                    
+                },
+                "Store Tasks" => {
+                    // First, make sure there are no store tasks loaded.
+                    // If there no store tasks, then load them.
+                    // Otherwise, make sure the tasks that are loaded 
+                    // for the selected store are for the CORRECT selected store. 
+                    if self.shared_ctx.tasks.filter_by_completion(false).is_empty() {
+                        let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
+                        let store_sel = self.shared_ctx.store_selection;
+                        let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
+                        
+                        spawn(async move {
+                            let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection).await;
+                            info!("get_tasks_for_store: {get_tasks_for_store:?}");
+                        });
+                    }
+                },
+                "Downloads" => {
+                    let github_tx = self.github_releases_channel.0.clone();
+                    let client = self.client.clone();
+                    spawn(async move {
+                        match get_github_releases(github_tx, client).await {
+                            Ok(_) => info!("get_github_releases ran ok"),
+                            Err(e) => error!("Error getting github releases: {e:?}"),
+                        }
+        
+                        Ok::<(), Error>(())
+                    });
+                }
+                _ => {}
+            }
+            
+        }
+
     }
 }

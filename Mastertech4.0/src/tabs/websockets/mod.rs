@@ -85,7 +85,7 @@ impl MastertechContext{
             ..Default::default()
         };
 
-        let tx = self.connected_clients_tx.clone();
+        let tx = self.shared_ctx.connected_clients_tx.clone();
         let uuid = self.client_uuid.clone();
         spawn(async move {
             match query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.key().to_string().clone()).await {

@@ -40,6 +40,8 @@ simplelog = { workspace=true }
 async-trait = { workspace=true }
 once_cell = { workspace=true }
 egui_json_tree = { workspace = true }
+brotli = { workspace=true }
+base64 = { workspace=true }
 
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }

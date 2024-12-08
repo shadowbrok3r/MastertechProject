@@ -30,19 +30,27 @@ pub mod first_run;
 pub mod data;
 
 impl eframe::App for MasterTechApp {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
         // most important part of the whole app.. setting up our styling
-        if self.context.modify_theme {
+        if self.context.shared_ctx.modify_theme {
             Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
-                let theme = self.context.theme_config.edit_ui(ui);
+                // info!("Settings: {:?}", self.context.theme_config);
+                let theme = self.context.shared_ctx.theme_config.edit_ui(ui);
                 if theme.0 {
-                    self.context.theme_config = theme.1;
-                    self.context.modify_theme = false;
+                    if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
+                        let user_settings = user.user_settings.as_mut().unwrap();
+                        user_settings.color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
+                        if let Some(storage) = frame.storage_mut() {
+                            storage.set_string("user_settings", serde_json::to_string(&user_settings).unwrap_or_default());
+                        }
+                    }
+                    self.context.shared_ctx.theme_config = theme.1;
+                    self.context.shared_ctx.modify_theme = false;
                 }
             });
         }
 
-        let custom_style = set_custom_style(&self.context.theme_config);
+        let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
         ctx.set_style((*custom_style).clone());
 
         if self.context.first_run {

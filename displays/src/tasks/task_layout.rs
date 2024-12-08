@@ -250,7 +250,6 @@ impl TaskLayout {
                                             });
                                         },
                                         TaskActions::MarkIncomplete => {
-                                            
                                             PlatformSpawner::spawn(async move {
                                                 for id in ids{
                                                     let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
