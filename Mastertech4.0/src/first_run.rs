@@ -2,19 +2,17 @@ use crate::tabs::tur_sheet::scaffold::AsanaResponse;
 
 use super::utilities::crypto::pass_hash::load_encrypted_user_data;
 use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
-use database::{live_data::listen_data, schema::{utilities::{get_store_users, get_tasks}, GetKeysResponse, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
+use database::schema::GetKeysResponse;
 use eframe::egui::{Context, ViewportCommand};
 use super::app_state::{AppState, MasterTechApp, MainPages};
-use database::{schema::{ComputerData, Store}, Database};
+use database::{schema::ComputerData, Database};
 use super::filesystem::system_info::ComputerInfo;
 use std::sync::{Arc, Condvar, Mutex};
 use super::pages::login_page::HASH;
 use std::sync::atomic::Ordering;
 use log::{debug, error, info};
-use anyhow::Error;
 use tokio::spawn;
 
-use super::tabs::{github::get_github_releases, stock::{get_extra_stock_info, get_stock}};
 
 impl MasterTechApp {
     pub fn first_run(&mut self) {
@@ -115,66 +113,10 @@ impl MasterTechApp {
 
     pub fn load_data(&mut self, ctx: &Context) {
         if let Some(usr) = self.context.shared_ctx.current_user.clone() {
-            let initial_tasks_tx = self.context.initial_tasks_tx.clone();
-            let stock_tx = self.context.stock_channel.0.clone();
-            let github_tx = self.context.github_releases_channel.0.clone();
-            let client = self.context.client.clone();
-            let ex_stock_tx = self.context.extra_stock_channel.0.clone();
-            let tx = self.context.store_users_tx.clone();
-            let live_tasks_tx = self.context.live_tasks_tx.clone();
-            let notes_tx = self.context.notes_tx.clone();
-            let live_notif_tx = self.context.live_notification_tx.clone();      
-            
-            let store_selection = match usr.store {
-                Store::RIV => 76,
-                Store::LTN => 73,
-                Store::MUR => 74,
-                Store::AF => 72,
-                Store::WJ => 78,
-                Store::ORE => 75,
-                Store::SAN => 77,
-            };
-
-            spawn(async move {
-                match get_github_releases(github_tx, client).await {
-                    Ok(_) => info!("get_github_releases ran ok"),
-                    Err(e) => error!("Error getting github releases: {e:?}"),
-                }
-                match get_extra_stock_info(ex_stock_tx).await{
-                    Ok(_) => info!("get_extra_stock_info ran ok"),
-                    Err(e) => error!("Error getting Extra Stock info: {e:?}")
-                }
-                match get_stock(stock_tx.clone(), store_selection).await{
-                    Ok(_) => info!("get_stock ran ok"),
-                    Err(e) => error!("Error getting Stock: {e:?}")
-                }
-                match get_store_users(tx, usr.store).await{
-                    Ok(_) => info!("get_store_users ran ok"),
-                    Err(e) => error!("Error running get_store_users: {e:?}")
-                }
-                match get_tasks(initial_tasks_tx).await{
-                    Ok(_) => info!("get_tasks ran ok"),
-                    Err(e) => error!("Error running get_tasks: {e:?}")
-                }
-                match listen_data(notes_tx, TASK_NOTE_TABLE).await {
-                    Ok(_) => info!("listen_task_notes ran ok"),
-                    Err(e) => error!("Error running listen_task_notes: {e:?}")
-                }
-                match listen_data(live_tasks_tx, TASK_TABLE).await {
-                    Ok(_) => info!("listen_tasks ran ok"),
-                    Err(e) => error!("Error running listen_tasks: {e:?}")
-                }
-                match listen_data(live_notif_tx.clone(), NOTIFICATION_TABLE).await {
-                    Ok(_) => info!("listen_notifications ran ok"),
-                    Err(e) => error!("Error running listen_notifications: {e:?}")
-                }
-                Ok::<(), Error>(())
-            });
-
             if let Some(settings) = &usr.user_settings {
                 match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()) {
                     Ok(color_settings) => {
-                        self.context.theme_config = color_settings.clone();
+                        self.context.shared_ctx.theme_config = color_settings.clone();
                     },
                     Err(e) => info!("Error setting theme config: {e:?}"),
                 }
@@ -268,19 +210,14 @@ impl MasterTechApp {
         }
 
         while let Ok(copied_items) = self.context.copied_items_rx.try_recv() {
-            // info!("GOT COPIED ITEMS: {copied_items:?}");
             self.context.output_text += &format!("{copied_items}\n");
-            // if self.context.output_text.is_empty() {}
         }
 
-        if let Ok(users) = self.context.store_users_rx.try_recv() {
+        if let Ok(users) = self.context.shared_ctx.store_users_rx.try_recv() {
             self.context.shared_ctx.store_users = users;
         }
 
-
-
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {
-            // self.context.seb_info = Some(seb);
             self.context.json_editor.set_value(seb.clone()).unwrap();
         }
     }

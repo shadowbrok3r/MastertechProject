@@ -14,7 +14,6 @@ pub mod terminal;
 pub mod toolbox;
 pub mod user_chat;
 pub mod web_console;
-// pub mod all_tasks;
 
 use super::app_state::MtechServerContext;
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};

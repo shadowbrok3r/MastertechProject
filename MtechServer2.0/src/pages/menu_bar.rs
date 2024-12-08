@@ -1,10 +1,6 @@
 use crate::app_state::{default_tree, AppState, MainPages, MtechServer};
 use crate::pages::downloads_page::get_github_releases;
-use database::live_data::listen_data;
-use database::schema::helper_traits::UserHelper;
-use database::schema::utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod};
-use database::schema::{Notification, Store, TaskPayload, CONNECTED_CLIENT_TABLE};
-use database::{self, DATABASE};
+use database::{DATABASE, live_data::listen_data, schema::{helper_traits::UserHelper, Notification, Store, TaskPayload, CONNECTED_CLIENT_TABLE, utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}}};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use displays::TaskUiActions;
 use eframe::egui::{
@@ -491,15 +487,14 @@ impl MtechServer {
                             self.context.open_tabs = tree.1;
                         }
                         ui.add_space(5.);
-                        // ui.spacing().button_padding
                         let submit = Button::new(RichText::new("Save Ui Layout").monospace()).ui(ui);
                         if submit.clicked() {
                             // self.context.user_settings.ui_layout = Some(serde_json::to_value(self.tree.clone()).unwrap());
                             // usr.user_settings.as_mut().unwrap_or(&mut self.context.user_settings.clone()).ui_layout = self.context.user_settings.ui_layout.clone();
                             let user_settings = usr.user_settings.as_mut().unwrap();
                             user_settings.ui_layout = Some(serde_json::to_value(self.tree.clone()).unwrap());
-                            // user_settings.color_scheme = 
                             info!("self.context.user_settings: {:?}\nusr.user_settings: {:?}", self.context.user_settings, usr.user_settings);
+
                             #[cfg(target_arch = "wasm32")]
                             {
                                 wasm_cookies::delete("user");

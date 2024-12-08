@@ -1,21 +1,21 @@
 use crossbeam::channel::{Receiver, Sender};
 use database::{
     schema::{
-        get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ComputerData, ConnectedClient, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, Notification, TaskNotePayload, TaskPayload, TicketData, User, CONNECTED_CLIENT_TABLE
+        prestashop_schema::PrestashopPayload, ComputerData, CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, Notification, TaskNotePayload, TaskPayload, TicketData, CONNECTED_CLIENT_TABLE
     },
     Database,
 };
 use displays::{
-    app_state::SharedContext, channel_manager::ChannelManager, egui_data_table::DataTable, ui_tools::{mention_handler::MentionHandler, theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, virtual_filesystem::FileSystem
+    app_state::SharedContext, channel_manager::ChannelManager, egui_data_table::DataTable, ui_tools::{mention_handler::MentionHandler, toasts::Toasts}, virtual_filesystem::FileSystem
 };
-use eframe::egui::{Align2, Color32, Context, Stroke, Style};
+use eframe::egui::{Align2, Color32, Context, Stroke};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc, Mutex},
 };
-use surrealdb::{sql::Uuid, Action, RecordId};
+use surrealdb::{sql::Uuid, RecordId};
 // use egui_ratatui::RataguiBackend;
 use anyhow::Error;
 use chrono::{DateTime, Utc};
@@ -164,9 +164,6 @@ pub struct MastertechContext {
     pub computer_specs_tx: Sender<ComputerData>,
     pub computer_specs_rx: Receiver<ComputerData>,
 
-    pub connected_clients_tx: Sender<Vec<ConnectedClient>>,
-    pub connected_clients_rx: Receiver<Vec<ConnectedClient>>,
-
     pub db_rx: Receiver<anyhow::Result<Database, Error>>,
     pub db_tx: Sender<anyhow::Result<Database, Error>>,
     pub cps_keys_tx: Sender<GetKeysResponse>,
@@ -175,17 +172,7 @@ pub struct MastertechContext {
         Sender<Vec<ExtraInventoryData>>,
         Receiver<Vec<ExtraInventoryData>>,
     ),
-    pub notes_tx: Sender<(Action, TaskNotePayload)>,
-    pub notes_rx: Receiver<(Action, TaskNotePayload)>,
-    pub new_note_tx: Sender<TaskNotePayload>,
-    pub new_note_rx: Receiver<TaskNotePayload>,
 
-    pub store_users: Vec<User>,
-    pub store_users_tx: Sender<Vec<User>>,
-    
-    pub store_users_rx: Receiver<Vec<User>>,
-    pub initial_tasks_tx: Sender<Vec<TaskPayload>>,
-    pub initial_tasks_rx: Receiver<Vec<TaskPayload>>,
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
@@ -199,14 +186,6 @@ pub struct MastertechContext {
     pub github_releases: Vec<GithubRelease>,
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
-    pub live_notification_tx: Sender<(Action, Notification)>,
-    pub live_notification_rx: Receiver<(Action, Notification)>,
-    pub notification_tx: Sender<Vec<Notification>>,
-    pub notification_rx: Receiver<Vec<Notification>>,
-    pub live_tasks_tx: Sender<(Action, LiveTaskPayload)>,
-    pub live_tasks_rx: Receiver<(Action, LiveTaskPayload)>,
-    pub new_ticket_tx: Sender<NewTicketChannel>,
-    pub new_ticket_rx: Receiver<NewTicketChannel>,
 
     
     pub data_viewer: MyRowViewer,
@@ -221,69 +200,11 @@ pub struct MastertechContext {
     pub stock_quantity_table: DataTable<StockQuantityData>,
     pub store_selection: u64,
     pub json_editor: JsonEditor,
-    /// Theme settings
-    pub theme_config: ThemeConfig,
-    /// Button state for modifying theme config
-    pub modify_theme: bool,
-    /// The theme itself
-    pub theme: Arc<Style>,
-
 }
 
 impl MasterTechApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-
-        let mut tree = DockState::new(vec![
-            "TUR Sheet".to_owned(),
-            "Tasks".to_owned(),
-            // "Part Order".to_owned(),
-            // "Minidump Analysis".to_owned(),
-            "SEB Lookup".to_owned(),
-            "Downloads".to_owned(),
-            "Stock".to_owned(),
-            "Stock Quantity".to_owned(),
-        ]);
-        tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
-
-        let [_a, _b] = tree.main_surface_mut().split_left(
-            NodeIndex::root(),
-            0.30,
-            vec!["File Browser 📂".to_owned(), "Logs".to_owned()],
-        );
-        let [_a, b] = tree.main_surface_mut().split_below(
-            NodeIndex::root(),
-            0.65,
-            vec!["Console".to_owned(), "Websockets".to_owned()],
-        );
-        let [_, _] = tree.main_surface_mut().split_left(
-            b,
-            0.45,
-            vec!["SysInfo".to_owned(), "Bug Tracker".to_owned()],
-        );
-        let [_, _] = tree.main_surface_mut().split_left(
-            b,
-            0.20,
-            vec!["Scripts".to_owned(), "ToolBox".to_owned()],
-        );
-
-        let mut open_tabs = HashSet::new();
-        for node in tree[SurfaceIndex::main()].iter() {
-            if let Node::Leaf { tabs, .. } = node {
-                for tab in tabs {
-                    open_tabs.insert(tab.clone());
-                }
-            }
-        }
-
-        // let _backend = RataguiBackend::new_with_fonts(
-        //     10,
-        //     10,
-        //     "Regular".into(),
-        //     "Bold".into(),
-        //     "Oblique".into(),
-        //     "BoldOblique".into(),
-        // );
-
+        let tree = default_tree();
         let (tx, rx) = crossbeam::channel::bounded::<String>(1);
         let tx_scaffold = tx.clone();
         let (db_data_sender, db_data_receiver) =
@@ -293,11 +214,6 @@ impl MasterTechApp {
         let (db_tx, db_rx) = crossbeam::channel::unbounded();
         let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
-        let (connected_clients_tx, connected_clients_rx) =
-            crossbeam::channel::unbounded::<Vec<ConnectedClient>>();
-        let (store_users_tx, store_users_rx) = crossbeam::channel::unbounded::<Vec<User>>();
-        let (initial_tasks_tx, initial_tasks_rx) =
-            crossbeam::channel::unbounded::<Vec<TaskPayload>>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
         let minio_files = <Vec<String>>::create_unbounded_channel();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
@@ -308,20 +224,11 @@ impl MasterTechApp {
         let seb_channel = <Vec<Value>>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
-        let (notes_tx, notes_rx) = crossbeam::channel::unbounded::<(Action, TaskNotePayload)>();
-        let (new_note_tx, new_note_rx) = crossbeam::channel::unbounded::<TaskNotePayload>();
-        let (live_notification_tx, live_notification_rx) = crossbeam::channel::unbounded::<(Action, Notification)>();
-        let (live_tasks_tx, live_tasks_rx) = crossbeam::channel::unbounded::<(Action, LiveTaskPayload)>();
-        let (new_ticket_tx, new_ticket_rx) = crossbeam::channel::unbounded::<NewTicketChannel>();
-        let (notification_tx, notification_rx) = crossbeam::channel::unbounded::<Vec<Notification>>();
 
         let mut data_viewer = MyRowViewer::default();
         data_viewer.stock_tx = Some(serial_channel.0.clone());
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
         
-        let theme_config = ThemeConfig::default();
-        let theme = set_custom_style(&theme_config);
-
         let mastertech_context = MastertechContext {
             shared_ctx: SharedContext::new(cc),
             // terminal: Terminal::new(backend).unwrap(),
@@ -346,7 +253,6 @@ impl MasterTechApp {
 
             disks: Value::Array(vec![]),
             disk_num: 0,
-            store_users: Vec::new(),
             scaffold_request: SendRequest { tx: tx_scaffold },
             client: reqwest::Client::new(),
             file_browser: Arc::new(Mutex::new(FileBrowser::new())),
@@ -375,7 +281,7 @@ impl MasterTechApp {
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             ctx: Context::default(),
             widget_size: 135.0,
-            open_tabs,
+            open_tabs: tree.1,
 
             date: None,
             animate_progress_bar: false,
@@ -413,8 +319,6 @@ impl MasterTechApp {
             computer_specs_rx,
             app_state_tx,
             app_state_rx,
-            connected_clients_tx,
-            connected_clients_rx,
             bytes_tx,
             bytes_rx,
             db_tx,
@@ -423,22 +327,9 @@ impl MasterTechApp {
             cps_keys_rx,
             copied_items_tx,
             copied_items_rx,
-            notes_tx,
-            notes_rx,
-            new_note_tx,
-            new_note_rx,
             github_releases_channel,
             tur_channel,
-            live_notification_tx,
-            live_notification_rx,
-            live_tasks_tx, live_tasks_rx,
-            new_ticket_tx, new_ticket_rx,
-            notification_tx, notification_rx,
 
-            store_users_tx,
-            store_users_rx,
-            initial_tasks_tx,
-            initial_tasks_rx,
             github_issue_title: String::new(),
             github_issue_descript: String::new(),
             scripts: Scripts::default(),
@@ -461,24 +352,19 @@ impl MasterTechApp {
             extra_stock_channel,
             stock_quantity_viewer: StockQuantityViewer::default(),
             stock_quantity_table: DataTable::<StockQuantityData>::default(),
-            theme,
-            theme_config,
-            modify_theme: false,
         };
         
         let context = mastertech_context;
 
         Self {
             context,
-            tree,
+            tree: tree.0,
             login: Login::default(),
             state: AppState::default(),
         }
     }
-}
 
-/// Private method to access login state only within NoAuth context
-impl MasterTechApp {
+    /// Private method to access login state only within NoAuth context
     pub fn login_mut(&mut self) -> Option<&mut Login> {
         match self.state {
             AppState::Login => Some(&mut self.login),
@@ -486,4 +372,53 @@ impl MasterTechApp {
             _ => None,
         }
     }
+}
+
+
+
+pub fn default_tree() -> (DockState<String>, HashSet<String>) {
+    let mut tree = DockState::new(vec![
+        "TUR Sheet".to_owned(),
+        "My Tasks".to_owned(),
+        "Store Tasks".to_owned(),
+        "Completed Tasks".to_owned(),
+        // "Part Order".to_owned(),
+        // "Minidump Analysis".to_owned(),
+        "SEB Lookup".to_owned(),
+        "Downloads".to_owned(),
+        "Stock".to_owned(),
+        "Stock Quantity".to_owned(),
+    ]);
+    tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
+
+    let [_a, _b] = tree.main_surface_mut().split_left(
+        NodeIndex::root(),
+        0.30,
+        vec!["File Browser 📂".to_owned(), "Logs".to_owned()],
+    );
+    let [_a, b] = tree.main_surface_mut().split_below(
+        NodeIndex::root(),
+        0.65,
+        vec!["Console".to_owned(), "Websockets".to_owned()],
+    );
+    let [_, _] = tree.main_surface_mut().split_left(
+        b,
+        0.45,
+        vec!["SysInfo".to_owned(), "Bug Tracker".to_owned()],
+    );
+    let [_, _] = tree.main_surface_mut().split_left(
+        b,
+        0.20,
+        vec!["Scripts".to_owned(), "ToolBox".to_owned()],
+    );
+
+    let mut open_tabs = HashSet::new();
+    for node in tree[SurfaceIndex::main()].iter() {
+        if let Node::Leaf { tabs, .. } = node {
+            for tab in tabs {
+                open_tabs.insert(tab.clone());
+            }
+        }
+    }
+    (tree, open_tabs)
 }
