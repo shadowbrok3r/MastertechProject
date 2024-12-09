@@ -10,6 +10,9 @@ impl SharedContext {
             let users = &self.store_users;
             let page = "StoreTasks";
             let current_user = self.current_user.as_ref().unwrap();
+            let store_sel = self.store_selection.clone();
+            // info!("Store_sel: {:?}", store_sel);
+            let store_selection = std::convert::Into::<Store>::into(store_sel);
             if let Some(layout) = self.task_layouts.get_mut(page) {
                 if self.rerun_filtering_store_tasks {
                     self.rerun_filtering_store_tasks = false;
@@ -17,8 +20,7 @@ impl SharedContext {
                     let mut map = BTreeMap::new();
                     users.iter().for_each(|u| {
                         if u.email != current_user.email { // u.store == current_user.store && 
-                            let store_sel = self.store_selection.clone();
-                            let store_selection = std::convert::Into::<Store>::into(store_sel);
+                            // info!("Reruning filters -> store_selection: {store_selection:?}");
                             let filtered = self
                                 .tasks
                                 .filter_by_assignee(u)
@@ -40,8 +42,7 @@ impl SharedContext {
                 let mut map = BTreeMap::new();
                 users.iter().for_each(|u| {
                     if u.store == current_user.store && u.email != current_user.email {
-                        let store_sel = self.store_selection.clone();
-                        let store_selection = std::convert::Into::<Store>::into(store_sel);
+                        // info!("No layout -> store_selection: {store_selection:?}");
                         let filtered = self
                             .tasks
                             .filter_by_assignee(u)

@@ -22,7 +22,9 @@ impl SharedContext {
         let live_notif_tx = self.live_notification_tx.clone();        
 
         if let Some(usr) = self.current_user.as_ref() {
-            info!("Getting Initial data");
+            self.store_selection = std::convert::Into::<u64>::into(usr.store);
+
+            info!("Getting Initial data: {}", self.store_selection);
             let user = usr.clone();
             let name = usr.name.clone();
 

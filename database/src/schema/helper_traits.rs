@@ -1194,21 +1194,16 @@ impl From<u64> for Store {
     }
 }
 
-// impl From<&mut u64> for &str {
-//     fn from(value: u64) -> Self {
-//         match value {
-//             76 => Store::RIV.as_str(),
-//             73 => Store::LTN.as_str(),
-//             74 => Store::MUR.as_str(),
-//             78 => Store::WJ.as_str(),
-//             75 => Store::ORE.as_str(),
-//             72 => Store::AF.as_str(),
-//             77 => Store::SAN.as_str(),
-//             _ => Store::RIV.as_str(),
-//         }
-//     }
-// }
-
-// pub trait StoreHelper {
-//     fn store_id_to_str(&mut self) -> 
-// }
+impl From<Store> for u64 {
+    fn from(value: Store) -> Self {
+        match value {
+            Store::RIV => 76,
+            Store::LTN => 73,
+            Store::MUR => 74,
+            Store::WJ => 78,
+            Store::ORE => 75,
+            Store::AF => 72,
+            Store::SAN => 77
+        }
+    }
+}
