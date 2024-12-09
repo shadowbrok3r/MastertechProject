@@ -82,11 +82,12 @@ impl SharedContext {
 
     pub fn receive(&mut self) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
-            log::info!("Got new tasks: {:?}", &tasks.len());
+            log::info!("Reruning filtering for store/completed/my_tasks. Got new tasks: {:?}", &tasks.len());
         
             // Indicate that filtering needs to be rerun
             self.rerun_filtering_store_tasks = true;
             self.rerun_filtering_completed = true;
+            self.rerun_filtering_my_tasks = true;
         
             // Clear layout-related data for specific pages
             for (page, layout) in self.task_layouts.iter_mut() {
@@ -120,7 +121,7 @@ impl SharedContext {
                 }
                 layout.update_assignees(users.clone());
             }
-            // log::info!("Got new users: {:?}", users);
+            log::info!("Reruning filtering for store/completed tasks, got new users");
             self.rerun_filtering_store_tasks = true;
             self.rerun_filtering_completed = true;
             self.store_users.clear();

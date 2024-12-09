@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [ "MtechServer2.0", "database" , "displays"] #  , "Mastertech4.0", "websocket_server", "websocket_server2"  
+members = [ "MtechServer2.0", "database" , "displays"] #  , , "websocket_server", "websocket_server2"  
 
 [workspace.dependencies]
 database = { path = "database" }
@@ -48,9 +48,9 @@ strip = false
 # lto = true
 
 [profile.release]
-# strip = "debuginfo"
-# debug = false
-# opt-level = 3
+strip = true
+debug = false
+opt-level = 3
 lto = true
 
 # Optimize all dependencies even in debug builds:
