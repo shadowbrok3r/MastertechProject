@@ -218,13 +218,13 @@ impl eframe::App for MtechServer {
         }
     }
 
-    fn persist_egui_memory(&self) -> bool {
-        true
-    }
+    // fn persist_egui_memory(&self) -> bool {
+    //     true
+    // }
 
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, eframe::APP_KEY, self)
-    }
+    // fn save(&mut self, storage: &mut dyn eframe::Storage) {
+    //     eframe::set_value(storage, eframe::APP_KEY, self)
+    // }
 
     // fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
     //     if let Some(window) = web_sys::window() {

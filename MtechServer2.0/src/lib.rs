@@ -41,7 +41,7 @@ pub fn run() {
             .dyn_into::<HtmlCanvasElement>()
             .expect("the_canvas_id was not a HtmlCanvasElement");
 
-        let _start_result = eframe::WebRunner::new()
+        let start_result = eframe::WebRunner::new()
             .start(
                 canvas,
                 web_options,
@@ -50,9 +50,19 @@ pub fn run() {
                     Ok(Box::new(MtechServer::new(cc)))
                 }),
             )
-            .await
-            .unwrap();
+            .await;
 
+        if let Err(e) = start_result {
+            gloo_console::info!(format!("Encountered an Error: {e:?}"));
+            if let Some(window) = web_sys::window() {
+                if let Ok(storage) = window.local_storage() {
+                    if let Some(storage) = storage {
+                        let clear = storage.clear();
+                        gloo_console::info!(format!("Clearing storage: {clear:?}"));
+                    }
+                }
+            }
+        }
         // // Remove the loading text and spinner:
         // if let Some(loading_text) = document.get_element_by_id("loading_text") {
         //     match start_result {

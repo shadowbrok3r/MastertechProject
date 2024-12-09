@@ -1,171 +1,152 @@
+use async_trait::async_trait;
 use database::{schema::{Priority, Record, Status, Store, TaskNotePayload, TaskPayload}, DATABASE};
-use crate::{PlatformSpawner, Spawner, Updatable};
 use surrealdb::RecordId;
+use crate::Updatable;
 use log::info;
 
 
+#[async_trait]
 impl Updatable for TaskPayload {
-    fn update_completed(&self, completed: bool) {
-        // self.completed = completed;
-        let id: RecordId = self.id.clone();
-        PlatformSpawner::spawn(async move {
-            let query =
-                format!("UPDATE task SET completed=$completed, status=$status WHERE id=$id");
-            DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("completed", completed).await.unwrap();
+    async fn update_completed(&self, completed: bool) -> anyhow::Result<(), anyhow::Error> {
+        let _update_task: Vec<Record> = DATABASE
+            .query("UPDATE $id SET completed=$completed, status=$status")
+            .bind(("id", self.id.clone()))
+            .bind(("completed", completed))
+            .bind(("status", if completed {Status::Complete} else {Status::InRepair}))
+            .await?
+            .take(0)?;
+        
+        Ok(())
+    }
 
-            if completed {
-                DATABASE.set("status", Status::Complete).await.unwrap();
-            } else {
-                DATABASE.set("status", Status::InRepair).await.unwrap();
+    async fn update_due_date(&self, due_date: String) -> anyhow::Result<(), anyhow::Error> {
+        let _update_task: Vec<Record> = DATABASE
+                .query("UPDATE $id SET due_date=$date")
+                .bind(("id", self.id.clone()))
+                .bind(("date", due_date))
+                .await?
+                .take(0)?;
+        Ok(())
+    }
+
+    async fn update_assignee_initials(&self, initials: String) -> anyhow::Result<(), anyhow::Error> {
+        info!("Initials: {initials}");
+        let selected_user: Option<RecordId> = DATABASE
+            .query("SELECT VALUE id FROM user WHERE everest_initials=$initials")
+            .bind(("initials", initials.clone()))
+            .await?
+            .take(0)?;
+
+        info!("Selected user: {selected_user:?}");
+
+        let _update_task: Vec<Record> = DATABASE
+            .query("UPDATE $id SET assignee=$assignee, everest_initials=$initials")
+            .bind(("id", self.id.clone()))
+            .bind(("assignee", selected_user.unwrap()))
+            .bind(("initials", initials))
+            .await?
+            .take(0)?;
+        
+        Ok(())
+    }
+
+    async fn update_task_name(&self, name: String) -> anyhow::Result<(), anyhow::Error> {
+        let _update_task: Vec<Record> = DATABASE
+            .query("UPDATE $id SET task_name=$name")
+            .bind(("id", self.id.clone()))
+            .bind(("name", name))
+            .await?
+            .take(0)?;
+        
+        Ok(())
+    }
+
+    async fn update_status(&self, status: Status) -> anyhow::Result<(), anyhow::Error> {
+        let mut _query = String::new();
+        match status {
+            Status::Todo => {
+                _query =
+                    format!("UPDATE $id SET status=$status, completed=false");
+                DATABASE.set("status", Status::Todo).await?;
             }
-
-            let _update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-        })
-    }
-
-    fn update_due_date(&self, due_date: String) {
-        let id: RecordId = self.id.clone();
-        PlatformSpawner::spawn(async move {
-            let query = format!("UPDATE task SET due_date=$date WHERE id=$id");
-
-            DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("date", due_date).await.unwrap();
-
-            let _update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-        })
-    }
-
-    fn update_assignee_initials(&self, initials: String) {
-        let id: RecordId = self.id.clone();
-        PlatformSpawner::spawn(async move {
-            let user_query = format!("SELECT id FROM user WHERE everest_initials=$initials");
-
-            DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("initials", initials).await.unwrap();
-
-            let selected_user: Option<Record> =
-                DATABASE.query(user_query).await.unwrap().take(0).unwrap();
-
-            let query = format!(
-                "UPDATE task SET assignee=$assignee, everest_initials=$initials WHERE id=$id"
-            );
-
-            DATABASE
-                .set("assignee", selected_user.unwrap().id)
-                .await
-                .unwrap();
-            // DATABASE.set("initials", initials).await.unwrap();
-
-            let _update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-        })
-    }
-
-    fn update_task_name(&self, name: String) {
-        let id: RecordId = self.id.clone();
-        PlatformSpawner::spawn(async move {
-            let query = format!("UPDATE task SET task_name=$name WHERE id=$id");
-
-            DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("name", name).await.unwrap();
-
-            let _update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-        })
-    }
-
-    fn update_status(&self, status: Status) {
-        let id: RecordId = self.id.clone();
-        PlatformSpawner::spawn(async move {
-            let mut _query = String::new();
-
-            DATABASE.set("id", id).await.unwrap();
-
-            match status {
-                Status::Todo => {
-                    _query =
-                        format!("UPDATE task SET status=$status, completed=false WHERE id=$id");
-                    DATABASE.set("status", Status::Todo).await.unwrap();
-                }
-                Status::InRepair => {
-                    _query =
-                        format!("UPDATE task SET status=$status, completed=false WHERE id=$id");
-                    DATABASE.set("status", Status::InRepair).await.unwrap();
-                }
-                Status::Complete => {
-                    _query = format!("UPDATE task SET status=$status, completed=true WHERE id=$id");
-                    DATABASE.set("status", Status::Complete).await.unwrap();
-                }
+            Status::InRepair => {
+                _query =
+                    format!("UPDATE $id SET status=$status, completed=false");
+                DATABASE.set("status", Status::InRepair).await?;
             }
+            Status::Complete => {
+                _query = format!("UPDATE $id SET status=$status, completed=true");
+                DATABASE.set("status", Status::Complete).await?;
+            }
+        }
 
-            let _update_task: Vec<Record> = DATABASE.query(_query).await.unwrap().take(0).unwrap();
-        })
+        let _update_task: Vec<Record> = DATABASE
+            .query(_query)
+            .bind(("id", self.id.clone()))
+            .await?
+            .take(0)?;
+        
+        Ok(())
     }
 
-    fn update_dep(&self, dep: Store) {
-        let id: RecordId = self.id.clone();
-        PlatformSpawner::spawn(async move {
-            let query = format!("UPDATE task SET dep=$dep WHERE id=$id");
-
-            DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("dep", dep).await.unwrap();
-
-            let _update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-        })
+    async fn update_dep(&self, dep: Store) -> anyhow::Result<(), anyhow::Error> {
+        let _update_task: Vec<Record> = DATABASE
+            .query("UPDATE $id SET dep=$dep")
+            .bind(("id", self.id.clone()))
+            .bind(("dep", dep))
+            .await?
+            .take(0)?;
+        Ok(())
     }
 
-    fn update_priority(&self, priority: Option<Priority>) {
-        let id: RecordId = self.id.clone();
-        PlatformSpawner::spawn(async move {
-            let query = format!("UPDATE task SET priority=$priority WHERE id=$id");
-
-            DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("priority", priority.unwrap()).await.unwrap();
-
-            let _update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-        })
+    async fn update_priority(&self, priority: Option<Priority>) -> anyhow::Result<(), anyhow::Error> {
+        let _update_task: Vec<Record> = DATABASE.query("UPDATE $id SET priority=$priority")
+            .bind(("id", self.id.clone()))
+            .bind(("priority", priority.unwrap_or_default()))
+            .await?
+            .take(0)?;
+        Ok(())
     }
 
-    fn update_task_description(&self, description: String) {
-        let id: RecordId = self.id.clone();
-        PlatformSpawner::spawn(async move {
-            let query = format!("UPDATE task SET task_description=$description WHERE id=$id");
-
-            DATABASE.set("id", id).await.unwrap();
-            DATABASE.set("description", description).await.unwrap();
-
-            let _update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-        })
+    async fn update_task_description(&self, description: String) -> anyhow::Result<(), anyhow::Error> {
+        let _update_task: Vec<Record> = DATABASE
+            .query("UPDATE $id SET task_description=$description")
+            .bind(("id", self.id.clone()))
+            .bind(("description", description))
+            .await?
+            .take(0)?;
+        
+        Ok(())
     }
 
-    fn update_checkin_notes(&self, checkin_notes: Option<String>) {
-        let id = self.service_ticket.as_ref();
-        let x = id.unwrap().id.clone();
-        PlatformSpawner::spawn(async move {
-            let query = format!("UPDATE service_order SET checkin_notes=$notes WHERE id=$id");
+    async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> anyhow::Result<(), anyhow::Error> {
+        let ticket = self.service_ticket.as_ref();
+        let ticket_id = ticket.cloned().unwrap_or_default().id.clone();
 
-            DATABASE.set("id", checkin_notes.unwrap()).await.unwrap();
-            DATABASE.set("notes", x).await.unwrap();
-
-            let _update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-        })
+        let _update_task: Vec<Record> = DATABASE.query("UPDATE service_order SET checkin_notes=$notes")
+        .bind(("id", checkin_notes.unwrap_or_default()))
+        .bind(("notes", ticket_id))
+        .await?
+        .take(0)?;
+        
+        Ok(())
     }
 
-    fn update_task_notes(&self, new_msg: String) {
+    async fn update_task_notes(&self, new_msg: String) -> anyhow::Result<(), anyhow::Error> {
         let task_note = TaskNotePayload {
             task_id: Some(self.id.clone()),
             note: new_msg,
-
             ..Default::default()
         };
 
-        PlatformSpawner::spawn(async move {
-            let query = format!("CREATE task_note CONTENT $note");
+        let update_task: Vec<Record> = DATABASE
+        .query("CREATE task_note CONTENT $note")
+        .bind(("note", task_note))
+        .await?
+        .take(0)?;
 
-            // DATABASE.set("id", id.0).await.unwrap();
-            DATABASE.set("note", task_note).await.unwrap();
-
-            let update_task: Vec<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-            info!("Updated notes: {update_task:?}");
-        })
+        info!("Updated notes: {update_task:?}");
+        
+        Ok(())
     }
 }
