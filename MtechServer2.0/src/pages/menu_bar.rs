@@ -170,7 +170,7 @@ impl MtechServer {
                         75 => Store::ORE.as_str(),
                         72 => Store::AF.as_str(),
                         77 => Store::SAN.as_str(),
-                        _ => Store::RIV.as_str(),
+                        _ => usr.store.as_str(),
                     };
             
                     ui.label("Show tasks in: ");
@@ -494,7 +494,8 @@ impl MtechServer {
                         let submit = Button::new(RichText::new("Save Ui Layout").monospace()).ui(ui);
                         if submit.clicked() {
                             let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
-                            usr.user_settings.ui_layout.mastertech = val.clone();
+                            self.context.user_settings.ui_layout.mtechserver = val.clone();
+                            usr.user_settings.ui_layout.mtechserver = val.clone();
                             info!("user_settings: {:#?}", usr.user_settings.ui_layout);
                             #[cfg(target_arch = "wasm32")]
                             {

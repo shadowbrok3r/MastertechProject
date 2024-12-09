@@ -143,7 +143,7 @@ impl eframe::App for MtechServer {
                 self.context.get_settings = false;
                 match serde_json::from_value::<DockState<String>>(user.user_settings.ui_layout.mtechserver.clone()){
                     Ok(tree) => self.tree = tree,
-                    Err(e) => info!("Could not get UI layout from user: {e:?}"),
+                    Err(e) => info!("Could not get UI layout from user: {e:?}: {:#?}", user.user_settings.ui_layout),
                 }
             } 
         }
@@ -154,11 +154,11 @@ impl eframe::App for MtechServer {
         // module
         if self.context.update_settings {
             self.context.update_settings = false;
-            // info!("Saving settings: {:?}", self.context.user_settings.clone());
-            // frame.storage_mut().unwrap().set_string(
-            //     "user_settings",
-            //     serde_json::to_string(&self.context.user_settings).unwrap(),
-            // );
+            info!("Saving settings: {:?}", self.context.user_settings.clone());
+            frame.storage_mut().unwrap().set_string(
+                "user_settings",
+                serde_json::to_string(&self.context.user_settings).unwrap(),
+            );
         }
 
         if self.context.shared_ctx.ai_playground.save_chats {

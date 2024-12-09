@@ -85,7 +85,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<Wss>(DB_URL_LOCAL).await {
+        match DATABASE.connect::<Wss>(DB_URL).await {
             Ok(_) => info!("Connected to {DB_URL:?}"),
             Err(e) => info!("Error connecting to database: {e:?}"),
         } //(&get_db_url()).await?;
@@ -155,7 +155,7 @@ impl Database {
         let cap = Capabilities::all();
         let config = Config::new().capabilities(cap);
 
-        DATABASE.connect::<Wss>((DB_URL_LOCAL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Wss>((DB_URL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE
