@@ -8,7 +8,6 @@ use eframe::egui::{
     vec2, Button, CentralPanel, Color32, CursorIcon, Frame, Margin, RichText, ScrollArea, TextEdit,
     TextStyle, TopBottomPanel, Ui, Widget,
 };
-// use egui_extras::{Size, StripBuilder};
 use log::info;
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
@@ -37,7 +36,7 @@ impl MastertechContext {
 
                     ui.add_space(50.);
 
-                    TextEdit::singleline(&mut self.data_viewer.filter)
+                    TextEdit::singleline(&mut self.seb_email)
                         .desired_width(150.)
                         .hint_text("Search with Email or Device ID")
                         .ui(ui);
@@ -47,7 +46,7 @@ impl MastertechContext {
                     if Button::new("Lookup SEB Info").ui(ui).clicked() {
                         let tx = self.seb_channel.0.clone();
                         let client = self.client.clone();
-                        let search_string = self.data_viewer.filter.clone();
+                        let search_string = self.seb_email.clone();
                         spawn(async move {
                             let mut params: HashMap<&str, &str> = HashMap::new();
                             params.insert("user_email", "logan.lees@pclaptops.com");
@@ -92,7 +91,7 @@ impl MastertechContext {
                         .collect::<Vec<String>>()
                         .clone();
                     drives.sort_unstable_by(|b, a| b.partial_cmp(a).unwrap());
-                    let search_string = self.data_viewer.filter.clone();
+                    let search_string = self.seb_email.clone();
 
                     for drive in drives.iter().cloned() {
                         let button = Button::new(RichText::new(drive.clone()));

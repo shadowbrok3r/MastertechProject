@@ -19,10 +19,9 @@ impl eframe::App for MtechServer {
                 let theme = self.context.shared_ctx.theme_config.edit_ui(ui);
                 if theme.0 {
                     if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
-                        let user_settings = user.user_settings.as_mut().unwrap();
-                        user_settings.color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
+                        user.user_settings.color_scheme = serde_json::to_value(theme.1.clone()).unwrap();
                         if let Some(storage) = frame.storage_mut() {
-                            storage.set_string("user_settings", serde_json::to_string(&user_settings).unwrap_or_default());
+                            storage.set_string("user_settings", serde_json::to_string(&user.user_settings).unwrap_or_default());
                         }
                         #[cfg(target_arch = "wasm32")]
                         {
@@ -125,7 +124,7 @@ impl eframe::App for MtechServer {
         self.receive();
         self.context.shared_ctx.receive();
         self.receive_database(frame);
-        self.receive_inventory();
+        self.context.shared_ctx.receive_inventory();
         self.context.shared_ctx.receive_client();
         self.context.shared_ctx.receive_ui_action();
         self.context.shared_ctx.receive_prestashop();
@@ -133,21 +132,18 @@ impl eframe::App for MtechServer {
         self.context.shared_ctx.receive_ticket();
         self.context.shared_ctx.receive_notes();
         self.context.shared_ctx.receive_notification();
-        self.menu_bar(ctx);
         self.context.shared_ctx.handle_modals(ctx);
-        self.context.toasts.show(ctx);
+        self.context.shared_ctx.handle_viewports(ctx);
+        self.context.shared_ctx.toasts.show(ctx);
+        self.menu_bar(ctx);
 
         // Get User settings from local storage
         if let Some(user) = &self.context.shared_ctx.current_user {
             if self.context.get_settings {
                 self.context.get_settings = false;
-                if let Some(settings) = &user.user_settings {
-                    if let Some(layout) = &settings.ui_layout {
-                        match serde_json::from_value::<DockState<String>>(layout.clone()){
-                            Ok(dock_state) => self.tree = dock_state,
-                            Err(e) => info!("Could not get UI layout from user: {e:?}"),
-                        }
-                    }
+                match serde_json::from_value::<DockState<String>>(user.user_settings.ui_layout.mtechserver.clone()){
+                    Ok(tree) => self.tree = tree,
+                    Err(e) => info!("Could not get UI layout from user: {e:?}"),
                 }
             } 
         }
@@ -158,17 +154,17 @@ impl eframe::App for MtechServer {
         // module
         if self.context.update_settings {
             self.context.update_settings = false;
-            info!("Saving settings: {:?}", self.context.user_settings.clone());
+            // info!("Saving settings: {:?}", self.context.user_settings.clone());
             // frame.storage_mut().unwrap().set_string(
             //     "user_settings",
             //     serde_json::to_string(&self.context.user_settings).unwrap(),
             // );
         }
 
-        if self.context.ai_playground.save_chats {
-            self.context.ai_playground.save_chats = false;
+        if self.context.shared_ctx.ai_playground.save_chats {
+            self.context.shared_ctx.ai_playground.save_chats = false;
             if let Some(_usr) = &self.context.shared_ctx.current_user {
-                let threads = self.context.ai_playground.get_threads();
+                let threads = self.context.shared_ctx.ai_playground.get_threads();
                 // for (id, thread) in threads {
                     // thread.messages
                 // }
@@ -189,9 +185,7 @@ impl eframe::App for MtechServer {
             // Always checking authentication
             AppState::Authenticated(MainPages::Tasks) => self.main_page(ctx),
             AppState::Authenticated(MainPages::Downloads) => self.downloads_page(ctx),
-            AppState::Authenticated(MainPages::AccountSettings) => {
-                self.account_settings_page(ctx, self.context.app_state_tx.clone())
-            }
+            AppState::Authenticated(MainPages::AccountSettings) => self.account_settings_page(ctx, self.context.app_state_tx.clone()),
             AppState::Authenticated(MainPages::WebConsole) => self.web_console(ctx),
             AppState::Authenticated(_) => self.main_page(ctx),
             AppState::CreateAccount => self.signup_page(

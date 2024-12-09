@@ -1,27 +1,10 @@
-use crate::{
-    pages::{login_page::Login, signup_page::Signup, account_settings_page::AccountMod, downloads_page::GithubRelease}, 
-    tabs::{
-        ai_playground::AiPlayground,
-        github_issue::GithubIssue,
-        json_viewer::{JsonEditor, JsonEditorState},
-        stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
-        stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer},
-        terminal::chart::App, 
-        web_console::websockets::WebSocketClient
-    }
-};
-use displays::{
-    app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, egui_data_table::DataTable, modals::{
-        create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow
-    }, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem
-};
+use displays::{app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use crate::{pages::{login_page::Login, signup_page::Signup, account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{github_issue::GithubIssue, web_console::websockets::WebSocketClient}};
 use database::{schema::{prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskPayload, UserSettings}, Database};
+use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use eframe::{egui::{Align2, Context}, CreationContext};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use crossbeam::channel::{self, Receiver, Sender};
-use async_openai_wasm::types::ThreadObject;
-use web_time::{Duration, Instant};
 use serde_json::Value;
 use serde::Serialize;
 use anyhow::Error;
@@ -94,18 +77,7 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     #[serde(skip)]
-    pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
-    #[serde(skip)]
-    pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
-    #[serde(skip)]
     pub seb_channel: (Sender<Vec<Value>>, Receiver<Vec<Value>>),
-    #[serde(skip)]
-    pub extra_stock_channel: (
-        Sender<Vec<ExtraInventoryData>>,
-        Receiver<Vec<ExtraInventoryData>>,
-    ),
-    #[serde(skip)]
-    pub ai_thread_channel: (Sender<ThreadObject>, Receiver<ThreadObject>),
     
 
     // UI and Application State Fields
@@ -133,22 +105,7 @@ pub struct MtechServerContext {
     pub toasts: Toasts,
     pub notifications: Vec<Notification>,
     pub read_notifications: bool,
-    #[serde(skip)]
-    pub json_editor: JsonEditor,
-    #[serde(skip)]
-    pub json_editor_state: JsonEditorState,
-    /// generic data viewer (currently used for inventory tab)
-    #[serde(skip)]
-    pub data_viewer: MyRowViewer,
-    /// generic data table (currently used for inventory tab)
-    #[serde(skip)]
-    pub data_table: DataTable<MyRowData>,
-    /// Data viewer for Stock Quantities tab
-    #[serde(skip)]
-    pub stock_quantity_viewer: StockQuantityViewer,
-    /// Data for Stock Quantities tab
-    #[serde(skip)]
-    pub stock_quantity_table: DataTable<StockQuantityData>,
+
 
     // System Data and Settings
     pub user_settings: UserSettings,
@@ -197,19 +154,6 @@ pub struct MtechServerContext {
 
     // Other Components
     pub tur: Tur,
-    /// This is a test chart
-    /// for running a TUI in egui
-    /// currently not being used
-    #[serde(skip)]
-    pub chart_app: App,
-    /// Tick rate for Chart
-    pub tick_rate: Duration,
-    /// Track last tick for Chart
-    #[serde(skip)]
-    pub last_tick: Instant,
-    /// Just some testing for Ai capabilities
-    #[serde(skip)]
-    pub ai_playground: AiPlayground,
     /// Do we need to refresh the UI?
     pub refresh: bool,
 }
@@ -218,30 +162,12 @@ impl MtechServer {
     pub fn new(cc: &CreationContext<'_>) -> Self {
         let tree = default_tree();
 
-        // let ctx = cc.egui_ctx.clone();
-        // let data_update = Rc::new(std::cell::Cell::new(None));
-        // let sender = data_update.clone();
-        // let context = ctx.clone();
-        // let bridge = <WebWorker as Spawnable>::spawner()
-        //     .callback(move |response| {
-        //         sender.set(Some(response.buckets));
-        //         context.request_repaint();
-        //     })
-        //     .spawn("./dummy_worker.js");
-
         let (db_tx, db_rx) = channel::unbounded();
         let (app_state_tx, app_state_rx) = channel::unbounded::<AppState>();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
-        let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
-        let serial_channel = <SerialData>::create_unbounded_channel();
-        let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let seb_channel = <Vec<Value>>::create_unbounded_channel();
-        let ai_thread_channel = <ThreadObject>::create_unbounded_channel();
-
-        let mut data_viewer = MyRowViewer::default();
-        data_viewer.stock_tx = Some(serial_channel.0.clone());
 
         let context = MtechServerContext {
             shared_ctx: SharedContext::new(cc),
@@ -259,13 +185,11 @@ impl MtechServer {
             github_releases_channel,
             bytes_channel,
             tur_channel,
-            extra_stock_channel,
             seb_channel,
-            ai_thread_channel,
 
             // MODALS / LAYOUTS
             tur: Tur::default(),
-            ai_playground: AiPlayground::default(),
+            
             edited_task: TaskPayload::default(),
             opened_modals: HashMap::new(),
             chat_modal: None,
@@ -274,10 +198,6 @@ impl MtechServer {
             file_system: FileSystem::new(),
             github_issue: GithubIssue::new(),
             github_releases: Vec::new(),
-
-            tick_rate: Duration::from_millis(30),
-            chart_app: App::new(),
-            last_tick: Instant::now(),
             url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_string(),
             ws_clients: HashMap::new(),
             undock_client: HashMap::new(),
@@ -299,18 +219,10 @@ impl MtechServer {
             read_notifications: false,
             total_download_size: 0.0,
             download_progress: 0.0,
-            json_editor: JsonEditor::default(),
-            json_editor_state: JsonEditorState::SettingsPage,
             user_settings: UserSettings::default(),
             update_settings: false,
             get_settings: true,
-            data_table: DataTable::<MyRowData>::default(),
-            stock_quantity_viewer: StockQuantityViewer::default(),
-            stock_quantity_table: DataTable::<StockQuantityData>::default(),
 
-            data_viewer,
-            stock_channel,
-            serial_channel,
             refresh: false,
         };
 
@@ -378,7 +290,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
             "My Tasks".to_owned(),
             "Bug Report".to_owned(),
             // "Task Audit".to_owned(),
-            "Ai Playground".to_owned(),
+            "Ai".to_owned(),
         ],
     );
 

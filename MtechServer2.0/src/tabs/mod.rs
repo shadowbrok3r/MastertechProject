@@ -1,29 +1,19 @@
-pub mod aging_tasks;
-pub mod ai_playground;
 pub mod customer;
 pub mod github_issue;
-pub mod json_viewer;
-pub mod logger;
 pub mod query_builder;
 pub mod quote_fulfilled_tasks;
 pub mod seb_lookup;
-pub mod stock;
-pub mod stock_quantities;
-pub mod task_audit;
-pub mod terminal;
-pub mod toolbox;
 pub mod user_chat;
 pub mod web_console;
+// pub mod terminal;
 
-use super::app_state::MtechServerContext;
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};
-use displays::FilterTasks;
 use eframe::egui::{ComboBox, Response, Ui, WidgetText};
+use displays::{tabs::{logger::logger_ui, stock::{get_extra_stock_info, get_stock}}, FilterTasks};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
-use log::info;
-use logger::logger_ui;
-use stock::{get_extra_stock_info, get_stock};
+use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
+use log::info;
 
 impl MtechServerContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
@@ -123,22 +113,22 @@ impl TabViewer for MtechServerContext {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "Lil menu" => self.simple_demo_menu(ui),
-            "Terminal" => self.terminal(ui),
-            "My Tools" => self.toolbox(ui),
+            "My Tools" => self.shared_ctx.toolbox(ui),
             "Store Tasks" => self.shared_ctx.store_tasks(ui),
             "My Tasks" => self.shared_ctx.my_tasks(ui),
-            "Ai Playground" => self.ai_playground(ui),
+            "Ai" => self.shared_ctx.ai_playground(ui),
             "Web Console" => self.web_console(ui),
             "Completed Tasks" => self.shared_ctx.completed_tasks(ui),
             "Bug Report" => self.github(ui),
-            // "Customers" => self.customer_view(ui),
             "Logs" => logger_ui().show(ui),
             "Query Builder" => self.query_builder(ui),
-            "Json Viewer" => self.json_viewer(ui),
-            "Stock" => self.stock_viewer(ui),
+            "Json Viewer" => self.shared_ctx.json_viewer(ui),
+            "Stock" => self.shared_ctx.stock_viewer(ui),
             "SEB Lookup" => self.seb_lookup(ui),
-            "Task Audit" => self.task_table_viewer(ui),
-            "Stock Quantity" => self.stock_quantities_viewer(ui),
+            "Task Audit" => self.shared_ctx.task_table_viewer(ui),
+            "Stock Quantity" => self.shared_ctx.stock_quantities_viewer(ui),
+            // "Customers" => self.customer_view(ui),
+            // "Terminal" => self.terminal(ui),
             _ => {}
         }
     }
@@ -181,7 +171,7 @@ impl TabViewer for MtechServerContext {
             &"Web Console".to_string(),
             &"Store Tasks".to_string(),
             &"My Tasks".to_string(),
-            &"Ai Playground".to_string(),
+            &"Ai".to_string(),
             &"Completed Tasks".to_string(),
             &"Customers".to_string(),
             &"Logs".to_string(),
@@ -209,7 +199,7 @@ impl TabViewer for MtechServerContext {
             match tab.as_str() {
                 "Stock" => {
                     if let Some(usr) = &self.shared_ctx.current_user {
-                        let stock_tx = self.stock_channel.0.clone();
+                        let stock_tx = self.shared_ctx.stock_channel.0.clone();
                         let store_selection = match usr.clone().store {
                             Store::RIV => 76,
                             Store::LTN => 73,
@@ -226,7 +216,7 @@ impl TabViewer for MtechServerContext {
                     }
                 },
                 "Stock Quantity" => {
-                    let ex_stock_tx = self.extra_stock_channel.0.clone();
+                    let ex_stock_tx = self.shared_ctx.extra_stock_channel.0.clone();
                     spawn_local(async move {
                         let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
                         info!("Extra Stock {stock_quantities:?}");

@@ -1,12 +1,11 @@
-use crate::tabs::tur_sheet::scaffold::AsanaResponse;
-
-use super::utilities::crypto::pass_hash::load_encrypted_user_data;
 use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
-use database::schema::GetKeysResponse;
-use eframe::egui::{Context, ViewportCommand};
-use super::app_state::{AppState, MasterTechApp, MainPages};
-use database::{schema::ComputerData, Database};
+use super::utilities::crypto::pass_hash::load_encrypted_user_data;
+use super::app_state::{AppState, MasterTechApp};
+use crate::tabs::tur_sheet::scaffold::AsanaResponse;
 use super::filesystem::system_info::ComputerInfo;
+use database::{schema::ComputerData, Database};
+use eframe::egui::{Context, ViewportCommand};
+use database::schema::GetKeysResponse;
 use std::sync::{Arc, Condvar, Mutex};
 use super::pages::login_page::HASH;
 use std::sync::atomic::Ordering;
@@ -16,6 +15,7 @@ use tokio::spawn;
 
 impl MasterTechApp {
     pub fn first_run(&mut self) {
+        self.context.first_run = false;
         // let x = std::env::current_exe().unwrap();
         // std::fs::rename( x, "Mastertech1").unwrap();
         let tx = self.context.db_tx.clone();
@@ -60,8 +60,6 @@ impl MasterTechApp {
         let loaded_data = load_encrypted_user_data(HASH);
         match loaded_data {
             Some(login) => {
-                self.state = AppState::Authenticated(MainPages::Tasks);
-
                 spawn(async move {
                     let db = Database::new(login.username, login.password, None).await;
                     info!("DB: {db:?}");
@@ -106,21 +104,18 @@ impl MasterTechApp {
                         .duration_in_seconds(6.0),
                 };
                 toast.add(error_toast);
-                self.state = AppState::Login;
+                let _ = self.context.app_state_tx.try_send(AppState::Login);
             }
         }
     }
 
     pub fn load_data(&mut self, ctx: &Context) {
         if let Some(usr) = self.context.shared_ctx.current_user.clone() {
-            if let Some(settings) = &usr.user_settings {
-                match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()) {
-                    Ok(color_settings) => {
-                        self.context.shared_ctx.theme_config = color_settings.clone();
-                    },
-                    Err(e) => info!("Error setting theme config: {e:?}"),
-                }
+            match serde_json::from_value::<ThemeConfig>(usr.user_settings.color_scheme.clone()) {
+                Ok(color_settings) => self.context.shared_ctx.theme_config = color_settings.clone(),
+                Err(e) => info!("Error setting theme config: {e:?}"),
             }
+            
             self.context.connect(ctx.clone());
             self.context.show_ws_viewport.store(true, Ordering::Relaxed);
         }
@@ -211,10 +206,6 @@ impl MasterTechApp {
 
         while let Ok(copied_items) = self.context.copied_items_rx.try_recv() {
             self.context.output_text += &format!("{copied_items}\n");
-        }
-
-        if let Ok(users) = self.context.shared_ctx.store_users_rx.try_recv() {
-            self.context.shared_ctx.store_users = users;
         }
 
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {

@@ -206,12 +206,12 @@ impl ComputerInfo for ComputerData {
 
         for component in &components {
             // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
-            component_temps.insert(component.label().to_string(), component.temperature());
+            component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
             // comps += format!("{component:#?} \n", component.).as_str();
         }
 
         let mut s =
-            System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
+            System::new_with_specifics(RefreshKind::everything());
 
         std::thread::sleep(Duration::from_millis(200));
 
@@ -363,12 +363,12 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
     for component in &components {
         // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
-        component_temps.insert(component.label().to_string(), component.temperature());
+        component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
         // comps += format!("{component:#?} \n", component.).as_str();
     }
 
     let mut s =
-        System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
+        System::new_with_specifics(RefreshKind::everything());
 
     std::thread::sleep(Duration::from_millis(200));
 

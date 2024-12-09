@@ -1,12 +1,11 @@
-use crate::{channel_manager::ChannelManager, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
 use std::{collections::HashMap, sync::Arc};
-use surrealdb::Action;
+use surrealdb::{Action, RecordId};
 use serde::Serialize;
 use anyhow::Error;
-
 
 #[derive(Serialize)]
 pub struct SharedContext {
@@ -86,19 +85,17 @@ pub struct SharedContext {
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
-    // #[serde(skip)]
-    // pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
-    // #[serde(skip)]
-    // pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
-    // #[serde(skip)]
-    // pub seb_channel: (Sender<Vec<Value>>, Receiver<Vec<Value>>),
-    // #[serde(skip)]
-    // pub extra_stock_channel: (
-    //     Sender<Vec<ExtraInventoryData>>,
-    //     Receiver<Vec<ExtraInventoryData>>,
-    // ),
-    // #[serde(skip)]
-    // pub ai_thread_channel: (Sender<ThreadObject>, Receiver<ThreadObject>),
+    #[serde(skip)]
+    pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
+    #[serde(skip)]
+    pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
+    #[serde(skip)]
+    pub extra_stock_channel: (
+        Sender<Vec<ExtraInventoryData>>,
+        Receiver<Vec<ExtraInventoryData>>,
+    ),
+    #[serde(skip)]
+    pub ai_thread_channel: (Sender<crate::openai::types::ThreadObject>, Receiver<crate::openai::types::ThreadObject>),
 
     // Notifications and App State
     #[serde(skip)]
@@ -140,6 +137,29 @@ pub struct SharedContext {
     // Other Components
     pub tur: Tur,
     pub close_modal: Option<String>,
+
+    #[serde(skip)]
+    pub json_editor: JsonEditor,
+    #[serde(skip)]
+    pub json_editor_state: JsonEditorState,
+    /// generic data viewer (currently used for inventory tab)
+    #[serde(skip)]
+    pub serials_viewer: SerialsViewer,
+    /// generic data table (currently used for inventory tab)
+    #[serde(skip)]
+    pub serials_table: DataTable<SerialsData>,
+    /// Data viewer for Stock Quantities tab
+    #[serde(skip)]
+    pub stock_quantity_viewer: StockQuantityViewer,
+    /// Data for Stock Quantities tab
+    #[serde(skip)]
+    pub stock_quantity_table: DataTable<StockQuantityData>,
+
+    /// Just some testing for Ai capabilities
+    #[serde(skip)]
+    pub ai_playground: AiPlayground,
+    #[serde(skip)]
+    pub show_tasks_viewport: HashMap<RecordId, ViewportData>,
 }
 
 impl SharedContext {
@@ -164,15 +184,15 @@ impl SharedContext {
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
+        let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
+        let serial_channel = <SerialData>::create_unbounded_channel();
+        let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
+        let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
         // let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
-        // let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
-        // let serial_channel = <SerialData>::create_unbounded_channel();
-        // let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         // let seb_channel = <Vec<Value>>::create_unbounded_channel();
-        // let ai_thread_channel = <ThreadObject>::create_unbounded_channel();
 
-        // let mut data_viewer = MyRowViewer::default();
-        // data_viewer.stock_tx = Some(serial_channel.0.clone());
+        let mut serials_viewer = SerialsViewer::default();
+        serials_viewer.stock_tx = Some(serial_channel.0.clone());
 
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
@@ -215,14 +235,14 @@ impl SharedContext {
             notification_rx,
             live_notification_tx,
             live_notification_rx,
-            // github_releases_channel,
             bytes_channel,
             tur_channel,
-            // stock_channel,
-            // serial_channel,
+            stock_channel,
+            serial_channel,
+            extra_stock_channel,
+            ai_thread_channel,
+            // github_releases_channel,
             // seb_channel,
-            // extra_stock_channel,
-            // ai_thread_channel,
             undock_client: HashMap::new(),
             wants_to_undock: false,
             clients: Vec::new(),
@@ -231,12 +251,21 @@ impl SharedContext {
             new_note: false,
             // ws_clients: HashMap::new(),
 
-                // Other Components
+            // Other Components
+            json_editor: JsonEditor::default(),
+            json_editor_state: JsonEditorState::SettingsPage,
+            serials_table: DataTable::<SerialsData>::default(),
+            serials_viewer,
+            stock_quantity_viewer: StockQuantityViewer::default(),
+            stock_quantity_table: DataTable::<StockQuantityData>::default(),
+            ai_playground: AiPlayground::default(),
+
             tur: Tur::default(),
             close_modal: None,
             theme_config,
             theme,
             modify_theme: false,
+            show_tasks_viewport: HashMap::new(),
         }
     }
 

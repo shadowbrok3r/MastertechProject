@@ -786,7 +786,7 @@ pub struct User {
     // pub notifications: Option<Vec<NotificationId>>,
     pub minio_access_key: Option<String>,
     pub minio_secret_key: Option<String>,
-    pub user_settings: Option<UserSettings>,
+    pub user_settings: UserSettings,
     pub id_prestashop: Option<u64>,
     pub id_store: Option<String>,
     pub chat_threads: Option<Vec<ChatThreads>>
@@ -802,7 +802,7 @@ impl Default for User {
             store: Store::default(),
             minio_access_key: None,
             minio_secret_key: None,
-            user_settings: None,
+            user_settings: UserSettings::default(),
             id_store: None,
             id_prestashop: None,
             chat_threads: None
@@ -814,8 +814,14 @@ impl Eq for User {}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
 pub struct UserSettings {
-    pub color_scheme: Value, // ui.color_edit_button_srgba(color)
-    pub ui_layout: Option<Value>,
+    pub color_scheme: Value,
+    pub ui_layout: UiLayout
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default, Eq)]
+pub struct UiLayout {
+    pub mtechserver: Value,
+    pub mastertech: Value,
 }
 
 impl Priority {
@@ -841,6 +847,7 @@ impl Status {
     }
     pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
 }
+
 
 
 

@@ -13,7 +13,6 @@ impl MtechServer{
         style.main_surface_border_rounding.nw = 15.0;
         style.main_surface_border_rounding.ne = 15.0;
         style.buttons.close_tab_color = Color32::from_rgb(191, 33, 101);
-        // style.tab_bar.bg_fill = Color32::TRANSPARENT;
         style.tab_bar.hline_color = Color32::TRANSPARENT;
         style.separator.color_idle = Color32::TRANSPARENT;
         style.main_surface_border_stroke = Stroke::new(0.25, Color32::TRANSPARENT);

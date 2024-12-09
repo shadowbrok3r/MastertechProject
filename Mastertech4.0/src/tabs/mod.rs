@@ -1,19 +1,16 @@
-use crate::app_state::MastertechContext;
-use crate::tabs::logger::logger_ui;
-use anyhow::Error;
 use database::schema::{utilities::{get_completed_tasks_for_store, get_tasks_for_store}, Store};
-use displays::FilterTasks;
-use eframe::egui::{Ui, WidgetText};
+use displays::{tabs::{logger::logger_ui, stock::{get_extra_stock_info, get_stock}}, FilterTasks};
 use egui_dock::{NodeIndex, SurfaceIndex, TabViewer};
+use crate::app_state::MastertechContext;
+use eframe::egui::{Ui, WidgetText};
 use github::get_github_releases;
-use log::{error, info};
-use stock::{get_extra_stock_info, get_stock};
-use tokio::spawn;
 use std::sync::atomic::Ordering;
+use log::{error, info};
+use anyhow::Error;
+use tokio::spawn;
 
 pub mod file_browser;
 pub mod github;
-pub mod logger;
 #[cfg(target_os = "windows")]
 pub mod minidump;
 pub mod output_console;
@@ -23,12 +20,10 @@ pub mod quality_check;
 pub mod resource_mon;
 pub mod scripts;
 pub mod seb_lookup;
-pub mod stock;
 pub mod system_information;
 pub mod toolbox;
 pub mod tur_sheet;
 pub mod websockets;
-pub mod stock_quantities;
 
 impl MastertechContext {
     pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
@@ -77,30 +72,24 @@ impl TabViewer for MastertechContext {
             "Console" => self.output_console(ui),
             "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
-            "ToolBox" => self.toolbox(ui),
+            "ToolBox" => self.shared_ctx.toolbox(ui),
             "File Browser 📂" => self.file_browse(ui),
             "SysInfo" => self.system_information(ui),
             #[cfg(target_os = "windows")]
             "Minidump Analysis" => self.mini_dump(ui),
             "QC ☑️" => self.quality_check(ui),
             "My Tasks" => self.shared_ctx.my_tasks(ui),
+            "Ai" => self.shared_ctx.ai_playground(ui),
             "Store Tasks" => self.shared_ctx.store_tasks(ui),
             "Completed Tasks" => self.shared_ctx.completed_tasks(ui),
             "Bug Tracker" => self.github(ui),
             "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),
             "SEB Lookup" => self.seb_lookup(ui),
-            "Stock" => self.stock_viewer(ui),
+            "Stock" => self.shared_ctx.stock_viewer(ui),
             "Logs" => logger_ui().show(ui),
-            "Stock Quantity" => self.stock_quantities_viewer(ui),
-            _ => {
-                let sysinfo_tab = &"SysInfo".to_string();
-                if ui.label(tab.as_str()).clicked() {
-                    if tab.as_str() == sysinfo_tab {
-                        self.first_run = true;
-                    }
-                };
-            }
+            "Stock Quantity" => self.shared_ctx.stock_quantities_viewer(ui),
+            _ => {}
         }
     }
 
@@ -140,7 +129,7 @@ impl TabViewer for MastertechContext {
             match tab.as_str() {
                 "Stock" => {
                     if let Some(usr) = &self.shared_ctx.current_user {
-                        let stock_tx = self.stock_channel.0.clone();
+                        let stock_tx = self.shared_ctx.stock_channel.0.clone();
                         let store_selection = match usr.clone().store {
                             Store::RIV => 76,
                             Store::LTN => 73,
@@ -159,7 +148,7 @@ impl TabViewer for MastertechContext {
                     }
                 },
                 "Stock Quantity" => {
-                    let ex_stock_tx = self.extra_stock_channel.0.clone();
+                    let ex_stock_tx = self.shared_ctx.extra_stock_channel.0.clone();
                     spawn(async move {
 
                         match get_extra_stock_info(ex_stock_tx).await{

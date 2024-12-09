@@ -255,10 +255,7 @@ impl MastertechContext{
                 });
 
 
-            }else{
-                self.submit_tur_email();
             }
-
             self.spinner = false;
             
             self.output_text += "\nSent Ticket";

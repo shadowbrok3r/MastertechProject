@@ -1,9 +1,6 @@
 #![allow(async_fn_in_trait)]
 use super::{
-    prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop},
-    ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record,
-    SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User,
-    TASK_NOTE_TABLE,
+    prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
 use crate::DATABASE;
 use anyhow::{Error, Result};
@@ -12,6 +9,7 @@ use chrono::{NaiveDateTime, TimeZone, Utc};
 use log::{debug, info};
 use regex::Regex;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::Value;
 use std::{collections::HashMap, fmt::Debug};
 use structdiff::StructDiff;
 use surrealdb::RecordId;
@@ -75,7 +73,15 @@ pub trait UserHelper {
     /// # Returns
     /// - `Ok(())` on success.
     /// - `Err(Error)` if an error occurs while saving the settings.
-    async fn save_user_ui_layout(&mut self) -> Result<(), Error>;
+    async fn save_mastertech_ui_layout(&mut self, settings: Value) -> Result<(), Error>;
+
+
+    /// Saves the user settings to the database or persistent storage.
+    ///
+    /// # Returns
+    /// - `Ok(())` on success.
+    /// - `Err(Error)` if an error occurs while saving the settings.
+    async fn save_mtechserver_ui_layout(&mut self, settings: Value) -> Result<(), Error>;
 
     /// Retrieves the store number from the Odoo system.
     ///
@@ -1028,16 +1034,23 @@ impl UserHelper for User {
         Ok(employee)
     }
 
-    async fn save_user_ui_layout(&mut self) -> Result<(), Error> {
-
-        // info!(
-        //     "User Settings to apply: {user_settings:?}\nTo User: {:?}",
-        //     self.id.clone()
-        // );
-
+    async fn save_mastertech_ui_layout(&mut self, settings: Value) -> Result<(), Error>{
+        info!("Settings for MASTERTECH: {:?}", settings.clone());
         match DATABASE
-            .query("UPDATE $auth.id SET user_settings.ui_layout = $settings")
-            .bind(("settings", self.user_settings.clone().unwrap().ui_layout))
+            .query("UPDATE $auth.id SET user_settings.ui_layout.mastertech = $settings")
+            .bind(("settings", settings))
+            .await
+        {
+            Ok(res) => info!("Result: {res:?}"),
+            Err(e) => info!("Error updating User Settings: {e:?}"),
+        }
+        Ok(())
+    }
+    async fn save_mtechserver_ui_layout(&mut self, settings: Value) -> Result<(), Error>{
+        info!("Settings for MTECHSERVER: {:?}", settings.clone());
+        match DATABASE
+            .query("UPDATE $auth.id SET user_settings.ui_layout.mtechserver = $settings")
+            .bind(("settings", settings))
             .await
         {
             Ok(res) => info!("Result: {res:?}"),

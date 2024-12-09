@@ -1,5 +1,5 @@
-use crate::tabs::json_viewer::Show;
 use database::schema::{ExtendedSeb, LocalSebData};
+use displays::tabs::json_viewer::Show;
 use eframe::egui::{
     Button, CentralPanel, Frame, Margin, ScrollArea, TextEdit, TextStyle, TopBottomPanel, Ui,
     Widget,
@@ -73,13 +73,13 @@ impl MtechServerContext {
                     .max_width(f32::INFINITY)
                     .auto_shrink(false)
                     .show_rows(ui, row_height, total_rows, |ui, _row_range| {
-                        if self.json_editor.value.is_null() {
+                        if self.shared_ctx.json_editor.value.is_null() {
                             let mut local_seb = LocalSebData::default();
                             local_seb.ExtendedSeb = Some(ExtendedSeb::default());
 
-                            let _ = self.json_editor.set_value(local_seb);
+                            let _ = self.shared_ctx.json_editor.set_value(local_seb);
                         }
-                        self.json_editor.show(ui);
+                        self.shared_ctx.json_editor.show(ui);
                     });
             });
     }

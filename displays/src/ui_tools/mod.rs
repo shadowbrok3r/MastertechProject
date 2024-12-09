@@ -1,4 +1,11 @@
-use eframe::egui::{text::LayoutJob, Color32, FontId, TextFormat};
+use std::collections::BTreeSet;
+
+use database::schema::TaskPayload;
+use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, Rounding, TextFormat, Ui, Widget};
+use log::info;
+use regex::Regex;
+
+use crate::TaskUiActions;
 
 pub mod autocomplete;
 pub mod carl_dark;
@@ -6,6 +13,101 @@ pub mod mention_handler;
 pub mod toasts;
 pub mod tokyo_dark;
 pub mod theme_config;
+
+pub fn find_task_in_description(
+    notification_description: &str,
+    task_names: &BTreeSet<String>, // BTreeSet of task names
+) -> Vec<String> {
+    // Define multiple regex patterns for different task formats
+    let regex_patterns = vec![
+        Regex::new(r"in task (.+)").unwrap(), // Matches: "in task {task name}"
+        Regex::new(r"(.+) assigned to you").unwrap(), // Matches: "{task name} assigned to you"
+    ];
+
+    // Iterate through each regex pattern and try to find matches
+    let mut matches: Vec<String> = Vec::new();
+    for task_name_regex in regex_patterns {
+        // Use regex to find the task name in the description
+        if let Some(caps) = task_name_regex.captures(notification_description) {
+            if let Some(match_task_name) = caps.get(1) {
+                // Get the first capture group (task name)
+                let task_name = match_task_name.as_str().to_string();
+
+                // Check if the extracted task name is in the set of task names
+                if task_names.contains(&task_name) {
+                    matches.push(task_name); // Add the matching task name to the result
+                }
+            }
+        }
+    }
+
+    matches
+}
+
+pub fn show_notification(
+    ui: &mut Ui,
+    notification_description: &str,
+    task_names: &BTreeSet<String>,
+    ui_actions_tx: crossbeam::channel::Sender<TaskUiActions>,
+    tasks: &Vec<TaskPayload>,
+) {
+    // Find task names in the notification description using regex
+    let matches = find_task_in_description(notification_description, task_names);
+
+    // We assume only one match for simplicity; handle multiple matches if necessary
+    if let Some(task_name) = matches.get(0) {
+        // Find where the task name is in the notification description
+        if let Some(pos) = notification_description.find(task_name) {
+            // Split the text into before, task name, and after
+            let before = &notification_description[..pos];
+            let after = &notification_description[pos + task_name.len()..];
+
+            // Display the text parts with different formatting
+            eframe::egui::Frame::none()
+                .fill(ui.style().visuals.window_fill)
+                .rounding(Rounding::same(12.0))
+                .inner_margin(Margin::same(15.0))
+                .outer_margin(Margin::same(5.0))
+                .show(ui, |ui| {
+                    info!("{pos:?}, {before:?}, {task_name:?}, {after:?}");
+                    ui.horizontal_wrapped(|ui| {
+                        // Show the text before the task name
+                        ui.label(RichText::new(before));
+
+                        // Show the task name in a different color (e.g., blue)
+                        let color = Color32::from_rgba_premultiplied(42, 222, 192, 60);
+                        if Button::new(
+                            RichText::new(task_name)
+                                .color(color),
+                        )
+                        .ui(ui)
+                        .clicked
+                        {
+                            let task = tasks.iter().find(|&x| {
+                                x.task_name == *task_name
+                                    || format!("{}", x.service_number.clone().unwrap_or_default())
+                                        == format!("{}", *task_name)
+                            });
+
+                            if let Some(task) = task {
+                                let _ = ui_actions_tx
+                                    .try_send(TaskUiActions::OpenTaskModal(task.clone()));
+                            }
+                        }
+
+                        // Show the text after the task name
+                        ui.label(after);
+                    });
+                });
+        } else {
+            // If no task name is found, display the whole description normally
+            ui.label(notification_description);
+        }
+    } else {
+        // If no task name is matched, just show the description
+        ui.label(notification_description);
+    }
+}
 
 /// Function to color text between two delimiters
 pub fn color_between_delimiters(

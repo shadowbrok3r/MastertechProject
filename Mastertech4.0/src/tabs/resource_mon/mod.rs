@@ -29,7 +29,7 @@ impl MastertechContext {
 
                 let mut live = VecDeque::new();
                 let mut s = System::new_with_specifics(
-                    RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
+                    RefreshKind::everything().with_cpu(CpuRefreshKind::everything()),
                 );
                 // Wait a bit because CPU usage is based on diff.
                 std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
@@ -107,7 +107,7 @@ impl MastertechContext {
                             ),
                         );
                         ui.label(
-                            RichText::new(format!("{}°C", component.temperature())).font(
+                            RichText::new(format!("{}°C", component.temperature().unwrap_or_default())).font(
                                 FontId {
                                     size: 18.1,
                                     family: FontFamily::Monospace,
