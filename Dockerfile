@@ -10,7 +10,7 @@ RUN update-ca-certificates
 COPY MtechServer2.0 MtechServer2.0
 COPY displays displays
 COPY database database
-RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.1/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
+RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.4/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
 COPY Cargo.toml Cargo.toml
 # COPY rust-toolchain.toml rust-toolchain.toml
 RUN mv trunk MtechServer2.0/trunk

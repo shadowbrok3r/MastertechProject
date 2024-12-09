@@ -21,17 +21,17 @@ impl SharedContext {
                 ctx.show_viewport_immediate(
                     viewport_id,
                     viewport_builder,
-                    |ctx, _class| {
-                        // Render the TaskModal UI
-                        let action = viewport_data.modal.ui(ctx, "Test".to_string(), 750., 850.);
-                        if let Some(ModalAction::Close) = action {
-                            viewport_state.store(false, Ordering::Relaxed); // Close viewport
-                        }
-                        if ctx.input(|i| i.viewport().close_requested()) {
-                            viewport_state.store(false, Ordering::Relaxed); // Handle viewport close
-                        }
-                    },
-                );
+                    |ctx, _class| 
+                {
+                    // Render the TaskModal UI
+                    let action = viewport_data.modal.ui(ctx, "Test".to_string(), 750., 850.);
+                    if let Some(ModalAction::Close) = action {
+                        viewport_state.store(false, Ordering::Relaxed); // Close viewport
+                    }
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        viewport_state.store(false, Ordering::Relaxed); // Handle viewport close
+                    }
+                });
             }
         }
     }
