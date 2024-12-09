@@ -16,7 +16,7 @@ public_url = "/"
 # '''
 [serve]
 # The address to serve on.
-address = "0.0.0.0"
+addresses = ["0.0.0.0"]
 # The port to serve on.
 port = 8080
 

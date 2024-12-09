@@ -265,11 +265,11 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         "Store Tasks".to_owned(),
         "Completed Tasks".to_owned(),
         "SEB Lookup".to_owned(),
-        "Stock Quantity".to_owned(),
+        "Company Stock".to_owned(),
         // "Customers".to_owned(),
         // "Json Viewer".to_owned(),
         // "Query Builder".to_owned(),
-        "Stock".to_owned(),
+        "Store Stock".to_owned(),
         "Logs".to_owned(),
     ]);
 

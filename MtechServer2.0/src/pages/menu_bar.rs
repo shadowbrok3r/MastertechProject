@@ -29,9 +29,10 @@ impl MtechServer {
                                 &"Ai".to_string(),
                                 &"Json Viewer".to_string(),
                                 &"Query Builder".to_string(),
-                                &"Stock".to_string(),
-                                &"Logs".to_string(),
                                 &"Task Audit".to_string(),
+                                &"Store Stock".to_string(),
+                                &"Company Stock".to_string(),
+                                &"Logs".to_string(),
                             ] {
                                 if ui
                                     .selectable_label(self.context.open_tabs.contains(*tab), *tab)

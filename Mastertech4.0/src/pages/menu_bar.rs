@@ -32,9 +32,10 @@ impl MasterTechApp {
                             &"Bug Tracker".to_string(),
                             &"Websockets".to_string(),
                             &"ToolBox".to_string(),
+                            &"Store Stock".to_string(),
+                            &"Company Stock".to_string(),
                             &"Downloads".to_string(),
                             &"Logs".to_string(),
-                            &"Stock".to_string(),
                         ] {
                             if ui
                                 .selectable_label(self.context.open_tabs.contains(*tab), *tab)

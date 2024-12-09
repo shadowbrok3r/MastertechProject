@@ -82,7 +82,7 @@ pub trait Task {
 
 pub async fn query_user_from_email(email: String) -> Result<User, Error> {
     let query =
-        format!("SELECT id, name, everest_initials, email, store FROM user WHERE email == $email");
+        format!("SELECT * FROM user WHERE email == $email");
 
     if email.contains("@pclaptops.com") {
         DATABASE.set("email", email.clone()).await?;
