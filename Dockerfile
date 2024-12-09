@@ -8,6 +8,7 @@ RUN rustup target add wasm32-wasi
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
 RUN update-ca-certificates 
 COPY MtechServer2.0 MtechServer2.0
+COPY .cargo .cargo
 COPY displays displays
 COPY database database
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.4/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
