@@ -1,6 +1,6 @@
 [package]
 name = "mtechserver"
-version = "2.0.11"
+version = "2.1.0"
 edition = "2021"
 
 # [[bin]]
