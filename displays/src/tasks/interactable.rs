@@ -8,7 +8,7 @@ use egui_extras::DatePickerButton;
 use log::info;
 
 use super::task_cards::date_colors;
-use crate::{Updatable, Interaction};
+use crate::{Interaction, PlatformSpawner, Spawner, Updatable};
 
 impl Interaction for TaskPayload {
     fn interact_task_name(&mut self, ui: &mut Ui) -> Response {
@@ -22,7 +22,11 @@ impl Interaction for TaskPayload {
             .ui(ui);
 
         if text_edit.lost_focus() {
-            self.update_task_name(self.task_name.clone());
+            let task = self.clone(); 
+            PlatformSpawner::spawn(async move { 
+                let update = task.update_task_name(task.task_name.clone()).await;
+                info!("Update: {update:?}"); 
+            });
         }
 
         text_edit
@@ -42,7 +46,11 @@ impl Interaction for TaskPayload {
 
         if text_edit.lost_focus() {
             let notes = ticket.clone().checkin_notes;
-            self.update_checkin_notes(Some(notes));
+            let task = self.clone(); 
+            PlatformSpawner::spawn(async move { 
+                let update = task.update_checkin_notes(Some(notes)).await;
+                info!("Update: {update:?}"); 
+            });
             info!(
                 "checkin_notes changed: {:?}// {:?}",
                 self.id, self.task_name
@@ -62,7 +70,11 @@ impl Interaction for TaskPayload {
             .ui(ui);
 
         if text_edit.lost_focus() {
-            self.update_task_description(self.task_description.clone());
+            let task = self.clone(); 
+            PlatformSpawner::spawn(async move { 
+                let update = task.update_task_description(task.task_description.clone()).await;
+                info!("Update: {update:?}"); 
+            });
         }
 
         text_edit
@@ -93,7 +105,11 @@ impl Interaction for TaskPayload {
 
             let rfc3339_date = date_time.to_rfc3339();
             let date = due_date.clone().to_string();
-            self.update_due_date(rfc3339_date.clone());
+            let task = self.clone(); 
+            PlatformSpawner::spawn(async move { 
+                let update = task.update_due_date(rfc3339_date.clone()).await;
+                info!("Update: {update:?}"); 
+            });
             info!("date_widget changed: {:?}// {:?} ", self.task_name, date);
         }
 
@@ -132,7 +148,11 @@ impl Interaction for TaskPayload {
                     let status_change =
                         ui.selectable_value(&mut self.status, status.to_owned(), status.as_str());
                     if status_change.clicked() {
-                        self.update_status(status.clone());
+                        let task = self.clone(); 
+                        PlatformSpawner::spawn(async move { 
+                            let update = task.update_status(status.clone()).await;
+                            info!("Update: {update:?}"); 
+                        });
                     }
                 }
             })
@@ -152,7 +172,11 @@ impl Interaction for TaskPayload {
                         priority.as_str(),
                     );
                     if priority_change.clicked() {
-                        self.update_priority(Some(priority.clone()));
+                        let task = self.clone(); 
+                        PlatformSpawner::spawn(async move { 
+                            let update = task.update_priority(Some(priority.clone())).await;
+                            info!("Update: {update:?}"); 
+                        });
                     }
                 }
             })
@@ -172,7 +196,12 @@ impl Interaction for TaskPayload {
                         &user.everest_initials,
                     );
                     if assignee_selection.clicked() {
-                        self.update_assignee_initials(user.everest_initials.clone());
+                        let task = self.clone(); 
+                        let initials = user.everest_initials.clone();
+                        PlatformSpawner::spawn(async move { 
+                            let update = task.update_assignee_initials(initials).await;
+                            info!("Update: {update:?}"); 
+                        });
                     }
                 }
             })

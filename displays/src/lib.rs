@@ -101,9 +101,6 @@ pub trait Displayable {
     fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>);
 }
 
-pub trait DisplayCards {
-    fn display_cards(&mut self, ui: &mut Ui, name: String);
-}
 
 pub trait ColumnLayout {
     fn layout_cols(&mut self, ui: &mut Ui);
@@ -112,19 +109,19 @@ pub trait ColumnLayout {
     // fn card_layout(&mut self, uir &mut Ui) -> Option<TaskUiActions>;
 }
 
-// #[async_trait]
+#[async_trait]
 pub trait Updatable {
     // This is correctly implemented
-    fn update_completed(&self, completed: bool);
-    fn update_due_date(&self, due_date: String);
-    fn update_assignee_initials(&self, initials: String);
-    fn update_task_name(&self, name: String);
-    fn update_status(&self, status: Status);
-    fn update_dep(&self, store: Store);
-    fn update_priority(&self, priority: Option<Priority>);
-    fn update_task_description(&self, description: String);
-    fn update_checkin_notes(&self, checkin_notes: Option<String>);
-    fn update_task_notes(&self, new_msg: String);
+    async fn update_completed(&self, completed: bool) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_due_date(&self, due_date: String) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_assignee_initials(&self, initials: String) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_task_name(&self, name: String) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_status(&self, status: Status) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_dep(&self, store: Store) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_priority(&self, priority: Option<Priority>) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_task_description(&self, description: String) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> anyhow::Result<(), anyhow::Error>;
+    async fn update_task_notes(&self, new_msg: String) -> anyhow::Result<(), anyhow::Error>;
 }
 
 pub trait Interaction {

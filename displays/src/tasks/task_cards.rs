@@ -8,7 +8,7 @@ use eframe::egui::{RichText, Ui};
 use egui_extras::{Size, StripBuilder};
 use log::info;
 
-use crate::{Displayable, Interaction, TaskUiActions, Updatable};
+use crate::{Displayable, Interaction, PlatformSpawner, Spawner, TaskUiActions, Updatable};
 
 impl Displayable for TaskPayload {
     fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>) {
@@ -91,10 +91,17 @@ impl Displayable for TaskPayload {
                                                     || response.clicked()
                                                 {
                                                     info!("Marked Task Complete / Incomplete ");
-                                                    if self.completed {
-                                                        self.update_completed(false);
+                                                    let task = self.clone();
+                                                    if task.completed {
+                                                        PlatformSpawner::spawn(async move {
+                                                            let update = task.update_completed(false).await;
+                                                            info!("update_completed: {update:?}");
+                                                        });
                                                     } else {
-                                                        self.update_completed(true);
+                                                        PlatformSpawner::spawn(async move {
+                                                            let update = task.update_completed(true).await;
+                                                            info!("update_completed: {update:?}");
+                                                        });
                                                     }
                                                     let _ =
                                                         tx.try_send(TaskUiActions::CommitChanges(
@@ -123,13 +130,7 @@ impl Displayable for TaskPayload {
                                 .size(Size::exact(50.))
                                 .horizontal(|mut s| {
                                     s.cell(|ui| {
-                                        let response =
-                                            self.interact_assignee_initials(ui, store_users);
-                                        if response.secondary_clicked() {
-                                            let _ = tx.try_send(TaskUiActions::OpenTaskModal(
-                                                self.to_owned(),
-                                            ));
-                                        }
+                                        let response = self.interact_assignee_initials(ui, store_users);
                                         if response.has_focus()
                                             || response.changed()
                                             || response.clicked()

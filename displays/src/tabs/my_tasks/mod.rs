@@ -46,14 +46,7 @@ impl SharedContext {
                             }
                         }
                     });
-                    if layout.task_map.is_empty(){
-                        ui.vertical_centered(|ui| {
-                            ui.label("Loading..");
-                            Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
-                        });
-                    } else {
-                        layout.layout_cols(ui);
-                    }
+                    layout.task_map = map;
                 }
                 layout.layout_cols(ui);
             } else {

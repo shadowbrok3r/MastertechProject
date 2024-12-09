@@ -104,7 +104,7 @@ impl TaskLayout {
     pub fn layout_cols(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
         let column_width = Size::exact(450.0);
-        let x: f32 = ui.available_height() - 40.0;
+        let x: f32 = ui.available_height() / 1.1;
         let style = ui.style().clone();
         ScrollArea::horizontal()
             .show_viewport(ui, |ui, _|
@@ -117,7 +117,7 @@ impl TaskLayout {
                 .size(Size::exact(x))
                 .vertical(|mut strip| 
             {
-                if self.column_names.len() > 0 {
+                // if self.column_names.len() > 0 {
                     strip.strip(|strip| 
                     {
                         strip.sizes(column_width, self.column_names.len())
@@ -135,12 +135,12 @@ impl TaskLayout {
                                 |mut strip| self.columns(strip.borrow_mut(), style.clone())
                             );
                     });
-                } else { 
-                    strip.cell(|ui| {
-                        ui.label("Loading..");
-                        Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                    });
-                 }
+                // } else { 
+                //     strip.cell(|ui| {
+                //         ui.label("Loading..");
+                //         Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
+                //     });
+                //  }
             });
         });
     }
@@ -167,8 +167,13 @@ impl TaskLayout {
             .rounding(Rounding::same(5.0))
             .stroke(style.visuals.window_stroke);
         // if self.task_map.keys().len() == self.column_names.len() {
+        let mut idx = 0;
             for (name, tasks) in self.task_map.iter() {
+                idx += 1;
                 s.cell(|ui|{
+                    if ui.available_width() < 10.0 || ui.available_height() < 10.0 {
+                        info!("First strip avail size: {:?}", ui.available_size());
+                    }
                     header_frame.show(ui, |ui|
                     {
                         ui.horizontal_top(|ui| 
@@ -300,7 +305,7 @@ impl TaskLayout {
                                     SortField::Date => RichText::new(format!("Date {}", txt.0)).color(txt.1).small(),
                                     SortField::Name => RichText::new(format!("Name {}", txt.0)).color(txt.1).small(),
                                 };
-                                ComboBox::new(format!("SortBy for {name:?}"), "")
+                                ComboBox::new(format!("SortBy for {name:?}-{idx}"), "")
                                     .selected_text(selected_text)
                                     .width(70.)
                                     .show_ui(ui, |ui| {
@@ -390,44 +395,45 @@ impl TaskLayout {
             }
 
             s.cell(|ui| {
+                if ui.available_width() < 10.0 || ui.available_height() < 10.0 {
+                    info!("Col strip avail size: {:?}", ui.available_size());
+                }
                 column_frame.show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
                         let row_height = 140.;
                         let total_rows = tasks.len(); 
                         let scroll_area = ScrollArea::vertical().auto_shrink(false);
                         ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
+                        scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
+                            // ui.scroll_with_delta(Vec2::new(0.0, 300.));
+                            // Retrieve search input for the current context, or default to an empty string.
+                            let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
 
-                        if total_rows.ne(&0) {
-                            scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
-                                // ui.scroll_with_delta(Vec2::new(0.0, 300.));
-                                // Retrieve search input for the current context, or default to an empty string.
-                                let search_input = self.search_inputs.get(name).cloned().unwrap_or_default();
+                            // Filter tasks based on search input.
+                            let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
+                                tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
+                            } else {
+                                tasks.iter().cloned().collect()
+                            };
 
-                                // Filter tasks based on search input.
-                                let mut filtered_tasks: Vec<TaskPayload> = if !search_input.is_empty() {
-                                    tasks.filter_by_task_name(inputs.clone(), search_input.clone())                                
+                            // Iterate only over the rows in the current viewport range.
+                            for row in row_range {
+                                if !search_input.is_empty() {
+                                    ui.scroll_to_cursor(Some(Align::BOTTOM));
+                                }
+                                if let Some(task) = filtered_tasks.get_mut(row) {
+                                    // info!("Store users: {:?}", self.assignees);
+                                    task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
                                 } else {
-                                    tasks.iter().cloned().collect()
-                                };
-
-                                // Iterate only over the rows in the current viewport range.
-                                for row in row_range {
-                                    if !search_input.is_empty() {
-                                        ui.scroll_to_cursor(Some(Align::BOTTOM));
-                                    }
-                                    if let Some(task) = filtered_tasks.get_mut(row) {
-                                        task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                    }
-                                }                        
-                            });
-                        } 
-                        else {
-                            info!("NO TASKS;");
-                            ui.vertical_centered(|ui| {
-                                ui.label("Loading..");
-                                Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
-                            });
-                        }
+                                    info!("NO TASKS;");
+                                    ui.vertical_centered(|ui| {
+                                        ui.label("Loading..");
+                                        Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
+                                    });
+                                }
+                            }                        
+                        });
+                        
                     });
                 });
             });

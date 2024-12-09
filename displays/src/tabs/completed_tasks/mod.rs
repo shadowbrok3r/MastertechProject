@@ -30,6 +30,7 @@ impl SharedContext{
                         }
                     });
                     layout.task_map = map;
+                    layout.update_assignees(users.clone());
                 }
                 layout.layout_cols(ui);
             } else {

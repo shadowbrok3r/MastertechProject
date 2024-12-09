@@ -8,6 +8,7 @@ impl SharedContext {
         ui.ctx().request_repaint();
         if !self.store_users.is_empty() {
             let users = &self.store_users;
+            // log::info!("StoreTasks Store users: {:?}", users);
             let page = "StoreTasks";
             let current_user = self.current_user.as_ref().unwrap();
             let store_sel = self.store_selection.clone();
@@ -34,6 +35,7 @@ impl SharedContext {
                         }
                     });
                     layout.task_map = map;
+                    layout.update_assignees(users.clone());
                 }
 
                 layout.layout_cols(ui);
