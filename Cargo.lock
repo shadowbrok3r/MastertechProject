@@ -3486,7 +3486,7 @@ dependencies = [
 
 [[package]]
 name = "mtechserver"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
