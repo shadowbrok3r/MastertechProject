@@ -86,9 +86,9 @@ impl TabViewer for MastertechContext {
             "Websockets" => self.websockets(ui),
             "Downloads" => self.downloads_page(ui),
             "SEB Lookup" => self.seb_lookup(ui),
-            "Stock" => self.shared_ctx.stock_viewer(ui),
+            "Store Stock" => self.shared_ctx.stock_viewer(ui),
             "Logs" => logger_ui().show(ui),
-            "Stock Quantity" => self.shared_ctx.stock_quantities_viewer(ui),
+            "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             _ => {}
         }
     }
@@ -127,7 +127,7 @@ impl TabViewer for MastertechContext {
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &eframe::egui::Response) {
         if response.clicked() {
             match tab.as_str() {
-                "Stock" => {
+                "Store Stock" => {
                     if let Some(usr) = &self.shared_ctx.current_user {
                         let stock_tx = self.shared_ctx.stock_channel.0.clone();
                         let store_selection = match usr.clone().store {
@@ -147,7 +147,7 @@ impl TabViewer for MastertechContext {
                         });
                     }
                 },
-                "Stock Quantity" => {
+                "Company Stock" => {
                     let ex_stock_tx = self.shared_ctx.extra_stock_channel.0.clone();
                     spawn(async move {
 

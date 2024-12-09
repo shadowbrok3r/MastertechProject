@@ -91,7 +91,6 @@ impl CreateTaskModal {
 
 impl DisplayModal for CreateTaskModal {
     fn display(&mut self, ui: &mut Ui) -> Option<ModalAction> {
-        let mut response: Option<ModalAction> = None;
         let avail_size = Vec2::new(680., 580.);
 
         StripBuilder::new(ui)
@@ -112,30 +111,23 @@ impl DisplayModal for CreateTaskModal {
                             strip.empty();
                             strip.cell(|ui| {
                                 ui.horizontal_top(|ui| {
-                                    let mut main_page = false;
-                                    let mut import_task_page = false;
-                                    match self.current_page_state {
-                                        ModalAction::TicketInfoPage => main_page = true,
-                                        ModalAction::ImportTask => import_task_page = true,
-                                        _ => main_page = true,
-                                    };
 
                                     ui.add_space(90.0);
 
                                     if ui
-                                        .selectable_label(main_page, RichText::new("🖹").heading())
+                                        .selectable_label(self.current_page_state == ModalAction::TicketInfoPage, RichText::new("🖹").heading())
                                         .clicked()
                                     {
-                                        response = Some(ModalAction::TicketInfoPage);
+                                        self.current_page_state = ModalAction::TicketInfoPage;
                                     };
                                     if ui
                                         .selectable_label(
-                                            import_task_page,
+                                            self.current_page_state == ModalAction::ImportTask,
                                             RichText::new("🖥").heading(),
                                         )
                                         .clicked()
                                     {
-                                        response = Some(ModalAction::ImportTask);
+                                        self.current_page_state = ModalAction::ImportTask;
                                     };
                                 });
                             });
@@ -191,7 +183,7 @@ impl DisplayModal for CreateTaskModal {
                                                         if let ModalAction::Close = self
                                                             .create_task(ui, avail_size, tx.clone())
                                                         {
-                                                            response = Some(ModalAction::Close)
+                                                            self.current_page_state = ModalAction::Close
                                                         }
                                                     }
                                                 }
@@ -204,7 +196,7 @@ impl DisplayModal for CreateTaskModal {
                 });
             });
 
-        response
+        Some(self.current_page_state.clone())
     }
 }
 

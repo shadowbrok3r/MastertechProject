@@ -123,10 +123,10 @@ impl TabViewer for MtechServerContext {
             "Logs" => logger_ui().show(ui),
             "Query Builder" => self.query_builder(ui),
             "Json Viewer" => self.shared_ctx.json_viewer(ui),
-            "Stock" => self.shared_ctx.stock_viewer(ui),
+            "Store Stock" => self.shared_ctx.stock_viewer(ui),
             "SEB Lookup" => self.seb_lookup(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
-            "Stock Quantity" => self.shared_ctx.stock_quantities_viewer(ui),
+            "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             // "Customers" => self.customer_view(ui),
             // "Terminal" => self.terminal(ui),
             _ => {}
@@ -177,7 +177,7 @@ impl TabViewer for MtechServerContext {
             &"Logs".to_string(),
             &"Json Viewer".to_string(),
             &"Query Builder".to_string(),
-            &"Stock".to_string(),
+            &"Store Stock".to_string(),
             &"Task Audit".to_string(),
             &"SEB Lookup".to_string(),
         ];
@@ -197,7 +197,7 @@ impl TabViewer for MtechServerContext {
     fn on_tab_button(&mut self, tab: &mut Self::Tab, response: &Response) {
         if response.clicked() {
             match tab.as_str() {
-                "Stock" => {
+                "Store Stock" => {
                     if let Some(usr) = &self.shared_ctx.current_user {
                         let stock_tx = self.shared_ctx.stock_channel.0.clone();
                         let store_selection = match usr.clone().store {
@@ -215,7 +215,7 @@ impl TabViewer for MtechServerContext {
                         });
                     }
                 },
-                "Stock Quantity" => {
+                "Company Stock" => {
                     let ex_stock_tx = self.shared_ctx.extra_stock_channel.0.clone();
                     spawn_local(async move {
                         let stock_quantities = get_extra_stock_info(ex_stock_tx).await;

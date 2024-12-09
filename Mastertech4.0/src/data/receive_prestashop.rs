@@ -11,7 +11,7 @@ use {
 impl MasterTechApp {
     pub fn receive_prestashop(&mut self) {
         if let Ok(data) = self.context.prestashop_api_rx.try_recv() {
-            let customer = &mut self.context.customer_data;
+            let customer = &mut self.context.customer_data; // self.context.shared_ctx.tur.
             let ticket = &mut self.context.ticket_data;
             let task = &mut self.context.task_data;
             let task_notes = &mut self.context.task_notes;

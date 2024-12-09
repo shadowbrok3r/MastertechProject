@@ -363,8 +363,8 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         // "Minidump Analysis".to_owned(),
         "SEB Lookup".to_owned(),
         "Downloads".to_owned(),
-        "Stock".to_owned(),
-        "Stock Quantity".to_owned(),
+        "Store Stock".to_owned(),
+        "Company Stock".to_owned(),
         "Ai".to_owned(),
     ]);
     tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
