@@ -1,6 +1,7 @@
+use std::collections::HashMap;
+
 use crate::{
-    app_state::SharedContext,
-    PlatformSpawner, Spawner,
+    app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner
 };
 use database::{
     live_data::listen_data,
@@ -56,12 +57,9 @@ impl SharedContext {
                 info!("listen_notifications: {listen_data:?}");
             });
 
-            if let Some(settings) = &usr.user_settings {
-
-                match serde_json::from_value::<ThemeConfig>(settings.color_scheme.clone()) {
-                    Ok(color_settings) => self.theme_config = color_settings.clone(),
-                    Err(e) => info!("Error setting theme config: {e:?}"),
-                }
+            match serde_json::from_value::<ThemeConfig>(usr.user_settings.color_scheme.clone()) {
+                Ok(color_settings) => self.theme_config = color_settings.clone(),
+                Err(e) => info!("Error setting theme config: {e:?}"),
             }
 
             let toast = &mut self.toasts;
@@ -125,6 +123,19 @@ impl SharedContext {
             self.rerun_filtering_completed = true;
             self.store_users.clear();
             self.store_users = users;
+        }
+
+        if let Ok(thread_obj) = self.ai_thread_channel.1.try_recv() {
+            let mut thread_map = HashMap::new();
+            self.ai_playground.save_chats = true;
+            thread_map.insert(thread_obj.id.clone(), ChatThread {
+                id: thread_obj.id.clone(),
+                messages: Vec::new(),
+                images: Vec::new(),
+                input: String::new(),
+            });
+            self.ai_playground.selected_thread = thread_obj.id;
+            self.ai_playground.set_threads(thread_map);
         }
     }
 }

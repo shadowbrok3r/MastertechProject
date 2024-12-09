@@ -50,7 +50,6 @@ fn decrypt_data(data: &[u8], key: &[u8]) -> Vec<u8> {
 pub fn save_encrypted_user_data(user_data: &Login, password: &[u8]) 
     -> anyhow::Result<(), anyhow::Error> 
 {
-    info!("User data: {user_data:?}");
     let salt = generate_salt();
     let key = generate_key(password, &salt);
     let serialized_data = bincode::serialize(user_data)?;

@@ -1,8 +1,8 @@
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use crate::app_state::{AppState, MainPages, MtechServer};
 use eframe::Frame;
 use log::info;
 
-use crate::app_state::{AppState, MainPages, MtechServer};
 
 impl MtechServer {
     pub fn receive_database(&mut self, frame: &mut Frame) {

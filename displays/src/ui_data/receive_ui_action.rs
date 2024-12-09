@@ -1,4 +1,8 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use crate::app_state::SharedContext;
+use crate::viewports::ViewportData;
 use crate::{PlatformSpawner, Spawner};
 use crate::{chats::ChatView, modals::{create_task_modal::CreateTaskModal, task_modal::TaskModal, ModalType}, TaskUiActions};
 use database::schema::{TaskNotePayload, helper_traits::TaskNotePayloadHelper};
@@ -9,6 +13,7 @@ impl SharedContext {
         if let Ok(action) = self.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
+                    
                     if let Some(usr) = self.current_user.clone() {
                         let task_modal = if !task.task_note.is_empty() {
                             TaskModal::new(ChatView::new(
@@ -97,6 +102,29 @@ impl SharedContext {
                 TaskUiActions::Response(_res) => (),
                 TaskUiActions::Editing(_record_id) => (),
                 TaskUiActions::CommitChanges(_record_id) => (),
+                TaskUiActions::OpenViewport(task) => {
+                    info!("TaskUiActions::OpenViewport");
+                    let modal = TaskModal::new(
+                        ChatView::new(
+                            task.task_note.clone(),
+                            self.current_user.clone().unwrap(),
+                            task.id.clone(),
+                            self.store_users.clone(),
+                        ),
+                        task.clone(),
+                    );
+                
+                    self.show_tasks_viewport
+                        .entry(task.id)
+                        .and_modify(|viewport_data| {
+                            viewport_data.is_visible.store(true, Ordering::Relaxed);
+                        })
+                        .or_insert(ViewportData {
+                            is_visible: Arc::new(AtomicBool::new(true)),
+                            modal: ModalType::TaskModal(modal),
+                        });
+                        info!("self.show_tasks_viewport: {:?}", self.show_tasks_viewport);
+                },
                 TaskUiActions::None => (),
                 
             };

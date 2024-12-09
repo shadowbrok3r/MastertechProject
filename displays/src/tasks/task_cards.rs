@@ -66,16 +66,17 @@ impl Displayable for TaskPayload {
                                         ui.with_layout(
                                             Layout::centered_and_justified(Direction::TopDown),
                                             |ui| {
-                                                if Button::new("⮫")
+                                                let button = Button::new("⮫")
                                                     .small()
                                                     .min_size(Vec2::new(25.0, 20.0))
-                                                    .ui(ui)
-                                                    .clicked()
-                                                {
-                                                    let _ =
-                                                        tx.try_send(TaskUiActions::OpenTaskModal(
-                                                            self.to_owned(),
-                                                        ));
+                                                    .ui(ui);
+                                                    
+                                                if button.clicked() {
+                                                    let _ = tx.try_send(TaskUiActions::OpenTaskModal(self.to_owned()));
+                                                }
+                                                if button.secondary_clicked() {
+                                                    info!("Secondary clicked, opening viewport");
+                                                    let _ = tx.try_send(TaskUiActions::OpenViewport(self.to_owned()));
                                                 }
                                             },
                                         );

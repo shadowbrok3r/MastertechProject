@@ -7,7 +7,6 @@ pub mod first_run;
 pub mod mtechserver;
 pub mod pages;
 pub mod tabs;
-pub mod utilities;
 pub mod webworker;
 pub mod worker;
 // Re-export MtechServer to make it accessible from the crate root
@@ -21,7 +20,7 @@ use wasm_bindgen::prelude::*;
 pub fn run() {
     use eframe::wasm_bindgen::JsCast as _;
     // use log::LevelFilter;
-    use tabs::logger::logging::builder;
+    use displays::tabs::logger::logging::builder;
     use web_sys::HtmlCanvasElement;
 
     builder().init().unwrap();

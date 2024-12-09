@@ -1,16 +1,13 @@
+use database::{live_data::listen_data, schema::{helper_traits::UserHelper, utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, CONNECTED_CLIENT_TABLE}, DATABASE};
+use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use crate::app_state::{default_tree, AppState, MainPages, MtechServer};
-use crate::pages::downloads_page::get_github_releases;
-use database::{DATABASE, live_data::listen_data, schema::{helper_traits::UserHelper, Notification, Store, TaskPayload, CONNECTED_CLIENT_TABLE, utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}}};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
-use displays::TaskUiActions;
-use eframe::egui::{
-    menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit
-};
-use eframe::egui::{Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Ui, Widget};
-use log::{error, info};
-use regex::Regex;
-use std::collections::BTreeSet;
+use crate::pages::downloads_page::get_github_releases;
+use displays::ui_tools::show_notification;
 use wasm_bindgen_futures::spawn_local;
+use std::collections::BTreeSet;
+use displays::TaskUiActions;
+use log::{error, info};
 
 impl MtechServer {
     pub fn menu_bar(&mut self, ctx: &Context) {
@@ -29,7 +26,7 @@ impl MtechServer {
                                 &"Web Console".to_string(),
                                 &"Completed Tasks".to_string(),
                                 &"Bug Report".to_string(),
-                                &"Ai Playground".to_string(),
+                                &"Ai".to_string(),
                                 &"Json Viewer".to_string(),
                                 &"Query Builder".to_string(),
                                 &"Stock".to_string(),
@@ -450,21 +447,13 @@ impl MtechServer {
                         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
                         ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
                         let reset_ui = Button::new(RichText::new("Reset Ui Layout").color(Color32::LIGHT_RED).monospace()).ui(ui);
-
+                        let tree = default_tree();
                         if reset_ui.clicked() {
+                            let default_layout = serde_json::to_value(&tree).unwrap();
+                            self.context.user_settings.ui_layout.mtechserver = default_layout.clone();
+                            usr.user_settings.ui_layout.mtechserver = default_layout.clone();
                             #[cfg(target_arch = "wasm32")]
                             {
-                                let mut user = usr.clone();
-                                self.context.user_settings.ui_layout = None;
-                                user.user_settings = Some(self.context.user_settings.clone());
-                                wasm_cookies::delete("user");
-                                let usr = serde_json::to_string(&user.clone()).unwrap();
-                                let duration = web_time::Duration::from_secs(172800);
-                                let cookie_opts = wasm_cookies::CookieOptions::default()
-                                    .with_same_site(wasm_cookies::SameSite::Strict)
-                                    .secure()
-                                    .expires_after(duration);
-                            
                                 use brotli::CompressorReader;
                                 use base64::{engine::general_purpose, Engine as _};
         
@@ -477,34 +466,38 @@ impl MtechServer {
                                     compressed
                                 }
         
-                                let compressed: Vec<u8> = compress_string(&usr);
+                                let user_string = serde_json::to_string(&usr.clone()).unwrap();
+                                let compressed: Vec<u8> = compress_string(&user_string);
                                 let encoded: String = general_purpose::STANDARD.encode(&compressed);
-                                info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
+                                info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), user_string.len());
+                                wasm_cookies::delete("user");
+                                let duration = web_time::Duration::from_secs(172800);
+                                let cookie_opts = wasm_cookies::CookieOptions::default()
+                                    .with_same_site(wasm_cookies::SameSite::Strict)
+                                    .secure()
+                                    .expires_after(duration);
                                 wasm_cookies::set("user", &encoded, &cookie_opts);
                             }
-                            let tree = default_tree();
+                            
                             self.tree = tree.0;
                             self.context.open_tabs = tree.1;
+                            let mut user = usr.clone();
+                            spawn_local(async move {
+                                match user.save_mtechserver_ui_layout(default_layout.clone()).await {
+                                    Ok(_) => info!("Updated User Settings"),
+                                    Err(e) => info!("Error updating User Settings: {e:?}"),
+                                }
+                            });
+                            self.context.update_settings = true;
                         }
                         ui.add_space(5.);
                         let submit = Button::new(RichText::new("Save Ui Layout").monospace()).ui(ui);
                         if submit.clicked() {
-                            // self.context.user_settings.ui_layout = Some(serde_json::to_value(self.tree.clone()).unwrap());
-                            // usr.user_settings.as_mut().unwrap_or(&mut self.context.user_settings.clone()).ui_layout = self.context.user_settings.ui_layout.clone();
-                            let user_settings = usr.user_settings.as_mut().unwrap();
-                            user_settings.ui_layout = Some(serde_json::to_value(self.tree.clone()).unwrap());
-                            info!("self.context.user_settings: {:?}\nusr.user_settings: {:?}", self.context.user_settings, usr.user_settings);
-
+                            let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
+                            usr.user_settings.ui_layout.mastertech = val.clone();
+                            info!("user_settings: {:#?}", usr.user_settings.ui_layout);
                             #[cfg(target_arch = "wasm32")]
                             {
-                                wasm_cookies::delete("user");
-                                let usr = serde_json::to_string(&usr.clone()).unwrap();
-                                let duration = web_time::Duration::from_secs(172800);
-                                let cookie_opts = wasm_cookies::CookieOptions::default()
-                                    .with_same_site(wasm_cookies::SameSite::Strict)
-                                    .secure()
-                                    .expires_after(duration);
-                            
                                 use brotli::CompressorReader;
                                 use base64::{engine::general_purpose, Engine as _};
         
@@ -516,15 +509,21 @@ impl MtechServer {
                                     }
                                     compressed
                                 }
-        
-                                let compressed: Vec<u8> = compress_string(&usr);
+                                let user_string = serde_json::to_string(&usr.clone()).unwrap();
+                                let compressed: Vec<u8> = compress_string(&user_string);
                                 let encoded: String = general_purpose::STANDARD.encode(&compressed);
-                                info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
+
+                                wasm_cookies::delete("user");
+                                let duration = web_time::Duration::from_secs(172800);
+                                let cookie_opts = wasm_cookies::CookieOptions::default()
+                                    .with_same_site(wasm_cookies::SameSite::Strict)
+                                    .secure()
+                                    .expires_after(duration);
                                 wasm_cookies::set("user", &encoded, &cookie_opts);
                             }
                             let mut user = usr.clone();
                             spawn_local(async move {
-                                match user.save_user_ui_layout().await {
+                                match user.save_mtechserver_ui_layout(val.clone()).await {
                                     Ok(_) => info!("Updated User Settings"),
                                     Err(e) => info!("Error updating User Settings: {e:?}"),
                                 }
@@ -563,99 +562,7 @@ impl MtechServer {
     }
 }
 
-pub fn find_task_in_description(
-    notification_description: &str,
-    task_names: &BTreeSet<String>, // BTreeSet of task names
-) -> Vec<String> {
-    // Define multiple regex patterns for different task formats
-    let regex_patterns = vec![
-        Regex::new(r"in task (.+)").unwrap(), // Matches: "in task {task name}"
-        Regex::new(r"(.+) assigned to you").unwrap(), // Matches: "{task name} assigned to you"
-    ];
 
-    // Iterate through each regex pattern and try to find matches
-    let mut matches: Vec<String> = Vec::new();
-    for task_name_regex in regex_patterns {
-        // Use regex to find the task name in the description
-        if let Some(caps) = task_name_regex.captures(notification_description) {
-            if let Some(match_task_name) = caps.get(1) {
-                // Get the first capture group (task name)
-                let task_name = match_task_name.as_str().to_string();
-
-                // Check if the extracted task name is in the set of task names
-                if task_names.contains(&task_name) {
-                    matches.push(task_name); // Add the matching task name to the result
-                }
-            }
-        }
-    }
-
-    matches
-}
-
-pub fn show_notification(
-    ui: &mut Ui,
-    notification_description: &str,
-    task_names: &BTreeSet<String>,
-    ui_actions_tx: crossbeam::channel::Sender<TaskUiActions>,
-    tasks: &Vec<TaskPayload>,
-) {
-    // Find task names in the notification description using regex
-    let matches = find_task_in_description(notification_description, task_names);
-
-    // We assume only one match for simplicity; handle multiple matches if necessary
-    if let Some(task_name) = matches.get(0) {
-        // Find where the task name is in the notification description
-        if let Some(pos) = notification_description.find(task_name) {
-            // Split the text into before, task name, and after
-            let before = &notification_description[..pos];
-            let after = &notification_description[pos + task_name.len()..];
-
-            // Display the text parts with different formatting
-            eframe::egui::Frame::none()
-                .fill(ui.style().visuals.window_fill)
-                .rounding(Rounding::same(12.0))
-                .inner_margin(Margin::same(15.0))
-                .outer_margin(Margin::same(5.0))
-                .show(ui, |ui| {
-                    info!("{pos:?}, {before:?}, {task_name:?}, {after:?}");
-                    ui.horizontal_wrapped(|ui| {
-                        // Show the text before the task name
-                        ui.label(RichText::new(before));
-
-                        // Show the task name in a different color (e.g., blue)
-                        if Button::new(
-                            RichText::new(task_name)
-                                .color(Color32::from_rgba_premultiplied(42, 222, 192, 60)),
-                        )
-                        .ui(ui)
-                        .clicked
-                        {
-                            let task = tasks.iter().find(|&x| {
-                                x.task_name == *task_name
-                                    || format!("{}", x.service_number.clone().unwrap_or_default())
-                                        == format!("{}", *task_name)
-                            });
-
-                            if let Some(task) = task {
-                                let _ = ui_actions_tx
-                                    .try_send(TaskUiActions::OpenTaskModal(task.clone()));
-                            }
-                        }
-
-                        // Show the text after the task name
-                        ui.label(after);
-                    });
-                });
-        } else {
-            // If no task name is found, display the whole description normally
-            ui.label(notification_description);
-        }
-    } else {
-        // If no task name is matched, just show the description
-        ui.label(notification_description);
-    }
-}
 
 /*
 pub fn find_task_in_description(

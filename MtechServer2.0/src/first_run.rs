@@ -1,14 +1,10 @@
+use crate::app_state::{AppState, MtechServer};
+use displays::tabs::ai_playground::ChatThread;
+use wasm_bindgen_futures::spawn_local;
 use std::collections::HashMap;
-use crate::{
-    app_state::{AppState, MtechServer},
-    tabs::ai_playground::ChatThread,
-};
+use log::{info, debug, error};
 use database::DATABASE;
 use eframe::Frame;
-// use egui_dock::DockState;
-use log::info;
-use log::{debug, error};
-use wasm_bindgen_futures::spawn_local;
 
 #[cfg(target_arch="wasm32")]
 use {
@@ -27,9 +23,9 @@ impl MtechServer {
                 let chat_threads: HashMap<String, ChatThread> = serde_json::from_str(&chat_history).unwrap_or_default();
                 // info!("chat_threads: {chat_threads:?}");
                 if let Some((nth, _)) = chat_threads.iter().nth(0) {
-                    self.context.ai_playground.selected_thread = nth.to_string();
+                    self.context.shared_ctx.ai_playground.selected_thread = nth.to_string();
                 }
-                self.context.ai_playground.set_threads(chat_threads);
+                self.context.shared_ctx.ai_playground.set_threads(chat_threads);
             }
 
             if let Some(version) = storage.get_string("version") {
@@ -111,19 +107,6 @@ impl MtechServer {
         if let Ok(state) = self.context.app_state_rx.try_recv() {
             gloo_console::info!(format!("Got a new state: {state:?}"));
             self.state = state;
-        }
-
-        if let Ok(thread_obj) = self.context.ai_thread_channel.1.try_recv() {
-            let mut thread_map = HashMap::new();
-            self.context.ai_playground.save_chats = true;
-            thread_map.insert(thread_obj.id.clone(), ChatThread {
-                id: thread_obj.id.clone(),
-                messages: Vec::new(),
-                images: Vec::new(),
-                input: String::new(),
-            });
-            self.context.ai_playground.selected_thread = thread_obj.id;
-            self.context.ai_playground.set_threads(thread_map);
         }
     }
 }

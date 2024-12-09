@@ -31,7 +31,7 @@ impl MtechServer {
                             &"Web Console".to_string(),
                             &"Completed Tasks".to_string(),
                             &"Bug Report".to_string(),
-                            &"Ai Playground".to_string(),
+                            &"Ai".to_string(),
                             &"Json Viewer".to_string(),
                             &"Query Builder".to_string(),
                             &"Stock".to_string(),

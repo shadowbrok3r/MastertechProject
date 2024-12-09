@@ -23,6 +23,15 @@ pub mod tabs;
 pub mod app_state;
 pub mod ui_data;
 pub mod first_run;
+pub mod ai;
+pub mod viewports;
+
+
+
+#[cfg(target_arch="wasm32")]
+pub use async_openai_wasm::{self as openai};
+#[cfg(not(target_arch="wasm32"))]
+pub use async_openai::{self as openai};
 
 pub use platform::PlatformSpawner;
 
@@ -84,6 +93,7 @@ pub enum TaskUiActions {
     Response(Response),
     Editing(RecordId),
     CommitChanges(RecordId),
+    OpenViewport(TaskPayload),
     None,
 }
 

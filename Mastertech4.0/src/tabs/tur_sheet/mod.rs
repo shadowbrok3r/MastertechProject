@@ -13,7 +13,6 @@ use tokio::spawn;
 pub mod get_ticket;
 pub mod submit_tur;
 pub mod submit_tur_mtech;
-pub mod submit_tur_email;
 pub mod email_builder;
 pub mod scaffold;
 pub mod presta_api;

@@ -6,10 +6,11 @@ use database::{
     Database,
 };
 use displays::{
-    app_state::SharedContext, channel_manager::ChannelManager, egui_data_table::DataTable, ui_tools::{mention_handler::MentionHandler, toasts::Toasts}, virtual_filesystem::FileSystem
+    app_state::SharedContext, channel_manager::ChannelManager, ui_tools::{mention_handler::MentionHandler, toasts::Toasts}, virtual_filesystem::FileSystem
 };
 use eframe::egui::{Align2, Color32, Context, Stroke};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
+use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -32,8 +33,6 @@ use crate::{
         github::self_updater::GithubRelease,
         scripts::Scripts,
         seb_lookup::JsonEditor,
-        stock::{MyRowData, MyRowViewer, RawStockData, SerialData},
-        stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer},
         tur_sheet::{
             get_ticket::SendRequest,
             scaffold::{self, HardwareTest},
@@ -55,12 +54,14 @@ pub struct MasterTechApp {
     login: Login,
 }
 
-#[derive(Default, Debug, PartialEq)]
+#[derive(Serialize, Default, Debug, PartialEq)]
 pub enum MainPages {
     #[default]
     Tasks,
+    ChatGpt,
     Downloads,
     WebConsole,
+    AccountSettings,
 }
 
 #[derive(Debug, PartialEq)]
@@ -168,10 +169,6 @@ pub struct MastertechContext {
     pub db_tx: Sender<anyhow::Result<Database, Error>>,
     pub cps_keys_tx: Sender<GetKeysResponse>,
     pub cps_keys_rx: Receiver<GetKeysResponse>,
-    pub extra_stock_channel: (
-        Sender<Vec<ExtraInventoryData>>,
-        Receiver<Vec<ExtraInventoryData>>,
-    ),
 
     pub bytes_tx: Sender<(u64, u64)>,
     pub bytes_rx: Receiver<(u64, u64)>,
@@ -186,20 +183,12 @@ pub struct MastertechContext {
     pub github_releases: Vec<GithubRelease>,
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
-
     
-    pub data_viewer: MyRowViewer,
-    pub data_table: DataTable<MyRowData>,
     pub seb_channel: (Sender<Vec<Value>>, Receiver<Vec<Value>>),
-    pub stock_data: RawStockData,
-    pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
-    pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
-    /// Data viewer for Stock Quantities tab
-    pub stock_quantity_viewer: StockQuantityViewer,
-    /// Data for Stock Quantities tab
-    pub stock_quantity_table: DataTable<StockQuantityData>,
-    pub store_selection: u64,
     pub json_editor: JsonEditor,
+    pub update_settings: bool,
+    pub get_settings: bool,
+    pub seb_email: String,
 }
 
 impl MasterTechApp {
@@ -219,14 +208,9 @@ impl MasterTechApp {
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
-        let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
-        let serial_channel = <SerialData>::create_unbounded_channel();
         let seb_channel = <Vec<Value>>::create_unbounded_channel();
-        let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
 
-        let mut data_viewer = MyRowViewer::default();
-        data_viewer.stock_tx = Some(serial_channel.0.clone());
         let client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE, Uuid::new_v4().to_string()));
         
         let mastertech_context = MastertechContext {
@@ -305,7 +289,6 @@ impl MasterTechApp {
             frame_counter: 0,
             show_deferred_viewport: Arc::new(AtomicBool::new(false)),
             show_ws_viewport: Arc::new(AtomicBool::new(false)),
-
             added_nodes: Vec::new(),
 
             current_modal: ModalType::Null,
@@ -341,17 +324,11 @@ impl MasterTechApp {
             bytes_channel,
 
             // Data table shit
-            data_table: DataTable::<MyRowData>::default(),
-            data_viewer,
-            stock_data: RawStockData::default(),
-            stock_channel,
-            serial_channel,
-            store_selection: 76,
             seb_channel,
             json_editor: JsonEditor::default(),
-            extra_stock_channel,
-            stock_quantity_viewer: StockQuantityViewer::default(),
-            stock_quantity_table: DataTable::<StockQuantityData>::default(),
+            update_settings: false,
+            get_settings: true,
+            seb_email: String::new(),
         };
         
         let context = mastertech_context;
@@ -388,6 +365,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
         "Downloads".to_owned(),
         "Stock".to_owned(),
         "Stock Quantity".to_owned(),
+        "Ai".to_owned(),
     ]);
     tree.translations.tab_context_menu.eject_button = "Undock".to_owned();
 
