@@ -48,9 +48,9 @@ strip = false
 # lto = true
 
 [profile.release]
-strip = true
-debug = false
-opt-level = 3
+# strip = true
+# debug = false
+# opt-level = 3
 lto = true
 
 # Optimize all dependencies even in debug builds:
