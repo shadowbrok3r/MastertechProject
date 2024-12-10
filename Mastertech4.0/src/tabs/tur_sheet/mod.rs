@@ -57,19 +57,16 @@ impl MastertechContext {
                                 .cell(|ui| // get_ticket button
                                 {
                                     let check = !self.ticket_data.service_number.is_empty();
-
+                                    let style = ui.style().clone();
                                     ui.vertical_centered(|ui|{                                    
                                         if ui.add_enabled(
                                             check, 
                                             Button::new( 
                                                 RichText::new("Get PrestaShop Order")
-                                                .color(Color32::from_rgb(255, 204, 255)) 
+                                                .color(style.visuals.warn_fg_color) 
                                             )
-                                            .stroke(
-                                                Stroke::new(1.0, Color32::from_rgb(191, 33, 101))
-                                            ).min_size(
-                                                Vec2::new(145.0, 25.0)
-                                            )
+                                            .stroke(style.visuals.window_stroke)
+                                            .min_size(Vec2::new(145.0, 25.0))
                                         ).clicked() {
                                             let service_num = self.ticket_data.service_number.clone();
                                             self.presta_api();

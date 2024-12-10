@@ -13,6 +13,7 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::*;
 use std::fmt::Debug;
+use std::path::Path;
 use std::result::Result;
 use std::time::{Duration, Instant};
 use std::{
@@ -290,8 +291,7 @@ where
             // .header(ACCEPT, "application/json")
             .form(&params)
             .send()
-            .await
-            .unwrap();
+            .await?;
 
         // info!("response: {:?}", response.text().await?);
 
@@ -300,36 +300,39 @@ where
         Ok(response_json.get(0).unwrap().clone())
     } else {
         // supereasybackup.com/downloads/SuperEasyBackup.exe
-        let file_path = format!("{drive}DCProtectData\\Shared\\Logs\\InstallationTracking.log"); // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log";
+        let file_path = Path::new("{drive}DCProtectData\\Shared\\Logs\\InstallationTracking.log");
+        if file_path.exists() { // "D:\\Users\\Owner\\Desktop\\SEB\\DCProtectData-Customer\\Shared\\Logs\\InstallationTracking.log";
 
-        // Read the file content
-        let file_content = fs::read_to_string(file_path)?;
+            // Read the file content
+            let file_content = fs::read_to_string(file_path)?;
 
-        // Deserialize the XML content
-        let mut result: LocalSebData = from_str(&file_content)?;
+            // Deserialize the XML content
+            let mut result: LocalSebData = from_str(&file_content)?;
 
-        params.insert("search", &result.InstalledDeviceId);
+            params.insert("search", &result.InstalledDeviceId);
 
-        let response = client
-            .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json")
-            .form(&params)
-            .send()
-            .await?;
+            let response = client
+                .post("https://scaffold.pclaptops.com/api/index") //https://5dccaa60-8a54-47f1-8ff6-ce32034dd0f6.mock.pstmn.io
+                .header(CONTENT_TYPE, "application/json")
+                .header(ACCEPT, "application/json")
+                .form(&params)
+                .send()
+                .await?;
 
-        let response_json: Vec<ExtendedSeb> = response.json().await?; // ExtendedSeb
+            let response_json: Vec<ExtendedSeb> = response.json().await?; // ExtendedSeb
 
-        info!("response: {:?}", response_json);
-        let actual_response = response_json.get(0);
+            info!("response: {:?}", response_json);
+            let actual_response = response_json.get(0);
 
-        if let Some(extended_seb) = actual_response {
-            debug!("Carbonite response: {extended_seb:#?}");
-            result.ExtendedSeb = Some(extended_seb.clone());
-        }
+            if let Some(extended_seb) = actual_response {
+                debug!("Carbonite response: {extended_seb:#?}");
+                result.ExtendedSeb = Some(extended_seb.clone());
+            }
 
-        let res: T = result.try_into()?;
-
-        Ok(res)
+            let res: T = result.try_into()?;
+            Ok(res)
+        } //else {
+            // Err(anyhow::Error::new(error))
+        // }
     }
 }

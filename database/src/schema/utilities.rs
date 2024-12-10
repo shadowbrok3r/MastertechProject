@@ -150,13 +150,15 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
             SELECT * FROM task_note 
                 WHERE task_id == $parent.id
         ) AS task_note 
-        FROM task 
+        FROM task
+        WITH INDEX idx_store_due_date
         WHERE $this.assignee.store == $auth.store 
+        
         FETCH 
             service_ticket, 
             service_ticket.computer, 
             service_ticket.customer
-    "#;
+    "#; // ORDER BY due_date ASC
     let query_results: Vec<TaskPayload> = DATABASE.query(query).await?.take(0)?;
     tx.try_send(query_results)?;
     Ok(())
@@ -174,6 +176,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
                     WHERE task_id == $parent.id
             ) AS task_note 
             FROM task 
+            WITH INDEX idx_store_due_date
             WHERE $this.assignee.store == $store AND $this.completed IS false
             LIMIT $limit START $offset
             FETCH 

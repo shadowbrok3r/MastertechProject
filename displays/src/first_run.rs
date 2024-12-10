@@ -47,7 +47,7 @@ impl SharedContext {
                     .iter_mut()
                     .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
                     .for_each(|(_, layout)| {
-                        layout.loading = true;
+                        layout.loading = false;
                 });
             }
 

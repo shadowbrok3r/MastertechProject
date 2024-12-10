@@ -60,10 +60,9 @@ impl MastertechContext {
                                 .header(CONTENT_TYPE, "application/json") // application/x-www-form-urlencoded
                                 .form(&params)
                                 .send()
-                                .await
-                                .unwrap();
+                                .await?;
 
-                            let response_json: Vec<Value> = response.json().await.unwrap();
+                            let response_json: Vec<Value> = response.json().await?;
                             info!("response_json: {:?}", response_json);
 
                             // let seb_data: Result<LocalSebData, anyhow::Error> =
@@ -78,7 +77,8 @@ impl MastertechContext {
                             //             Ok(data)
                             //         });
 
-                            tx.try_send(response_json).unwrap();
+                            tx.try_send(response_json)?;
+                            Ok::<(), Error>(())
                         });
                     }
 
