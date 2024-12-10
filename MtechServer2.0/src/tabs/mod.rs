@@ -15,98 +15,6 @@ use super::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
 use log::info;
 
-impl MtechServerContext {
-    pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
-        if ui.button("Open...").clicked() {
-            ui.close_menu();
-        }
-        ui.menu_button("SubMenu", |ui| {
-            ui.menu_button("SubMenu", |ui| {
-                if ui.button("Open...").clicked() {
-                    ui.close_menu();
-                }
-                let _ = ui.button("Item");
-            });
-            ui.menu_button("SubMenu", |ui| {
-                if ui.button("Open...").clicked() {
-                    ui.close_menu();
-                }
-                let _ = ui.button("Item");
-            });
-            let _ = ui.button("Item");
-            if ui.button("Open...").clicked() {
-                ui.close_menu();
-            }
-        });
-        ui.menu_button("SubMenu", |ui| {
-            let _ = ui.button("Item1");
-            let _ = ui.button("Item2");
-            let _ = ui.button("Item3");
-            let _ = ui.button("Item4");
-            if ui.button("Open...").clicked() {
-                ui.close_menu();
-            }
-        });
-        let _ = ui.button("Very long text for this item");
-    }
-
-    pub fn store_selection_menu(&mut self, ui: &mut Ui) {
-        let selected = &mut self.shared_ctx.store_selection;
-        let current = selected.clone();
-
-        let selected_text = match selected {
-            76 => Store::RIV.as_str(),
-            73 => Store::LTN.as_str(),
-            74 => Store::MUR.as_str(),
-            78 => Store::WJ.as_str(),
-            75 => Store::ORE.as_str(),
-            72 => Store::AF.as_str(),
-            77 => Store::SAN.as_str(),
-            _ => Store::RIV.as_str(),
-        };
-
-        ComboBox::new("Store_Selection", "")
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(selected, 76, "RIV");
-                ui.selectable_value(selected, 73, "LTN");
-                ui.selectable_value(selected, 74, "MUR");
-                ui.selectable_value(selected, 78, "WJ");
-                ui.selectable_value(selected, 75, "ORE");
-                ui.selectable_value(selected, 72, "AF");
-                ui.selectable_value(selected, 77, "SAN");
-            });
-
-        if *selected != current {
-            let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
-            let store_users_tx = self.shared_ctx.store_users_tx.clone();
-            let store_selection = match selected.clone() {
-                76 => Store::RIV,
-                73 => Store::LTN,
-                74 => Store::MUR,
-                78 => Store::WJ,
-                75 => Store::ORE,
-                72 => Store::AF,
-                77 => Store::SAN,
-                _ => Store::RIV,
-            };
-
-            self.shared_ctx.store_users.clear();
-            self.shared_ctx.tasks.clear();
-            
-            info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
-            spawn_local(async move {
-                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
-                let get_store_users = get_store_users(store_users_tx, store_selection).await;
-
-                info!("get_tasks_for_store: {store_tasks:?}");
-                info!("get_store_users: {get_store_users:?}");
-            });
-        }
-    }
-
-}
-
 impl TabViewer for MtechServerContext {
     type Tab = String;
 
@@ -265,6 +173,99 @@ impl TabViewer for MtechServerContext {
                 _ => {}
             }
             
+        }
+    }
+
+}
+
+
+impl MtechServerContext {
+    pub fn simple_demo_menu(&mut self, ui: &mut Ui) {
+        if ui.button("Open...").clicked() {
+            ui.close_menu();
+        }
+        ui.menu_button("SubMenu", |ui| {
+            ui.menu_button("SubMenu", |ui| {
+                if ui.button("Open...").clicked() {
+                    ui.close_menu();
+                }
+                let _ = ui.button("Item");
+            });
+            ui.menu_button("SubMenu", |ui| {
+                if ui.button("Open...").clicked() {
+                    ui.close_menu();
+                }
+                let _ = ui.button("Item");
+            });
+            let _ = ui.button("Item");
+            if ui.button("Open...").clicked() {
+                ui.close_menu();
+            }
+        });
+        ui.menu_button("SubMenu", |ui| {
+            let _ = ui.button("Item1");
+            let _ = ui.button("Item2");
+            let _ = ui.button("Item3");
+            let _ = ui.button("Item4");
+            if ui.button("Open...").clicked() {
+                ui.close_menu();
+            }
+        });
+        let _ = ui.button("Very long text for this item");
+    }
+
+    pub fn store_selection_menu(&mut self, ui: &mut Ui) {
+        let selected = &mut self.shared_ctx.store_selection;
+        let current = selected.clone();
+
+        let selected_text = match selected {
+            76 => Store::RIV.as_str(),
+            73 => Store::LTN.as_str(),
+            74 => Store::MUR.as_str(),
+            78 => Store::WJ.as_str(),
+            75 => Store::ORE.as_str(),
+            72 => Store::AF.as_str(),
+            77 => Store::SAN.as_str(),
+            _ => Store::RIV.as_str(),
+        };
+
+        ComboBox::new("Store_Selection", "")
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(selected, 76, "RIV");
+                ui.selectable_value(selected, 73, "LTN");
+                ui.selectable_value(selected, 74, "MUR");
+                ui.selectable_value(selected, 78, "WJ");
+                ui.selectable_value(selected, 75, "ORE");
+                ui.selectable_value(selected, 72, "AF");
+                ui.selectable_value(selected, 77, "SAN");
+            });
+
+        if *selected != current {
+            let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
+            let store_users_tx = self.shared_ctx.store_users_tx.clone();
+            let store_selection = match selected.clone() {
+                76 => Store::RIV,
+                73 => Store::LTN,
+                74 => Store::MUR,
+                78 => Store::WJ,
+                75 => Store::ORE,
+                72 => Store::AF,
+                77 => Store::SAN,
+                _ => Store::RIV,
+            };
+
+            self.shared_ctx.store_users.clear();
+            self.shared_ctx.tasks.clear();
+            
+            info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
+            spawn_local(async move {
+                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                let get_store_users = get_store_users(store_users_tx, store_selection).await;
+
+                info!("get_tasks_for_store: {store_tasks:?}");
+                info!("get_store_users: {get_store_users:?}");
+            });
         }
     }
 

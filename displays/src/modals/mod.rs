@@ -38,7 +38,7 @@ impl ModalWindow for ModalType {
         shadow.blur = 1.0;
         shadow.spread = 3.0;
         shadow.color = style.window_stroke.color;
-        let title_color = RichText::new(title.clone()).color(style.error_fg_color);
+        let title_color = RichText::new(title.clone()).color(style.warn_fg_color);
         let window = Window::new(title_color)
             .frame(
                 Frame::default()

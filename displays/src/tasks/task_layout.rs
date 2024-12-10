@@ -1,4 +1,4 @@
-use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Stroke, Style, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Style, TextEdit, Ui, Vec2, Widget};
 use crate::{Displayable, FilterTasks, SortDirection, Sortable, TaskUiActions};
 use database::schema::{Record, TaskPayload, User};
 use egui_extras::{Size, Strip, StripBuilder};
@@ -104,7 +104,7 @@ impl TaskLayout {
     }
 
     pub fn layout_cols(&mut self, ui: &mut Ui) {
-        ui.style_mut().visuals.window_rounding = Rounding::same(10.0);
+        ui.style_mut().visuals.window_rounding = ui.style().visuals.window_rounding;
         let column_width = Size::exact(450.0);
         let x: f32 = ui.available_height() / 1.1;
         let style = ui.style().clone();
@@ -166,7 +166,7 @@ impl TaskLayout {
             .fill(style.visuals.window_fill) // (Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(8.0, 1.0))
-            .rounding(Rounding::same(5.0))
+            .rounding(style.visuals.window_rounding)
             .stroke(style.visuals.window_stroke);
         // if self.task_map.keys().len() == self.column_names.len() {
         let mut idx = 0;
@@ -376,7 +376,7 @@ impl TaskLayout {
             .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(6.0))
             .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0,  Color32::from_additive_luminance(100)));
+            .stroke(style.visuals.window_stroke);
 
         let mut inputs = BTreeSet::new();
 
