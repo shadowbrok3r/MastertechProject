@@ -30,12 +30,12 @@ pub mod viewports;
 
 #[cfg(target_arch="wasm32")]
 pub use {
-    rayon_wasm::prelude::{self as rayon},
+    // rayon_wasm::prelude::{self as rayon},
     async_openai_wasm::{self as openai}
 };
 #[cfg(not(target_arch="wasm32"))]
 pub use {
-    rayon::prelude::{self as rayon},
+    // rayon::prelude::{self as rayon},
     async_openai::{self as openai}
 };
 

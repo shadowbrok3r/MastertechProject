@@ -43,6 +43,12 @@ impl SharedContext {
                     let get_tasks = get_tasks_for_store(initial_tasks_tx, store).await;
                     info!("get_tasks: {get_tasks:?}");
                 });
+                self.task_layouts
+                    .iter_mut()
+                    .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
+                    .for_each(|(_, layout)| {
+                        layout.loading = true;
+                });
             }
 
             PlatformSpawner::spawn(async move {
@@ -95,22 +101,25 @@ impl SharedContext {
             self.rerun_filtering_completed = true;
             self.rerun_filtering_my_tasks = true;
         
+            
             // Clear layout-related data for specific pages
             self.task_layouts
                 .iter_mut()
                 .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
                 .for_each(|(_, layout)| {
-                    layout.task_map.clear();
-                    layout.assignees.clear();
-                    layout.search_inputs.clear();
-                });
-        
+                    if self.switching_store {
+                        layout.task_map.clear();
+                        layout.assignees.clear();
+                        layout.search_inputs.clear();
+                    }
+                    layout.loading = true;
+            });
             // Filter and append new tasks
             let existing_tasks = &mut self.tasks;
             // Process new tasks in parallel
             tasks.drain(..).for_each(|new_task| {
                 // Avoid duplicates by checking if the new task already exists
-                if !existing_tasks.par_iter().any(|task| task == &new_task) {
+                if !existing_tasks.iter().any(|task| task == &new_task) {
                     existing_tasks.push(new_task); // Add the task if it's unique
                 }
             });

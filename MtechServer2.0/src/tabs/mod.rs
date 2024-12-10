@@ -236,6 +236,12 @@ impl TabViewer for MtechServerContext {
                             let get_completed_tasks_for_store = get_completed_tasks_for_store(tasks_tx, store_selection).await;
                             info!("get_completed_tasks_for_store: {get_completed_tasks_for_store:?}");
                         });
+                        self.shared_ctx.task_layouts
+                            .iter_mut()
+                            .filter(|(page, _)| *page == "CompletedTasks")
+                            .for_each(|(_, layout)| {
+                                layout.loading = true;
+                        });
                     }
                     
                 },

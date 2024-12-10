@@ -34,6 +34,7 @@ pub struct TaskLayout{
     pub sort_by: HashMap<String, SortOptions>,
     #[difference(skip)]
     pub last_sort_field: Option<SortField>,    
+    pub loading: bool
 }
 
 
@@ -64,7 +65,8 @@ impl TaskLayout {
             action: TaskUiActions::None,
             task: None,
             sort_by: HashMap::new(),
-            last_sort_field: None
+            last_sort_field: None,
+            loading: false
         }
     }
 
@@ -424,16 +426,15 @@ impl TaskLayout {
                                 if let Some(task) = filtered_tasks.get_mut(row) {
                                     // info!("Store users: {:?}", self.assignees);
                                     task.display_cards(ui, &self.assignees, self.ui_actions_tx.clone());
-                                } else {
-                                    info!("NO TASKS;");
-                                    ui.vertical_centered(|ui| {
-                                        ui.label("Loading..");
-                                        Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
-                                    });
                                 }
-                            }                        
+                            }
+                            if self.loading {
+                                ui.vertical_centered(|ui| {
+                                    ui.label("Loading..");
+                                    Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui)
+                                });
+                            }                   
                         });
-                        
                     });
                 });
             });
