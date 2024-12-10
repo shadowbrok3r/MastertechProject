@@ -6,7 +6,7 @@ use schema::User;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, sync::RwLock};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Wss}, // Ws
+    engine::remote::ws::{Client as WsClient, Ws, Wss}, // Ws
     opt::{
         auth::{Jwt, Record as SurrealRec},
         capabilities::Capabilities,
@@ -155,7 +155,7 @@ impl Database {
         let cap = Capabilities::all();
         let config = Config::new().capabilities(cap);
 
-        DATABASE.connect::<Wss>((DB_URL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Ws>((DB_URL_LOCAL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE

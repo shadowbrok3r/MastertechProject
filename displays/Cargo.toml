@@ -20,7 +20,7 @@ thiserror = "2.0.2"
 derive_more = {version = "1", features = ["from"]}
 rpc-router = "0.1"
 schemars = "0.8"
-
+web-time = { workspace=true }
 bincode = { workspace=true } 
 anyhow = { workspace=true }
 database = { workspace=true }
@@ -41,7 +41,9 @@ regex = { workspace=true }
 structdiff = { workspace=true }
 async-trait = { workspace = true }
 egui_dock = {workspace = true}
-egui-modal ={ workspace = true }
+egui-modal = { workspace = true }
+# rayon-wasm = { workspace = true }
+rayon-wasm = "=1.6.2"
 # egui_struct = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

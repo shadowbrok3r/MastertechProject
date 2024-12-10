@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 
 use crate::{
     app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner
@@ -11,7 +10,9 @@ use database::{
     },
 };
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
+use std::collections::HashMap;
 use log::info;
+use web_time::{SystemTime, UNIX_EPOCH};
 
 impl SharedContext {
     pub fn load_data(&mut self) -> bool {
@@ -82,6 +83,11 @@ impl SharedContext {
 
     pub fn receive(&mut self) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
+            // Capture the Unix timestamp on receiving
+            let receive_time = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
+
+            // Log the time difference (assuming you have the send timestamp in logs)
+            log::info!("Receive timestamp: {}", receive_time);
             log::info!("Reruning filtering for store/completed/my_tasks. Got new tasks: {:?}", &tasks.len());
         
             // Indicate that filtering needs to be rerun
@@ -90,22 +96,24 @@ impl SharedContext {
             self.rerun_filtering_my_tasks = true;
         
             // Clear layout-related data for specific pages
-            for (page, layout) in self.task_layouts.iter_mut() {
-                if page == "CompletedTasks" || page == "StoreTasks" {
+            self.task_layouts
+                .iter_mut()
+                .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
+                .for_each(|(_, layout)| {
                     layout.task_map.clear();
                     layout.assignees.clear();
                     layout.search_inputs.clear();
-                }
-            }
+                });
         
             // Filter and append new tasks
             let existing_tasks = &mut self.tasks;
-            for new_task in tasks.drain(..) {
+            // Process new tasks in parallel
+            tasks.drain(..).for_each(|new_task| {
                 // Avoid duplicates by checking if the new task already exists
-                if !existing_tasks.iter().any(|task| task == &new_task) {
-                    existing_tasks.push(new_task);
+                if !existing_tasks.par_iter().any(|task| task == &new_task) {
+                    existing_tasks.push(new_task); // Add the task if it's unique
                 }
-            }
+            });
         }
         
 
