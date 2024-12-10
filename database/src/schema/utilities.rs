@@ -13,7 +13,7 @@ use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use surrealdb::{sql::Id, RecordId};
-
+use web_time::{SystemTime, UNIX_EPOCH, Instant};
 pub trait FilterTasks {
     fn filter_by_assignee(&self, assignee: &User) -> Vec<TaskPayload>;
     fn filter_by_completion(&self, completed: bool) -> Vec<TaskPayload>;
@@ -163,25 +163,49 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
 
 pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_tasks");
-    let query = r#"
-        SELECT *, (
-            SELECT * FROM task_note 
-                WHERE task_id == $parent.id
-        ) AS task_note 
-        FROM task 
-        WHERE $this.assignee.store == $store AND $this.completed IS false
-        FETCH 
-            service_ticket, 
-            service_ticket.computer, 
-            service_ticket.customer
-    "#;
-    let query_results: Vec<TaskPayload> = DATABASE
-        .query(query)
-        .bind(("store", store.clone()))
-        .await?
-        .take(0)?;
-    // info!("Tasks for store: {:?}", query_results.iter().map(|f| f.everest_initials.clone() ).collect::<Vec<String>>());
-    tx.try_send(query_results)?;
+
+    loop {
+        let mut offset = 0;
+        let limit = 100; // Number of tasks per chunk
+
+        let query = r#"
+            SELECT *, (
+                SELECT * FROM task_note 
+                    WHERE task_id == $parent.id
+            ) AS task_note 
+            FROM task 
+            WHERE $this.assignee.store == $store AND $this.completed IS false
+            LIMIT $limit START $offset
+            FETCH 
+                service_ticket, 
+                service_ticket.computer, 
+                service_ticket.customer
+            
+        "#; // PARALLEL
+
+        let start_query = Instant::now(); // Start timing the query
+
+        let query_results: Vec<TaskPayload> = DATABASE
+            .query(query)
+            .bind(("store", store.clone()))
+            .await?
+            .take(0)?;
+
+        let query_duration = start_query.elapsed(); // Measure query duration
+        info!("Query execution time for chunk (offset: {offset}): {query_duration:?}");
+
+        
+        // Break the loop if no more results
+        if query_results.is_empty() {
+            break;
+        }
+
+        tx.try_send(query_results)?;
+        // Update the offset for the next chunk
+        offset += limit;
+    }
+
+    
     Ok(())
 }
 

@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
-members = [ "MtechServer2.0", "database" , "displays", "Mastertech4.0"] #  , , "websocket_server", "websocket_server2"  
+members = [ "MtechServer2.0", "database" , "displays"] #  , , "websocket_server", "websocket_server2"  
 
 [workspace.dependencies]
 database = { path = "database" }
 eframe = { version="=0.29.1", features=["persistence", "serde",  "default_fonts", "accesskit", "glow"], default-features=false }
 egui_extras = { version = "0.29.1", features = ["datepicker", "syntect", "serde", "image" ]}
 image = { version = "0.25.5", features = ["jpeg", "png"] }
-surrealdb = { version = "=2.1.2", features = ["protocol-ws", "kv-tikv"] } 
+surrealdb = { version = "=2.1.2", features = ["protocol-ws", "kv-surrealkv"] } 
 egui_dock = { version = "0.14", features = ["serde"]}
 serde = { version = "1", features = ["derive"] }
 ratatui = { version = "0.29", default-features = false }
@@ -41,7 +41,9 @@ chrono = { version = "0.4", default-features = false, features = ["now"] } # fea
 egui-modal = "0.5"
 async-openai-wasm = { version = "0.26" }
 async-openai = {version = "0.26"}
-rayon="1"
+
+# rayon = "1"
+
 
 [profile.dev]
 debug = true
@@ -60,8 +62,14 @@ lto = true
 
 # [patch.crates-io]
 # arrayvec = "=0.7.6"
+# [patch.crates-io]
+# # rayon = "1.10"
+# rayon-core = "1.10"
+# rayon-core-wasm = "1.10"
+
 [overrides]
 arrayvec = "0.7.6"
+# rayon-core = "1.12.1"
 # libc = { git = "https://github.com/wasix-org/libc", branch = "master" }
 # tokio = { git = "https://github.com/wasix-org/tokio", branch = "wasix-1.24.2" }
 
