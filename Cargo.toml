@@ -63,7 +63,7 @@ lto = true
 # [patch.crates-io]
 # arrayvec = "=0.7.6"
 # [patch.crates-io]
-# # rayon = "1.10"
+# rayon = "1.10.0"
 # rayon-core = "1.10"
 # rayon-core-wasm = "1.10"
 

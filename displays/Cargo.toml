@@ -43,7 +43,7 @@ async-trait = { workspace = true }
 egui_dock = {workspace = true}
 egui-modal = { workspace = true }
 # rayon-wasm = { workspace = true }
-rayon-wasm = "=1.6.2"
+# rayon-wasm = "1.6.2"
 # egui_struct = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
