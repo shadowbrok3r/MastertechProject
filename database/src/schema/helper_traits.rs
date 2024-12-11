@@ -870,11 +870,6 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 }
 
-pub trait GetRec {
-    
-}
-
-
 impl EmployeeHelper for Employee {
     async fn find_user(&mut self) -> Result<Option<User>, Error> {
         DATABASE.set("email", self.email.clone()).await?;
@@ -1046,6 +1041,7 @@ impl UserHelper for User {
         }
         Ok(())
     }
+    
     async fn save_mtechserver_ui_layout(&mut self, settings: Value) -> Result<(), Error>{
         info!("Settings for MTECHSERVER: {:?}", settings.clone());
         match DATABASE
@@ -1058,18 +1054,6 @@ impl UserHelper for User {
         }
         Ok(())
     }
-
-    // async fn save_theme_config(theme: ThemeConfig) -> Result<(), Error> {
-    //     match DATABASE 
-    //         .query("UPDATE $auth.id SET user_settings.color_scheme = $color_settings")
-    //         .bind(("color_settings", theme.clone()))
-    //         .await 
-    //     {
-    //         Ok(res) => info!("Res: {res:?}"),
-    //         Err(e) => info!("Error updating User Settings: {e:?}"),
-    //     }
-    //     Ok(())
-    // }
 
     fn get_odoo_store_number(&mut self) -> Result<u64, Error> {
         let store = match self.store {

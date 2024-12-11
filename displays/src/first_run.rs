@@ -1,18 +1,17 @@
 
 use crate::{
-    app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner
+    app_state::SharedContext, tabs::{ai_playground::ChatThread, task_audit::PrestashopOrderData}, PlatformSpawner, Spawner
 };
 use database::{
     live_data::listen_data,
     schema::{
-        utilities::{get_store_users, get_tasks_for_store},
-        NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE,
+        utilities::{get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE
     },
 };
+use itertools::Itertools;
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use std::collections::HashMap;
 use log::info;
-use web_time::{SystemTime, UNIX_EPOCH};
 
 impl SharedContext {
     pub fn load_data(&mut self) -> bool {
@@ -89,13 +88,6 @@ impl SharedContext {
 
     pub fn receive(&mut self) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
-            // Capture the Unix timestamp on receiving
-            let receive_time = SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards").as_secs();
-
-            // Log the time difference (assuming you have the send timestamp in logs)
-            log::info!("Receive timestamp: {}", receive_time);
-            log::info!("Reruning filtering for store/completed/my_tasks. Got new tasks: {:?}", &tasks.len());
-        
             // Indicate that filtering needs to be rerun
             self.rerun_filtering_store_tasks = true;
             self.rerun_filtering_completed = true;
@@ -138,7 +130,7 @@ impl SharedContext {
                 }
                 layout.update_assignees(users.clone());
             }
-            log::info!("Reruning filtering for store/completed tasks, got new users");
+            // log::info!("Reruning filtering for store/completed tasks, got new users");
             self.rerun_filtering_store_tasks = true;
             self.rerun_filtering_completed = true;
             self.store_users.clear();
@@ -160,6 +152,26 @@ impl SharedContext {
             });
             self.ai_playground.selected_thread = thread_obj.id;
             self.ai_playground.set_threads(thread_map);
+        }
+
+        if let  Ok(orders) = self.presta_order_channel.1.try_recv() {
+            let data: Vec<PrestashopOrderData> = orders
+                .iter()
+                .map(|order_data| {
+                    PrestashopOrderData(
+                        order_data.id.clone(),
+                        order_data.id_customer.clone(),
+                        order_data.date_add.clone(),
+                        order_data.associations.order_rows.iter().find_or_first(
+                            |f|
+                            f.product_name ==  f.product_name
+                        ).cloned().unwrap_or_default().product_name,
+                        order_data.id_store.clone()
+                    )
+                })
+                .collect();
+
+            self.my_orders_table.replace(data);
         }
     }
 }

@@ -1,5 +1,5 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, TaskUiActions};
-use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::{PrestashopOrderData, TaskRowViewer}}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, TaskUiActions};
+use database::{schema::{get_data::NewTicketChannel, prestashop_schema::{self, PrestashopPayload}, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
 use std::{collections::HashMap, sync::Arc};
@@ -86,6 +86,8 @@ pub struct SharedContext {
     #[serde(skip)]
     pub tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>),
     #[serde(skip)]
+    pub presta_order_channel: (Sender<Vec<prestashop_schema::Order>>, Receiver<Vec<prestashop_schema::Order>>),
+    #[serde(skip)]
     pub stock_channel: (Sender<Vec<RawStockData>>, Receiver<Vec<RawStockData>>),
     #[serde(skip)]
     pub serial_channel: (Sender<SerialData>, Receiver<SerialData>),
@@ -155,6 +157,10 @@ pub struct SharedContext {
     /// Data viewer for Stock Quantities tab
     #[serde(skip)]
     pub stock_quantity_viewer: StockQuantityViewer,
+    #[serde(skip)]
+    pub my_orders_table: DataTable<PrestashopOrderData>,
+    #[serde(skip)]
+    pub my_orders_viewer: TaskRowViewer,
     /// Data for Stock Quantities tab
     #[serde(skip)]
     pub stock_quantity_table: DataTable<StockQuantityData>,
@@ -189,6 +195,7 @@ impl SharedContext {
         let (notification_tx, notification_rx) = channel::unbounded::<Vec<Notification>>();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let tur_channel = PrestashopPayload::create_unbounded_channel();
+        let presta_order_channel = <Vec<prestashop_schema::Order>>::create_unbounded_channel();
         let stock_channel = <Vec<RawStockData>>::create_unbounded_channel();
         let serial_channel = <SerialData>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
@@ -247,6 +254,7 @@ impl SharedContext {
             stock_channel,
             serial_channel,
             extra_stock_channel,
+            presta_order_channel,
             ai_thread_channel,
             // github_releases_channel,
             // seb_channel,
@@ -264,6 +272,8 @@ impl SharedContext {
             serials_table: DataTable::<SerialsData>::default(),
             serials_viewer,
             stock_quantity_viewer: StockQuantityViewer::default(),
+            my_orders_table: DataTable::default(),
+            my_orders_viewer: TaskRowViewer::default(),
             stock_quantity_table: DataTable::<StockQuantityData>::default(),
             ai_playground: AiPlayground::default(),
 
