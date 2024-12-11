@@ -375,7 +375,7 @@ impl TaskLayout {
         let column_frame = Frame::default()
             .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(6.0))
-            .rounding(Rounding::same(10.0))
+            .rounding(style.visuals.menu_rounding)
             .stroke(style.visuals.window_stroke);
 
         let mut inputs = BTreeSet::new();

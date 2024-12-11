@@ -42,6 +42,7 @@ structdiff = { workspace=true }
 async-trait = { workspace = true }
 egui_dock = {workspace = true}
 egui-modal = { workspace = true }
+derivative = "2"
 # rayon-wasm = { workspace = true }
 # rayon-wasm = "1.6.2"
 # egui_struct = { workspace = true }

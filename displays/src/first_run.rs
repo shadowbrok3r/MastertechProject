@@ -145,6 +145,10 @@ impl SharedContext {
             self.store_users = users;
         }
 
+        if let Ok(settings) = self.settings_receiver.try_recv() {
+            self.theme_config = settings;
+        }
+
         if let Ok(thread_obj) = self.ai_thread_channel.1.try_recv() {
             let mut thread_map = HashMap::new();
             self.ai_playground.save_chats = true;

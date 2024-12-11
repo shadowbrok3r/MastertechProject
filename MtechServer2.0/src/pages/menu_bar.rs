@@ -74,7 +74,9 @@ impl MtechServer {
 
                         if result.secondary_clicked() || accepted_by_keyboard && !self.context.search_input.is_empty() {
                             info!("selected? {}", self.context.search_input.clone());
-                            if let Some(input) = inputs.get(&self.context.search_input) {
+                            let search = self.context.search_input.clone();
+                            self.context.search_input.clear();
+                            if let Some(input) = inputs.get(&search) {
                                 let task = self.context.shared_ctx.tasks.iter().find(|&x| {
                                     x.task_name == *input
                                         || format!("{}", x.service_number.clone().unwrap_or_default())

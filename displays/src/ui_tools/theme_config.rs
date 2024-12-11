@@ -1,17 +1,20 @@
 use std::sync::Arc;
 
+use crossbeam::channel::Sender;
 use database::DATABASE;
 use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, CursorIcon, DragValue, FontFamily, FontId, Layout, Rounding, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
 use log::info;
 use serde::{Deserialize, Serialize};
-
+use serde_json::to_vec;
+use derivative::Derivative;
 use crate::{PlatformSpawner, Spawner};
 
 use super::carl_dark::{Aesthetix, CarlDark};
 
 
 
-#[derive(Serialize, Clone, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Clone, Deserialize, Debug, Derivative)]
+#[derivative(PartialEq)]
 pub struct ThemeConfig {
     /// Editor background
     pub background_color: Color32,
@@ -113,10 +116,10 @@ impl Default for ThemeConfig {
 }
 
 impl ThemeConfig {
-    pub fn edit_ui(&mut self, ui: &mut Ui) -> (bool, Self) {
+    pub fn edit_ui(&mut self, ui: &mut Ui, tx: Sender<ThemeConfig>) -> (bool, Self) {
         let mut ret = (false, self.clone());
         ui.horizontal(|ui| {
-            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let reset = Button::new("Reset to Default")
                     .min_size(Vec2::new(70., 25.))
                     .stroke(Stroke::new(1., self.warn_color))
@@ -157,6 +160,62 @@ impl ThemeConfig {
                     });
                     ret = (true, self.clone());
                 }
+
+                ui.add_space(5.);
+
+                let save_local = Button::new("Save to file")
+                    .min_size(Vec2::new(70., 25.))
+                    .stroke(Stroke::new(1., self.warn_color))
+                    .ui(ui);
+                
+                if save_local.clicked() {
+                    let color_settings = self.clone();
+                    
+                    PlatformSpawner::spawn(async move {
+                        // Serialize the struct into JSON
+                        if let Ok(json_data) = to_vec(&color_settings) {
+                            // Show the save file dialog
+                            if let Some(file) = rfd::AsyncFileDialog::new()
+                                .set_file_name("mastertech_color_scheme.json") // Default file name
+                                .save_file()
+                                .await
+                            {
+                                // Write the JSON data to the selected file
+                                if let Err(err) = file.write(&json_data).await {
+                                    info!("Failed to save file: {:?}", err);
+                                }
+                            }
+                        } else {
+                            info!("Error serializing settings to json");
+                        }
+                    });
+                }
+
+                ui.add_space(5.);
+
+                let upload = Button::new("Upload settings")
+                    .min_size(Vec2::new(70., 25.))
+                    .stroke(Stroke::new(1., self.warn_color))
+                    .ui(ui);
+                
+                if upload.clicked() {
+                    let tx = tx.clone();
+                    PlatformSpawner::spawn(async move {
+                        // Show the save file dialog
+                        if let Some(file) = rfd::AsyncFileDialog::new()
+                            .set_file_name("mastertech_color_scheme.json") // Default file name
+                            .pick_file()
+                            .await
+                        {
+                            match serde_json::from_slice::<ThemeConfig>(&file.read().await) {
+                                Ok(theme) => tx.try_send(theme).unwrap(),
+                                Err(e) => info!("Error converting bytes to Theme: {e:?}"),
+                            }
+                        }
+                        
+                    });
+                }
+                
             });
         });
 

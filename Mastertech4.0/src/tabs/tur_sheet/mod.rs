@@ -100,68 +100,49 @@ impl MastertechContext {
                                                 .show(ui, |ui| 
                                                 {
                                                                         /*     ROW 1     */
-                                                    if ui.add(
-                                                        TextEdit::singleline(&mut self.ticket_data.service_number)
+                                                    let service_num = TextEdit::singleline(&mut self.ticket_data.service_number)
                                                         .hint_text("Service #  ")
                                                         .char_limit(8)
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
-                                                        .min_size(vec2(self.widget_size+2.0,14.0))
-                                                    ).changed(){
-                                                        info!("Data changed: {}", self.ticket_data.service_number);
-                                                    };
+                                                        .min_size(vec2(self.widget_size+2.0,14.0)).ui(ui);
 
-                                                    if let Some(usr) = &self.shared_ctx.current_user {
-                                                        if usr.email == "tyler.naylor@pclaptops.com".to_string() && self.customer_data.name.len() > 0 {
-                                                            let name = self.customer_data.name.split_at(2);
-                                                            let pt1 = name.0;
-                                                            let pt2 = name.1;
-                                                            let new_pt1 = pt1.to_uppercase();
-                                                            self.customer_data.name = new_pt1 + pt2;
+                                                    service_num.clone().on_hover_text("(hint) Press Enter to pull ticket after typing SO#");
 
-                                                            ui.add(
-                                                                TextEdit::singleline(&mut self.customer_data.name)
-                                                                .hint_text("Customer Name  ")
-                                                                .vertical_align(Align::Center)
-                                                                .margin(vec2(4.0, 4.0))
-                                                                .min_size(vec2(self.widget_size+2.0,14.0))
-                                                            );
-                                                        } else {
-                                                            ui.add(
-                                                                TextEdit::singleline(&mut self.customer_data.name)
-                                                                .hint_text("Customer Name  ")
-                                                                .vertical_align(Align::Center)
-                                                                .margin(vec2(4.0, 4.0))
-                                                                .min_size(vec2(self.widget_size+2.0,14.0))
-                                                            );
-                                                        }
-                                                    } else {
-                                                        ui.add(
-                                                            TextEdit::singleline(&mut self.customer_data.name)
-                                                            .hint_text("Customer Name  ")
-                                                            .vertical_align(Align::Center)
-                                                            .margin(vec2(4.0, 4.0))
-                                                            .min_size(vec2(self.widget_size+2.0,14.0))
-                                                        );
+                                                    let accepted_by_keyboard = ui.input_mut(|input| input.key_pressed(Key::Enter));
+
+                                                    if self.ticket_data.service_number.len() == 7 && accepted_by_keyboard && service_num.has_focus() {
+                                                        let service_num = self.ticket_data.service_number.clone();
+                                                        self.presta_api();
+                                                        self.ticket_data = TicketData::default();
+                                                        self.task_data = LiveTaskPayload::default();
+                                                        self.customer_data = CustomerData::default();
+                                                        self.task_notes = Vec::new();
+                                                        self.ticket_data.service_number = service_num;
                                                     }
+
+                                                    TextEdit::singleline(&mut self.customer_data.name)
+                                                        .hint_text("Customer Name  ")
+                                                        .vertical_align(Align::Center)
+                                                        .margin(vec2(4.0, 4.0))
+                                                        .min_size(vec2(self.widget_size+2.0,14.0))
+                                                        .ui(ui);
 
                                                     ui.end_row();
 
                                                                         /*     ROW 2     */
-                                                    ui.add(
-                                                        TextEdit::singleline(&mut self.customer_data.phone_number)
+                                                    TextEdit::singleline(&mut self.customer_data.phone_number)
                                                         .hint_text("Phone Number 1")
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
-                                                        .min_size(vec2(self.widget_size+2.0,14.0))
-                                                    );
-                                                    ui.add(
-                                                        TextEdit::singleline(&mut self.customer_data.phone_number_2)
+                                                        .min_size(vec2(self.widget_size+2.0,14.0)).ui(ui);
+
+                                                    TextEdit::singleline(&mut self.customer_data.phone_number_2)
                                                         .hint_text("Phone Number 2")
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
                                                         .min_size(vec2(self.widget_size+2.0,14.0))
-                                                    );     
+                                                        .ui(ui);
                                                     
                                                     ui.end_row();
 
