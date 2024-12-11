@@ -130,8 +130,15 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
         hotkeys
     }
 
-    fn show_cell_view(&mut self, _ui: &mut eframe::egui::Ui, _row: &PrestashopOrderData, _column: usize) {
-        todo!()
+    fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopOrderData, column: usize) {
+        let _ = match column {
+            0 => ui.label(row.0.clone()),
+            1 => ui.label(row.1.clone()),
+            2 => ui.label(row.2.clone()),
+            3 => ui.label(row.3.clone()),
+            4 => ui.label(row.4.clone()),
+            _ => unreachable!(),
+        };
     }
 
     fn show_cell_editor(
