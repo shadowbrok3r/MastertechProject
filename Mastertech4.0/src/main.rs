@@ -35,7 +35,7 @@ impl eframe::App for MasterTechApp {
         // most important part of the whole app.. setting up our styling
         if self.context.shared_ctx.modify_theme {
             Window::new("Theme Mods").max_height(600.).title_bar(true).show(ctx, |ui| {
-                let theme = self.context.shared_ctx.theme_config.edit_ui(ui);
+                let theme = self.context.shared_ctx.theme_config.edit_ui(ui, self.context.shared_ctx.settings_sender.clone());
                 if theme.0 {
                     if let Some(user) = self.context.shared_ctx.current_user.clone().as_mut() {
                         user.user_settings.color_scheme = serde_json::to_value(theme.1.clone()).unwrap();

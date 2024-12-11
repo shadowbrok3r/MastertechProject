@@ -151,14 +151,15 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
                 WHERE task_id == $parent.id
         ) AS task_note 
         FROM task
-        WITH INDEX idx_store_due_date
+        
         WHERE $this.assignee.store == $auth.store 
         
         FETCH 
             service_ticket, 
             service_ticket.computer, 
             service_ticket.customer
-    "#; // ORDER BY due_date ASC
+        PARALLEL
+    "#; // ORDER BY due_date ASC WITH INDEX idx_store_due_date
     let query_results: Vec<TaskPayload> = DATABASE.query(query).await?.take(0)?;
     tx.try_send(query_results)?;
     Ok(())
@@ -176,15 +177,15 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
                     WHERE task_id == $parent.id
             ) AS task_note 
             FROM task 
-            WITH INDEX idx_store_due_date
+            
             WHERE $this.assignee.store == $store AND $this.completed IS false
             LIMIT $limit START $offset
             FETCH 
                 service_ticket, 
                 service_ticket.computer, 
                 service_ticket.customer
-            
-        "#; // PARALLEL
+            PARALLEL
+        "#; // PARALLEL WITH INDEX idx_store_due_date
 
         let start_query = Instant::now(); // Start timing the query
 
@@ -199,7 +200,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
             .take(0)?;
 
         let query_duration = start_query.elapsed(); // Measure query duration
-        info!("Query execution time for chunk (offset: {offset}): {query_duration:?}\ntask len: {}", query_results.len());
+        info!("Query execution time for chunk (offset: {offset}): {query_duration:?}");
 
         
         // Break the loop if no more results
@@ -234,6 +235,7 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: 
                 service_ticket, 
                 service_ticket.computer, 
                 service_ticket.customer
+            PARALLEL
         "#;
         
         let start_query = Instant::now(); // Start timing the query

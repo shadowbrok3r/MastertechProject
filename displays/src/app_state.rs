@@ -113,6 +113,10 @@ pub struct SharedContext {
     /// {UI actions channel for communication between UI components and main function}
     #[serde(skip)]
     pub ui_actions_rx: Receiver<TaskUiActions>,
+    #[serde(skip)]
+    pub settings_sender: Sender<ThemeConfig>,
+    #[serde(skip)]
+    pub settings_receiver: Receiver<ThemeConfig>,
 
     #[serde(skip)]
     pub toasts: Toasts,
@@ -189,6 +193,7 @@ impl SharedContext {
         let serial_channel = <SerialData>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
+        let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<ThemeConfig>(1);
         // let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         // let seb_channel = <Vec<Value>>::create_unbounded_channel();
 
@@ -236,6 +241,7 @@ impl SharedContext {
             notification_rx,
             live_notification_tx,
             live_notification_rx,
+            settings_sender, settings_receiver,
             bytes_channel,
             tur_channel,
             stock_channel,

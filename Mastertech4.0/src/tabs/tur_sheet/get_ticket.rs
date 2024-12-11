@@ -331,8 +331,10 @@ where
 
             let res: T = result.try_into()?;
             Ok(res)
-        } //else {
-            // Err(anyhow::Error::new(error))
-        // }
+        } else {
+            let mut seb = LocalSebData::default();
+            seb.ActivationCode = "COULD NOT GET SEB INFORMATION".to_string();
+            Ok(seb.into())
+        }
     }
 }
