@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
-use log::{debug, info};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use surrealdb::{sql::Id, RecordId};
@@ -189,7 +189,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
 
         let start_query = Instant::now(); // Start timing the query
 
-        info!("Querying at offset: {offset}");
+        warn!("Querying at offset: {offset}");
 
         let query_results: Vec<TaskPayload> = DATABASE
             .query(query)
@@ -200,7 +200,7 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
             .take(0)?;
 
         let query_duration = start_query.elapsed(); // Measure query duration
-        info!("Query execution time for chunk (offset: {offset}): {query_duration:?}");
+        warn!("Query execution time for chunk (offset: {offset}): {query_duration:?}");
 
         
         // Break the loop if no more results
@@ -239,7 +239,7 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: 
         "#;
         
         let start_query = Instant::now(); // Start timing the query
-        info!("Querying at offset: {offset}");
+        warn!("Querying at offset: {offset}");
 
         let query_results: Vec<TaskPayload> = DATABASE
             .query(query)
@@ -250,7 +250,7 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: 
             .take(0)?;
 
         let query_duration = start_query.elapsed(); // Measure query duration
-        info!("Query execution time for chunk (offset: {offset}): {query_duration:?}\ntask len: {}", query_results.len());
+        warn!("Query execution time for chunk (offset: {offset}): {query_duration:?}\ntask len: {}", query_results.len());
 
         // Break the loop if no more results
         if query_results.is_empty() {

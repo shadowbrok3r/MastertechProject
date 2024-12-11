@@ -13,7 +13,7 @@ impl SharedContext{
             if let Some(layout) = self.task_layouts.get_mut(page){
                 if self.rerun_filtering_completed{
                     self.rerun_filtering_completed = false;
-                    log::info!("Reruning filters for COMPLETED tasks: {:?}", self.tasks.len());
+                    // log::info!("Reruning filters for COMPLETED tasks: {:?}", self.tasks.len());
                     let mut map = BTreeMap::new();
                     users.iter().for_each(|u| {
                         let store_sel = self.store_selection.clone();
