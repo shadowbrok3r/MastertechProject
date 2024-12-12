@@ -1,11 +1,19 @@
+use std::collections::HashMap;
+
 use crate::{channel_manager::ChannelManager, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{Button, CentralPanel, ComboBox, KeyboardShortcut, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
-use database::schema::{helper_traits::EmployeeHelper, prestashop_schema::{self, Employee}, User};
+use database::schema::{helper_traits::EmployeeHelper, prestashop_schema::{self, Employee, PrestashopPayload}, User};
 use egui_extras::Column;
 use itertools::Itertools;
 use crate::{app_state::SharedContext, PlatformSpawner};
 use serde::Serialize;
+
+impl SharedContext {
+    pub fn task_table_viewer(&mut self, ui: &mut Ui) {
+        self.task_audit_table.show(ui, self.current_user.clone());
+    }
+}
 
 /// Every logic is defined in `Viewer`
 #[derive(Default, Serialize)]
@@ -21,7 +29,8 @@ pub struct TaskAuditViewer {
     my_orders_table: DataTable<PrestashopOrderData>,
     my_orders_viewer: TaskRowViewer,
     loading: bool,
-    index: i32
+    index: i32,
+    services: HashMap<String, Vec<PrestashopPayload>>
 }
 
 impl TaskAuditViewer {
@@ -33,7 +42,8 @@ impl TaskAuditViewer {
             my_orders_viewer: TaskRowViewer::default(),
             order_channel,
             loading: false,
-            index: 0
+            index: 0,
+            services: HashMap::new()
         }
     }
 
@@ -50,34 +60,15 @@ impl TaskAuditViewer {
 
                     if Button::new("Refresh").ui(ui).clicked() {
                         let order_tx = self.order_channel.0.clone();
-                        let usr = current_user.clone().unwrap_or_default();
-                        let id = usr.id_prestashop.unwrap_or_default();
-                        let mut employee = Employee::default();
-                        employee.id = format!("{id}");
-                        employee.id_store = usr.id_store.unwrap_or_default();
-                        PlatformSpawner::spawn(async move {
-                            let services = employee.get_my_services().await;
-                            match services {
-                                Ok(svcs) => order_tx.try_send(svcs).unwrap(),
-                                Err(e) => log::info!("Error getting my services: {e:?}"),
-                            }
-                        });
+                        let selected = self.audit_selection.clone();
+                        Self::get_services(selected, current_user.clone(), order_tx, self.index);
                     }
                     ui.add_space(10.);
                     if Button::new("Load +10").ui(ui).clicked() {
                         let order_tx = self.order_channel.0.clone();
-                        let usr = current_user.clone().unwrap_or_default();
-                        let id = usr.id_prestashop.unwrap_or_default();
-                        let mut employee = Employee::default();
-                        employee.id = format!("{id}");
-                        employee.id_store = usr.id_store.unwrap_or_default();
-                        PlatformSpawner::spawn(async move {
-                            let services = employee.get_my_services().await;
-                            match services {
-                                Ok(svcs) => order_tx.try_send(svcs).unwrap(),
-                                Err(e) => log::info!("Error getting my services: {e:?}"),
-                            }
-                        });
+                        let selected = self.audit_selection.clone();
+                        self.index += 10;
+                        Self::get_services(selected, current_user.clone(), order_tx, self.index);
                     }
                 });
             });
@@ -106,98 +97,8 @@ impl TaskAuditViewer {
 
                 if current_selection != *selected {
                     self.loading = true;
-                    match selected {
-                        TaskAudit::CheckinShelf => {
-                            let order_tx = self.order_channel.0.clone();
-                            let usr = current_user.clone().unwrap_or_default();
-                            let id = usr.id_prestashop.unwrap_or_default();
-                            let mut employee = Employee::default();
-                            employee.id = format!("{id}");
-                            employee.id_store = usr.id_store.unwrap_or_default();
-                            PlatformSpawner::spawn(async move {
-                                let services = employee.get_services_by_status("29").await;
-                                match services {
-                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
-                                    Err(e) => log::info!("Error getting my services: {e:?}"),
-                                }
-                            });
-                        },
-                        TaskAudit::MyInRepair => {
-                            let order_tx = self.order_channel.0.clone();
-                            let usr = current_user.clone().unwrap_or_default();
-                            let id = usr.id_prestashop.unwrap_or_default();
-                            let mut employee = Employee::default();
-                            employee.id = format!("{id}");
-                            employee.id_store = usr.id_store.unwrap_or_default();
-                            PlatformSpawner::spawn(async move {
-                                let services = employee.get_my_services().await;
-                                match services {
-                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
-                                    Err(e) => log::info!("Error getting my services: {e:?}"),
-                                }
-                            });
-                        },
-                        TaskAudit::InRepair => {
-                            let order_tx = self.order_channel.0.clone();
-                            let usr = current_user.clone().unwrap_or_default();
-                            let id = usr.id_prestashop.unwrap_or_default();
-                            let mut employee = Employee::default();
-                            employee.id = format!("{id}");
-                            employee.id_store = usr.id_store.unwrap_or_default();
-                            PlatformSpawner::spawn(async move {
-                                let services = employee.get_services_by_status("30").await;
-                                match services {
-                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
-                                    Err(e) => log::info!("Error getting my services: {e:?}"),
-                                }
-                            });
-                        },
-                        TaskAudit::DoneShelf => {
-                            let order_tx = self.order_channel.0.clone();
-                            let usr = current_user.clone().unwrap_or_default();
-                            let id = usr.id_prestashop.unwrap_or_default();
-                            let mut employee = Employee::default();
-                            employee.id = format!("{id}");
-                            employee.id_store = usr.id_store.unwrap_or_default();
-                            PlatformSpawner::spawn(async move {
-                                let services = employee.get_services_by_status("40").await;
-                                match services {
-                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
-                                    Err(e) => log::info!("Error getting my services: {e:?}"),
-                                }
-                            });
-                        },
-                        TaskAudit::AllServices => {
-                            let order_tx = self.order_channel.0.clone();
-                            let usr = current_user.clone().unwrap_or_default();
-                            let id = usr.id_prestashop.unwrap_or_default();
-                            let mut employee = Employee::default();
-                            employee.id = format!("{id}");
-                            employee.id_store = usr.id_store.unwrap_or_default();
-                            PlatformSpawner::spawn(async move {
-                                let services = employee.get_all_services_in_my_store().await;
-                                match services {
-                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
-                                    Err(e) => log::info!("Error getting my services: {e:?}"),
-                                }
-                            });
-                        },
-                        TaskAudit::MyServices => {
-                            let order_tx = self.order_channel.0.clone();
-                            let usr = current_user.clone().unwrap_or_default();
-                            let id = usr.id_prestashop.unwrap_or_default();
-                            let mut employee = Employee::default();
-                            employee.id = format!("{id}");
-                            employee.id_store = usr.id_store.unwrap_or_default();
-                            PlatformSpawner::spawn(async move {
-                                let services = employee.get_my_services().await;
-                                match services {
-                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
-                                    Err(e) => log::info!("Error getting my services: {e:?}"),
-                                }
-                            });
-                        },
-                    }
+                    let order_tx = self.order_channel.0.clone();
+                    Self::get_services(selected.clone(), current_user, order_tx, self.index);
                 }
             
                 if self.loading {
@@ -210,8 +111,86 @@ impl TaskAuditViewer {
         });  
     }
 
+    pub fn get_services(
+        selected: TaskAudit, 
+        current_user: Option<User>, 
+        order_tx: Sender<Vec<prestashop_schema::PrestashopPayload>>, 
+        index: i32
+    ) {
+        let usr = current_user.clone().unwrap_or_default();
+        let id = usr.id_prestashop.unwrap_or_default();
+        let mut employee = Employee::default();
+        employee.id = format!("{id}");
+        employee.id_store = usr.id_store.unwrap_or_default();
+        let idx = index.clone();
+        match selected {
+            TaskAudit::CheckinShelf => {
+                PlatformSpawner::spawn(async move {
+                    let services = employee.get_services_by_status("29", idx).await;
+                    match services {
+                        Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                        Err(e) => log::info!("Error getting my services: {e:?}"),
+                    }
+                });
+            },
+            TaskAudit::MyInRepair => {
+                PlatformSpawner::spawn(async move {
+                    let services = employee.get_my_services(idx).await;
+                    match services {
+                        Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                        Err(e) => log::info!("Error getting my services: {e:?}"),
+                    }
+                });
+            },
+            TaskAudit::InRepair => {
+                PlatformSpawner::spawn(async move {
+                    let services = employee.get_services_by_status("30", idx).await;
+                    match services {
+                        Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                        Err(e) => log::info!("Error getting my services: {e:?}"),
+                    }
+                });
+            },
+            TaskAudit::DoneShelf => {
+                PlatformSpawner::spawn(async move {
+                    let services = employee.get_services_by_status("40", idx).await;
+                    match services {
+                        Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                        Err(e) => log::info!("Error getting my services: {e:?}"),
+                    }
+                });
+            },
+            TaskAudit::AllServices => {
+                PlatformSpawner::spawn(async move {
+                    let services = employee.get_all_services_in_my_store(idx).await;
+                    match services {
+                        Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                        Err(e) => log::info!("Error getting my services: {e:?}"),
+                    }
+                });
+            },
+            TaskAudit::MyServices => {
+                PlatformSpawner::spawn(async move {
+                    let services = employee.get_my_services(idx).await;
+                    match services {
+                        Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                        Err(e) => log::info!("Error getting my services: {e:?}"),
+                    }
+                });
+            },
+        }
+    }
+
     pub fn receive(&mut self) {
         if let  Ok(orders) = self.order_channel.1.try_recv() {
+            // let key = self.audit_selection.as_str();
+            // self.services.entry(key).or_insert(orders.clone()).it;
+            // self.services
+            //     .iter_mut()
+            //     .map(|(k, v)| 
+            // {
+
+            // });
             let data: Vec<PrestashopOrderData> = orders
                 .iter()
                 .map(|order_data| {
@@ -228,16 +207,11 @@ impl TaskAuditViewer {
                 })
                 .collect();
 
-            self.my_orders_table.replace(data);
+            self.my_orders_table.extend(data);
             self.loading = false;
         }
     }
-}
 
-impl SharedContext {
-    pub fn task_table_viewer(&mut self, ui: &mut Ui) {
-        self.task_audit_table.show(ui, self.current_user.clone());
-    }
 }
 
 #[derive(PartialEq, Debug, Clone, Default)]
@@ -343,7 +317,7 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopOrderData, column: usize) {
         let _ = match column {
-            0 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.0.clone()))),
+            0 => ui.horizontal_centered(|ui| ui.colored_label(ui.style().visuals.warn_fg_color , format!(" {}", row.0.clone()))),
             1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.1.clone()))),
             2 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.2.clone()))),
             3 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.3.clone()))),
@@ -356,9 +330,9 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
         let col_config = Column::auto();
         match column {
             0 => col_config.resizable(true).at_least(60.).at_most(60.),
-            1 => col_config.resizable(true).at_least(100.).at_most(185.),
+            1 => col_config.resizable(true).at_least(180.).at_most(225.),
             2 => col_config.resizable(true).at_least(150.).at_most(150.),
-            3 => col_config.resizable(true).at_least(200.).at_most(250.),
+            3 => col_config.resizable(true).at_least(250.).at_most(320.),
             4 => col_config.resizable(true).at_least(50.).at_most(50.),
             _ => col_config,
         }
