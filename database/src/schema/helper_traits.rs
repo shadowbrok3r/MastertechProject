@@ -46,17 +46,17 @@ pub trait EmployeeHelper {
     /// Find a User based on Employee info -> id_employee
     async fn find_user(&mut self) -> Result<Option<User>, Error>;
     /// Pull all of my services given Employee info -> id_employee
-    async fn get_my_services(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    async fn get_my_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
     /// Get all orders in my store given Employee info -> id_location
-    async fn get_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    async fn get_services_in_my_store(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
     /// Get all Orders of which are my Return For Service's
-    async fn get_my_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn get_my_return_for_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Get all Orders of which are In the given status
-    async fn get_services_by_status(&mut self, status: &str) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    async fn get_services_by_status(&mut self, status: &str, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
     /// Get all services in my store
-    async fn get_all_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    async fn get_all_services_in_my_store(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
     /// Get all Return For Service's in my store
-    async fn get_my_store_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn get_my_store_return_for_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Get Employee from ID
     async fn get_employee_from_id(&mut self, id_employee: &str) -> Result<Employee, Error>;
     /// Convert an order into a PrestashopPayload
@@ -908,14 +908,14 @@ impl EmployeeHelper for Employee {
         }
     }
 
-    async fn get_my_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error> {
+    async fn get_my_return_for_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::Order>, Error> {
         let mut api_call = Prestashop::default();
         api_call.display = "";
         let mut query: HashMap<&str, &str> = HashMap::new();
-
+        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
         query.insert("filter[product_reference]", "SRVC/RETURN");
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", "0,10");
+        query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
 
         let order_details: Vec<prestashop_schema::OrderDetails> = api_call
@@ -946,13 +946,13 @@ impl EmployeeHelper for Employee {
         Ok(orders_vec)
     }
 
-    async fn get_my_store_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error> {
+    async fn get_my_store_return_for_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::Order>, Error> {
         let api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-
+        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
         query.insert("filter[product_reference]", "SRVC/RETURN");
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", "0,10");
+        query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
 
         let order_details: Vec<prestashop_schema::OrderDetails> = api_call
@@ -985,15 +985,15 @@ impl EmployeeHelper for Employee {
         Ok(orders_vec)
     }
 
-    async fn get_my_services(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+    async fn get_my_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-
+        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
         query.insert("filter[id_employee_sales_rep]", &mut self.id);
         query.insert("filter[id_store]", &mut self.id_store);
         query.insert("filter[id_order_type]", "2");
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", "0,10");
+        query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
         api_call.display = "[id]";
 
@@ -1010,14 +1010,14 @@ impl EmployeeHelper for Employee {
         Ok(presta_payloads)
     }
 
-    async fn get_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+    async fn get_services_in_my_store(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-
+        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
         query.insert("filter[id_store]", &mut self.id_store);
         query.insert("filter[id_order_type]", "2");
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", "0,10");
+        query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
         api_call.display = "[id]";
 
@@ -1034,12 +1034,12 @@ impl EmployeeHelper for Employee {
         Ok(presta_payloads)
     }
 
-    async fn get_all_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+    async fn get_all_services_in_my_store(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-
+        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", "0,10");
+        query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
         api_call.display = "[id]";
 
@@ -1056,13 +1056,14 @@ impl EmployeeHelper for Employee {
         Ok(presta_payloads)
     }
  
-    async fn get_services_by_status(&mut self, status: &str) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+    async fn get_services_by_status(&mut self, status: &str, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
 
+        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
         query.insert("filter[current_state]", status);
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", "0,10");
+        query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
         api_call.display = "[id]";
 
