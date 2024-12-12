@@ -161,7 +161,7 @@ impl<'a> Prestashop<'a> {
         info!("query:{url}\nresponse: {:#?}", response);
 
         let x: T = from_value(response[name].clone())?;
-        info!("x: {x:#?}");
+        // info!("x: {x:#?}");
         Ok(x)
     }
 
@@ -185,10 +185,10 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        info!("query:{url}\nresponse: {:#?}", response);
+        info!("query:{url}");
 
         let x: T = from_value(response[name].clone())?;
-        info!("x: {x:#?}");
+        // info!("x: {x:#?}");
         Ok(x)
     }
 
@@ -241,9 +241,9 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        info!("response: {:#?}", response);
+        // info!("response: {:#?}", response);
         let x: Vec<T> = from_value(response[resource_name].clone())?;
-        info!("x: {x:#?}");
+        // info!("x: {x:#?}");
 
         Ok(x)
     }
@@ -269,9 +269,9 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        info!("response: {:#?}", response);
+        // info!("response: {:#?}", response);
         let x: T = from_value(response[resource_name].clone())?;
-        info!("x: {x:#?}");
+        // info!("x: {x:#?}");
 
         Ok(x)
     }
@@ -352,6 +352,7 @@ pub struct Order {
     pub id_address_delivery: String, // ✔️
     pub id_address_invoice: String,  // ✔️
     pub id_customer: String,         // ✔️
+    pub current_state: String,
     // pub id_cart: String, // ✔️
     pub invoice_number: String, // ❌
     pub invoice_date: String,   // ❌

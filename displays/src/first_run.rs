@@ -85,7 +85,7 @@ impl SharedContext {
         }
     }
 
-    pub fn receive(&mut self) {
+    pub fn receive(&mut self, frame: &mut eframe::Frame) {
         if let Ok(mut tasks) = self.initial_tasks_rx.try_recv() {
             // Indicate that filtering needs to be rerun
             self.rerun_filtering_store_tasks = true;
@@ -115,7 +115,6 @@ impl SharedContext {
                 }
             });
         }
-        
 
         if let Ok(users) = self.store_users_rx.try_recv() {
             for (page, layout) in self.task_layouts.iter_mut() {
@@ -153,6 +152,6 @@ impl SharedContext {
             self.ai_playground.set_threads(thread_map);
         }
 
-        self.task_audit_table.receive();
+        self.task_audit_table.receive(frame);
     }
 }

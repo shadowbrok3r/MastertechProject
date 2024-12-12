@@ -63,7 +63,7 @@ impl MtechServer {
                                 .max_suggestions(10)
                                 .set_text_edit_properties(|text_edit: TextEdit<'_>| {
                                     text_edit
-                                        .hint_text("Search for task")
+                                        .hint_text("  Search for task")
                                         .desired_width(150.0)
                                         .font(FontId::proportional(12.0))
                                         .frame(true)
@@ -94,7 +94,7 @@ impl MtechServer {
                         }
                     
                         ui.add_space(20.);
-                        if Button::new(RichText::new("Organize Windows").monospace()).ui(ui).clicked() {
+                        if Button::new(RichText::new(" Organize Windows ").monospace()).ui(ui).clicked() {
                             // ctx.send_viewport_cmd(command);
 
                             //let organize_shortcut = KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::O);
@@ -109,13 +109,13 @@ impl MtechServer {
                             })
                         }
                         ui.add_space(20.);
-                        if Button::new(RichText::new("Reset Memory").monospace()).ui(ui).clicked() {
+                        if Button::new(RichText::new(" Reset Memory ").monospace()).ui(ui).clicked() {
                             ctx.memory_mut(|mem| *mem = Default::default());
                         }
                     });
 
                     let notif_tx = self.context.shared_ctx.notification_tx.clone();
-                    ui.add_space(ui.available_width() / 6.);
+                    ui.add_space(ui.available_width() / 7.);
                     let txt = RichText::new(format!(
                         "Mastertech Server {}",
                         env!("CARGO_PKG_VERSION")
@@ -160,7 +160,7 @@ impl MtechServer {
                         .ui(ui);
                     }
 
-                    ui.add_space(ui.available_width()/6.0);
+                    ui.add_space(ui.available_width()/7.0);
 
                     let selected = &mut self.context.shared_ctx.store_selection;
                     let current = selected.clone();
@@ -217,7 +217,7 @@ impl MtechServer {
                     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                         ui.add_space(8.0);
                         let txt =
-                            RichText::new(usr.name.clone()).color(Color32::from_rgb(100, 50, 100));
+                            RichText::new(format!(" {} ", usr.name.clone())).color(Color32::from_rgb(100, 50, 100));
                         ui.menu_button(txt, |ui| {
                             ui.set_width(300.0);
                             ui.set_height(600.0);
@@ -449,7 +449,7 @@ impl MtechServer {
                         ui.add_space(20.);
                         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
                         ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                        let reset_ui = Button::new(RichText::new("Reset Ui Layout").color(Color32::LIGHT_RED).monospace()).ui(ui);
+                        let reset_ui = Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()).ui(ui);
                         let tree = default_tree();
                         if reset_ui.clicked() {
                             let default_layout = serde_json::to_value(&tree).unwrap();
@@ -494,7 +494,8 @@ impl MtechServer {
                             self.context.update_settings = true;
                         }
                         ui.add_space(5.);
-                        let submit = Button::new(RichText::new("Save Ui Layout").monospace()).ui(ui);
+                        let submit = Button::new(RichText::new(" Save Ui Layout ").monospace()).ui(ui);
+                        
                         if submit.clicked() {
                             let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
                             self.context.user_settings.ui_layout.mtechserver = val.clone();

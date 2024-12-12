@@ -3,7 +3,7 @@ use super::{
     prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
 use crate::{schema::CUSTOMER_TABLE, DATABASE};
-use anyhow::{Error, Result};
+use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use log::{debug, info};
@@ -46,17 +46,17 @@ pub trait EmployeeHelper {
     /// Find a User based on Employee info -> id_employee
     async fn find_user(&mut self) -> Result<Option<User>, Error>;
     /// Pull all of my services given Employee info -> id_employee
-    async fn get_my_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    async fn get_my_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error>;
     /// Get all orders in my store given Employee info -> id_location
-    async fn get_services_in_my_store(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    async fn get_services_in_my_store(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error>;
     /// Get all Orders of which are my Return For Service's
-    async fn get_my_return_for_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn get_my_return_for_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Get all Orders of which are In the given status
-    async fn get_services_by_status(&mut self, status: &str, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    async fn get_services_by_status(&mut self, status: &str, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error>;
     /// Get all services in my store
-    async fn get_all_services_in_my_store(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    async fn get_all_services_in_my_store(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error>;
     /// Get all Return For Service's in my store
-    async fn get_my_store_return_for_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn get_my_store_return_for_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Get Employee from ID
     async fn get_employee_from_id(&mut self, id_employee: &str) -> Result<Employee, Error>;
     /// Convert an order into a PrestashopPayload
@@ -188,8 +188,9 @@ pub trait OrderHelper {
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct OrderNumber {
     #[serde(deserialize_with = "deserialize_to_string")]
-    id: String
+    pub id: String
 }
+
 /// A trait for managing operations and data related to task note payloads.
 pub trait TaskNotePayloadHelper: Send {
     /// Creates a task note in the Prestashop system.
@@ -908,11 +909,11 @@ impl EmployeeHelper for Employee {
         }
     }
 
-    async fn get_my_return_for_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::Order>, Error> {
+    async fn get_my_return_for_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<prestashop_schema::Order>, Error> {
         let mut api_call = Prestashop::default();
         api_call.display = "";
         let mut query: HashMap<&str, &str> = HashMap::new();
-        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
+        let pagination = format!("{},{}",start_idx.clone(), offset);
         query.insert("filter[product_reference]", "SRVC/RETURN");
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
@@ -946,10 +947,10 @@ impl EmployeeHelper for Employee {
         Ok(orders_vec)
     }
 
-    async fn get_my_store_return_for_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::Order>, Error> {
+    async fn get_my_store_return_for_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<prestashop_schema::Order>, Error> {
         let api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
+        let pagination = format!("{},{}",start_idx.clone(), offset);
         query.insert("filter[product_reference]", "SRVC/RETURN");
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
@@ -985,12 +986,12 @@ impl EmployeeHelper for Employee {
         Ok(orders_vec)
     }
 
-    async fn get_my_services(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+    async fn get_my_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
-        query.insert("filter[id_employee_sales_rep]", &mut self.id);
-        query.insert("filter[id_store]", &mut self.id_store);
+        let pagination = format!("{},{}",start_idx.clone(), offset);
+        query.insert("filter[id_employee_sales_rep]", &self.id);
+        query.insert("filter[id_store]", &self.id_store);
         query.insert("filter[id_order_type]", "2");
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
@@ -1000,21 +1001,14 @@ impl EmployeeHelper for Employee {
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await?;
-
-        let mut presta_payloads = Vec::new();
-        for order in orders.iter() {
-            presta_payloads.push(
-                self.to_prestashop_payload(&order.id).await?
-            );
-        }
-        Ok(presta_payloads)
+        Ok(orders)
     }
 
-    async fn get_services_in_my_store(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+    async fn get_services_in_my_store(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
-        query.insert("filter[id_store]", &mut self.id_store);
+        let pagination = format!("{},{}",start_idx.clone(), offset);
+        query.insert("filter[id_store]", &self.id_store);
         query.insert("filter[id_order_type]", "2");
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
@@ -1024,20 +1018,15 @@ impl EmployeeHelper for Employee {
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await?;
-
-        let mut presta_payloads = Vec::new();
-        for order in orders.iter() {
-            presta_payloads.push(
-                self.to_prestashop_payload(&order.id).await?
-            );
-        }
-        Ok(presta_payloads)
+        Ok(orders)
     }
 
-    async fn get_all_services_in_my_store(&mut self, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+    async fn get_all_services_in_my_store(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
+        let pagination = format!("{},{}",start_idx.clone(), offset);
+        query.insert("filter[id_store]", &self.id_store);
+        query.insert("filter[id_order_type]", "2");
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
@@ -1046,21 +1035,16 @@ impl EmployeeHelper for Employee {
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await?;
-
-        let mut presta_payloads = Vec::new();
-        for order in orders.iter() {
-            presta_payloads.push(
-                self.to_prestashop_payload(&order.id).await?
-            );
-        }
-        Ok(presta_payloads)
+        Ok(orders)
     }
  
-    async fn get_services_by_status(&mut self, status: &str, start_idx: i32) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+    async fn get_services_by_status(&mut self, status: &str, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-
-        let pagination = format!("{},{}",start_idx.clone(), start_idx+10);
+        let pagination = format!("{},{}",start_idx.clone(), offset);
+        info!("Pagination: {pagination}");
+        query.insert("filter[id_store]", &self.id_store);
+        query.insert("filter[id_order_type]", "2");
         query.insert("filter[current_state]", status);
         query.insert("sort", "[id_DESC]");
         query.insert("limit", &pagination);
@@ -1069,39 +1053,28 @@ impl EmployeeHelper for Employee {
 
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
-            .await?;
-
-        let mut presta_payloads = Vec::new();
-        for order in orders.iter() {
-            presta_payloads.push(
-                self.to_prestashop_payload(&order.id).await?
-            );
-        }
-        Ok(presta_payloads)
+            .await.context("Pulling orders list")?;
+        Ok(orders)
     }
 
     async fn to_prestashop_payload(&mut self, order_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> {
         let api_call = Prestashop::default();
         let mut query = HashMap::new();
-
+        info!("Pulling order {order_number}");
         query.insert("filter[id_order]", order_number);
         query.insert("output_format", "JSON");
 
 
         let order: prestashop_schema::Order = api_call
             .request_subresources_by_id_wasm("orders", "order", order_number)
-            .await?;
+            .await.context("Pulling order")?;
 
         if order.id_customer.is_empty() 
-            || order.id_employee_sales_rep.eq("0") 
         {
             return Err(anyhow::anyhow!("order.id_customer is empty")).into();
         }
 
-        info!("order: {order:#?}");
-
-
-        let sales_rep: Option<Employee>  = if !order.id_employee_split_rep.contains("checkinshelf") {
+        let sales_rep: Option<Employee>  = if !order.id_employee_sales_rep.eq("checkinshelf") && !order.id_employee_sales_rep.eq("0"){
             Some(
                 api_call
                 .request_subresources_by_id_wasm(
@@ -1109,14 +1082,13 @@ impl EmployeeHelper for Employee {
                     "employee",
                     &order.id_employee_sales_rep,
                 )
-                .await?
+                .await.context("Pulling employee")?
             )
         } else {
             let mut emp = Employee::default();
             emp.firstname = "CheckInShelf".to_string();
             Some(emp)
         };
-
 
         let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0") {
             let employee_2: Employee = api_call
@@ -1125,7 +1097,7 @@ impl EmployeeHelper for Employee {
                     "employee",
                     &order.id_employee_split_rep,
                 )
-                .await?;
+                .await.context("Pulling split rep")?;
 
             info!("employee: {sales_rep:#?}");
             Some(employee_2)
@@ -1133,10 +1105,17 @@ impl EmployeeHelper for Employee {
             None
         };
 
-        let cust: prestashop_schema::Customer = api_call
-            .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
-            .await?;
-
+        let cust: prestashop_schema::Customer = if order.id_employee_sales_rep.eq("0") {
+            let mut cust = prestashop_schema::Customer::default();
+            cust.firstname = "Checkin".to_string();
+            cust.lastname = "Shelf".to_string();
+            cust
+        } else {
+            api_call
+                .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
+                .await.context("Pulling customer")?
+        };
+        
         let customer = CustomerData {
             id: RecordId::from((
                 CUSTOMER_TABLE.to_string(),
