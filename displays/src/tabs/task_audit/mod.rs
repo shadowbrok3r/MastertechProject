@@ -1,41 +1,56 @@
-use crate::{egui_data_table::{viewer::{default_hotkeys, UiActionContext}, Renderer, RowViewer, UiAction}, Spawner};
-use eframe::egui::{Button, CentralPanel, Color32, ComboBox, KeyboardShortcut, RichText, SidePanel, TextEdit, TopBottomPanel, Ui, Widget};
-use database::schema::{helper_traits::{EmployeeHelper, UserHelper}, prestashop_schema::Employee};
+use crate::{channel_manager::ChannelManager, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
+use crossbeam::channel::{Receiver, Sender};
+use eframe::egui::{Button, CentralPanel, ComboBox, KeyboardShortcut, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
+use database::schema::{helper_traits::EmployeeHelper, prestashop_schema::{self, Employee}, User};
+use egui_extras::Column;
+use itertools::Itertools;
 use crate::{app_state::SharedContext, PlatformSpawner};
 use serde::Serialize;
 
-impl SharedContext {
-    pub fn task_table_viewer(&mut self, ui: &mut Ui) {
-        SidePanel::right("Hotkeys-TaskAudit")
-            .default_width(500.)
-            .show_inside(ui, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.heading("Hotkeys");
-                    ui.separator();
-                    ui.add_space(0.);
+/// Every logic is defined in `Viewer`
+#[derive(Default, Serialize)]
+pub struct TaskRowViewer {
+    filter: String,
+    row_protection: bool,
+    hotkeys: Vec<(KeyboardShortcut, UiAction)>,
+}
 
-                    // for (k, a) in &self.data_viewer.hotkeys {
-                    //     Button::new(format!("{a:?}"))
-                    //         .shortcut_text(ui.ctx().format_shortcut(k))
-                    //         .ui(ui);
-                    //     ui.add_space(10.);
-                    // }
-                });
-            });
+pub struct TaskAuditViewer {
+    audit_selection: TaskAudit,
+    order_channel: (Sender<Vec<prestashop_schema::PrestashopPayload>>, Receiver<Vec<prestashop_schema::PrestashopPayload>>),
+    my_orders_table: DataTable<PrestashopOrderData>,
+    my_orders_viewer: TaskRowViewer,
+    loading: bool,
+    index: i32
+}
 
+impl TaskAuditViewer {
+    pub fn new() -> Self {
+        let order_channel = <Vec<prestashop_schema::PrestashopPayload>>::create_unbounded_channel();
+        Self {
+            audit_selection: TaskAudit::default(),
+            my_orders_table: DataTable::default(),
+            my_orders_viewer: TaskRowViewer::default(),
+            order_channel,
+            loading: false,
+            index: 0
+        }
+    }
+
+    fn show(&mut self, ui: &mut Ui, current_user: Option<User>) {
         TopBottomPanel::top("Task Audit Top Panel")
             .exact_height(30.)
             .show_inside(ui, |ui| {
                 ui.horizontal_top(|ui| {
-                    TextEdit::singleline(&mut self.serials_viewer.filter)
+                    TextEdit::singleline(&mut self.my_orders_viewer.filter)
                         .hint_text("Search for SO# / Customer")
                         .ui(ui);
 
                     ui.add_space(10.);
 
                     if Button::new("Refresh").ui(ui).clicked() {
-                        let order_tx = self.presta_order_channel.0.clone();
-                        let usr = self.current_user.clone().unwrap_or_default();
+                        let order_tx = self.order_channel.0.clone();
+                        let usr = current_user.clone().unwrap_or_default();
                         let id = usr.id_prestashop.unwrap_or_default();
                         let mut employee = Employee::default();
                         employee.id = format!("{id}");
@@ -49,61 +64,257 @@ impl SharedContext {
                         });
                     }
                     ui.add_space(10.);
-                    
+                    if Button::new("Load +10").ui(ui).clicked() {
+                        let order_tx = self.order_channel.0.clone();
+                        let usr = current_user.clone().unwrap_or_default();
+                        let id = usr.id_prestashop.unwrap_or_default();
+                        let mut employee = Employee::default();
+                        employee.id = format!("{id}");
+                        employee.id_store = usr.id_store.unwrap_or_default();
+                        PlatformSpawner::spawn(async move {
+                            let services = employee.get_my_services().await;
+                            match services {
+                                Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                                Err(e) => log::info!("Error getting my services: {e:?}"),
+                            }
+                        });
+                    }
                 });
             });
 
-        CentralPanel::default().show_inside(ui, |ui| {
+        CentralPanel::default()
+            .show_inside(ui, |ui| 
+        {
             ui.horizontal(|ui| {
-                // TextEdit::singleline(&mut self.data_viewer.filter).ui(ui);
-
                 ui.add_space(10.);
 
-                let selected = &mut self.store_selection;
-
-                let mut usr = self.current_user.clone().unwrap_or_default();
-                let selected_text = usr.get_store_from_odoo_id().unwrap_or_default();
-
+                let selected_text = self.audit_selection.to_owned().as_str();
+                let selected = &mut self.audit_selection;
                 let current_selection = selected.clone();
 
                 ComboBox::new("Store_Selection", "")
                     .selected_text(selected_text.as_str())
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(selected, 76, "RIV");
-                        ui.selectable_value(selected, 73, "LTN");
-                        ui.selectable_value(selected, 74, "MUR");
-                        ui.selectable_value(selected, 78, "WJ");
-                        ui.selectable_value(selected, 75, "ORE");
-                        ui.selectable_value(selected, 72, "AF");
-                        ui.selectable_value(selected, 77, "SAN");
+                        ui.selectable_value(selected, TaskAudit::AllServices, "All Services");
+                        ui.selectable_value(selected, TaskAudit::CheckinShelf, "Check-in Shelf");
+                        ui.selectable_value(selected, TaskAudit::MyInRepair, "My In Repair");
+                        ui.selectable_value(selected, TaskAudit::InRepair, "In Repair");
+                        ui.selectable_value(selected, TaskAudit::DoneShelf, "Done Shelf");
+                        ui.selectable_value(selected, TaskAudit::MyServices, "My Services");
                     })
                     .response;
 
                 if current_selection != *selected {
-                    PlatformSpawner::spawn(async move {});
+                    self.loading = true;
+                    match selected {
+                        TaskAudit::CheckinShelf => {
+                            let order_tx = self.order_channel.0.clone();
+                            let usr = current_user.clone().unwrap_or_default();
+                            let id = usr.id_prestashop.unwrap_or_default();
+                            let mut employee = Employee::default();
+                            employee.id = format!("{id}");
+                            employee.id_store = usr.id_store.unwrap_or_default();
+                            PlatformSpawner::spawn(async move {
+                                let services = employee.get_services_by_status("29").await;
+                                match services {
+                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                                    Err(e) => log::info!("Error getting my services: {e:?}"),
+                                }
+                            });
+                        },
+                        TaskAudit::MyInRepair => {
+                            let order_tx = self.order_channel.0.clone();
+                            let usr = current_user.clone().unwrap_or_default();
+                            let id = usr.id_prestashop.unwrap_or_default();
+                            let mut employee = Employee::default();
+                            employee.id = format!("{id}");
+                            employee.id_store = usr.id_store.unwrap_or_default();
+                            PlatformSpawner::spawn(async move {
+                                let services = employee.get_my_services().await;
+                                match services {
+                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                                    Err(e) => log::info!("Error getting my services: {e:?}"),
+                                }
+                            });
+                        },
+                        TaskAudit::InRepair => {
+                            let order_tx = self.order_channel.0.clone();
+                            let usr = current_user.clone().unwrap_or_default();
+                            let id = usr.id_prestashop.unwrap_or_default();
+                            let mut employee = Employee::default();
+                            employee.id = format!("{id}");
+                            employee.id_store = usr.id_store.unwrap_or_default();
+                            PlatformSpawner::spawn(async move {
+                                let services = employee.get_services_by_status("30").await;
+                                match services {
+                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                                    Err(e) => log::info!("Error getting my services: {e:?}"),
+                                }
+                            });
+                        },
+                        TaskAudit::DoneShelf => {
+                            let order_tx = self.order_channel.0.clone();
+                            let usr = current_user.clone().unwrap_or_default();
+                            let id = usr.id_prestashop.unwrap_or_default();
+                            let mut employee = Employee::default();
+                            employee.id = format!("{id}");
+                            employee.id_store = usr.id_store.unwrap_or_default();
+                            PlatformSpawner::spawn(async move {
+                                let services = employee.get_services_by_status("40").await;
+                                match services {
+                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                                    Err(e) => log::info!("Error getting my services: {e:?}"),
+                                }
+                            });
+                        },
+                        TaskAudit::AllServices => {
+                            let order_tx = self.order_channel.0.clone();
+                            let usr = current_user.clone().unwrap_or_default();
+                            let id = usr.id_prestashop.unwrap_or_default();
+                            let mut employee = Employee::default();
+                            employee.id = format!("{id}");
+                            employee.id_store = usr.id_store.unwrap_or_default();
+                            PlatformSpawner::spawn(async move {
+                                let services = employee.get_all_services_in_my_store().await;
+                                match services {
+                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                                    Err(e) => log::info!("Error getting my services: {e:?}"),
+                                }
+                            });
+                        },
+                        TaskAudit::MyServices => {
+                            let order_tx = self.order_channel.0.clone();
+                            let usr = current_user.clone().unwrap_or_default();
+                            let id = usr.id_prestashop.unwrap_or_default();
+                            let mut employee = Employee::default();
+                            employee.id = format!("{id}");
+                            employee.id_store = usr.id_store.unwrap_or_default();
+                            PlatformSpawner::spawn(async move {
+                                let services = employee.get_my_services().await;
+                                match services {
+                                    Ok(svcs) => order_tx.try_send(svcs).unwrap(),
+                                    Err(e) => log::info!("Error getting my services: {e:?}"),
+                                }
+                            });
+                        },
+                    }
+                }
+            
+                if self.loading {
+                    ui.add_space(10.);
+                    Spinner::new().color(ui.style().visuals.error_fg_color).ui(ui);
                 }
             });
 
-            ui.add(Renderer::new(&mut self.my_orders_table, &mut self.my_orders_viewer));
-        });
+            Renderer::new(&mut self.my_orders_table, &mut self.my_orders_viewer).ui(ui);
+        });  
+    }
+
+    pub fn receive(&mut self) {
+        if let  Ok(orders) = self.order_channel.1.try_recv() {
+            let data: Vec<PrestashopOrderData> = orders
+                .iter()
+                .map(|order_data| {
+                    PrestashopOrderData(
+                        order_data.order.id.clone(),
+                        order_data.customer.name.clone(),
+                        order_data.order.date_add.clone(),
+                        order_data.order.associations.order_rows.iter().find_or_first(
+                            |f|
+                            f.product_name ==  f.product_name
+                        ).cloned().unwrap_or_default().product_name,
+                        order_data.order.id_store.clone()
+                    )
+                })
+                .collect();
+
+            self.my_orders_table.replace(data);
+            self.loading = false;
+        }
     }
 }
 
+impl SharedContext {
+    pub fn task_table_viewer(&mut self, ui: &mut Ui) {
+        self.task_audit_table.show(ui, self.current_user.clone());
+    }
+}
 
+#[derive(PartialEq, Debug, Clone, Default)]
+pub enum TaskAudit {
+    CheckinShelf,
+    #[default]
+    MyInRepair,
+    InRepair,
+    DoneShelf,
+    AllServices,
+    MyServices
+}
+
+impl TaskAudit {
+    fn as_str(self) -> String {
+        match self {
+            TaskAudit::CheckinShelf => "Check-in Shelf".to_string(),
+            TaskAudit::MyInRepair => "My In Repair".to_string(),
+            TaskAudit::InRepair => "In Repair".to_string(),
+            TaskAudit::DoneShelf => "Done Shelf".to_string(),
+            TaskAudit::AllServices => "All Services".to_string(),
+            TaskAudit::MyServices => "My Services".to_string()
+        }
+    }
+}
 
 // Don't need to implement any trait on row data itself.
 #[derive(Default, Serialize, Clone)]
 pub struct PrestashopOrderData(pub String, pub String, pub String, pub String, pub String);
 
-/// Every logic is defined in `Viewer`
-#[derive(Default, Serialize)]
-pub struct TaskRowViewer {
-    filter: String,
-    row_protection: bool,
-    hotkeys: Vec<(KeyboardShortcut, UiAction)>,
+/* -------------------------------------------- Codec ------------------------------------------- */
+
+struct Codec;
+
+impl RowCodec<PrestashopOrderData> for Codec {
+    type DeserializeError = &'static str;
+
+    fn encode_column(&mut self, src_row: &PrestashopOrderData, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src_row.0),
+            1 => dst.push_str(&src_row.1),
+            2 => dst.push_str(&src_row.2),
+            3 => dst.push_str(&src_row.3),
+            4 => dst.push_str(&src_row.4),
+            _ => unreachable!(),
+        }
+    }
+
+    fn decode_column(
+        &mut self,
+        src_data: &str,
+        column: usize,
+        dst_row: &mut PrestashopOrderData,
+    ) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            0 => dst_row.0.replace_range(.., src_data),
+            1 => dst_row.1 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            4 => dst_row.4 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            _ => unreachable!(),
+        }
+
+        Ok(())
+    }
+
+    fn create_empty_decoded_row(&mut self) -> PrestashopOrderData {
+        PrestashopOrderData("".to_string(), "".to_string(),"".to_string(),"".to_string(),"".to_string())
+    }
 }
 
+
 impl RowViewer<PrestashopOrderData> for TaskRowViewer {
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<PrestashopOrderData>> {
+        Some(Codec)
+    }
+
     fn num_columns(&mut self) -> usize {
         5
     }
@@ -132,14 +343,27 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopOrderData, column: usize) {
         let _ = match column {
-            0 => ui.label(row.0.clone()),
-            1 => ui.label(row.1.clone()),
-            2 => ui.label(row.2.clone()),
-            3 => ui.label(row.3.clone()),
-            4 => ui.label(row.4.clone()),
+            0 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.0.clone()))),
+            1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.1.clone()))),
+            2 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.2.clone()))),
+            3 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.3.clone()))),
+            4 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.4.clone()))),
             _ => unreachable!(),
         };
     }
+
+    fn column_render_config(&mut self, column: usize) -> Column {
+        let col_config = Column::auto();
+        match column {
+            0 => col_config.resizable(true).at_least(60.).at_most(60.),
+            1 => col_config.resizable(true).at_least(100.).at_most(185.),
+            2 => col_config.resizable(true).at_least(150.).at_most(150.),
+            3 => col_config.resizable(true).at_least(200.).at_most(250.),
+            4 => col_config.resizable(true).at_least(50.).at_most(50.),
+            _ => col_config,
+        }
+    }
+    
 
     fn show_cell_editor(
         &mut self,

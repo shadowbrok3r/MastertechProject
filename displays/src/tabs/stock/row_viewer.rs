@@ -1,4 +1,4 @@
-use crate::egui_data_table::{viewer::{default_hotkeys, TrivialConfig, UiActionContext}, RowViewer, UiAction};
+use crate::egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, TrivialConfig, UiActionContext}, RowViewer, UiAction};
 use eframe::egui::{Button, Color32, KeyboardShortcut, Response, RichText, TextEdit, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,10 @@ pub struct SerialsViewer {
 
 // There are several methods that MUST be implemented to make the viewer work correctly.
 impl RowViewer<SerialsData> for SerialsViewer {
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<SerialsData>> {
+        Some(Codec)
+    }
+
     fn num_columns(&mut self) -> usize {
         5
     }
@@ -292,6 +296,57 @@ impl RowViewer<SerialsData> for SerialsViewer {
         }
     }
 }
+
+
+/* -------------------------------------------- Codec ------------------------------------------- */
+
+struct Codec;
+
+impl RowCodec<SerialsData> for Codec {
+    type DeserializeError = &'static str;
+
+    fn encode_column(&mut self, src_row: &SerialsData, column: usize, dst: &mut String) {
+        match column {
+            0 => dst.push_str(&src_row.0),
+            1 => dst.push_str(&src_row.1),
+            2 => dst.push_str(&src_row.2),
+            3 => dst.push_str(&src_row.3),
+            4 => dst.push_str(&format!("{}", src_row.4)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn decode_column(
+        &mut self,
+        src_data: &str,
+        column: usize,
+        dst_row: &mut SerialsData,
+    ) -> Result<(), DecodeErrorBehavior> {
+        match column {
+            0 => dst_row.0.replace_range(.., src_data),
+            1 => dst_row.1 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            4 => dst_row.4 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            _ => unreachable!(),
+        }
+
+        Ok(())
+    }
+
+    fn create_empty_decoded_row(&mut self) -> SerialsData {
+        SerialsData("".to_string(), "".to_string(), "".to_string(), "".to_string(), false)
+    }
+}
+
+fn _round_to_two_decimal_places(value: f64) -> f64 {
+    if value > 0.0 {
+        (value * 100.0).round() / 100.0
+    } else {
+        value
+    }
+}
+
 
 use serde::de::Deserializer;
 use std::fmt;
