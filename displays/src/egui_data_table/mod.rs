@@ -12,6 +12,7 @@ pub use viewer::{RowViewer, UiAction};
 /* ---------------------------------------------------------------------------------------------- */
 
 /// Prevents direct modification of `Vec`
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct DataTable<R> {
     /// Efficient row data storage
     ///
@@ -29,6 +30,7 @@ pub struct DataTable<R> {
     dirty_flag: bool,
 
     /// Ui
+    #[serde(skip)]
     ui: Option<Box<draw::state::UiState<R>>>,
 }
 
@@ -79,6 +81,11 @@ impl<R> DataTable<R> {
     pub fn take(&mut self) -> Vec<R> {
         self.ui = None;
         std::mem::take(&mut self.rows)
+    }
+
+    pub fn push(&mut self, new: R) {
+        self.ui = None;
+        self.rows.push(new);
     }
 
     pub fn replace(&mut self, new: Vec<R>) -> Vec<R> {

@@ -1,5 +1,5 @@
 use crate::app_state::{AppState, MtechServer};
-use displays::tabs::ai_playground::ChatThread;
+use displays::{egui_data_table::DataTable, tabs::{ai_playground::ChatThread, task_audit::PrestashopOrderData}};
 use wasm_bindgen_futures::spawn_local;
 use std::collections::HashMap;
 use log::{info, debug, error};
@@ -26,6 +26,13 @@ impl MtechServer {
                     self.context.shared_ctx.ai_playground.selected_thread = nth.to_string();
                 }
                 self.context.shared_ctx.ai_playground.set_threads(chat_threads);
+            }
+
+            if let Some(service_map) = storage.get_string("service_data") {
+                match serde_json::from_str::<HashMap<String, DataTable<PrestashopOrderData>>>(&service_map) {
+                    Ok(map) => self.context.shared_ctx.task_audit_table.service_map = map,
+                    Err(e) => info!("Error converting service_map: {e:?}"),
+                }
             }
 
             if let Some(version) = storage.get_string("version") {
