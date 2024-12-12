@@ -17,7 +17,7 @@ impl SharedContext {
             if let Some(layout) = self.task_layouts.get_mut(page) {
                 if self.rerun_filtering_store_tasks {
                     self.rerun_filtering_store_tasks = false;
-                    log::info!("Reruning filters for STORE tasks: {:?}", self.tasks.len());
+                    // log::info!("Reruning filters for STORE tasks: {:?}", self.tasks.len());
                     let mut map = BTreeMap::new();
                     users.iter().for_each(|u| {
                         if u.email != current_user.email { // u.store == current_user.store && 

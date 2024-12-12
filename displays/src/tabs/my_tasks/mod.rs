@@ -1,7 +1,6 @@
 use database::schema::Status;
 use crate::{app_state::SharedContext, tasks::task_layout::TaskLayout, FilterTasks};
 use eframe::egui::{Color32, Spinner, Ui, Widget};
-use log::info;
 use std::collections::BTreeMap;
 
 impl SharedContext {
@@ -33,7 +32,7 @@ impl SharedContext {
                         .filter(|s| user_settings.iter_mut().any(|st| st == *s))
                         .collect::<Vec<&mut Status>>();
 
-                    info!("Statuses from user: {:?}", statuses);
+                    // info!("Statuses from user: {:?}", statuses);
                     statuses.iter_mut().for_each(|status| {
                         if Status::Complete != **status {
                             let filtered = self

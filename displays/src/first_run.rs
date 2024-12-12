@@ -1,6 +1,6 @@
 
 use crate::{
-    app_state::SharedContext, tabs::{ai_playground::ChatThread, task_audit::PrestashopOrderData}, PlatformSpawner, Spawner
+    app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner
 };
 use database::{
     live_data::listen_data,
@@ -8,7 +8,6 @@ use database::{
         utilities::{get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE
     },
 };
-use itertools::Itertools;
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use std::collections::HashMap;
 use log::info;
@@ -154,24 +153,6 @@ impl SharedContext {
             self.ai_playground.set_threads(thread_map);
         }
 
-        if let  Ok(orders) = self.presta_order_channel.1.try_recv() {
-            let data: Vec<PrestashopOrderData> = orders
-                .iter()
-                .map(|order_data| {
-                    PrestashopOrderData(
-                        order_data.id.clone(),
-                        order_data.id_customer.clone(),
-                        order_data.date_add.clone(),
-                        order_data.associations.order_rows.iter().find_or_first(
-                            |f|
-                            f.product_name ==  f.product_name
-                        ).cloned().unwrap_or_default().product_name,
-                        order_data.id_store.clone()
-                    )
-                })
-                .collect();
-
-            self.my_orders_table.replace(data);
-        }
+        self.task_audit_table.receive();
     }
 }

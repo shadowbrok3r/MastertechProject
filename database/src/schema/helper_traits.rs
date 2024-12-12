@@ -2,7 +2,7 @@
 use super::{
     prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
-use crate::DATABASE;
+use crate::{schema::CUSTOMER_TABLE, DATABASE};
 use anyhow::{Error, Result};
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, TimeZone, Utc};
@@ -13,7 +13,7 @@ use serde_json::Value;
 use std::{collections::HashMap, fmt::Debug};
 use structdiff::StructDiff;
 use surrealdb::RecordId;
-
+use crate::schema::deserializer::deserialize_to_string;
 /// Macro to implement GetDataFromId for structs with an 'id' field
 macro_rules! _get_id {
     ($struct_name:ident) => {
@@ -46,17 +46,21 @@ pub trait EmployeeHelper {
     /// Find a User based on Employee info -> id_employee
     async fn find_user(&mut self) -> Result<Option<User>, Error>;
     /// Pull all of my services given Employee info -> id_employee
-    async fn get_my_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn get_my_services(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
     /// Get all orders in my store given Employee info -> id_location
-    async fn get_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn get_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
     /// Get all Orders of which are my Return For Service's
     async fn get_my_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
+    /// Get all Orders of which are In the given status
+    async fn get_services_by_status(&mut self, status: &str) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
+    /// Get all services in my store
+    async fn get_all_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error>;
     /// Get all Return For Service's in my store
-    async fn get_my_store_return_for_services(
-        &mut self,
-    ) -> Result<Vec<prestashop_schema::Order>, Error>;
+    async fn get_my_store_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error>;
     /// Get Employee from ID
     async fn get_employee_from_id(&mut self, id_employee: &str) -> Result<Employee, Error>;
+    /// Convert an order into a PrestashopPayload
+    async fn to_prestashop_payload(&mut self, order_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> ;
 }
 
 /// A trait for assisting with operations involving the `User` struct.
@@ -131,11 +135,7 @@ pub trait CustomerHelper {
     /// - `Ok(Address)` containing the customer's address on success.
     /// - `Err(Error)` if the address cannot be found or an error occurs.
     async fn find_associated_addr(&mut self) -> Result<prestashop_schema::Address, Error>;
-}
 
-/// A trait for managing and assisting with Customer Data operations.
-#[async_trait(?Send)]
-pub trait CustomerDataHelper {
     /// Finds and retrieves special part orders for a customer.
     ///
     /// # Returns
@@ -156,6 +156,7 @@ pub trait CustomerDataHelper {
     /// - `Ok(ExtendedSeb)` containing the extended SEB data.
     /// - `Err(Error)` if an error occurs during retrieval.
     async fn get_seb_data(&mut self) -> Result<ExtendedSeb, Error>;
+
 }
 
 /// A trait for assisting with operations involving orders.
@@ -184,6 +185,11 @@ pub trait OrderHelper {
         -> Result<Vec<prestashop_schema::Order>, Error>;
 }
 
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+pub struct OrderNumber {
+    #[serde(deserialize_with = "deserialize_to_string")]
+    id: String
+}
 /// A trait for managing operations and data related to task note payloads.
 pub trait TaskNotePayloadHelper: Send {
     /// Creates a task note in the Prestashop system.
@@ -902,39 +908,6 @@ impl EmployeeHelper for Employee {
         }
     }
 
-    async fn get_my_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error> {
-        let api_call = Prestashop::default();
-        let mut query: HashMap<&str, &str> = HashMap::new();
-
-        query.insert("filter[id_employee_sales_rep]", &mut self.id);
-        query.insert("filter[id_store]", &mut self.id_store);
-        query.insert("filter[id_order_type]", "2");
-        query.insert("sort", "[id_DESC]");
-        query.insert("limit", "0,20");
-        query.insert("output_format", "JSON");
-
-        let orders: Vec<prestashop_schema::Order> = api_call
-            .request_resources_wasm("orders", query.clone())
-            .await?;
-        Ok(orders)
-    }
-
-    async fn get_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::Order>, Error> {
-        let api_call = Prestashop::default();
-        let mut query: HashMap<&str, &str> = HashMap::new();
-
-        query.insert("filter[id_store]", &mut self.id_store);
-        query.insert("filter[id_order_type]", "2");
-        query.insert("sort", "[id_DESC]");
-        query.insert("limit", "0,20");
-        query.insert("output_format", "JSON");
-
-        let orders: Vec<prestashop_schema::Order> = api_call
-            .request_resources_wasm("orders", query.clone())
-            .await?;
-        Ok(orders)
-    }
-
     async fn get_my_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error> {
         let mut api_call = Prestashop::default();
         api_call.display = "";
@@ -942,7 +915,7 @@ impl EmployeeHelper for Employee {
 
         query.insert("filter[product_reference]", "SRVC/RETURN");
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", "5");
+        query.insert("limit", "0,10");
         query.insert("output_format", "JSON");
 
         let order_details: Vec<prestashop_schema::OrderDetails> = api_call
@@ -973,15 +946,13 @@ impl EmployeeHelper for Employee {
         Ok(orders_vec)
     }
 
-    async fn get_my_store_return_for_services(
-        &mut self,
-    ) -> Result<Vec<prestashop_schema::Order>, Error> {
+    async fn get_my_store_return_for_services(&mut self) -> Result<Vec<prestashop_schema::Order>, Error> {
         let api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
 
         query.insert("filter[product_reference]", "SRVC/RETURN");
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", "5");
+        query.insert("limit", "0,10");
         query.insert("output_format", "JSON");
 
         let order_details: Vec<prestashop_schema::OrderDetails> = api_call
@@ -1012,6 +983,180 @@ impl EmployeeHelper for Employee {
         }
 
         Ok(orders_vec)
+    }
+
+    async fn get_my_services(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+        let mut api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+
+        query.insert("filter[id_employee_sales_rep]", &mut self.id);
+        query.insert("filter[id_store]", &mut self.id_store);
+        query.insert("filter[id_order_type]", "2");
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", "0,10");
+        query.insert("output_format", "JSON");
+        api_call.display = "[id]";
+
+        let orders: Vec<OrderNumber> = api_call
+            .request_resources_wasm("orders", query.clone())
+            .await?;
+
+        let mut presta_payloads = Vec::new();
+        for order in orders.iter() {
+            presta_payloads.push(
+                self.to_prestashop_payload(&order.id).await?
+            );
+        }
+        Ok(presta_payloads)
+    }
+
+    async fn get_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+        let mut api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+
+        query.insert("filter[id_store]", &mut self.id_store);
+        query.insert("filter[id_order_type]", "2");
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", "0,10");
+        query.insert("output_format", "JSON");
+        api_call.display = "[id]";
+
+        let orders: Vec<OrderNumber> = api_call
+            .request_resources_wasm("orders", query.clone())
+            .await?;
+
+        let mut presta_payloads = Vec::new();
+        for order in orders.iter() {
+            presta_payloads.push(
+                self.to_prestashop_payload(&order.id).await?
+            );
+        }
+        Ok(presta_payloads)
+    }
+
+    async fn get_all_services_in_my_store(&mut self) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+        let mut api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", "0,10");
+        query.insert("output_format", "JSON");
+        api_call.display = "[id]";
+
+        let orders: Vec<OrderNumber> = api_call
+            .request_resources_wasm("orders", query.clone())
+            .await?;
+
+        let mut presta_payloads = Vec::new();
+        for order in orders.iter() {
+            presta_payloads.push(
+                self.to_prestashop_payload(&order.id).await?
+            );
+        }
+        Ok(presta_payloads)
+    }
+ 
+    async fn get_services_by_status(&mut self, status: &str) -> Result<Vec<prestashop_schema::PrestashopPayload>, Error> {
+        let mut api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+
+        query.insert("filter[current_state]", status);
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", "0,10");
+        query.insert("output_format", "JSON");
+        api_call.display = "[id]";
+
+        let orders: Vec<OrderNumber> = api_call
+            .request_resources_wasm("orders", query.clone())
+            .await?;
+
+        let mut presta_payloads = Vec::new();
+        for order in orders.iter() {
+            presta_payloads.push(
+                self.to_prestashop_payload(&order.id).await?
+            );
+        }
+        Ok(presta_payloads)
+    }
+
+    async fn to_prestashop_payload(&mut self, order_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> {
+        let api_call = Prestashop::default();
+        let mut query = HashMap::new();
+
+        query.insert("filter[id_order]", order_number);
+        query.insert("output_format", "JSON");
+
+
+        let order: prestashop_schema::Order = api_call
+            .request_subresources_by_id_wasm("orders", "order", order_number)
+            .await?;
+
+        if order.id_customer.is_empty() 
+            || order.id_employee_sales_rep.eq("0") 
+        {
+            return Err(anyhow::anyhow!("order.id_customer is empty")).into();
+        }
+
+        info!("order: {order:#?}");
+
+
+        let sales_rep: Option<Employee>  = if !order.id_employee_split_rep.contains("checkinshelf") {
+            Some(
+                api_call
+                .request_subresources_by_id_wasm(
+                    "employees",
+                    "employee",
+                    &order.id_employee_sales_rep,
+                )
+                .await?
+            )
+        } else {
+            let mut emp = Employee::default();
+            emp.firstname = "CheckInShelf".to_string();
+            Some(emp)
+        };
+
+
+        let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0") {
+            let employee_2: Employee = api_call
+                .request_subresources_by_id_wasm(
+                    "employees",
+                    "employee",
+                    &order.id_employee_split_rep,
+                )
+                .await?;
+
+            info!("employee: {sales_rep:#?}");
+            Some(employee_2)
+        } else {
+            None
+        };
+
+        let cust: prestashop_schema::Customer = api_call
+            .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
+            .await?;
+
+        let customer = CustomerData {
+            id: RecordId::from((
+                CUSTOMER_TABLE.to_string(),
+                order.id_customer.clone(),
+            )),
+            cust_code: order.id_customer.clone(),
+            name: format!("{} {}", &cust.firstname, &cust.lastname),
+            // phone_number: address.phone.clone().to_string(),
+            email: cust.email,
+            ..Default::default()
+        };
+
+        Ok(
+            prestashop_schema::PrestashopPayload {
+                customer,
+                order,
+                sales_rep,
+                split_rep,
+                ..Default::default()
+            }
+        )
     }
 }
 
@@ -1084,6 +1229,31 @@ impl UserHelper for User {
 }
 
 #[async_trait(?Send)]
+impl CustomerHelper for prestashop_schema::Customer {
+    async fn find_associated_addr(&mut self) -> Result<prestashop_schema::Address, Error> {
+
+        todo!()
+    }
+
+    async fn find_part_orders(&mut self) -> Result<Vec<SpecialPartOrder>, Error> {
+
+        todo!()
+    }
+
+    async fn find_prestashop_customer(&mut self) -> Result<prestashop_schema::Customer, Error> {
+
+        todo!()
+    }
+
+    async fn get_seb_data(&mut self) -> Result<ExtendedSeb, Error> {
+
+        todo!()
+    }
+
+}
+
+
+#[async_trait(?Send)]
 impl ComputerDataHelper for ComputerData {
     async fn associate_to_service(&mut self) -> Result<prestashop_schema::ServiceOrder, Error> {
         todo!()
@@ -1134,7 +1304,7 @@ impl ComputerDataHelper for ComputerData {
     }
 }
 
-fn convert_date_string(input: &str) -> Result<String, chrono::ParseError> {
+pub fn convert_date_string(input: &str) -> Result<String, chrono::ParseError> {
     // Define the input format as per the provided string.
     let format = "%Y-%m-%d %H:%M:%S";
 
