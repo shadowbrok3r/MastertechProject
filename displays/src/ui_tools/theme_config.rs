@@ -223,7 +223,7 @@ impl ThemeConfig {
 
         ScrollArea::vertical()
             .scroll_bar_visibility(ScrollBarVisibility::AlwaysVisible)
-            .max_height(600.)
+            .max_height(800.)
             .show(ui, |ui| 
         {
 
@@ -513,7 +513,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
     custom_style.override_font_id = Some(font);
 
     // Adjust spacing and interactions
-    custom_style.spacing.button_padding = Vec2::new(3.0, 3.0);
+    custom_style.spacing.button_padding = Vec2::new(7.0, 3.0);
     custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
     custom_style.spacing.combo_height = 55.0;
     custom_style.spacing.combo_width = 100.0;
@@ -537,8 +537,8 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 weak_bg_fill: Color32::from_rgb(18, 18, 20),
                 bg_stroke: Stroke::new(1.0, Color32::from_rgb(80, 80, 80)),
                 rounding: config.rounding,
-                fg_stroke: Stroke::new(1.0, config.text_color),
-                expansion: 0.0,
+                fg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
+                expansion: 2.0,
             },
             hovered: WidgetVisuals {
                 bg_fill: config.hovered_bg_fill,
@@ -546,7 +546,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 bg_stroke: Stroke::new(0.5, config.hovered_bg_stroke_color),
                 rounding: config.rounding,
                 fg_stroke: Stroke::new(1.0, config.hovered_fg_stroke_color),
-                expansion: 0.1,
+                expansion: 1.,
             },
             active: WidgetVisuals {
                 bg_fill: config.active_bg_fill,
@@ -554,7 +554,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 bg_stroke: Stroke::new(1.0, config.active_bg_stroke_color),
                 rounding: config.rounding,
                 fg_stroke: Stroke::new(1.0, config.active_fg_stroke_color),
-                expansion: 0.1,
+                expansion: 1.,
             },
             open: WidgetVisuals {
                 bg_fill: config.open_bg_fill,
@@ -562,7 +562,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 bg_stroke: Stroke::new(1.0, config.open_bg_stroke_color),
                 rounding: config.rounding,
                 fg_stroke: Stroke::new(1.0, config.open_fg_stroke_color),
-                expansion: 0.1,
+                expansion: 1.,
             },
         },
         selection: Selection {
