@@ -1,10 +1,12 @@
-FROM --platform=$BUILDPLATFORM rust:latest 
+FROM --platform=$BUILDPLATFORM rustlang/rust:nightly
 # 
-# rustlang/rust:nightly
+# 
 WORKDIR /
+RUN rustup default nightly
 RUN rustup target add wasm32-unknown-unknown
-RUN rustup target add wasm32-wasi
-# RUN rustup toolchain install nightly-x86_64-unknown-linux-gnu
+
+# RUN rustup target add wasm32-wasi
+RUN rustup component add rust-src
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
 RUN update-ca-certificates 
 COPY MtechServer2.0 MtechServer2.0

@@ -24,4 +24,4 @@ futures = { workspace=true }
 structdiff = { workspace=true }
 chrono = {workspace=true}
 bytes = {workspace = true}
-# gloo-console = { workspace=true }
+gloo-console = { workspace=true }

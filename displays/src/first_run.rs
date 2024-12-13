@@ -8,8 +8,9 @@ use database::{
         utilities::{get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE
     },
 };
+use futures::future;
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 use log::info;
 
 impl SharedContext {
@@ -32,11 +33,20 @@ impl SharedContext {
                 let store_users_tx = self.store_users_tx.clone();
                 let store = usr.store.as_str().to_string().clone();
 
+                let number = Arc::new(Mutex::new(0));
+                let number_clone = Arc::clone(&number);
+                
                 PlatformSpawner::spawn(async move {
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
+                    let mut num = number_clone.lock().unwrap();
+                    *num = 1;
                     info!("get_store_users: {get_store_users:?}");
                 });
-
+                let num = number.lock().unwrap();
+                if *num != 0 {
+                    info!("Number: {}", *num);
+                }
+                
                 PlatformSpawner::spawn(async move {
                     let get_tasks = get_tasks_for_store(initial_tasks_tx, store).await;
                     info!("get_tasks: {get_tasks:?}");

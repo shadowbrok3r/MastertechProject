@@ -60,16 +60,10 @@ impl eframe::App for MtechServer {
         let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
         ctx.set_style((custom_style).clone());
 
-        // This is our 'dummy' worker that retrieves Minio bucket storage
-        // contents, then builds our 'virtual' file system ui in the
-        // crate::tabs::toolbox tab
-        // let data_update = self.context.data_update.as_mut().unwrap();
-        // if let Some(items) = data_update.take() {
-        //     if !items.is_empty() && self.context.file_system.paths.is_empty() {
-        //         debug!("Files: {items:?}");
-        //         self.context.file_system.build_file_system(items);
-        //     }
-        // }
+        // Getting responses from our webworker
+        if let Some(items) = self.context.data_update.take() {
+            gloo_console::info!(format!("{:?}", items));
+        }
 
         // do some initial setting up
         if self.context.first_run { self.first_run(frame); }
@@ -208,6 +202,12 @@ impl eframe::App for MtechServer {
                     }
                     self.state = AppState::Authenticated(MainPages::Tasks);
                 } else {
+                    self
+                        .context
+                        .bridge
+                        .send(
+                        crate::webworker::Input("logan.lees@pclaptops.com".to_string(), "toor".to_string())
+                    );
                     self.login_page(
                         ctx,
                         self.context.db_tx.clone(),

@@ -170,6 +170,32 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
 
     let mut offset = 0;
     let limit = 2; // Number of tasks per chunk
+    // let query_len = r#"
+    //     RETURN (
+    //         SELECT *, (
+    //             SELECT * FROM task_note 
+    //                 WHERE task_id == $parent.id
+    //         ) AS task_note 
+    //         FROM task 
+            
+    //         WHERE $this.assignee.store == $store AND $this.completed IS false
+    //         LIMIT $limit START $offset
+    //         FETCH 
+    //             service_ticket, 
+    //             service_ticket.computer, 
+    //             service_ticket.customer
+    //         PARALLEL
+    //     ).len();
+    // "#;
+
+    // let query_results: Vec<TaskPayload> = DATABASE
+    //     .query(query)
+    //     .bind(("store", store.clone()))
+    //     .bind(("limit", limit))
+    //     .bind(("offset", offset))
+    //     .await?
+    //     .take(0)?;
+
     loop {
         let query = r#"
             SELECT *, (
