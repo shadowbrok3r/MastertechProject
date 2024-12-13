@@ -1,5 +1,6 @@
 use crate::{channel_manager::ChannelManager, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
-use eframe::egui::{Button, CentralPanel, ComboBox, KeyboardShortcut, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use eframe::egui::{Button, CentralPanel, ComboBox, Hyperlink, KeyboardShortcut, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
 use database::schema::{helper_traits::EmployeeHelper, prestashop_schema::{self, Employee}, User};
 use log::info;
 use crate::{app_state::SharedContext, PlatformSpawner};
@@ -456,13 +457,24 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
 
     fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopOrderData, column: usize) {
         let _ = match column {
-            0 => ui.horizontal_centered(|ui| ui.hyperlink_to(format!(" {}", row.0.clone()), format!("{BASE_URL}{}", row.0.clone()))),
-            1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.1.clone()))),
-            2 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.2.clone()))),
-            3 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.3.clone()))),
-            4 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.4.clone()))),
-            5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.5.clone()))),
-            6 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.6.clone()))),
+            0 => ui.horizontal_centered(|ui| ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.0.clone()))).inner,
+            1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.1.clone()))).inner,
+            2 => ui.horizontal_centered(|ui| {
+                // Parse the input into a NaiveDateTime
+                let naive_datetime = NaiveDateTime::parse_from_str(&row.2, "%Y-%m-%d %H:%M:%S")
+                    .expect("Failed to parse datetime");
+
+                // Convert to a DateTime with Utc timezone
+                let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(naive_datetime, Utc);
+
+                // Format the DateTime into yyyy/mm/dd
+                let formatted_date = datetime.format(" %Y/%m/%d").to_string();
+                ui.label(formatted_date)
+            }).inner,
+            3 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.3.clone()))).inner,
+            4 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.4.clone()))).inner,
+            5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.5.clone()))).inner,
+            6 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.6.clone()))).inner,
             _ => unreachable!(),
         };
     }
@@ -487,19 +499,31 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
         row: &mut PrestashopOrderData,
         column: usize,
     ) -> Option<eframe::egui::Response> {
-        let res = match column {
-            0 => ui.label(row.0.clone()),
-            1 => ui.label(row.1.clone()),
-            2 => ui.label(row.2.clone()),
-            3 => ui.label(row.3.clone()),
-            4 => ui.label(row.4.clone()),
-            5 => ui.label(row.5.clone()),
-            6 => ui.label(row.6.clone()),
-            _ => unreachable!(),
-        };
-        Some(res)
+        match column {
+            0 => Some(
+                Hyperlink::from_label_and_url(
+                    format!(" {}", row.0.clone()), 
+                    format!("{BASE_URL}{}", row.0.clone())
+                )
+                .open_in_new_tab(true)
+                .ui(ui)
+            ),
+            _ => None,
+        }
     }
 
+    fn on_cell_view_response(
+            &mut self,
+            _row: &PrestashopOrderData,
+            _column: usize,
+            resp: &eframe::egui::Response,
+        ) -> Option<Box<PrestashopOrderData>> {
+        resp
+            .clone()
+            .on_hover_and_drag_cursor(eframe::egui::CursorIcon::Crosshair)
+            .dnd_release_payload::<String>()
+            .map(|_| Box::new(PrestashopOrderData::default()))
+    }
     fn set_cell_value(
         &mut self,
         src: &PrestashopOrderData,

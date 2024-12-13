@@ -16,7 +16,7 @@ impl Interaction for TaskPayload {
         ui.style_mut().override_font_id = Some(FontId::proportional(12.0));
         // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name)
-            .desired_width(ui.available_width() - 10.0)
+            .desired_width(ui.available_width() -10.)
             .horizontal_align(Align::Min)
             .vertical_align(Align::Center)
             .ui(ui);
@@ -83,7 +83,7 @@ impl Interaction for TaskPayload {
     fn interact_due_date(&mut self, ui: &mut Ui) -> Response {
         let frame_color = date_colors(self.due_date.clone(), self.completed);
         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, frame_color);
-        ui.style_mut().spacing.button_padding = Vec2::new(15.0, 3.0);
+        // ui.style_mut().spacing.button_padding = Vec2::new(15.0, 3.0);
         let mut due_date = self.due_date.parse::<DateTime<Utc>>().unwrap().date_naive();
 
         let id = self.id.clone().key().to_string().to_string();
@@ -124,7 +124,7 @@ impl Interaction for TaskPayload {
             return Button::new(hover_txt)
                 .stroke(stroke)
                 .small()
-                .min_size(Vec2::new(25.0, 20.0))
+                .min_size(Vec2::new(20.0, 20.0))
                 .ui(ui);
         } else {
             let hover_txt = "✖";
@@ -133,7 +133,7 @@ impl Interaction for TaskPayload {
             return Button::new(hover_txt)
                 .stroke(stroke)
                 .small()
-                .min_size(Vec2::new(25.0, 20.0))
+                .min_size(Vec2::new(20.0, 20.0))
                 .ui(ui);
         }
     }

@@ -130,7 +130,7 @@ pub trait RowViewer<R>: 'static {
     /// To deal with input, use `cell_edit` method. If you need to deal with drag/drop,
     /// see [`RowViewer::on_cell_view_response`] which delivers resulting response of
     /// containing cell.
-    fn show_cell_view(&mut self, ui: &mut egui::Ui, row: &R, column: usize);
+    fn show_cell_view(&mut self, ui: &mut egui::Ui, row: &R, column: usize); // -> Option<egui::Response>;
 
     /// Use this to check if given cell is going to take any dropped payload / use as drag
     /// source.

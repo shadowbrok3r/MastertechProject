@@ -286,7 +286,7 @@ impl TaskLayout {
                                     RichText::new("✚")
                                         .color(style.visuals.warn_fg_color)
                                     )
-                                    .rounding(Rounding::same(2.))
+                                    .rounding(style.visuals.menu_rounding)
                                     .fill(Color32::from_rgb(22,22,22))
                                     .min_size(Vec2::new(30.0, 15.0))
                                     .ui(ui);
@@ -299,7 +299,7 @@ impl TaskLayout {
 
                                 let selected = self.sort_by.entry(name.clone()).or_default();
                                 let txt = match selected.direction {
-                                    SortDirection::Asc => ("↗", ui.style().visuals.window_stroke.color),
+                                    SortDirection::Asc => ("↗", ui.style().visuals.warn_fg_color),
                                     SortDirection::Desc => ("↘", ui.style().visuals.error_fg_color),
                                 };
                                 let selected_text = match selected.field {

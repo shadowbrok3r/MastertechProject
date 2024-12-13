@@ -58,7 +58,7 @@ impl eframe::App for MtechServer {
         }
 
         let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
-        ctx.set_style((*custom_style).clone());
+        ctx.set_style((custom_style).clone());
 
         // This is our 'dummy' worker that retrieves Minio bucket storage
         // contents, then builds our 'virtual' file system ui in the
