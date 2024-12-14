@@ -27,7 +27,9 @@
       await init("./worker_bg.wasm");
       await initThreadPool(navigator.hardwareConcurrency);
     </script> <!--// import init from "./worker_loader.js";-->
-
+    
+    <script src="./coi-serviceworker.js"></script>
+    
     <link
       data-trunk
       rel="rust"
@@ -54,14 +56,12 @@
 
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
-
     <link data-trunk rel="icon" href="assets/favicon.ico" />
-    <link data-trunk rel="copy-file" href="assets/sw.js" />
-
+    <!-- <link data-trunk rel="copy-file" href="assets/sw.js" /> -->
+    <link data-trunk rel="copy-file" href="assets/coi-serviceworker.js"/>
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
     <link data-trunk rel="copy-file" href="assets/pcllogo.png" />
     <link data-trunk rel="copy-file" href="assets/mtechlogo.png" />
-
     <link rel="manifest" href="manifest.json" />
 
     <!-- <meta name="theme-color" media="(prefers-color-scheme: light)" content="white"> -->
@@ -70,6 +70,10 @@
       media="(prefers-color-scheme: dark)"
       content="#404040"
     />
+
+    <script>
+        console.log(`Cross origin isolated: ${window.crossOriginIsolated ? "✅" : "❌"}`)
+    </script>
 
     <style>
       html {
@@ -163,17 +167,13 @@
     <!-- The WASM code will resize the canvas dynamically -->
     <!-- the id is hardcoded in main.rs . so, make sure both match. -->
     <canvas id="mtech_canvas"></canvas>
-    <!-- <script type="module"> -->
-    <!--   import "./worker_loader.js"; -->
-    <!--   console.log("Main Wasm and thread pool initialized."); -->
-    <!-- </script> -->
     <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
-    <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
     <script>
       // We disable caching during development so that we always view the latest version.
       if ("serviceWorker" in navigator && window.location.hash !== "#dev") {
         window.addEventListener("load", function () {
           navigator.serviceWorker.register("sw.js");
+          navigator.serviceWorker.register("coi-serviceworker.js");
         });
       }
     </script>

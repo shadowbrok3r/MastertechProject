@@ -20,11 +20,11 @@ addresses = ["0.0.0.0"]
 # The port to serve on.
 port = 8080
 
-[serve.headers]
-# see ./assets/_headers for more documentation
-"cross-origin-embedder-policy"= "require-corp"
-"cross-origin-opener-policy"= "same-origin"
-"cross-origin-resource-policy"= "credentialless" # "same-site"
+# [serve.headers]
+# # see ./assets/_headers for more documentation
+# "cross-origin-embedder-policy"= "require-corp"
+# "cross-origin-opener-policy"= "same-origin"
+# "cross-origin-resource-policy"= "credentialless" # "same-site"
 # Disable auto-reload of the web app.
 # no_autoreload = false
 # Additional headers set for responses.

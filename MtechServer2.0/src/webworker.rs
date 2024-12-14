@@ -1,5 +1,7 @@
-use database::{schema::TaskPayload, Database, DATABASE};
+use database::{schema::{TaskPayload, User, DB, NS, USER_SCOPE}, Auth, Database, DATABASE, DB_URL_LOCAL};
 use gloo_worker::{HandlerId, WorkerScope};
+use surrealdb::{engine::remote::ws::Ws, opt::auth::Record};
+use wasm_bindgen::{prelude::wasm_bindgen, JsError};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -46,16 +48,17 @@ impl gloo_worker::Worker for WebWorker {
         log!(format!("received {msg:?}"));
         let scope = scope.clone();
         spawn_local(async move {
+            let stuff = get_completed_tasks_for_store(msg).await.unwrap();
             scope.respond(id, Self::Output {
-                tasks: get_completed_tasks_for_store(msg).await.unwrap(),
+                tasks: stuff,
             });
         });
     }
 }
 
 
-
-pub async fn get_completed_tasks_for_store(input: Input) -> anyhow::Result<Vec<TaskPayload>, anyhow::Error> {
+// #[wasm_bindgen]
+pub async fn get_completed_tasks_for_store(input: Input) -> Result<Vec<TaskPayload>, JsError> {
     gloo_console::debug!("get_completed_tasks");
     let query = r#"
         SELECT *, (
@@ -70,20 +73,56 @@ pub async fn get_completed_tasks_for_store(input: Input) -> anyhow::Result<Vec<T
             service_ticket.customer
         PARALLEL
     "#;
-    
-    let x = Database::new(input.0, input.1, None).await?;
-    gloo_console::warn!(format!("user {:?}", x.user));
+    match DATABASE.connect::<Ws>(DB_URL_LOCAL).await {
+        Ok(_) => gloo_console::info!(format!("Connected to {DB_URL_LOCAL:?}")),
+        Err(e) => gloo_console::info!(format!("Error connecting to database: {e:?}")),
+    } //(&get_db_url()).await?;
+    DATABASE.use_ns(NS).use_db(DB).await?;
 
-    let start_query = web_time::Instant::now(); // Start timing the query
-    gloo_console::warn!(format!("{start_query:?}"));
+    gloo_console::debug!("Signing in");
+    let signin = DATABASE
+        .signin(Record {
+            namespace: NS,
+            database: DB,
+            access: USER_SCOPE,
+            params: Auth {
+                email: input.0.clone(),
+                password: input.1.clone(),
+            },
+        }).await;
+
+
+        match signin {
+            Ok(o) => {
+                gloo_console::warn!(o.as_insecure_token());
+            },
+            Err(e) => {
+                gloo_console::warn!(e.to_string());
+            },
+        }
+    DATABASE
+        .set("email", input.0.clone().to_lowercase())
+        .await?;
+
+    let user: Result<surrealdb::Response, JsError> = match DATABASE
+        .query("SELECT * FROM user WHERE email == $email")
+        .await{
+            Ok(res) => {
+                gloo_console::info!(format!("{:?}", res));
+                Ok(res)
+            },
+            Err(e) => {
+                gloo_console::info!(e.to_string());
+                Err(JsError::new(&e.to_string()))
+            },
+        };
+    gloo_console::warn!(format!("user: {user:?}"));
 
     let query_results: Vec<TaskPayload> = DATABASE
         .query(query)
         .await?
         .take(0)?;
-
-    let query_duration = start_query.elapsed(); // Measure query duration
-    gloo_console::warn!(format!("Query execution time {query_duration:?}\ntask len: {}", query_results.len()));
+    gloo_console::warn!(format!("task len: {}", query_results.len()));
 
     Ok(query_results)
 }
