@@ -7,6 +7,7 @@ if (typeof window === "undefined") {
   );
 
   self.addEventListener("message", (ev) => {
+    console.error("TYPE MESSAGE");
     if (!ev.data) {
       return;
     } else if (ev.data.type === "deregister") {
@@ -23,12 +24,50 @@ if (typeof window === "undefined") {
     }
   });
 
-  self.addEventListener("fetch", function (event) {
+  self.addEventListener("open", function (event) {
+    console.error("TYPE OEPN");
     const r = event.request;
-    if (r.cache === "only-if-cached" && r.mode !== "same-origin") {
+    console.log("CHECKING WS CONNECTION");
+    // WebSocket handshake requests are detected by their "Upgrade: websocket" header
+    const isWebSocket = r.headers.get("Upgrade") === "websocket";
+    console.log(isWebSocket);
+    // Handle WebSocket handshakes separately
+    if (isWebSocket) {
+      event.respondWith(
+        fetch(r)
+          .then((response) => {
+            const newHeaders = new Headers(response.headers);
+            // Add necessary COOP/COEP headers for WebSocket handshake response
+            newHeaders.set(
+              "Cross-Origin-Embedder-Policy",
+              coepCredentialless ? "credentialless" : "require-corp",
+            );
+            newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
+            newHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
+
+            return new Response(null, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: newHeaders,
+            });
+          })
+          .catch((e) => {
+            console.error("WebSocket handshake interception error:", e);
+            throw e;
+          }),
+      );
       return;
     }
-
+  });
+  self.addEventListener("fetch", function (event) {
+    console.info("TYPE fetch");
+    const r = event.request;
+    console.error(`req: ${r.cache}\n${r.data}\n${r.request}\n${r.headers}${r.response}`);
+    if (r.cache === "only-if-cached" && r.mode !== "same-origin") {
+      console.error("returning");
+      return;
+    }
+    
     const request =
       coepCredentialless && r.mode === "no-cors"
         ? new Request(r, {
@@ -63,6 +102,7 @@ if (typeof window === "undefined") {
   });
 } else {
   (() => {
+    console.log('NOT UNDEFINED');
     const reloadedBySelf = window.sessionStorage.getItem("coiReloadedBySelf");
     window.sessionStorage.removeItem("coiReloadedBySelf");
     const coepDegrading = reloadedBySelf == "coepdegrade";

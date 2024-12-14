@@ -1,6 +1,6 @@
 use database::{schema::{TaskPayload, User, DB, NS, USER_SCOPE}, Auth, Database, DATABASE, DB_URL_LOCAL};
 use gloo_worker::{HandlerId, WorkerScope};
-use surrealdb::{engine::remote::ws::Ws, opt::auth::Record};
+use surrealdb::{engine::remote::{http::Http, ws::Ws}, opt::auth::Record};
 use wasm_bindgen::{prelude::wasm_bindgen, JsError};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ pub async fn get_completed_tasks_for_store(input: Input) -> Result<Vec<TaskPaylo
             service_ticket.customer
         PARALLEL
     "#;
-    match DATABASE.connect::<Ws>(DB_URL_LOCAL).await {
+    match DATABASE.connect::<Http>(DB_URL_LOCAL).await {
         Ok(_) => gloo_console::info!(format!("Connected to {DB_URL_LOCAL:?}")),
         Err(e) => gloo_console::info!(format!("Error connecting to database: {e:?}")),
     } //(&get_db_url()).await?;

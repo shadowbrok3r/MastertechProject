@@ -6,7 +6,7 @@ use schema::User;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, sync::RwLock};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws, Wss}, // Ws
+    engine::remote::{http::{Client as HttpsCli, Http, Https}, ws::{Client as WsClient, Ws, Wss}},
     opt::{
         auth::{Jwt, Record as SurrealRec},
         capabilities::Capabilities,
@@ -60,9 +60,9 @@ const USER_SCOPE: &str = "user";
 const DB: &str = "MastertechDB";
 const NS: &str = "Mastertech";
 pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
-pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
-pub const DB_URL_LOCAL: &str = "localhost:8000/rpc";
-pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
+pub const DB_URL: &str = "surrealdb.master-tech.app/rpc"; // "";
+pub const DB_URL_LOCAL: &str = "localhost:8000";
+pub static DATABASE: Lazy<Surreal<HttpsCli>> = Lazy::new(Surreal::init);
 
 pub fn set_db_selection(selection: DatabaseSelection) {
     let mut db_selection = DB_SELECTION.write().unwrap();
@@ -84,7 +84,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<Ws>(DB_URL_LOCAL).await {
+        match DATABASE.connect::<Https>(DB_URL).await {
             Ok(_) => info!("Connected to {DB_URL:?}"),
             Err(e) => info!("Error connecting to database: {e:?}"),
         } //(&get_db_url()).await?;
@@ -154,7 +154,7 @@ impl Database {
         let cap = Capabilities::all();
         let config = Config::new().capabilities(cap);
 
-        DATABASE.connect::<Ws>((DB_URL_LOCAL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Https>((DB_URL_LOCAL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE
