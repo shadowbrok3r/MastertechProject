@@ -81,33 +81,23 @@ pub fn get_db_url() -> String {
 
 impl Database {
     pub async fn new(
-        username: String,
+        email: String,
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        match DATABASE.connect::<Ws>(DB_URL_LOCAL).await {
-            Ok(_) => info!("Connected to {DB_URL:?}"),
-            Err(e) => info!("Error connecting to database: {e:?}"),
-        } //(&get_db_url()).await?;
+        DATABASE.connect::<Wss>(DB_URL).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt {
             Some(jwt) => {
                 info!("Have a JWT, attempting token auth");
-                let auth = DATABASE.authenticate(jwt.clone()).await;
-                match auth {
-                    Ok(_) => {
-                        info!("Auth not ok");
-                        Ok(Self {
-                            jwt: Some(jwt.into()),
-                            user: None,
-                        })
-                    }
-                    Err(e) => Err(e.into()),
-                }
+                DATABASE.authenticate(jwt.clone()).await?;
+                let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+                info!("Returned Auth: {user:?}");
+                Ok( Self { jwt: Some(jwt.into()), user } )
             }
             None => {
-                info!("No JWT, sigining in: {:?}", username.clone());
+                info!("No JWT, sigining in: {:?}", email.clone());
 
                 // Select a specific namespace / database
                 let jwt = DATABASE
@@ -115,34 +105,13 @@ impl Database {
                         namespace: NS,
                         database: DB,
                         access: USER_SCOPE,
-                        params: Auth {
-                            email: username.clone(),
-                            password,
-                        },
+                        params: Auth { email, password },
                     })
                     .await?;
 
-                
-                DATABASE
-                    .set("email", username.clone().to_lowercase())
-                    .await?;
-
-                let user: Result<surrealdb::Response, Error> = match DATABASE
-                    .query("SELECT * FROM user WHERE email == $email")
-                    .await{
-                        Ok(res) => Ok(res),
-                        Err(e) => {
-                            info!("{e:?}");
-                            Err(e)
-                        },
-                    };
-
-                let usr: Result<Option<User>, Error> = user?.take(0);
-
-                Ok(Self {
-                    jwt: Some(jwt),
-                    user: usr?,
-                })
+                let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
+                info!("Returned Auth: {user:?}");
+                Ok( Self { jwt: Some(jwt), user } )
             }
         }
     }
@@ -155,7 +124,7 @@ impl Database {
         let cap = Capabilities::all();
         let config = Config::new().capabilities(cap);
 
-        DATABASE.connect::<Ws>((DB_URL_LOCAL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
+        DATABASE.connect::<Wss>((DB_URL_LOCAL, config)).await?; //(&get_db_url()).await?;(&db_url).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
         // Select a specific namespace / database
         let jwt = DATABASE

@@ -60,16 +60,13 @@ impl eframe::App for MtechServer {
         let custom_style = set_custom_style(&self.context.shared_ctx.theme_config);
         ctx.set_style((custom_style).clone());
 
-        // This is our 'dummy' worker that retrieves Minio bucket storage
-        // contents, then builds our 'virtual' file system ui in the
-        // crate::tabs::toolbox tab
-        // let data_update = self.context.data_update.as_mut().unwrap();
-        // if let Some(items) = data_update.take() {
-        //     if !items.is_empty() && self.context.file_system.paths.is_empty() {
-        //         debug!("Files: {items:?}");
-        //         self.context.file_system.build_file_system(items);
-        //     }
-        // }
+        // Getting responses from our webworker
+        if let Some(items) = self.context.data_update.take() {
+            let tx = self.context.shared_ctx.initial_tasks_tx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = tx.try_send(items);
+            });
+        }
 
         // do some initial setting up
         if self.context.first_run { self.first_run(frame); }

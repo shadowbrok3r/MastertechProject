@@ -8,7 +8,7 @@ pub mod mtechserver;
 pub mod pages;
 pub mod tabs;
 pub mod webworker;
-pub mod worker;
+// pub mod worker;
 // Re-export MtechServer to make it accessible from the crate root
 pub use app_state::MtechServer;
 

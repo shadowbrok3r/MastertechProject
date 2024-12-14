@@ -145,12 +145,17 @@ pub struct MtechServerContext {
 
 
     // // Webworker Communication
-    // /// Data from our Dummy Worker
-    // #[serde(skip)]
-    // pub data_update: Option<Rc<Cell<Option<Vec<String>>>>>,
-    // /// The actual communication bridge to / from our dummy worker
-    // #[serde(skip)]
-    // pub bridge: Option<gloo_worker::WorkerBridge<WebWorker>>,
+    #[serde(skip)]
+    pub data_update: std::rc::Rc<
+        std::cell::Cell<
+            Option<
+                Vec<TaskPayload>
+            >
+        >
+    >,
+    /// The actual communication bridge to / from our dummy worker
+    #[serde(skip)]
+    pub bridge: gloo_worker::WorkerBridge<crate::webworker::WebWorker>,
 
     // Other Components
     pub tur: Tur,
@@ -169,10 +174,22 @@ impl MtechServer {
         let tur_channel = PrestashopPayload::create_unbounded_channel();
         let seb_channel = <Vec<Value>>::create_unbounded_channel();
 
+        let data_update = std::rc::Rc::new(std::cell::Cell::new(None));
+        let sender = data_update.clone();
+        let ctx = cc.egui_ctx.clone();
+        let bridge = <crate::webworker::WebWorker as gloo_worker::Spawnable>::spawner()
+            .callback(move |response| {
+                sender.set(Some(response.tasks));
+                ctx.request_repaint();
+            })
+            .spawn("./webworker.js");
+
         let context = MtechServerContext {
             shared_ctx: SharedContext::new(cc),
             first_run: true,
             clients: Vec::new(),
+            bridge,
+            data_update,
 
             task_map: BTreeMap::new(),
             live_tasks: None,

@@ -8,14 +8,23 @@ impl MtechServer {
     pub fn receive_database(&mut self, frame: &mut Frame) {
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.context.db_rx.try_recv() {
+            info!("No token");
             match db {
-                Ok(_db) => {
+                Ok(db) => {
                     info!("3");
                     if !self.context.shared_ctx.load_data() {
                         self.context.first_run = true;
                         self.first_run(frame);
                         self.state = AppState::NoAuth("No user detected".to_string());
-                    }
+                    } 
+                        if let Some(token) = db.jwt.clone() {
+                            self
+                            .context
+                            .bridge
+                            .send(
+                                crate::webworker::Input(token.into_insecure_token())
+                            );
+                        } else { info!("No token"); }
                 }
                 Err(e) => {
                     info!("6");
