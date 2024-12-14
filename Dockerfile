@@ -9,16 +9,17 @@ RUN rustup target add wasm32-unknown-unknown
 RUN rustup component add rust-src
 RUN apt-get update && apt-get install -y clang gcc build-essential libclang-dev openssl
 RUN update-ca-certificates 
-COPY MtechServer2.0 MtechServer2.0
-COPY displays displays
-COPY database database
+# COPY MtechServer2.0 MtechServer2.0
+# COPY displays displays
+# COPY database database
 RUN wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.4/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
-COPY Cargo.toml Cargo.toml
+# COPY Cargo.toml Cargo.toml
 # COPY rust-toolchain.toml rust-toolchain.toml
 RUN mv trunk MtechServer2.0/trunk
 WORKDIR /MtechServer2.0
 ENTRYPOINT [ "/MtechServer2.0/trunk" ]
-CMD [ "serve", "--release" ]
+CMD [ "serve"] 
+# , "--release"
 
 
 

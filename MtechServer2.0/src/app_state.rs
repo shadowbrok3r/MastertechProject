@@ -242,7 +242,7 @@ impl MtechServer {
             update_settings: false,
             get_settings: true,
 
-            refresh: false,
+            refresh: true,
         };
 
         Self {

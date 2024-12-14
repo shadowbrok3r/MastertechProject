@@ -1,0 +1,54 @@
+services:
+  mtechserver:
+
+    image: shadowbrok3r/mtechserver:beta
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./MtechServer2.0
+          target: /MtechServer2.0
+          # ignore:
+          #   - target/
+        - action: rebuild
+          path: Cargo.toml
+    restart: always
+    networks:
+        - web
+    ports:
+      - 8080:8080
+    expose:
+      - 8080
+    # volumes:
+    #   - "${PWD}:${PWD}"
+
+networks:
+  web:
+    driver: bridge
+    name: web
+    # runtime: io.containerd.wasmedge.v1
+    # platform: wasi/wasm32
+      # - ./dist:/dist
+      # - ./target:/target
+      # - ./database:/database
+      # - ./displays:/displays
+      # - ./MtechServer2.0:/MtechServer2.0
+      # - ./database:/database
+    # labels:
+      # # Routers
+      # - "traefik.http.routers.wasm.rule=Host(`master-tech.app`)"
+      # - "traefik.http.routers.wasm.entrypoints=websecure"
+      # - "traefik.http.routers.wasm.tls=true"
+      # - "traefik.http.routers.wasm.tls.certresolver=cloudflare"
+      # - "traefik.http.routers.wasm.middlewares=corsHeader"
+      # # Services
+      # - "traefik.http.routers.wasm.service=wasm"
+      # - "traefik.http.services.wasm.loadbalancer.server.port=8080"
+
+# docker image tag mtechserver:latest shadowbrok3r/mtechserver:latest
+# docker push shadowbrok3r/mtechserver:latest
+# podman push 9038b33bb284 docker://docker.io/shadowbrok3r/mtechserver:latest
+
+

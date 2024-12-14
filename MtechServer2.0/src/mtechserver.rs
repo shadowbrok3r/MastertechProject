@@ -9,6 +9,15 @@ use log::info;
 
 impl eframe::App for MtechServer {
     fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        if self.context.refresh {
+            self.context.refresh = false;
+            self
+                .context
+                .bridge
+                .send(
+                crate::webworker::Input("logan.lees@pclaptops.com".to_string(), "toor".to_string())
+            );
+        }
         // most important part of the whole app.. setting up our styling
         // currently this just sets the style of the app, but in the near
         // future i will be making this the setup to allow user customization
@@ -202,12 +211,6 @@ impl eframe::App for MtechServer {
                     }
                     self.state = AppState::Authenticated(MainPages::Tasks);
                 } else {
-                    self
-                        .context
-                        .bridge
-                        .send(
-                        crate::webworker::Input("logan.lees@pclaptops.com".to_string(), "toor".to_string())
-                    );
                     self.login_page(
                         ctx,
                         self.context.db_tx.clone(),

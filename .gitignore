@@ -26,3 +26,5 @@ Mastertech4.0/git-MasterTech.exe
 output.log
 .rust-analyzer/*
 # Mastertech4.0\.cargo\config.toml
+target/**
+target/
