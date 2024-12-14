@@ -22,8 +22,8 @@ impl SharedContext {
             vals.sort_unstable_by_key(|x| order(x.clone()));
 
             if let Some(layout) = self.task_layouts.get_mut(page) {
-                if self.rerun_filtering_my_tasks {
-                    self.rerun_filtering_my_tasks = false;
+                // if self.rerun_filtering_my_tasks {
+                //     self.rerun_filtering_my_tasks = false;
                     // log::info!("Reruning my tasks filter");
                     let mut map = BTreeMap::new();
                     let mut user_settings = [Status::Todo, Status::InRepair];
@@ -46,7 +46,7 @@ impl SharedContext {
                         }
                     });
                     layout.task_map = map;
-                }
+                // }
                 layout.layout_cols(ui);
             } else {
                 let mut map = BTreeMap::new();

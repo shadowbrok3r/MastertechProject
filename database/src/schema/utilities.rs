@@ -184,7 +184,6 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
                 service_ticket, 
                 service_ticket.computer, 
                 service_ticket.customer
-            PARALLEL
         "#; // PARALLEL WITH INDEX idx_store_due_date
 
         let start_query = Instant::now(); // Start timing the query
@@ -235,7 +234,6 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: 
                 service_ticket, 
                 service_ticket.computer, 
                 service_ticket.customer
-            PARALLEL
         "#;
         
         let start_query = Instant::now(); // Start timing the query

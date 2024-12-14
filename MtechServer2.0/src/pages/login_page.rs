@@ -1,9 +1,9 @@
 use anyhow::{Error, Result};
 use crossbeam::channel::Sender;
 use database::{Database, DATABASE};
+use displays::tabs::logger::logger_ui;
 use eframe::egui::{
-    Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Key, KeyboardShortcut,
-    Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, Vec2, Widget,
+    Align, Button, CentralPanel, Color32, Context, Direction, FontId, Frame, Id, Key, KeyboardShortcut, Layout, Modifiers, Pos2, Spinner, Stroke, TextEdit, TopBottomPanel, Vec2, Widget
 };
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
@@ -36,7 +36,6 @@ impl Login {
     ) -> Result<(), Error> {
         gloo_console::info!("Logging in");
         let database = Database::new(email, pass, None).await;
-        gloo_console::info!(format!("database: {database:?}"));
         match database {
             Ok(db) => {
                 let database = db.clone();
@@ -97,6 +96,7 @@ impl MtechServer {
         db_tx: Sender<anyhow::Result<Database, anyhow::Error>>,
         appstate_tx: Sender<AppState>,
     ) {
+        TopBottomPanel::bottom(Id::new("logger_ui")).exact_height(400.).show(ctx, |ui| logger_ui().show(ui));
         CentralPanel::default()
             .frame(Frame::central_panel(&ctx.style()).inner_margin(1.))
             .show(ctx, |ui| {

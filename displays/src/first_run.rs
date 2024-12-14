@@ -99,6 +99,7 @@ impl SharedContext {
                 .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
                 .for_each(|(_, layout)| {
                     if self.switching_store {
+                        info!("Switched store, clearing tasks");
                         layout.task_map.clear();
                         layout.assignees.clear();
                         layout.search_inputs.clear();
@@ -110,7 +111,7 @@ impl SharedContext {
             // Process new tasks in parallel
             tasks.drain(..).for_each(|new_task| {
                 // Avoid duplicates by checking if the new task already exists
-                if !existing_tasks.iter().any(|task| task == &new_task) {
+                if !existing_tasks.contains(&new_task) {
                     existing_tasks.push(new_task); // Add the task if it's unique
                 }
             });

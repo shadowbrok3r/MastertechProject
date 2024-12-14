@@ -23,22 +23,22 @@
       data-target-name="mtechserver"
     />
     <!-- <script type="module">
-      import init, { initThreadPool } from "{base}{js}";
-      await init("{base}{wasm}");
+      import init, { initThreadPool } from "./worker.js"
+      await init("./worker_bg.wasm");
       await initThreadPool(navigator.hardwareConcurrency);
     </script> -->
 
-    <!-- <link -->
-    <!--   data-trunk -->
-    <!--   rel="rust" -->
-    <!--   href="Cargo.toml" -->
-    <!--   data-integrity="none" -->
-    <!--   data-wasm-opt="4" -->
-    <!--   data-bin="worker" -->
-    <!--   data-type="worker" -->
-    <!--   data-bindgen-target="web" -->
-    <!--   data-loader-shim -->
-    <!-- /> -->
+    <link
+      data-trunk
+      rel="rust"
+      href="Cargo.toml"
+      data-integrity="none"
+      data-wasm-opt="4"
+      data-bin="webworker"
+      data-type="worker"
+    />
+    <!-- data-bindgen-target="web" -->
+    <!-- data-loader-shim -->
 
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />

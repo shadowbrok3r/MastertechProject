@@ -168,6 +168,7 @@ pub struct SharedContext {
     #[serde(skip)]
     pub show_tasks_viewport: HashMap<RecordId, ViewportData>,
     pub switching_store: bool,
+    pub refresh: bool
 }
 
 impl SharedContext {
@@ -277,7 +278,8 @@ impl SharedContext {
             theme,
             modify_theme: false,
             show_tasks_viewport: HashMap::new(),
-            switching_store: false
+            switching_store: false,
+            refresh: false,
         }
     }
 

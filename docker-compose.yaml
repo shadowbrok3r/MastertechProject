@@ -1,0 +1,30 @@
+services:
+  mtechserver:
+
+    image: shadowbrok3r/mtechserver:beta
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./MtechServer2.0
+          target: /MtechServer2.0
+          # ignore:
+          #   - target/
+        - action: rebuild
+          path: Cargo.toml
+    restart: always
+    networks:
+        - web
+    ports:
+      - 8080:8080
+    expose:
+      - 8080
+    # volumes:
+    #   - "${PWD}:${PWD}"
+
+networks:
+  web:
+    driver: bridge
+    name: web
