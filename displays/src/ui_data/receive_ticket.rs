@@ -41,8 +41,6 @@ impl SharedContext {
 
             // If no matching task was found in the layouts, add the task to the global context
             if !self
-                
-                
                 .tasks
                 .iter()
                 .any(|task| task.id.key().to_string() == new_task_id)

@@ -76,7 +76,7 @@ impl eframe::App for MasterTechApp {
         self.context.shared_ctx.toasts.show(ctx);
         self.context.shared_ctx.receive(frame);
         self.context.shared_ctx.handle_viewports(ctx);
-        self.receive_database();
+        self.receive_database(ctx);
         self.receive(ctx);
         self.receive_github();
         self.viewport_loader(ctx);

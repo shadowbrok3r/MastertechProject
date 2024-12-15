@@ -115,7 +115,7 @@ impl MasterTechApp {
                 Ok(color_settings) => self.context.shared_ctx.theme_config = color_settings.clone(),
                 Err(e) => info!("Error setting theme config: {e:?}"),
             }
-            
+            ctx.request_repaint();
             self.context.connect(ctx.clone());
             self.context.show_ws_viewport.store(true, Ordering::Relaxed);
         }

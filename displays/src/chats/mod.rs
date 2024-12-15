@@ -1,24 +1,19 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
-
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget
-};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{helper_traits::TaskNotePayloadHelper, TaskNotePayload, User}};
-use crate::{PlatformSpawner, Spawner};
-
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
-use surrealdb::RecordId;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use crate::{PlatformSpawner, Spawner};
 use chrono::{DateTime, Local, Utc};
-use eframe::emath::Vec2;
-use serde::Serialize;
-use log::{error, info};
 use structdiff::StructDiff;
+use eframe::emath::Vec2;
+use log::{error, info};
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatView{
     pub title: String,
     pub messages: Vec<TaskNotePayload>,
     pub current_user: Option<User>,
-    pub task_id: Option<RecordId>,
     #[serde(skip)]
     pub markdown_editor: EasyMarkEditor,
     pub delete: Option<TaskNotePayload>,
@@ -34,18 +29,16 @@ impl Default for ChatView{
             messages: Vec::new(), 
             current_user: None, 
             markdown_editor: EasyMarkEditor::default(),
-            task_id: None,
             delete: None,
             users: BTreeSet::new(),
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
-            // save_edit: false,
         }
     }
 }
 
 impl ChatView {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, task_id: RecordId, users: Vec<User>) -> Self {
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, users: Vec<User>) -> Self {
         // info!("Before messages: {messages:?}");
         let mut users_set = BTreeSet::new();
         for user in users {
@@ -65,13 +58,13 @@ impl ChatView {
             messages,
             title: "Chat".to_string(),
             markdown_editor: EasyMarkEditor::new(),
-            task_id: Some(task_id),
             delete: None,
             users: users_set,
             edit_text: note_ids,
             allow_edit: HashSet::new()
         }
     }
+
 
     pub fn insert_note(&mut self, new_note: &mut TaskNotePayload){
         if let Some(existing_note) = self.messages.iter_mut().find(|n| n.id == new_note.id .clone()) {
@@ -121,15 +114,19 @@ impl ChatView {
         let bottom_panel_frame = Frame::none().fill(color)
             .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(c_panel_marg)
             .inner_margin(Margin::same(6.0)).rounding(Rounding::same(10.0));
-        let id = if let Some(task_id) = self.task_id.clone() {
-            ui.auto_id_with(task_id)
-        } else {
-            ui.auto_id_with("Chat Salt")
-        };
 
+        let note = self.messages.first().cloned().unwrap_or_default();
+        let task_id = note.clone().task_id;
+        let salt = if let Some(id) = note.task_id {
+            id
+        } else { note.id };
+
+        let id = ui.auto_id_with(salt);
+
+        
         TopBottomPanel::bottom(id)
             .frame(bottom_panel_frame)
-            .default_height(300.0)
+            .default_height(500.0)
             .resizable(true)
             .show_inside(ui, |ui| 
         {
@@ -158,10 +155,11 @@ impl ChatView {
 
                         let employee_id = usr.id_prestashop.clone().unwrap_or_default();
                         let id_employee = Some(employee_id.to_string());
+
                         let mut new_note = TaskNotePayload {
                             everest_initials: usr.everest_initials, 
                             note: txt, 
-                            task_id: self.task_id.clone(), 
+                            task_id, 
                             username,
                             user: Some(usr.id),
                             id_employee,
@@ -252,7 +250,7 @@ impl ChatView {
                             .fill(msg_color)
                             .show(ui, |ui| {
                                 ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-                                ui.set_min_width(min_width / 2.5);
+                                ui.set_max_width(max_msg_width);
                                 // Use a vertical layout to stack the name and message content
                                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
 
@@ -277,6 +275,7 @@ impl ChatView {
                                             Direction::RightToLeft,
                                             Align::Min,
                                         ), |ui| {
+                                            // ui.set_max_width(max_msg_width);
                                             ui.add_space(8.0);
                                             Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30.0, 20.0)).sense(Sense::hover()).ui(ui);
                                             
@@ -318,9 +317,7 @@ impl ChatView {
                                                 if edit_btn.clicked(){
                                                     self.allow_edit.insert(item.id.to_string()); 
                                                 }
-
                                             }
-
 
                                             let copy_btn = Button::new(RichText::new("🗐").weak().color(Color32::LIGHT_RED))
                                                 .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
@@ -351,6 +348,7 @@ impl ChatView {
                                             Direction::LeftToRight,
                                             Align::Min,
                                         ), |ui| {
+                                            // ui.set_max_width(max_msg_width);
                                             ui.add_space(8.0);
                                             Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30.0, 20.0)).sense(Sense::hover()).ui(ui);
                                             ui.add_space(35.0);

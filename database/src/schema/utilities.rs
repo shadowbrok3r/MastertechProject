@@ -1,8 +1,7 @@
-use super::{Notification, TicketPayload};
+use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Notification, TicketData, TicketPayload};
 use crate::{
     schema::{
-        ClientId, Cmd, ConnectedClient, Priority, Record, Status, Store, SystemInformation,
-        TaskNotePayload, TaskPayload, User, TASK_NOTE_TABLE, TASK_TABLE,
+        helper_traits::TaskNotePayloadHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ClientId, Cmd, ConnectedClient, Priority, Record, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
     },
     DATABASE,
 };
@@ -11,8 +10,8 @@ use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use surrealdb::{sql::Id, RecordId};
+use std::{collections::HashMap, fmt::Debug};
+use surrealdb::RecordId;
 use web_time::Instant;
 
 pub trait FilterTasks {
@@ -82,8 +81,9 @@ pub trait Task {
 }
 
 pub async fn query_user_from_email(email: String) -> Result<User, Error> {
-    let query =
-        format!("SELECT * FROM user WHERE email == $email");
+    let query = if email.eq("checkinshelf") || email.is_empty() {
+        "RETURN (SELECT * FROM user WHERE id == $auth.id)"
+    } else { "SELECT * FROM user WHERE email == $email" };
 
     if email.contains("@pclaptops.com") {
         DATABASE.set("email", email.clone()).await?;
@@ -98,6 +98,28 @@ pub async fn query_user_from_email(email: String) -> Result<User, Error> {
     info!("user: {:?}", user.clone());
     // let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
     user.clone().context("No User Found") // Ok(user.unwrap())
+}
+
+pub async fn get_task_notes_from_service_number(service_number: String) -> Result<Vec<TaskNotePayload>, Error> {
+    debug!("get_task_from_service_number");
+    let query_results: Vec<TaskNotePayload> = DATABASE
+        .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number")
+        .bind(("service_number", service_number.clone()))
+        .await?
+        .take(0)?;
+
+    if query_results.is_empty() {
+        let alt_query: Vec<TaskNotePayload> = DATABASE
+            .query("SELECT * FROM task_note WHERE service_number == $service_number")
+            .bind(("service_number", service_number))
+            .await?
+            .take(0)?;
+        info!("get_task_notes_from_service_number: {alt_query:?}");
+        Ok(alt_query)
+    } else {
+        info!("get_task_notes_from_service_number: {query_results:?}");
+        Ok(query_results)
+    }
 }
 
 pub async fn query_id<T>(table: String, id: T) -> Result<Option<RecordId>, Error>
@@ -286,18 +308,18 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: 
 }
 
 pub async fn get_associated_task_notes(
-    tx: Sender<TaskNotePayload>,
-    note_id: Id,
+    tx: Sender<Vec<TaskNotePayload>>,
+    task_id: RecordId,
 ) -> Result<(), Error> {
     debug!("get_associated_task_notes");
-    DATABASE.set("id", note_id).await?;
-    let note: Option<TaskNotePayload> = DATABASE
-        .query("SELECT * FROM task_note WHERE id == $id")
+    let query = "SELECT * FROM task_note WHERE task_id == $id"; 
+    let query_results: Vec<TaskNotePayload> = DATABASE
+        .query(query)
+        .bind(("id", task_id))
         .await?
         .take(0)?;
-    debug!("note: {:?}", note);
-    let new_note = note.unwrap_or_default();
-    tx.try_send(new_note)?;
+
+    tx.try_send(query_results)?;
     Ok(())
 }
 
@@ -452,221 +474,213 @@ impl NotificationMod for Notification {
     }
 }
 
-// #[async_trait]
-// pub trait Updatable {
-//     async fn update_completed(&self, completed: bool) -> Result<(), Error>;
-//     async fn update_due_date(&self, due_date: String) -> Result<(), Error>;
-//     async fn update_assignee_initials(&self, initials: String) -> Result<(), Error>;
-//     async fn update_task_name(&self, name: String) -> Result<(), Error>;
-//     async fn update_status(&self, status: Status) -> Result<(), Error>;
-//     async fn update_dep(&self, store: Store) -> Result<(), Error>;
-//     async fn update_priority(&self, priority: Option<Priority>) -> Result<(), Error>;
-//     async fn update_task_description(&self, description: String) -> Result<(), Error>;
-//     async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> Result<(), Error>;
-//     async fn update_task_notes(&self, new_msg: String) -> Result<(), Error>;
-// }
-// #[async_trait]
-// impl Updatable for TaskPayload {
-//     async fn update_completed(&self, completed: bool) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().0;
-//         let query = format!("UPDATE task SET completed=$completed, status=$status WHERE id=$id");
-//         DATABASE.set("id", id).await?;
-//         DATABASE.set("completed", completed).await?;
-//         if completed{ DATABASE.set("status", Status::Complete).await?; }
-//         else{ DATABASE.set("status", Status::InRepair).await?; }
-//         let _update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_due_date(&self, due_date: String) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().0;
-//         let query = format!("UPDATE task SET due_date=$date WHERE id=$id");
-//         DATABASE.set("id", id).await?;
-//         DATABASE.set("date", due_date).await?;
-//         let _update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_assignee_initials(&self, initials: String) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().0;
-//         let user_query = format!("SELECT id FROM user WHERE everest_initials=$initials");
-//         DATABASE.set("id", id).await?;
-//         DATABASE.set("initials", initials).await?;
-//         let selected_user: Option<Record> = DATABASE.query(user_query).await?.take(0)?;
-//         let query = format!("UPDATE task SET assignee=$assignee, everest_initials=$initials WHERE id=$id");
-//         DATABASE.set("assignee", selected_user.unwrap().id).await?;
-//         let _update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_task_name(&self, name: String) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().0;
-//         let query = format!("UPDATE task SET task_name=$name WHERE id=$id");
-//         DATABASE.set("id", id).await?;
-//         DATABASE.set("name", name).await?;
-//         let _update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_status(&self, status: Status) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().0;
-//         let mut _query = String::new();
-//         DATABASE.set("id", id).await?;
-//         match status{
-//             Status::Todo => {
-//                 _query = format!("UPDATE task SET status=$status, completed=false WHERE id=$id");
-//                 DATABASE.set("status", Status::Todo).await?;
-//             },
-//             Status::InRepair => {
-//                 _query = format!("UPDATE task SET status=$status, completed=false WHERE id=$id");
-//                 DATABASE.set("status", Status::InRepair).await?;
-//             },
-//             Status::Complete => {
-//                 _query = format!("UPDATE task SET status=$status, completed=true WHERE id=$id");
-//                 DATABASE.set("status", Status::Complete).await?;
-//             },
-//         }
-//         let _update_task: Vec<Record> = DATABASE.query(_query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_dep(&self, dep: Store) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().0;
-//         let query = format!("UPDATE task SET dep=$dep WHERE id=$id");
-//         DATABASE.set("id", id).await?;
-//         DATABASE.set("dep", dep).await?;
-//         let _update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_priority(&self, priority: Option<Priority>) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().0;
-//         let query = format!("UPDATE task SET priority=$priority WHERE id=$id");
-//         DATABASE.set("id", id).await?;
-//         DATABASE.set("priority", priority.unwrap()).await?;
-//         let _update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_task_description(&self, description: String) -> Result<(), Error> {
-//         let id: RecordId = self.id.clone().0;
-//         let query = format!("UPDATE task SET task_description=$description WHERE id=$id");
-//         DATABASE.set("id", id).await?;
-//         DATABASE.set("description", description).await?;
-//         let _update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_checkin_notes(&self, checkin_notes: Option<String>) -> Result<(), Error> {
-//         let id = self.service_ticket.as_ref();
-//         let x = id.unwrap().id.clone().0;
-//         let query = format!("UPDATE service_order SET checkin_notes=$notes WHERE id=$id");
-//         DATABASE.set("id", checkin_notes.unwrap()).await?;
-//         DATABASE.set("notes", x).await?;
-//         let _update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         Ok(())
-//     }
-//     async fn update_task_notes(&self, new_msg: String) -> Result<(), Error> {
-//         let task_note = TaskNotePayload {
-//             task_id: self.id.clone(),
-//             note: new_msg,
-//             ..Default::default()
-//         };
-//         let query = format!("CREATE task_note CONTENT $note");
-//         DATABASE.set("note", task_note).await?;
-//         let update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
-//         info!("Updated notes: {update_task:?}");
-//         Ok(())
-//     }
-// }
-// impl Task for TaskPayload{
-//     fn get_computer_data<T>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error>
-//         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
-//     {
-//         let id: RecordId = self.id.clone().0;
-//         spawn(async move {
-//             let query = format!(
-//                 "SELECT service_ticket.computer FROM task WHERE id={id} FETCH service_ticket.computer"
-//             );
-//             let get_data: Option<T> = DATABASE
-//                 .query(query)
-//                 .await
-//                 .unwrap()
-//                 .take(0).unwrap();
-//             debug!("get_data: {get_data:#?}");
-//                 match tx.try_send(get_data){
-//                     Ok(_) => debug!("Sent data"),
-//                     Err(e) => error!("Error sending data: {e:?}")
-//                 };
-//         });
-//     }
-//     fn get_customer_data<T>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error>
-//         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
-//     {
-//         let id: RecordId = self.id.clone().0;
-//         spawn(async move {
-//             let query = format!(
-//                 "SELECT service_ticket.customer FROM task WHERE id={id} FETCH service_ticket.customer"
-//             );
-//             let get_data: Option<T> = DATABASE
-//                 .query(query)
-//                 .await
-//                 .unwrap()
-//                 .take(0).unwrap();
-//             debug!("get_data: {get_data:#?}");
-//                 match tx.try_send(get_data){
-//                     Ok(_) => debug!("Sent data"),
-//                     Err(e) => error!("Error sending data: {e:?}")
-//                 };
-//         });
-//     }
-//     fn get_task_notes<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>) //-> Result<(), Error>
-//         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
-//     {
-//         let id: RecordId = self.id.clone().0;
-//         spawn(async move {
-//             let query = format!(
-//                 "SELECT * FROM task_note WHERE id={id}"
-//             );
-//             let get_data: Option<T> = DATABASE
-//                 .query(query)
-//                 .await
-//                 .unwrap()
-//                 .take(0).unwrap();
-//             debug!("get_data: {get_data:#?}");
-//                 match tx.try_send(get_data){
-//                     Ok(_) => debug!("Sent data"),
-//                     Err(e) => error!("Error sending data: {e:?}")
-//                 };
-//         });
-//     }
-//     fn get_ticket_payload<T>(&mut self, tx: Sender<Option<T>>)//-> Result<(), Error>
-//         where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
-//     {
-//         let id: RecordId = self.id.clone().0;
-//         spawn(async move {
-//             let get_data: Option<T> = DATABASE
-//                 .query(format!("SELECT service_ticket.*, service_ticket.customer.*, service_ticket.computer.* FROM task WHERE id={id}"))
-//                 .await
-//                 .unwrap()
-//                 .take(0).unwrap();
-//             match tx.try_send(get_data){
-//                 Ok(_) => debug!("Sent data"),
-//                 Err(e) => error!("Error sending data: {e:?}")
-//             };
-//         });
-//     }
-//     // fn get_service_data<T: Serialize + for<'a> Deserialize<'a> + Debug + 'static>(&mut self, tx: Sender<Option<T>>)//-> Result<(), Error>
-//     //     where T: Serialize + for<'a> Deserialize<'a> + Debug + 'static
-//     // {
-//     //     let id: RecordId = self.service_ticket.clone().unwrap().clone().0;
-//     //     spawn(async move {
-//     //         let query = format!(
-//     //             "SELECT * FROM service_order WHERE id={id}"
-//     //         );
-//     //         let get_data: Option<T> = db
-//     //             .database
-//     //             .query(query)
-//     //             .await
-//     //             .unwrap()
-//     //             .take(0).unwrap();
-//     //         debug!("get_data: {get_data:#?}");
-//     //             match tx.try_send(get_data){
-//     //                 Ok(_) => debug!("Sent data"),
-//     //                 Err(e) => error!("Error sending data: {e:?}")
-//     //             };
-//     //     });
-//     // }
-// }
+
+pub async fn create_full_task_payload(
+    ticket_data: TicketData,
+    customer_data: CustomerData,
+    computer_data: ComputerData,
+    mut task_data: LiveTaskPayload,
+    task_notes: Vec<TaskNotePayload>,
+    send_specs: bool,
+) -> anyhow::Result<(), anyhow::Error> {
+    info!("Send_Payload");
+    let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
+    let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
+
+    // let task_id = task_data.id.clone();
+    let ticket_id = ticket_data.id.clone();
+    let customer_id = customer_data.id.clone();
+    let computer_id = computer_data.id.clone();
+
+    task_data.task_name = format!(
+        "{} - {}",
+        &customer_data.name,
+        ticket_data.service_number.clone()
+    );
+    task_data.service_ticket = Some(ticket_id.clone());
+    task_data.service_number = Some(ticket_data.service_number.clone());
+    task_data.priority = Priority::Normal;
+    task_data.everest_initials = queried_salesman.everest_initials;
+    task_data.assignee = queried_salesman.id;
+
+    if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await? {
+        let update_cust_record: Vec<RecordId> = DATABASE
+            .update(cust.key().to_string())
+            .content(customer_data.clone())
+            .await?;
+        info!("Customer updated: {update_cust_record:?}");
+
+        if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await? {
+            if send_specs {
+                let create_computer_record: Vec<RecordId> = DATABASE
+                    .update(computer_record.key().to_string())
+                    .content(computer_data)
+                    .await?;
+                info!("create_computer_record: {create_computer_record:?}");
+            }
+        } else {
+            let create_computer_record: Option<RecordId> = DATABASE
+                .create(COMPUTER_TABLE)
+                .content(computer_data)
+                .await?;
+            info!("create_computer_record: {create_computer_record:?}");
+        }
+        if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await? {
+            let service_ticket_record: Vec<RecordId> = DATABASE
+                .update(ticket.key().to_string())
+                .content(ticket_data)
+                .await?;
+            info!("service_ticket_record: {service_ticket_record:?}");
+        } else {
+            let service_ticket_record: Option<RecordId> =
+                DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
+            info!("service_ticket_record: {service_ticket_record:?}");
+        }
+    } else {
+        match DATABASE
+            .create::<Option<Record>>(CUSTOMER_TABLE)
+            .content(customer_data.clone())
+            .await
+        {
+            Ok(create_cust_record) => info!("Created Record: {create_cust_record:?}"),
+            Err(e) => log::error!("Error with create_cust_record: {e:?}"),
+        }
+        if send_specs {
+            match DATABASE
+                .create::<Option<Record>>(COMPUTER_TABLE)
+                .content(computer_data)
+                .await
+            {
+                Ok(create_computer_record) => info!("Created Record: {create_computer_record:?}"),
+                Err(e) => log::error!("Error with create_computer_record: {e:?}"),
+            }
+        }
+        match DATABASE
+            .create::<Option<Record>>(TICKET_TABLE)
+            .content(ticket_data)
+            .await
+        {
+            Ok(create_ticket_record) => info!("Created Record: {create_ticket_record:?}"),
+            Err(e) => log::error!("Error with create_ticket_record: {e:?}"),
+        }
+    }
+
+    info!("Task Data: {:?}", &task_data);
+
+    let create_task_record: Option<Record> = DATABASE
+        .create(TASK_TABLE)
+        .content(task_data).await?;
+
+    info!("create_task_record: {create_task_record:?}");
+
+    for mut note in task_notes {
+        let res = note.create_task_note().await;
+        info!("Task Note Creation from Mastertech: {res:?}");
+    }
+
+    Ok(())
+}
+
+pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
+    let api_call = Prestashop::default();
+    let mut query = HashMap::new();
+
+    query.insert("filter[id_order]", order_number);
+    query.insert("output_format", "JSON");
+
+    let customer_threads: Vec<CustomerThread> = api_call
+        .request_resources_wasm("customer_threads", query.clone())
+        .await?;
+
+    let mut customer_messages: Vec<CustomerMessage> = Vec::new();
+
+    if !customer_threads.is_empty() {
+        for thread in customer_threads.iter() {
+            for msg in thread.associations.customer_messages.iter() {
+                let msg =  api_call
+                    .request_subresources_by_id_wasm(
+                        "customer_messages",
+                        "customer_message",
+                        msg.id.as_str(),
+                    )
+                    .await?;
+                customer_messages.push(msg)
+            }
+        }
+    }
+
+    let order: Order = api_call
+        .request_subresources_by_id_wasm("orders", "order", order_number)
+        .await?;
+
+    if order.id_customer.is_empty() {
+        info!("Order is likely gonna fuKKKK");
+    }
+
+    info!("order: {order:#?}");
+
+    let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.eq("0") {
+        let employee: Employee = api_call
+            .request_subresources_by_id_wasm(
+                "employees",
+                "employee",
+                &order.id_employee_sales_rep,
+            )
+            .await?;
+
+        info!("employee: {employee:#?}");
+        Some(employee)
+    } else {
+        None
+    };
+
+    let split_rep: Option<Employee> = if !order.id_employee_split_rep.eq("0") {
+        let employee_2: Employee = api_call
+            .request_subresources_by_id_wasm(
+                "employees",
+                "employee",
+                &order.id_employee_split_rep,
+            )
+            .await?;
+
+        info!("employee: {sales_rep:#?}");
+        Some(employee_2)
+    } else {
+        None
+    };
+
+    let cust: Customer = api_call
+        .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
+        .await?;
+
+    let address: Address = api_call
+        .request_subresources_by_id_wasm("addresses", "address", &order.id_address_invoice)
+        .await?;
+
+
+    info!("address: {address:#?}");
+
+    let customer = CustomerData {
+        id: RecordId::from((
+            CUSTOMER_TABLE.to_string(),
+            order.id_customer.clone(),
+        )),
+        cust_code: order.id_customer.clone(),
+        name: format!("{} {}", &cust.firstname, &cust.lastname),
+        phone_number: address.phone.clone().to_string(),
+        email: cust.email,
+        ..Default::default()
+    };
+
+    Ok( 
+        PrestashopPayload {
+            customer,
+            order,
+            sales_rep,
+            split_rep,
+            address,
+            customer_threads,
+            customer_messages,
+        }
+    )
+}

@@ -1,10 +1,12 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
-use chrono::{DateTime, NaiveDateTime, Utc};
-use eframe::egui::{Button, CentralPanel, ComboBox, Grid, Hyperlink, Id, KeyboardShortcut, RichText, ScrollArea, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::{schema::{helper_traits::{EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee}, TaskNotePayload, User}, DATABASE};
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
+use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use log::info;
+use surrealdb::RecordId;
 use crate::{app_state::SharedContext, PlatformSpawner};
 use crossbeam::channel::{Receiver, Sender};
+// use core::f32;
 use std::collections::HashMap;
 use itertools::Itertools;
 use egui_extras::Column;
@@ -18,166 +20,229 @@ impl SharedContext {
 }
 
 /// Every logic is defined in `Viewer`
-#[derive(Default, Serialize)]
+#[derive(Serialize)]
 pub struct TaskRowViewer {
     filter: String,
     row_protection: bool,
     hotkeys: Vec<(KeyboardShortcut, UiAction)>,
-    selected: Option<PrestashopOrderData>
+    pub selected: Option<PrestashopOrderData>,
+    order_data: PrestashopPayload,
+    open_hotkeys: bool,
+    pub chat_view: ChatView,
+    #[serde(skip)]
+    notes_channel: (Sender<Vec<TaskNotePayload>>, Receiver<Vec<TaskNotePayload>>),
+    #[serde(skip)]
+    tur_channel: (Sender<PrestashopPayload>, Receiver<PrestashopPayload>)
 }
 
+impl Default for TaskRowViewer {
+    fn default() -> Self {
+        let notes_channel = <Vec<TaskNotePayload>>::create_unbounded_channel();
+        let tur_channel = PrestashopPayload::create_unbounded_channel();
+        Self {
+            notes_channel,
+            tur_channel,
+            filter: Default::default(),
+            row_protection: Default::default(),
+            hotkeys: Default::default(),
+            selected: Default::default(),
+            open_hotkeys: Default::default(),
+            chat_view: Default::default(),
+            order_data: PrestashopPayload::default()
+        }
+    }
+}
 pub struct TaskAuditViewer {
     audit_selection: TaskAudit,
     order_channel: (Sender<prestashop_schema::PrestashopPayload>, Receiver<prestashop_schema::PrestashopPayload>),
-    notes_channel: (Sender<Vec<TaskNotePayload>>, Receiver<Vec<TaskNotePayload>>),
-    services_viewer: TaskRowViewer,
+    pub services_viewer: TaskRowViewer,
     loading: bool,
     index: HashMap<String, i32>,
     counter: i32,
-    chat_view: ChatView,
     pub service_map: HashMap<String, DataTable<PrestashopOrderData>>,
 }
 
 impl TaskAuditViewer {
     pub fn new() -> Self {
         let order_channel = <prestashop_schema::PrestashopPayload>::create_unbounded_channel();
-        let notes_channel = <Vec<TaskNotePayload>>::create_unbounded_channel();
         Self {
             audit_selection: TaskAudit::default(),
             services_viewer: TaskRowViewer::default(),
             order_channel,
-            notes_channel,
             loading: false,
             index: HashMap::new(),
             counter: 0,
             service_map: HashMap::new(),
-            chat_view: ChatView::default()
         }
     }
 
     fn show(&mut self, ui: &mut Ui, current_user: Option<User>) {
         SidePanel::right(Id::new("Task Audit Side Panel"))
-            .default_width(400.)
+            .default_width(280.)
+            .max_width(900.)
             .resizable(true)
             .show_separator_line(true)
             .show_inside(ui, |ui| 
         {
-            ui.vertical_centered_justified(|ui| {
-                let service = self.services_viewer.selected.clone();
+            let service = self.services_viewer.selected.clone();
 
-                let header = if let Some(service) = &service {
-                    &format!("{} - {}", service.1, service.0)
-                } else { "Task Details" };
-                ui.add_space(5.);
-                ui.heading(header);
-                ui.separator();
-                ui.add_space(5.0);
+            let header = if let Some(service) = &service {
+                &format!("{} - {}", service.1, service.0)
+            } else { "Task Details" };
 
-                if let Some(order) = self.services_viewer.selected.clone() {
-                    let get_notes = ui.button("get notes");
-                    if get_notes.clicked() {
-                        let tx = self.notes_channel.0.clone();
-                        let mut note = TaskNotePayload::default();
-                        PlatformSpawner::spawn(async move {
-                            let thread_id = note.get_thread_id_from_order().await;
-                            if let Ok(thread) = thread_id {
-                                match DATABASE.query("SELECT * FROM task_note WHERE id_customer_thread == $thread")
-                                    .bind(("thread", thread))
-                                    .await
-                                {
-                                    Ok(mut r) => {
-                                        let notes: Result<Vec<TaskNotePayload>, surrealdb::Error> = r.take(0);
-                                        match notes {
-                                            Ok(notes) => {
-                                                let _ = tx.try_send(notes);
-                                            },
-                                            Err(e) => info!("Error getting notes: {e:?}"),
-                                        }
-                                    },
-                                    Err(e) => info!("Error getting task notes: {e:?}"),
+            if let Some(order) = self.services_viewer.selected.clone() {
+                ui.vertical_centered_justified(|ui| {
+                    let service = self.services_viewer.selected.clone();
+
+                    let header = if let Some(service) = &service {
+                        &format!("{} - {}", service.1, service.0)
+                    } else { "Task Details" };
+                    ui.add_space(5.);
+                    ui.heading(header.to_uppercase());
+                    Separator::default().horizontal().shrink(ui.available_width()/2.5).ui(ui);
+                    ui.add_space(5.0);
+
+
+                    ScrollArea::vertical()
+                    .auto_shrink(true)
+                    // .max_height(f32::INFINITY)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.);
+                            ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                                if ui.button(RichText::new("Create Task").code().color(ui.style().visuals.error_fg_color)).clicked() {
+                                    let tx = self.services_viewer.tur_channel.0.clone();
+                                    let order_num = order.0.clone();
+                                    PlatformSpawner::spawn(async move {
+                                        let presta_order = TaskRowViewer::get_prestashop_order(order_num).await.unwrap_or_default();
+                                        let _ = tx.try_send(presta_order);
+                                    });
                                 }
-                                
-                            }
-
+                                ui.add_space(10.);
+                            });
                         });
-                    }
-                    
-                    Grid::new(header)
-                        .max_col_width(200.)
-                        .num_columns(2)
-                        .show(ui, |ui| 
-                    {
-                        ui.end_row();
-                        ui.label(order.3);
-                        ui.label(order.4);
-                        ui.end_row();
-                        ui.label(order.5);
-                        ui.label(order.6);
-                        ui.end_row();
+
+                        ui.add_space(5.0);
+                        ui.separator();
+                        ui.add_space(5.0);
+
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.);
+                            ui.label("Status");
+                            ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                                ui.label(order.3);
+                                ui.add_space(10.);
+                            });
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.);
+                            ui.label("Sales Rep");
+                            ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                                ui.label(order.4);
+                                ui.add_space(10.);
+                            });
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add_space(10.);
+                            ui.label("Split Rep");
+                            ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                                ui.label(order.5);
+                                ui.add_space(10.);
+                            });
+                        });
                     });
 
-                    self.chat_view.ui(ui);
-                    
-                    // let msg = ChatView::new(messages, current_user, task_id, users).ui(ui);
-                }
-            });
+                    // ui.add_space(ui.available_height());
+                });
+                ui.with_layout(Layout::bottom_up(eframe::egui::Align::Min), |ui| {
+                    CollapsingHeader::new(
+                        RichText::new("Order Notes")
+                            .color(ui.style().visuals.error_fg_color)
+                            .monospace()
+                        )
+                        .default_open(false)
+                        .id_salt(format!("Order Notes - {}", header))
+                        .show_unindented(ui, |ui| 
+                    {
+                        self.services_viewer.chat_view.ui(ui);
+                    });
+                });
+            } else {
+                ui.vertical_centered_justified(|ui| {
+
+                    ui.add_space(5.);
+                    ui.heading(header.to_uppercase());
+                    Separator::default().horizontal().shrink(ui.available_width()/2.5).ui(ui);
+                    ui.add_space(5.0);
+
+                });
+            }
         });
 
         TopBottomPanel::top("Task Audit Top Panel")
             .exact_height(30.)
             .show_inside(ui, |ui| 
         {
-                ui.horizontal_top(|ui| {
-                    TextEdit::singleline(&mut self.services_viewer.filter)
-                        .hint_text(" Search for SO# / Customer")
-                        .ui(ui);
+            ui.horizontal_top(|ui| {
+                TextEdit::singleline(&mut self.services_viewer.filter)
+                    .hint_text(" Search for SO# / Customer")
+                    .ui(ui);
 
-                    ui.add_space(10.);
+                ui.add_space(10.);
 
-                    if Button::new(" Refresh ").ui(ui).clicked() {
-                        let order_tx = self.order_channel.0.clone();
-                        let selected = self.audit_selection.clone();
-                        let selection = selected.clone().as_str();
+                if Button::new(" Refresh ").ui(ui).clicked() {
+                    let order_tx = self.order_channel.0.clone();
+                    let selected = self.audit_selection.clone();
+                    let selection = selected.clone().as_str();
 
-                        let start_idx = self
-                            .index
-                            .entry(selection.clone())
-                            .or_insert(0)
-                            .clone();
+                    let start_idx = self
+                        .index
+                        .entry(selection.clone())
+                        .or_insert(0)
+                        .clone();
 
-                        let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
-                            k.iter().map(|k| k.0.clone()).collect::<Vec<String>>()
-                        } else {
-                            Vec::new()
-                        };
-                        Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx);
-                    }
-                    ui.add_space(10.);
-                    if Button::new(" Load +10 ").ui(ui).clicked() {
-                        let order_tx = self.order_channel.0.clone();
-                        let selected = self.audit_selection.clone();
-                        let selection = selected.clone().as_str();
+                    let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
+                        k.iter().map(|k| k.0.clone()).collect::<Vec<String>>()
+                    } else {
+                        Vec::new()
+                    };
+                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx);
+                }
+                ui.add_space(10.);
+                if Button::new(" Load +10 ").ui(ui).clicked() {
+                    let order_tx = self.order_channel.0.clone();
+                    let selected = self.audit_selection.clone();
+                    let selection = selected.clone().as_str();
 
-                        let start_idx = self
-                            .index
-                            .entry(selection.clone())
-                            .and_modify(|i| *i+=10)
-                            .or_insert(0)
-                            .clone();
+                    let start_idx = self
+                        .index
+                        .entry(selection.clone())
+                        .and_modify(|i| *i+=10)
+                        .or_insert(0)
+                        .clone();
 
-                        let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
-                            k.iter().map(|k| k.0.clone()).collect::<Vec<String>>()
-                        } else {
-                            Vec::new()
-                        };
-                        Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx);
-                    }
-                });
+                    let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
+                        k.iter().map(|k| k.0.clone()).collect::<Vec<String>>()
+                    } else {
+                        Vec::new()
+                    };
+                    Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx);
+                }
+                ui.add_space(10.);
+                let label = if self.services_viewer.open_hotkeys {
+                    " Hide Hotkeys"
+                } else {
+                    " Show Hotkeys"
+                };
+                if Button::new(label).ui(ui).clicked() {
+                    self.services_viewer.open_hotkeys = !self.services_viewer.open_hotkeys;
+                }
+            });
         });
 
         TopBottomPanel::bottom(Id::new("Task Audit Hot Keys"))
-            .exact_height(240.)
-            .show_inside(ui, |ui| 
+            .max_height(240.)
+            .show_animated_inside(ui, self.services_viewer.open_hotkeys, |ui| 
         {
             ui.vertical_centered(|ui| ui.heading("Hotkeys"));
             ui.vertical_centered_justified(|ui| ui.separator());
@@ -493,15 +558,135 @@ impl TaskAuditViewer {
             log::warn!("idx: {:?}\ncounter: {}", self.index, self.counter);
         }
     
-        if let Ok(notes) = self.notes_channel.1.try_recv() {
+        if let Ok(notes) = self.services_viewer.notes_channel.1.try_recv() {
             info!("Got notes: {notes:?}");
-            if let Some(order) = self.services_viewer.selected.clone() {
-                // self.chat_view = ChatView::new(notes, current_user, order.0, store_users)
+            if self.services_viewer.selected.is_some() {
+                info!("Creating chat view");
+                self.services_viewer.chat_view = ChatView::new(notes, current_user, store_users);
             }
+        }
+
+        if let Ok(order_data) = self.services_viewer.tur_channel.1.try_recv() {
+            info!("Got order_data: {order_data:?}");
+            // if self.services_viewer.selected.is_some() {
+            //     self.services_viewer.chat_view = ChatView::new(order_data, current_user, store_users);
+            // }
+        }
+
+    }
+}
+
+impl TaskRowViewer {
+    async fn get_order_notes(order_number: String) -> anyhow::Result<Vec<TaskNotePayload>, anyhow::Error> {
+        let existing_notes = get_task_notes_from_service_number(order_number.clone()).await?;
+        if !existing_notes.is_empty() {
+            info!("We already have notes");
+            Ok(existing_notes)
+        } else {
+            let mut note = TaskNotePayload::default();
+            let notes = note.get_notes_from_order_number(&order_number).await?;
+            info!("notes: {notes:?}");
+            Ok(notes)
         }
     }
 
+    async fn get_prestashop_order(order_number: String) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
+        info!("Did not have a task, creating");
+        let value = get_prestashop_payload(&order_number).await?;
+        let mut customer = CustomerData::default();
+        let mut ticket = TicketPayload::default();
+        let mut task: TaskPayload = TaskPayload::default();
+        let mut task_notes = Vec::new();
 
+        let service_details = value.order.associations.order_service.clone();
+        let mut services: Vec<RecordId> = Vec::new();
+
+        let sales_rep = value.sales_rep.clone().unwrap_or_default();
+        let split_rep = value.split_rep.clone().unwrap_or_default();
+        let email = parse_email_user(&sales_rep.email);
+        let email_split_rep = parse_email_user(&split_rep.email);
+
+        customer.id = value.customer.id.clone();
+        customer.cust_code = value.customer.cust_code.clone();
+        customer.email = value.customer.email.clone();
+        customer.name = value.customer.name.clone();
+        customer.phone_number = value.customer.phone_number.clone();
+        ticket.salesman = email_split_rep.to_string();
+        ticket.sales_rep = email.to_string();
+        ticket.tech = email.to_string();
+        info!(
+            "Salesman: {:?}\nTech: {:?}",
+            ticket.salesman.clone(),
+            ticket.tech.clone()
+        );
+        ticket.customer = Some(customer.clone());
+        ticket.checkin_rep = email.to_string();
+        ticket.terms = value.order.payment.clone();
+        ticket.ticket_total = value.order.total_products_wt.clone();
+        ticket.doc_alias = value.order.order_type.clone();
+        ticket.service_number = value.order.id.clone();
+        ticket.id = RecordId::from((
+            TICKET_TABLE.to_string(),
+            ticket.service_number.clone(),
+        ));
+        task.id = RecordId::from((
+            TASK_TABLE.to_string(),
+            ticket.service_number.clone(),
+        ));
+
+        for msg in value.customer_messages.iter() {
+            task_notes.push(TaskNotePayload {
+                everest_initials: msg.id_employee.clone(),
+                note: msg.message.clone(),
+                id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
+                task_id: Some(task.id.clone()),
+                // created_at: msg.date_add.clone(),
+                id_customer_thread: Some(msg.id_customer_thread.clone()),
+                id_customer_message: Some(msg.id.clone()),
+                id_employee: Some(msg.id_employee.clone()),
+                ..Default::default()
+            })
+        }
+        task.task_note = task_notes.clone();
+        // Get the current time in UTC
+        let now = Utc::now();
+
+        // Format the date in the desired format
+        let formatted_date = now.to_rfc3339_opts(SecondsFormat::Millis, true);
+        
+        task.due_date = formatted_date;
+        services.push(ticket.id.clone());
+        
+        if !service_details.is_empty() {
+            if service_details.len() == 1 {
+                let svc = service_details.get(0);
+                if let Some(service) = svc {
+                    ticket.checkin_notes = service.check_in_notes.clone();
+                }
+            } else {
+                info!("Theres a couple.... {:?}", service_details);
+            }
+        }
+
+        task.service_ticket = Some(ticket.clone());
+
+        task.task_name = format!(
+            "{} - {}",
+            &customer.name,
+            ticket.service_number.clone()
+        );
+
+        create_full_task_payload(
+            ticket.into(), 
+            customer, 
+            ComputerData::default(), 
+            task.clone().into(), 
+            task.clone().task_note, 
+            false
+        ).await?;
+
+        Ok(value)
+    }
 }
 
 #[derive(PartialEq, Debug, Clone, Default)]
@@ -579,13 +764,19 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
                 let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(naive_datetime, Utc);
 
                 // Format the DateTime into yyyy/mm/dd
-                let formatted_date = datetime.format(" %Y/%m/%d").to_string();
-                ui.label(formatted_date)
+                let formatted_date = datetime.format(" %m/%d/%Y").to_string();
+                let split1 = formatted_date.split_once('/').unwrap_or_default();
+                let split2 = split1.1.split_once('/').unwrap_or_default();
+                ui.horizontal_centered(|ui| {
+                    ui.colored_label(Color32::from_rgb(42, 195, 222), format!("{}/", split1.0));
+                    ui.colored_label(ui.style().visuals.error_fg_color, format!("{}/", split2.0));
+                    ui.colored_label(ui.style().visuals.warn_fg_color, split2.1)
+                }).inner
             }).inner,
             3 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.3.clone()))).inner,
             4 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.4.clone()))).inner,
             5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.5.clone()))).inner,
-            6 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.6.clone()))).inner,
+            6 => ui.vertical_centered(|ui| ui.checkbox(&mut false, "")).inner,
             _ => unreachable!(),
         };
     }
@@ -595,11 +786,11 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
         match column {
             0 => col_config.resizable(true).at_least(60.).at_most(60.),
             1 => col_config.resizable(true).at_least(180.).at_most(225.),
-            2 => col_config.resizable(true).at_least(150.).at_most(150.),
-            3 => col_config.resizable(true).at_least(250.).at_most(320.),
+            2 => col_config.resizable(true).at_least(90.).at_most(100.),
+            3 => col_config.resizable(true).at_least(130.).at_most(130.),
             4 => col_config.resizable(true).at_least(130.).at_most(150.),
             5 => col_config.resizable(true).at_least(130.).at_most(150.),
-            6 => col_config.resizable(true).at_least(50.).at_most(50.),
+            6 => col_config.resizable(true).at_least(80.).at_most(80.),
             _ => col_config,
         }
     }
@@ -633,6 +824,14 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
             0 => {
                 if resp.clicked() {
                     self.selected = Some(row.clone());
+                    let notes_tx = self.notes_channel.0.clone();
+                    let order_number = row.0.clone();
+                    PlatformSpawner::spawn(async move {
+                        match Self::get_order_notes(order_number).await {
+                            Ok(notes) => notes_tx.try_send(notes).unwrap(),
+                            Err(e) => info!("Error {e:?}"),
+                        };
+                    });
                 }
             },
             _ => {}

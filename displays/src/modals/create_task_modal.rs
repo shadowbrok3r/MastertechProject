@@ -1,27 +1,15 @@
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_TABLE},DATABASE};
+use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
+use database::schema::{get_data::get_user_from_email, utilities::{get_prestashop_payload, create_full_task_payload}};
+use crate::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
 use super::task_modal::{display_ticket_page, ModalAction};
-use database::schema::get_data::get_user_from_email;
+use egui_extras::{DatePickerButton, Size, StripBuilder};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use crossbeam::channel::Sender;
-use database::{
-    schema::{
-        prestashop_schema::{
-            Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop,
-            PrestashopPayload,
-        }, utilities::{query_id, query_user_from_email}, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
-    },
-    DATABASE,
-};
-use crate::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
-use eframe::egui::vec2;
-use eframe::egui::{
-    Align, Button, Color32, ComboBox, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2,
-    Widget,
-};
-use egui_extras::{DatePickerButton, Size, StripBuilder};
+use std::collections::BTreeSet;
 use log::{error, info, warn};
-use serde::Serialize;
-use std::collections::{BTreeSet, HashMap};
 use surrealdb::RecordId;
+use serde::Serialize;
 
 #[derive(Serialize, Default, Debug, Clone)]
 pub struct CreateTaskModal {
@@ -43,6 +31,8 @@ pub struct CreateTaskModal {
     pub prestashop_api_tx: Option<Sender<PrestashopPayload>>,
 }
 
+
+// TODO This is an ugly implementation
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Tur {
     pub data: PrestashopPayload,
@@ -365,7 +355,7 @@ impl CreateTaskModal {
                                                 info!("TicketData: {:?}", ticket_data.clone());
 
                                                 info!("Attaching Customer with Ticket: {:?}", &payload.customer_data.name);
-                                                match send_payload(
+                                                match create_full_task_payload(
                                                     ticket_data,
                                                     payload.customer_data.clone(),
                                                     ComputerData::default(),
@@ -438,7 +428,7 @@ impl Tur {
 
         if ui.add_enabled(check, button).clicked() {
             let service_num = self.ticket_data.service_number.clone();
-            self.presta_api(prestashop_api_tx);
+            Self::presta_api(prestashop_api_tx, self.ticket_data.service_number.clone());
             self.ticket_data = TicketPayload::default();
             self.task_data = TaskPayload::default();
             self.customer_data = CustomerData::default();
@@ -459,260 +449,16 @@ impl Tur {
             .ui(ui);
     }
 
-    pub fn presta_api(&mut self, prestashop_api_tx: Sender<PrestashopPayload>) {
-        let input = self.ticket_data.service_number.clone();
+    pub fn presta_api(prestashop_api_tx: Sender<PrestashopPayload>, input: String) {
+        let input = input.clone();
         let tx = prestashop_api_tx.clone();
         if !input.is_empty() {
             PlatformSpawner::spawn(async move {
-                let api_call = Prestashop::default();
-                let mut query = HashMap::new();
-
-                query.insert("filter[id_order]", input.as_str());
-                query.insert("output_format", "JSON");
-
-                let customer_threads: Vec<CustomerThread> = api_call
-                    .request_resources_wasm("customer_threads", query.clone())
-                    .await
-                    .unwrap_or_default();
-
-                let mut customer_messages: Vec<CustomerMessage> = Vec::new();
-
-                if !customer_threads.is_empty() {
-                    for thread in customer_threads.iter() {
-                        for msg in thread.associations.customer_messages.iter() {
-                            customer_messages.push(
-                                api_call
-                                    .request_subresources_by_id_wasm(
-                                        "customer_messages",
-                                        "customer_message",
-                                        msg.id.as_str(),
-                                    )
-                                    .await
-                                    .unwrap_or_default(),
-                            );
-                        }
-                    }
-                }
-
-                let order: Order = api_call
-                    .request_subresources_by_id_wasm("orders", "order", &input)
-                    .await
-                    .unwrap_or_default();
-
-                if order.id_customer.is_empty() {
-                    info!("Order is likely gonna fuKKKK");
-                }
-
-                info!("order: {order:#?}");
-
-                let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.contains("0") && !order.id_employee_sales_rep.is_empty() {
-                    let employee: Employee = api_call
-                        .request_subresources_by_id_wasm(
-                            "employees",
-                            "employee",
-                            &order.id_employee_sales_rep,
-                        )
-                        .await
-                        .unwrap_or_default();
-
-                    info!("employee: {employee:#?}");
-
-
-                    // let my_returns = employee.get_my_return_for_services().await;
-                    // error!("RETURN FOR SERVICES: {:?}", my_returns);
-                    Some(employee)
-                } else {
-                    None
-                };
-
-                let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0") && !order.id_employee_split_rep.is_empty() {
-                    let employee_2: Employee = api_call
-                        .request_subresources_by_id_wasm(
-                            "employees",
-                            "employee",
-                            &order.id_employee_split_rep,
-                        )
-                        .await
-                        .unwrap_or_default();
-
-                    info!("employee: {sales_rep:#?}");
-                    Some(employee_2)
-                } else {
-                    None
-                };
-
-                let cust: Customer = api_call
-                    .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
-                    .await
-                    .unwrap_or_default();
-
-                // info!("customer: {customer:#?}");
-
-                let address: Address = api_call
-                    .request_subresources_by_id_wasm(
-                        "addresses",
-                        "address",
-                        &order.id_address_invoice,
-                    )
-                    .await
-                    .unwrap_or_default();
-
-
-                info!("address: {address:#?}");
-                let customer = CustomerData {
-                    id: RecordId::from((
-                        CUSTOMER_TABLE.to_string(),
-                        order.id_customer.clone(),
-                    )),
-                    cust_code: order.id_customer.clone(),
-                    name: format!("{} {}", &cust.firstname, &cust.lastname),
-                    phone_number: address.phone.clone().to_string(),
-                    // phone_number_2: address.phone_mobile.clone().unwrap_or(0).to_string(),
-                    email: cust.email,
-                    ..Default::default()
-                };
-
-                let presta_payload = PrestashopPayload {
-                    customer,
-                    order,
-                    sales_rep,
-                    split_rep,
-                    address,
-                    customer_threads,
-                    customer_messages,
-                };
-
-                match tx.try_send(presta_payload) {
-                    Ok(_) => {
-                        info!("SENT PRESTASHOP DATA");
-                        drop(tx);
-                    }
-                    Err(err) => error!("Error: {err:?}"),
-                };
+                let _ = tx.try_send(
+                    get_prestashop_payload(&input.clone()).await.unwrap_or_default()
+                );
             });
         }
     }
 }
 
-pub async fn send_payload(
-    ticket_data: TicketData,
-    customer_data: CustomerData,
-    computer_data: ComputerData,
-    mut task_data: LiveTaskPayload,
-    task_notes: Vec<TaskNotePayload>,
-    send_specs: bool,
-) -> anyhow::Result<Option<RecordId>, anyhow::Error> {
-    info!("Send_Payload");
-    let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
-    // let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
-
-    let task_id = task_data.id.clone();
-    let ticket_id = ticket_data.id.clone();
-    let customer_id = customer_data.id.clone();
-    let computer_id = computer_data.id.clone();
-
-    task_data.task_name = format!(
-        "{} - {}",
-        &customer_data.name,
-        ticket_data.service_number.clone()
-    );
-    task_data.service_ticket = Some(ticket_id.clone());
-    task_data.service_number = Some(ticket_data.service_number.clone());
-    task_data.priority = Priority::Normal;
-    task_data.everest_initials = queried_salesman.everest_initials;
-    task_data.assignee = queried_salesman.id;
-
-    info!("Customer: {:?}", customer_data);
-    if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await? {
-        let update_cust_record: Vec<RecordId> = DATABASE
-            .update(cust.key().to_string())
-            .content(customer_data.clone())
-            .await?;
-        info!("Customer updated: {update_cust_record:?}");
-        if send_specs {
-            if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await?
-            {
-                let create_computer_record: Vec<RecordId> = DATABASE
-                    .update(computer_record.key().to_string())
-                    .content(computer_data)
-                    .await?;
-                info!("create_computer_record: {create_computer_record:?}");
-            } else {
-                let create_computer_record: Option<RecordId> = DATABASE
-                    .create(COMPUTER_TABLE)
-                    .content(computer_data)
-                    .await?;
-                info!("create_computer_record: {create_computer_record:?}");
-            }
-        }
-        info!("Ticket: {:?}", ticket_data);
-
-        if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await? {
-            let service_ticket_record: Vec<RecordId> =
-                DATABASE.update(ticket.key().to_string()).content(ticket_data).await?;
-            info!("service_ticket_record: {service_ticket_record:?}");
-        } else {
-            let service_ticket_record: Option<RecordId> =
-                DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
-            info!("service_ticket_record: {service_ticket_record:?}");
-        }
-    } else {
-        match DATABASE
-            .create::<Option<RecordId>>(CUSTOMER_TABLE)
-            .content(customer_data.clone())
-            .await
-        {
-            Ok(create_cust_record) => info!("Created RecordId: {create_cust_record:?}"),
-            Err(e) => error!("Error with create_cust_record: {e:?}"),
-        }
-        match DATABASE
-            .create::<Option<RecordId>>(COMPUTER_TABLE)
-            .content(computer_data)
-            .await
-        {
-            Ok(create_computer_record) => info!("Created RecordId: {create_computer_record:?}"),
-            Err(e) => error!("Error with create_computer_record: {e:?}"),
-        }
-        match DATABASE
-            .create::<Option<RecordId>>(TICKET_TABLE)
-            .content(ticket_data)
-            .await
-        {
-            Ok(create_ticket_record) => info!("Created RecordId: {create_ticket_record:?}"),
-            Err(e) => error!("Error with create_ticket_record: {e:?}"),
-        }
-    }
-
-    info!("Task: {:?}", task_data);
-
-    let create_task_record: Option<RecordId> = DATABASE.create(TASK_TABLE).content(task_data).await?;
-    info!("create_task_record: {create_task_record:?}");
-
-    if task_notes.len() > 0 {
-        info!("Task Notes: {:?}", task_notes);
-        let mut note_ids = Vec::new();
-
-        for mut note in task_notes {
-            note.task_id = Some(task_id.clone());
-            let create_task_note_record: Option<RecordId> =
-                DATABASE.create(TASK_NOTE_TABLE).content(note).await?;
-            info!("create_task_note_record: {:?}", create_task_note_record);
-            if let Some(note_record) = create_task_note_record {
-                note_ids.push(note_record.key().to_string().clone());
-            }
-        }
-
-        if let Some(ref record) = create_task_record {
-            let update_task: Option<RecordId> = DATABASE
-                .query("UPDATE $task SET task_note += $notes")
-                .bind(("task", record.key().to_string().clone()))
-                .bind(("notes", note_ids))
-                .await?
-                .take(0)?;
-
-            info!("Update_task with notes: {update_task:?}");
-        }
-    }
-
-    Ok(create_task_record)
-}

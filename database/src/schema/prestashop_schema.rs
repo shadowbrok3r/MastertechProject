@@ -10,6 +10,7 @@ use std::collections::HashMap;
 const PRESTASHOP_API_URL: &str = "https://pclaptops.mojo11.com/api";
 const PRESTASHOP_API_URL_WASM: &str = "https://pcl.master-tech.app/api";
 
+#[derive(Clone)]
 pub struct Prestashop<'a> {
     client: Client,
     /// [field1,field2 …] or 'full'
@@ -172,7 +173,7 @@ impl<'a> Prestashop<'a> {
         id: &str,
     ) -> anyhow::Result<T, anyhow::Error>
     where
-        T: for<'de> Deserialize<'de> + std::fmt::Debug,
+        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
     {
         let url = format!("{PRESTASHOP_API_URL_WASM}/{resource}/{id}?output_format=JSON");
         let response: Value = self
@@ -226,7 +227,7 @@ impl<'a> Prestashop<'a> {
         url_params: HashMap<&str, &str>,
     ) -> anyhow::Result<Vec<T>, anyhow::Error>
     where
-        T: for<'de> Deserialize<'de> + std::fmt::Debug,
+        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
     {
         info!(
             "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
@@ -254,7 +255,7 @@ impl<'a> Prestashop<'a> {
         url_params: HashMap<&str, &str>,
     ) -> anyhow::Result<T, anyhow::Error>
     where
-        T: for<'de> Deserialize<'de> + std::fmt::Debug,
+        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
     {
         info!(
             "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",

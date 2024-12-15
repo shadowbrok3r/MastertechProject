@@ -8,12 +8,13 @@ use database::{
         utilities::{get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE // Status, Store, 
     },
 };
+use eframe::egui::Context;
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use std::collections::HashMap;
 use log::info;
 
 impl SharedContext {
-    pub fn load_data(&mut self) -> bool {
+    pub fn load_data(&mut self, ctx: &Context) -> bool {
         // get all of our channel Senders from crossbeam to get user/store/completed tasks,
         // as well as store users and live task notifications
         let live_tasks_tx = self.live_tasks_tx.clone();
@@ -66,7 +67,10 @@ impl SharedContext {
             });
 
             match serde_json::from_value::<ThemeConfig>(usr.user_settings.color_scheme.clone()) {
-                Ok(color_settings) => self.theme_config = color_settings.clone(),
+                Ok(color_settings) => {
+                    self.theme_config = color_settings.clone();
+                    ctx.request_repaint();
+                },
                 Err(e) => info!("Error setting theme config: {e:?}"),
             }
 

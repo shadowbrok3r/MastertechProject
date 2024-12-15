@@ -19,7 +19,6 @@ impl SharedContext {
                             TaskModal::new(ChatView::new(
                                     task.task_note.clone(),
                                     usr,
-                                    task.id.clone(),
                                     self.store_users.clone()
                                 ),
                                 task.clone()
@@ -29,7 +28,6 @@ impl SharedContext {
                                 ChatView::new(
                                     task.task_note.clone(),
                                     usr,
-                                    task.id.clone(),
                                     self.store_users.clone(),
                                 ),
                                 task.clone()
@@ -74,8 +72,7 @@ impl SharedContext {
                     if let Some(current_user) = self.current_user.as_ref() {
                         let chat_modal = ChatView::new(
                             pld.1.to_owned(),
-                            current_user.clone(),
-                            pld.0.clone(),
+                            current_user.clone(), // Some(pld.0.clone()),
                             self.store_users.clone(),
                         );
                         let task = self
@@ -107,8 +104,7 @@ impl SharedContext {
                     let modal = TaskModal::new(
                         ChatView::new(
                             task.task_note.clone(),
-                            self.current_user.clone().unwrap(),
-                            task.id.clone(),
+                            self.current_user.clone().unwrap_or_default(),
                             self.store_users.clone(),
                         ),
                         task.clone(),

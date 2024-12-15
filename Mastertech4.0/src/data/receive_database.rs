@@ -1,10 +1,11 @@
 use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use eframe::egui::Context;
 use crate::app_state::{AppState, MainPages, MasterTechApp};
 use log::info;
 
 
 impl MasterTechApp {
-    pub fn receive_database(&mut self) { // , frame: &mut eframe::Frame
+    pub fn receive_database(&mut self, ctx: &Context) { // , frame: &mut eframe::Frame
         // Retrieve our database connection, and 2. Requesting some task data
         if let Ok(db) = self.context.db_rx.try_recv() {
             match db {
@@ -16,7 +17,7 @@ impl MasterTechApp {
                     } else {
                         info!("11");
                     }
-                    if !self.context.shared_ctx.load_data() {
+                    if !self.context.shared_ctx.load_data(ctx) {
                         info!("12");
                         let _ = self.context.app_state_tx.try_send(AppState::NoAuth("No user detected".to_string()));
                     } else {
@@ -27,7 +28,7 @@ impl MasterTechApp {
                     info!("6");
                     if e.to_string().contains("Already connected") {
                         info!("7");
-                        if !self.context.shared_ctx.load_data() {
+                        if !self.context.shared_ctx.load_data(ctx) {
                             let _ = self.context.app_state_tx.try_send(AppState::NoAuth("No user detected".to_string()));
                         }
                         let _ = self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
