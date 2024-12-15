@@ -157,6 +157,6 @@ impl SharedContext {
             self.payload_len = len;
         }
 
-        self.task_audit_table.receive(frame);
+        self.task_audit_table.receive(self.current_user.clone().unwrap_or_default(), self.store_users.clone(), frame);
     }
 }

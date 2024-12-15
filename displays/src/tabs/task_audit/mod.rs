@@ -1,7 +1,7 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use eframe::egui::{Button, CentralPanel, ComboBox, Hyperlink, Id, KeyboardShortcut, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
-use database::schema::{helper_traits::EmployeeHelper, prestashop_schema::{self, Employee}, User};
+use eframe::egui::{Button, CentralPanel, ComboBox, Grid, Hyperlink, Id, KeyboardShortcut, RichText, ScrollArea, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use database::{schema::{helper_traits::{EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee}, TaskNotePayload, User}, DATABASE};
 use log::info;
 use crate::{app_state::SharedContext, PlatformSpawner};
 use crossbeam::channel::{Receiver, Sender};
@@ -29,31 +29,104 @@ pub struct TaskRowViewer {
 pub struct TaskAuditViewer {
     audit_selection: TaskAudit,
     order_channel: (Sender<prestashop_schema::PrestashopPayload>, Receiver<prestashop_schema::PrestashopPayload>),
+    notes_channel: (Sender<Vec<TaskNotePayload>>, Receiver<Vec<TaskNotePayload>>),
     services_viewer: TaskRowViewer,
     loading: bool,
     index: HashMap<String, i32>,
     counter: i32,
+    chat_view: ChatView,
     pub service_map: HashMap<String, DataTable<PrestashopOrderData>>,
 }
 
 impl TaskAuditViewer {
     pub fn new() -> Self {
         let order_channel = <prestashop_schema::PrestashopPayload>::create_unbounded_channel();
+        let notes_channel = <Vec<TaskNotePayload>>::create_unbounded_channel();
         Self {
             audit_selection: TaskAudit::default(),
             services_viewer: TaskRowViewer::default(),
             order_channel,
+            notes_channel,
             loading: false,
             index: HashMap::new(),
             counter: 0,
             service_map: HashMap::new(),
+            chat_view: ChatView::default()
         }
     }
 
     fn show(&mut self, ui: &mut Ui, current_user: Option<User>) {
+        SidePanel::right(Id::new("Task Audit Side Panel"))
+            .default_width(400.)
+            .resizable(true)
+            .show_separator_line(true)
+            .show_inside(ui, |ui| 
+        {
+            ui.vertical_centered_justified(|ui| {
+                let service = self.services_viewer.selected.clone();
+
+                let header = if let Some(service) = &service {
+                    &format!("{} - {}", service.1, service.0)
+                } else { "Task Details" };
+                ui.add_space(5.);
+                ui.heading(header);
+                ui.separator();
+                ui.add_space(5.0);
+
+                if let Some(order) = self.services_viewer.selected.clone() {
+                    let get_notes = ui.button("get notes");
+                    if get_notes.clicked() {
+                        let tx = self.notes_channel.0.clone();
+                        let mut note = TaskNotePayload::default();
+                        PlatformSpawner::spawn(async move {
+                            let thread_id = note.get_thread_id_from_order().await;
+                            if let Ok(thread) = thread_id {
+                                match DATABASE.query("SELECT * FROM task_note WHERE id_customer_thread == $thread")
+                                    .bind(("thread", thread))
+                                    .await
+                                {
+                                    Ok(mut r) => {
+                                        let notes: Result<Vec<TaskNotePayload>, surrealdb::Error> = r.take(0);
+                                        match notes {
+                                            Ok(notes) => {
+                                                let _ = tx.try_send(notes);
+                                            },
+                                            Err(e) => info!("Error getting notes: {e:?}"),
+                                        }
+                                    },
+                                    Err(e) => info!("Error getting task notes: {e:?}"),
+                                }
+                                
+                            }
+
+                        });
+                    }
+                    
+                    Grid::new(header)
+                        .max_col_width(200.)
+                        .num_columns(2)
+                        .show(ui, |ui| 
+                    {
+                        ui.end_row();
+                        ui.label(order.3);
+                        ui.label(order.4);
+                        ui.end_row();
+                        ui.label(order.5);
+                        ui.label(order.6);
+                        ui.end_row();
+                    });
+
+                    self.chat_view.ui(ui);
+                    
+                    // let msg = ChatView::new(messages, current_user, task_id, users).ui(ui);
+                }
+            });
+        });
+
         TopBottomPanel::top("Task Audit Top Panel")
             .exact_height(30.)
-            .show_inside(ui, |ui| {
+            .show_inside(ui, |ui| 
+        {
                 ui.horizontal_top(|ui| {
                     TextEdit::singleline(&mut self.services_viewer.filter)
                         .hint_text(" Search for SO# / Customer")
@@ -100,26 +173,36 @@ impl TaskAuditViewer {
                         Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx);
                     }
                 });
-            });
+        });
 
-        SidePanel::right(Id::new("Task Audit Side Panel"))
-            .default_width(400.)
-            .show_separator_line(true)
-            .show_inside(ui, |ui| {
-                if let Some(order) = self.services_viewer.selected.clone() {
-                    ui.vertical_centered_justified(|ui| {
-                        // let msg = ChatView::new(messages, current_user, task_id, users).ui(ui);
-                        ui.button("get notes");
-                        ui.label(order.0);
-                        ui.label(order.1);
-                        ui.label(order.2);
-                        ui.label(order.3);
-                        ui.label(order.4);
-                        ui.label(order.5);
-                        ui.label(order.6);
-                    });
+        TopBottomPanel::bottom(Id::new("Task Audit Hot Keys"))
+            .exact_height(240.)
+            .show_inside(ui, |ui| 
+        {
+            ui.vertical_centered(|ui| ui.heading("Hotkeys"));
+            ui.vertical_centered_justified(|ui| ui.separator());
+
+            ui.horizontal_wrapped(|ui| {
+                ui.style_mut().spacing.item_spacing.y = 5.0;
+                ui.add_space(2.);
+                let mut count = 0;
+                for (k, a) in &self.services_viewer.hotkeys {
+                    Button::new(format!("{a:?}"))
+                        .min_size(Vec2::new(280., 25.))
+                        .shortcut_text(
+                            RichText::new(ui.ctx().format_shortcut(k))
+                            .code()
+                            .color(ui.style().visuals.warn_fg_color)
+                        )
+                        .ui(ui);
+                    
+                    count += 1;
+                    if count % 4 == 0 {
+                        ui.end_row();
+                    }
                 }
             });
+        });
 
         CentralPanel::default()
             .show_inside(ui, |ui| 
@@ -331,7 +414,7 @@ impl TaskAuditViewer {
         }
     }
 
-    pub fn receive(&mut self, frame: &mut eframe::Frame) {
+    pub fn receive(&mut self, current_user: User, store_users: Vec<User>, frame: &mut eframe::Frame) {
         if let  Ok(order) = self.order_channel.1.try_recv() {
             self.counter += 1;
             self.loading = true;
@@ -409,7 +492,15 @@ impl TaskAuditViewer {
             }
             log::warn!("idx: {:?}\ncounter: {}", self.index, self.counter);
         }
+    
+        if let Ok(notes) = self.notes_channel.1.try_recv() {
+            info!("Got notes: {notes:?}");
+            if let Some(order) = self.services_viewer.selected.clone() {
+                // self.chat_view = ChatView::new(notes, current_user, order.0, store_users)
+            }
+        }
     }
+
 
 }
 
@@ -535,14 +626,18 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
     fn on_cell_view_response(
         &mut self,
         row: &PrestashopOrderData,
-        _column: usize,
+        column: usize,
         resp: &eframe::egui::Response,
     ) -> Option<Box<PrestashopOrderData>> {
-
-        if resp.clicked() {
-            self.selected = Some(row.clone());
+        match column {
+            0 => {
+                if resp.clicked() {
+                    self.selected = Some(row.clone());
+                }
+            },
+            _ => {}
         }
-
+    
         resp
             .clone()
             .on_hover_and_drag_cursor(eframe::egui::CursorIcon::Crosshair)
