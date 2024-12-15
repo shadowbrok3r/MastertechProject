@@ -1,4 +1,4 @@
-use eframe::egui::{Button, CentralPanel, Color32, ComboBox, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Button, CentralPanel, Color32, ComboBox, ScrollArea, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
 use crate::egui_data_table::Renderer;
 use crate::app_state::SharedContext;
 use crate::{PlatformSpawner, Spawner};
@@ -13,23 +13,23 @@ pub use stock_operations::*;
 
 impl SharedContext {
     pub fn stock_viewer(&mut self, ui: &mut Ui) {
-        // SidePanel::right("Hotkeys")
-        //     .default_width(250.)
-        //     .show_inside(ui, |ui| {
-        //         ui.vertical_centered_justified(|ui| {
-        //             ui.heading("Hotkeys");
-        //             ui.separator();
-        //             ui.add_space(0.);
-        //             ScrollArea::new([false, true]).show(ui, |ui| {
-        //                 for (k, a) in &self.serials_viewer.hotkeys {
-        //                     Button::new(format!("{a:?}"))
-        //                         .shortcut_text(ui.ctx().format_shortcut(k))
-        //                         .ui(ui);
-        //                     ui.add_space(10.);
-        //                 }
-        //             });
-        //         });
-        //     });
+        SidePanel::right("Hotkeys")
+            .default_width(300.)
+            .show_inside(ui, |ui| {
+                ui.vertical_centered_justified(|ui| {
+                    ui.heading("Hotkeys");
+                    ui.separator();
+                    ui.add_space(0.);
+                    ScrollArea::new([false, true]).show(ui, |ui| {
+                        for (k, a) in &self.serials_viewer.hotkeys {
+                            Button::new(format!("{a:?}"))
+                                .shortcut_text(ui.ctx().format_shortcut(k))
+                                .ui(ui);
+                            ui.add_space(10.);
+                        }
+                    });
+                });
+            });
         TopBottomPanel::top("StockTopPanel")
             .exact_height(30.)
             .show_inside(ui, |ui| {
