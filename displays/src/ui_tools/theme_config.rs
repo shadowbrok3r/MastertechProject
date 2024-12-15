@@ -515,7 +515,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
     // Adjust spacing and interactions
     custom_style.spacing.button_padding = Vec2::new(5.0, 3.0);
     custom_style.spacing.item_spacing = Vec2::new(2.0, 1.0);
-    custom_style.spacing.combo_height = 55.0;
+    custom_style.spacing.combo_height = 200.0;
     custom_style.spacing.combo_width = 100.0;
     custom_style.interaction.selectable_labels = true;
     custom_style.interaction.interact_radius = 10.0;

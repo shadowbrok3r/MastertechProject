@@ -1,8 +1,8 @@
 #![allow(async_fn_in_trait)]
 use super::{
-    prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
+    prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
-use crate::{schema::CUSTOMER_TABLE, DATABASE};
+use crate::{schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, TimeZone, Utc};
@@ -294,6 +294,13 @@ pub trait TaskNotePayloadHelper: Send {
     async fn get_thread_id_from_order(&mut self) -> Result<String>
     where
         anyhow::Error: Send;
+
+    /// Retrieves the thread ID based on an order NUMBER.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<TaskNotePayload>)` containing the notes from an order.
+    /// - `Err(Error)` if the thread ID cannot be found or an error occurs.
+    async fn get_notes_from_order_number(&mut self, order_number: &str) -> Result<Vec<TaskNotePayload>>;
 
     /// Retrieves the order ID associated with a task.
     ///
@@ -672,7 +679,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 None
                             };
 
-                            let task_note = TaskNotePayload {
+                            let mut task_note = TaskNotePayload {
                                 id,
                                 id_customer_message: Some(customer_message.id.clone()),
                                 id_customer_thread: Some(thread.id.clone()),
@@ -683,16 +690,13 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 username: parse_email_user(&employee.email).to_string(),
                                 everest_initials: employee.initials,
                                 user,
+                                service_number: order_number.to_string()
                             };
                             info!("Creating a new task_note: {task_note:?}");
 
-                            let note: Option<Record> = DATABASE
-                                .query("CREATE task_note CONTENT $task_note")
-                                .bind(("task_note", task_note))
-                                .await?
-                                .take(0)?;
+                            task_note.create_task_note_in_db().await?;
 
-                            info!("Created note: {note:?}");
+                            info!("Created note: {task_note:?}");
                         } else {
                             info!("Message already exists: {:?}", exists);
                         }
@@ -704,7 +708,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 info!("Order number is still empty? {order_number:?}");
             }
         } else {
-            info!("Error getting order number from task id");
+            info!("Error getting order number from task id\nIs there a task ID??");
         }
 
         // Extract the first customer thread ID if available
@@ -717,6 +721,96 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         info!("Customer thread id from order: {id_customer_thread:?}");
 
         Ok(id_customer_thread)
+    }
+
+    async fn get_notes_from_order_number(&mut self, order_number: &str) -> Result<Vec<TaskNotePayload>> {
+        let mut notes = Vec::new();
+        info!("Calling get_notes_from_order_number");
+        
+        if !order_number.is_empty() {
+            let api_call = Prestashop::default();
+            let mut query: HashMap<&str, &str> = HashMap::new();
+
+            query.insert("filter[id_order]", &order_number);
+            query.insert("output_format", "JSON");
+
+            let customer_threads: Vec<CustomerThread> = api_call
+                .request_resources_wasm("customer_threads", query.clone())
+                .await?;
+            
+            info!("Got customer threads: {customer_threads:?}");
+            for thread in customer_threads {
+                for msg in thread.associations.customer_messages.iter() {
+                    info!("Checking if msg ID exists in database: {:?}", &msg);
+                    let exists = self.check_existing_note_record(&msg.id).await?;
+                    if exists.is_none() {
+                        info!("WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+                        let customer_message: CustomerMessage = api_call
+                            .request_subresources_by_id_wasm(
+                                "customer_messages",
+                                "customer_message",
+                                &msg.id,
+                            )
+                            .await?;
+
+                        let mut employee: Employee = api_call
+                            .request_subresources_by_id_wasm(
+                                "employees",
+                                "employee",
+                                &customer_message.id_employee,
+                            )
+                            .await?; // Employee::default();
+                                        // employee.get_employee_from_id(&customer_message.id_employee).await?;
+
+                        let id = RecordId::from((TASK_NOTE_TABLE, customer_message.id.clone()));
+                        let user = if let Some(usr) = employee.find_user().await? {
+                            Some(usr.id)
+                        } else {
+                            None
+                        };
+
+                        let task_note = TaskNotePayload {
+                            id,
+                            id_customer_message: Some(customer_message.id.clone()),
+                            id_customer_thread: Some(thread.id.clone()),
+                            task_id: self.task_id.clone(),
+                            id_employee: Some(customer_message.id_employee),
+                            created_at: convert_date_string(&customer_message.date_add)?,
+                            note: customer_message.message,
+                            username: parse_email_user(&employee.email).to_string(),
+                            everest_initials: employee.initials,
+                            service_number: order_number.to_string(),
+                            user,
+                        };
+                        info!("Creating a new task_note: {task_note:?}");
+                        
+
+                        let note: Option<Record> = DATABASE
+                            .query("CREATE task_note CONTENT $task_note")
+                            .bind(("task_note", task_note.clone()))
+                            .await?
+                            .take(0)?;
+
+                        notes.push(task_note);
+
+                        info!("Created note: {note:?}");
+                    } else {
+                        info!("Message already exists: {:?}", exists);
+                        let query_results: Vec<TaskNotePayload> = DATABASE
+                            .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
+                            .bind(("id_customer_message", msg.id.clone()))
+                            .await?
+                            .take(0)?;
+                        for note in query_results.iter() {
+                            notes.push(note.clone());
+                        }
+                    }
+                }
+            }
+        } else {
+            info!("Order number is still empty? {order_number:?}");
+        }
+        Ok(notes)
     }
 
     async fn check_existing_note_record(
@@ -1090,7 +1184,7 @@ impl EmployeeHelper for Employee {
             Some(emp)
         };
 
-        let split_rep: Option<Employee> = if !order.id_employee_split_rep.contains("0") {
+        let split_rep: Option<Employee> = if !order.id_employee_split_rep.eq("0") {
             let employee_2: Employee = api_call
                 .request_subresources_by_id_wasm(
                     "employees",
@@ -1284,27 +1378,6 @@ impl ComputerDataHelper for ComputerData {
     }
 }
 
-pub fn convert_date_string(input: &str) -> Result<String, chrono::ParseError> {
-    // Define the input format as per the provided string.
-    let format = "%Y-%m-%d %H:%M:%S";
-
-    // Parse the input string into a NaiveDateTime (which doesn't include timezone information).
-    let naive_dt = NaiveDateTime::parse_from_str(input, format)?;
-
-    // Convert the NaiveDateTime to a DateTime<Utc> with the assumption that it is in UTC.
-    let datetime_utc = Utc.from_utc_datetime(&naive_dt);
-
-    // Format the DateTime<Utc> to the desired ISO 8601 string with milliseconds.
-    let result = datetime_utc.to_rfc3339();
-
-    Ok(result)
-}
-
-/// Parses the username from an email address
-fn parse_email_user(email: &str) -> &str {
-    email.split('@').next().unwrap_or(email)
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
     pub date_add: String,
@@ -1312,6 +1385,215 @@ pub struct Response {
     pub date_upd: String,
 }
 
+#[async_trait(?Send)]
+pub trait PrestashopPayloadHelper<'a>: Send + Sync  {
+    async fn get_prestashop_payload(&mut self, order_number: &str) -> Result<PrestashopPayload, Error>;
+    async fn get_customer_threads(&mut self, order_number: &str, prestashop_api: &Prestashop) -> Result<(), Error>;
+    async fn get_customer_messages(&mut self, prestashop_api: &Prestashop) -> Result<(), Error>;
+    async fn get_order(&mut self, order_number: &str, prestashop_api: &Prestashop) -> Result<(), Error>;
+    async fn get_employee(&mut self, prestashop_api: &Prestashop) -> Result<(), Error>;
+    async fn get_customer(&mut self, prestashop_api: &Prestashop) -> Result<(), Error>;
+}
+
+#[async_trait(?Send)]
+impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
+    async fn get_prestashop_payload(&mut self, order_number: &str) -> Result<Self, Error> {
+        let prestashop_api = Prestashop::default();
+        self.get_customer_threads(&order_number, &prestashop_api).await?;
+        self.get_customer_messages(&prestashop_api).await?;
+        self.get_order(&order_number, &prestashop_api).await?;
+        self.get_employee(&prestashop_api).await?;
+        self.get_customer(&prestashop_api).await?;
+
+        Ok(self.clone())
+    }
+    async fn get_customer_threads(&mut self, order_number: &str, prestashop_api: &Prestashop) -> Result<(), Error> {
+        if !self.customer_threads.is_empty() {
+            let mut query = HashMap::new();
+            query.insert("filter[id_order]", order_number);
+            query.insert("output_format", "JSON");
+            self.customer_threads = prestashop_api
+                .request_resources_wasm("customer_threads", query.clone())
+                .await?;
+        }
+        Ok(())
+    }
+    async fn get_customer_messages(&mut self, prestashop_api: &Prestashop) -> Result<(), Error> {
+        for thread in self.customer_threads.iter() {
+            for msg in thread.associations.customer_messages.iter() {
+                let msg =  prestashop_api
+                    .request_subresources_by_id_wasm(
+                        "customer_messages",
+                        "customer_message",
+                        msg.id.as_str(),
+                    )
+                    .await?;
+                self.customer_messages.push(msg)
+            }
+        }
+        Ok(())
+    }
+    async fn get_order(&mut self, order_number: &str, prestashop_api: &Prestashop) -> Result<(), Error> {
+        self.order = prestashop_api.request_subresources_by_id_wasm("orders", "order", order_number).await?;
+        Ok(())
+    }
+    async fn get_employee(&mut self, prestashop_api: &Prestashop) -> Result<(), Error> {
+        let sales_rep: Option<Employee> = if !self.order.id_employee_sales_rep.eq("checkinshelf") && !self.order.id_employee_sales_rep.eq("0") {
+            //|| order.id_employee_sales_rep.len() != 0{
+            let employee: Employee = prestashop_api
+                .request_subresources_by_id_wasm(
+                    "employees",
+                    "employee",
+                    &self.order.id_employee_sales_rep,
+                )
+                .await?;
+    
+            info!("employee: {employee:#?}");
+            Some(employee)
+        } else {
+            None
+        };
+    
+        self.sales_rep = sales_rep;
+
+        let split_rep: Option<Employee> = if !self.order.id_employee_split_rep.eq("0") {
+            let employee_2: Employee = prestashop_api
+                .request_subresources_by_id_wasm(
+                    "employees",
+                    "employee",
+                    &self.order.id_employee_split_rep,
+                )
+                .await?;
+    
+            info!("employee: {employee_2:#?}");
+            Some(employee_2)
+        } else {
+            None
+        };
+        self.split_rep = split_rep;
+
+        Ok(())
+    }
+    async fn get_customer(&mut self, prestashop_api: &Prestashop) -> Result<(), Error> {
+        let cust: prestashop_schema::Customer = if self.order.id_employee_sales_rep.eq("0") {
+            let mut cust = prestashop_schema::Customer::default();
+            cust.firstname = "Checkin".to_string();
+            cust.lastname = "Shelf".to_string();
+            cust
+        } else {
+            prestashop_api
+                .request_subresources_by_id_wasm("customers", "customer", &self.order.id_customer)
+                .await.context("Pulling customer")?
+        };
+
+        let address: prestashop_schema::Address = prestashop_api
+            .request_subresources_by_id_wasm("addresses", "address", &self.order.id_address_invoice)
+            .await?;
+
+        self.customer = CustomerData {
+            id: RecordId::from((
+                CUSTOMER_TABLE.to_string(),
+                self.order.id_customer.clone(),
+            )),
+            cust_code: self.order.id_customer.clone(),
+            name: format!("{} {}", &cust.firstname, &cust.lastname),
+            phone_number: address.phone.clone().to_string(),
+            // phone_number_2: address.phone_mobile.clone().unwrap_or(0).to_string(),
+            email: cust.email,
+            ..Default::default()
+        };
+
+        Ok(())
+    }
+}
+
+
+impl From<TaskPayload> for PrestashopPayload {
+    fn from(_value: TaskPayload) -> Self {
+        todo!()
+    }
+}
+
+impl From<PrestashopPayload> for TaskPayload {
+    fn from(value: PrestashopPayload) -> Self {
+        let customer = &mut CustomerData::default();
+        let ticket = &mut TicketPayload::default();
+        let task = &mut TaskPayload::default();
+        let mut task_notes = Vec::new();
+
+        let service_details = value.order.associations.order_service.clone();
+        let mut services: Vec<RecordId> = Vec::new();
+
+        let sales_rep = value.sales_rep.clone().unwrap_or_default();
+        let split_rep = value.split_rep.clone().unwrap_or_default();
+        let email = parse_email_user(&sales_rep.email);
+        let email_split_rep = parse_email_user(&split_rep.email);
+
+        customer.id = value.customer.id.clone();
+        customer.cust_code = value.customer.cust_code.clone();
+        customer.email = value.customer.email.clone();
+        customer.name = value.customer.name.clone();
+        customer.phone_number = value.customer.phone_number.clone();
+        ticket.salesman = email_split_rep.to_string();
+        ticket.sales_rep = email.to_string();
+        ticket.tech = email.to_string();
+        info!(
+            "Salesman: {:?}\nTech: {:?}",
+            ticket.salesman.clone(),
+            ticket.tech.clone()
+        );
+        ticket.customer = Some(customer.clone());
+        ticket.checkin_rep = email.to_string();
+        ticket.terms = value.order.payment.clone();
+        ticket.ticket_total = value.order.total_products_wt.clone();
+        ticket.doc_alias = value.order.order_type.clone();
+        ticket.service_number = value.order.id.clone();
+        ticket.id = RecordId::from((
+            TICKET_TABLE.to_string(),
+            ticket.service_number.clone(),
+        ));
+        task.id = RecordId::from((
+            TASK_TABLE.to_string(),
+            ticket.service_number.clone(),
+        ));
+
+        for msg in value.customer_messages.iter() {
+            task_notes.push(TaskNotePayload {
+                everest_initials: msg.id_employee.clone(),
+                note: msg.message.clone(),
+                id: RecordId::from((TASK_NOTE_TABLE, msg.id.clone())),
+                task_id: Some(task.id.clone()),
+                // created_at: msg.date_add.clone(),
+                id_customer_thread: Some(msg.id_customer_thread.clone()),
+                id_customer_message: Some(msg.id.clone()),
+                id_employee: Some(msg.id_employee.clone()),
+                ..Default::default()
+            })
+        }
+        task.task_note = task_notes;
+        services.push(ticket.id.clone());
+        
+        if !service_details.is_empty() {
+            if service_details.len() == 1 {
+                let svc = service_details.get(0);
+                if let Some(service) = svc {
+                    ticket.checkin_notes = service.check_in_notes.clone();
+                }
+            } else {
+                info!("Theres a couple.... {:?}", service_details);
+            }
+        }
+
+        task.service_ticket = Some(ticket.clone());
+
+        task.task_name = format!(
+            "{} - {}",
+            &customer.name,
+            ticket.service_number.clone()
+        );
+        task.clone()
+    }
+}
 
 impl From<u64> for Store {
     fn from(value: u64) -> Self {
@@ -1340,4 +1622,26 @@ impl From<Store> for u64 {
             Store::SAN => 77
         }
     }
+}
+
+
+pub fn convert_date_string(input: &str) -> Result<String, chrono::ParseError> {
+    // Define the input format as per the provided string.
+    let format = "%Y-%m-%d %H:%M:%S";
+
+    // Parse the input string into a NaiveDateTime (which doesn't include timezone information).
+    let naive_dt = NaiveDateTime::parse_from_str(input, format)?;
+
+    // Convert the NaiveDateTime to a DateTime<Utc> with the assumption that it is in UTC.
+    let datetime_utc = Utc.from_utc_datetime(&naive_dt);
+
+    // Format the DateTime<Utc> to the desired ISO 8601 string with milliseconds.
+    let result = datetime_utc.to_rfc3339();
+
+    Ok(result)
+}
+
+/// Parses the username from an email address
+pub fn parse_email_user(email: &str) -> &str {
+    email.split('@').next().unwrap_or(email)
 }

@@ -50,7 +50,6 @@ impl EasyMarkEditor {
         let mut font = FontId::default();
         font.size = 12.0;
         ui.style_mut().override_font_id = Some(font);
-        let width = ui.available_width() / 9.0;
         if self.show_rendered {
             ui.columns(2, |columns| {
                 ScrollArea::vertical()
@@ -72,19 +71,13 @@ impl EasyMarkEditor {
         }
         ui.separator();
 
-        Grid::new("controls")
-            .spacing(Vec2::new(width, 10.0))
-            .show(ui, |ui| {
-                let _response = ui.button("Hotkeys").on_hover_ui(nested_hotkeys_ui);
-
-                ui.checkbox(&mut self.show_rendered, "Show rendered");
-
-                ui.checkbox(&mut self.highlight_editor, "Highlight editor");
-
-                let res = Button::new("Submit").min_size(Vec2::new(60.0, 10.0)).ui(ui);
-                response = Some(res);
-                ui.end_row();
-            });
+        ui.columns(4, |columns| {
+            let _res = columns[0].button("Hotkeys").on_hover_ui(nested_hotkeys_ui);
+            columns[1].checkbox(&mut self.show_rendered, "Show rendered");
+            columns[2].checkbox(&mut self.highlight_editor, "Highlight editor");
+            let res = columns[3].add(Button::new("Submit").min_size(Vec2::new(60.0, 10.0)));
+            response = Some(res);
+        });
 
         response
     }

@@ -8,6 +8,7 @@ impl SharedContext {
         if let Ok(mut note_payload) = self.notes_rx.try_recv() {
             info!("New note: {:?}", note_payload);
             self.new_note = true;
+            
             for (_, modal) in self.opened_modals.iter_mut() {
                 if let Some(ref note_task_id) = note_payload.1.task_id {
                     if let ModalType::TaskModal(task_modal) = modal {
@@ -24,7 +25,7 @@ impl SharedContext {
                         let task = self
                             .tasks
                             .iter_mut()
-                            .find(|task| task.id == chat_view.task_id.clone().unwrap());
+                            .find(|task| task.id == chat_view.messages.first().cloned().unwrap_or_default().task_id.clone().unwrap());
 
                         if let Some(task) = task {
                             handle_live_notes(note_payload.clone(), task).unwrap_or(());

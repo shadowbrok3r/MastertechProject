@@ -1,6 +1,7 @@
 use anyhow::Error;
 use async_trait::async_trait;
 use helper_traits::GetAssociatedDataFromId;
+// use prestashop_schema::PrestashopPayload;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -285,6 +286,24 @@ impl From<TicketData> for TicketPayload {
     }
 }
 
+impl From<TaskPayload> for LiveTaskPayload {
+    fn from(task: TaskPayload) -> Self {
+        Self {
+            id: task.id,
+            task_name: task.task_name,
+            service_ticket: Some(task.service_ticket.unwrap_or_default().id),
+            everest_initials: task.everest_initials,
+            task_description: task.task_description,
+            assignee: task.assignee,
+            service_number: task.service_number,
+            due_date: task.due_date,
+            priority: task.priority,
+            completed: task.completed,
+            status: task.status,
+        }
+    }
+}
+
 impl From<TicketPayload> for TicketData {
     fn from(ticket: TicketPayload) -> Self {
         Self {
@@ -458,6 +477,7 @@ pub struct TaskNotePayload {
     pub id_customer_message: Option<String>,
     pub id_employee: Option<String>,
     pub user: Option<RecordId>,
+    pub service_number: String
 }
 
 impl Default for TaskNotePayload {
@@ -473,6 +493,7 @@ impl Default for TaskNotePayload {
             id_customer_message: Default::default(),
             id_employee: Default::default(),
             user: Default::default(),
+            service_number: Default::default()
         }
     }
 }
@@ -848,7 +869,15 @@ impl Status {
     pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
 }
 
-
+// #[derive(Debug, Clone, Default, Serialize)]
+// pub struct Tur {
+//     pub data: PrestashopPayload,
+//     pub ticket_data: TicketPayload,
+//     pub task_data: TaskPayload,
+//     pub customer_data: CustomerData,
+//     pub task_notes: Vec<TaskNotePayload>,
+//     pub store_users: Vec<User>,
+// }
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

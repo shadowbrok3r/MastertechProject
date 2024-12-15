@@ -120,7 +120,7 @@ impl eframe::App for MtechServer {
         // justify creating a separate file / module for
         self.receive();
         self.context.shared_ctx.receive(frame);
-        self.receive_database(frame);
+        self.receive_database(frame, ctx);
         self.context.shared_ctx.receive_inventory();
         self.context.shared_ctx.receive_client();
         self.context.shared_ctx.receive_ui_action();
@@ -194,7 +194,7 @@ impl eframe::App for MtechServer {
                 if reason.to_string().contains("Already connected") {
                     info!("Already connected");
                     if self.context.shared_ctx.current_user.is_some() {
-                        if !self.context.shared_ctx.load_data() {
+                        if !self.context.shared_ctx.load_data(ctx) {
                             self.context.first_run = true;
                             self.first_run(frame);
                             self.state = AppState::NoAuth("No user detected".to_string());
