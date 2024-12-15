@@ -1,11 +1,11 @@
 
 use crate::{
-    app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner
+    app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner //,FilterTasks
 };
 use database::{
     live_data::listen_data,
     schema::{
-        utilities::{get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE
+        utilities::{get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE // Status, Store, 
     },
 };
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
@@ -29,6 +29,7 @@ impl SharedContext {
 
             if self.tasks.is_empty() || self.store_users.is_empty() {
                 let initial_tasks_tx = self.initial_tasks_tx.clone();
+                let len_tx = self.payload_len_channel.0.clone();
                 let store_users_tx = self.store_users_tx.clone();
                 let store = usr.store.as_str().to_string().clone();
 
@@ -38,7 +39,7 @@ impl SharedContext {
                 });
 
                 PlatformSpawner::spawn(async move {
-                    let get_tasks = get_tasks_for_store(initial_tasks_tx, store).await;
+                    let get_tasks = get_tasks_for_store(initial_tasks_tx, store, len_tx).await;
                     info!("get_tasks: {get_tasks:?}");
                 });
                 self.task_layouts
@@ -99,7 +100,6 @@ impl SharedContext {
                 .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
                 .for_each(|(_, layout)| {
                     if self.switching_store {
-                        info!("Switched store, clearing tasks");
                         layout.task_map.clear();
                         layout.assignees.clear();
                         layout.search_inputs.clear();
@@ -111,7 +111,7 @@ impl SharedContext {
             // Process new tasks in parallel
             tasks.drain(..).for_each(|new_task| {
                 // Avoid duplicates by checking if the new task already exists
-                if !existing_tasks.contains(&new_task) {
+                if !existing_tasks.iter().any(|task| task == &new_task) {
                     existing_tasks.push(new_task); // Add the task if it's unique
                 }
             });
@@ -151,6 +151,10 @@ impl SharedContext {
             });
             self.ai_playground.selected_thread = thread_obj.id;
             self.ai_playground.set_threads(thread_map);
+        }
+
+        if let Ok(len) = self.payload_len_channel.1.try_recv() {
+            self.payload_len = len;
         }
 
         self.task_audit_table.receive(frame);

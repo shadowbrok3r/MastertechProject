@@ -199,12 +199,13 @@ impl MtechServer {
                             self.context.task_map.clear();
                             self.context.shared_ctx.task_layouts.clear();
                             let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
+                            let len_tx = self.context.shared_ctx.payload_len_channel.0.clone();
                             let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
                             let store_selection = std::convert::Into::<Store>::into(*selected);
                             
                             info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
                             spawn_local(async move {
-                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string(), len_tx).await;
                                 let get_store_users = get_store_users(store_users_tx, store_selection).await;
                 
                                 info!("get_tasks_for_store: {store_tasks:?}");

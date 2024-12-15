@@ -11,10 +11,10 @@ impl SharedContext{
             let page = "CompletedTasks";
             // let current_user = self.current_user.as_ref().unwrap();
             if let Some(layout) = self.task_layouts.get_mut(page){
-                // if self.rerun_filtering_completed{
-                //     self.rerun_filtering_completed = false;
+                if self.rerun_filtering_completed{
+                    self.rerun_filtering_completed = false;
                     // log::info!("Reruning filters for COMPLETED tasks: {:?}", self.tasks.len());
-                    let map = &mut layout.task_map;
+                    let mut map = BTreeMap::new();
                     users.iter().for_each(|u| {
                         let store_sel = self.store_selection.clone();
                         let store_selection = std::convert::Into::<Store>::into(store_sel);
@@ -25,12 +25,13 @@ impl SharedContext{
                             .filter_by_store(u, &store_selection);
 
                         if !filtered.is_empty() {
-                            map.entry(u.everest_initials.to_string()) // need to still add filtered tasks..
+                            map.entry(u.everest_initials.to_string())
                                 .or_insert(filtered);
                         }
                     });
+                    layout.task_map = map;
                     layout.update_assignees(users.clone());
-                // }
+                }
                 layout.layout_cols(ui);
             } else {
                 log::info!("No layout");

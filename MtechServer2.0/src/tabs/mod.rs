@@ -160,11 +160,12 @@ impl TabViewer for MtechServerContext {
                     // for the selected store are for the CORRECT selected store. 
                     if self.shared_ctx.tasks.filter_by_completion(false).is_empty() {
                         let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
+                        let len_tx = self.shared_ctx.payload_len_channel.0.clone();
                         let store_sel = self.shared_ctx.store_selection;
                         let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
                         
                         spawn_local(async move {
-                            let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection).await;
+                            let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection, len_tx).await;
                             info!("get_tasks_for_store: {get_tasks_for_store:?}");
                         });
                     }
@@ -257,10 +258,10 @@ impl MtechServerContext {
 
             self.shared_ctx.store_users.clear();
             self.shared_ctx.tasks.clear();
-            
+            let len_tx = self.shared_ctx.payload_len_channel.0.clone();
             info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
             spawn_local(async move {
-                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
+                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string(), len_tx).await;
                 let get_store_users = get_store_users(store_users_tx, store_selection).await;
 
                 info!("get_tasks_for_store: {store_tasks:?}");

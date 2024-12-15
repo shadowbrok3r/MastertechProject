@@ -96,6 +96,8 @@ pub struct SharedContext {
     ),
     #[serde(skip)]
     pub ai_thread_channel: (Sender<crate::openai::types::ThreadObject>, Receiver<crate::openai::types::ThreadObject>),
+    #[serde(skip)]
+    pub payload_len_channel: (Sender<u64>, Receiver<u64>),
 
     // Notifications and App State
     #[serde(skip)]
@@ -168,7 +170,8 @@ pub struct SharedContext {
     #[serde(skip)]
     pub show_tasks_viewport: HashMap<RecordId, ViewportData>,
     pub switching_store: bool,
-    pub refresh: bool
+    pub refresh: bool,
+    pub payload_len: u64,
 }
 
 impl SharedContext {
@@ -198,6 +201,7 @@ impl SharedContext {
         let serial_channel = <SerialData>::create_unbounded_channel();
         let extra_stock_channel = <Vec<ExtraInventoryData>>::create_unbounded_channel();
         let ai_thread_channel = <crate::openai::types::ThreadObject>::create_unbounded_channel();
+        let payload_len_channel = <u64>::create_unbounded_channel();
         let (settings_sender, settings_receiver) = crossbeam::channel::bounded::<ThemeConfig>(1);
         // let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
         // let seb_channel = <Vec<Value>>::create_unbounded_channel();
@@ -207,6 +211,11 @@ impl SharedContext {
 
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
+        
+        // let mut task_layouts = HashMap::new();
+        // task_layouts.insert("CompletedTasks".to_string(), Vec::new());
+        // task_layouts.insert("StoreTasks".to_string(), Vec::new());
+        // task_layouts.insert("MyTasks".to_string(), Vec::new());
         
         Self {
             current_user: None,
@@ -219,6 +228,7 @@ impl SharedContext {
             rerun_filtering_store_tasks: false,
             rerun_filtering_completed: false,
             store_selection: 76,
+            payload_len: 0,
 
             toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),
@@ -253,6 +263,7 @@ impl SharedContext {
             serial_channel,
             extra_stock_channel,
             ai_thread_channel,
+            payload_len_channel,
             // github_releases_channel,
             // seb_channel,
             undock_client: HashMap::new(),
