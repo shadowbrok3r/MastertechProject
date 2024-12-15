@@ -82,7 +82,6 @@ pub async fn get_completed_tasks(input: Input, scope: WorkerScope<WebWorker>, id
 
 
 pub async fn get_completed_tasks_for_store(offset: i32, limit: i32) -> anyhow::Result<Vec<TaskPayload>, anyhow::Error> {
-    gloo_console::debug!("get_completed_tasks");
     let query = r#"
         SELECT *, (
             SELECT * FROM task_note 

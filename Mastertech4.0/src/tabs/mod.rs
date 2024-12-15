@@ -181,11 +181,12 @@ impl TabViewer for MastertechContext {
                     // for the selected store are for the CORRECT selected store. 
                     if self.shared_ctx.tasks.filter_by_completion(false).is_empty() {
                         let tasks_tx = self.shared_ctx.initial_tasks_tx.clone();
+                        let len_tx = self.shared_ctx.payload_len_channel.0.clone();
                         let store_sel = self.shared_ctx.store_selection;
                         let store_selection = std::convert::Into::<Store>::into(store_sel).as_str().to_string();
                         
                         spawn(async move {
-                            let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection).await;
+                            let get_tasks_for_store = get_tasks_for_store(tasks_tx, store_selection, len_tx).await;
                             info!("get_tasks_for_store: {get_tasks_for_store:?}");
                         });
                     }

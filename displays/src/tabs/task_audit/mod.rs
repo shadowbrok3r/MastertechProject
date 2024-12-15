@@ -1,6 +1,6 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
+use crate::{channel_manager::ChannelManager, chats::ChatView, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use eframe::egui::{Button, CentralPanel, ComboBox, Hyperlink, KeyboardShortcut, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Button, CentralPanel, ComboBox, Hyperlink, Id, KeyboardShortcut, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Widget};
 use database::schema::{helper_traits::EmployeeHelper, prestashop_schema::{self, Employee}, User};
 use log::info;
 use crate::{app_state::SharedContext, PlatformSpawner};
@@ -23,6 +23,7 @@ pub struct TaskRowViewer {
     filter: String,
     row_protection: bool,
     hotkeys: Vec<(KeyboardShortcut, UiAction)>,
+    selected: Option<PrestashopOrderData>
 }
 
 pub struct TaskAuditViewer {
@@ -45,7 +46,7 @@ impl TaskAuditViewer {
             loading: false,
             index: HashMap::new(),
             counter: 0,
-            service_map: HashMap::new()
+            service_map: HashMap::new(),
         }
     }
 
@@ -99,6 +100,25 @@ impl TaskAuditViewer {
                         Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx);
                     }
                 });
+            });
+
+        SidePanel::right(Id::new("Task Audit Side Panel"))
+            .default_width(400.)
+            .show_separator_line(true)
+            .show_inside(ui, |ui| {
+                if let Some(order) = self.services_viewer.selected.clone() {
+                    ui.vertical_centered_justified(|ui| {
+                        // let msg = ChatView::new(messages, current_user, task_id, users).ui(ui);
+                        ui.button("get notes");
+                        ui.label(order.0);
+                        ui.label(order.1);
+                        ui.label(order.2);
+                        ui.label(order.3);
+                        ui.label(order.4);
+                        ui.label(order.5);
+                        ui.label(order.6);
+                    });
+                }
             });
 
         CentralPanel::default()
@@ -513,17 +533,23 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
     }
 
     fn on_cell_view_response(
-            &mut self,
-            _row: &PrestashopOrderData,
-            _column: usize,
-            resp: &eframe::egui::Response,
-        ) -> Option<Box<PrestashopOrderData>> {
+        &mut self,
+        row: &PrestashopOrderData,
+        _column: usize,
+        resp: &eframe::egui::Response,
+    ) -> Option<Box<PrestashopOrderData>> {
+
+        if resp.clicked() {
+            self.selected = Some(row.clone());
+        }
+
         resp
             .clone()
             .on_hover_and_drag_cursor(eframe::egui::CursorIcon::Crosshair)
             .dnd_release_payload::<String>()
             .map(|_| Box::new(PrestashopOrderData::default()))
     }
+
     fn set_cell_value(
         &mut self,
         src: &PrestashopOrderData,

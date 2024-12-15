@@ -165,11 +165,34 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
+pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String, _len_tx: Sender<u64>) -> Result<(), Error> {
     debug!("get_tasks");
 
     let mut offset = 0;
     let limit = 2; // Number of tasks per chunk
+    // let len_query = r#"
+    //     RETURN (
+    //         SELECT *, (
+    //             SELECT * FROM task_note 
+    //                 WHERE task_id == $parent.id
+    //         ) AS task_note 
+    //         FROM task 
+    //         WHERE $this.assignee.store == $store AND $this.completed IS false
+    //         FETCH 
+    //             service_ticket, 
+    //             service_ticket.computer, 
+    //             service_ticket.customer
+    //     )
+    // "#;
+
+    // let len_results: Option<u64> = DATABASE
+    //     .query(len_query)
+    //     .bind(("store", store.clone()))
+    //     .await?
+    //     .take(0)?;
+
+    // len_tx.try_send(len_results.unwrap_or_default())?;
+
     loop {
         let query = r#"
             SELECT *, (
@@ -177,7 +200,6 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) ->
                     WHERE task_id == $parent.id
             ) AS task_note 
             FROM task 
-            
             WHERE $this.assignee.store == $store AND $this.completed IS false
             LIMIT $limit START $offset
             FETCH 
