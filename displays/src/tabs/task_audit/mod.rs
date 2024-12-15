@@ -823,6 +823,7 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
         match column {
             0 => {
                 if resp.clicked() {
+                    self.chat_view.messages.clear();
                     self.selected = Some(row.clone());
                     let notes_tx = self.notes_channel.0.clone();
                     let order_number = row.0.clone();
