@@ -165,7 +165,7 @@ impl MtechServerContext {
                             Err(error) => {
                                 cli_clone.connected = false;
                                 info!("Failed to connect to {:?}: {}", &url, error);
-                                let toast = &mut self.toasts;
+                                let toast = &mut self.shared_ctx.toasts;
 
                                 let error_toast = Toast {
                                     kind: ToastKind::Error,
@@ -275,7 +275,7 @@ impl MtechServerContext {
 //         Err(error) => {
 //             client.connected = false;
 //             info!("Failed to connect to {:?}: {}", &url, error);
-//             let toast = &mut self.toasts;
+//             let toast = &mut self.shared_ctx.toasts;
 //             let error_toast = Toast{
 //                 kind: ToastKind::Error,
 //                 text: format!("{error:?}").into(),

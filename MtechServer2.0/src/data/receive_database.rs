@@ -37,7 +37,7 @@ impl MtechServer {
                             self.state = AppState::NoAuth("No user detected".to_string());
                         }
                         self.state = AppState::Authenticated(MainPages::Tasks);
-                        let toast = &mut self.context.toasts;
+                        let toast = &mut self.context.shared_ctx.toasts;
                         let auth_toast = Toast {
                             kind: ToastKind::Success,
                             text: format!("Already Connected").into(),
@@ -55,7 +55,7 @@ impl MtechServer {
                             wasm_cookies::delete("user");
                         }
                         // eframe::web::storage::local_storage_get(key)
-                        let toast = &mut self.context.toasts;
+                        let toast = &mut self.context.shared_ctx.toasts;
                         let auth_toast = Toast {
                             kind: ToastKind::Error,
                             text: format!("{e:?} \nYou may need to login again").into(),

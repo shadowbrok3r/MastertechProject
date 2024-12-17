@@ -1,5 +1,5 @@
 use crate::app_state::{AppState, MtechServer};
-use displays::{egui_data_table::DataTable, tabs::{ai_playground::ChatThread, task_audit::PrestashopOrderData}};
+use displays::{egui_data_table::DataTable, tabs::{ai_playground::ChatThread, task_audit::PrestashopOrderData}, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
 use wasm_bindgen_futures::spawn_local;
 use std::collections::HashMap;
 use log::{info, debug, error};
@@ -84,17 +84,30 @@ impl MtechServer {
         match check_authentication(self.context.db_tx.clone()) {
             Ok(d) => {
                 info!("1");
-                self.state = d.0;
-                if let Some(ref usr) = d.1 {
-                    self.context.shared_ctx.current_user = Some(usr.clone());
-                    self.context.file_system.set_user(usr.clone());
-                    spawn_local(async move {
-                        match DATABASE.health().await {
-                            Ok(_) => info!("Healthy connection"),
-                            Err(e) => info!("Database connection health: {e:?}"),
-                        }
-                    });
+                if let AppState::NoAuth(reason) = &d.0 {
+                    let toast = &mut self.context.shared_ctx.toasts;
+    
+                    let error_toast = Toast {
+                        kind: ToastKind::Error,
+                        text: format!("Message from Database: {reason}").into(),
+                        options: ToastOptions::default()
+                            .show_progress(true)
+                            .duration_in_seconds(6.0),
+                    };
+                    toast.add(error_toast);
+                }else {
+                    if let Some(ref usr) = d.1 {
+                        self.context.shared_ctx.current_user = Some(usr.clone());
+                        self.context.file_system.set_user(usr.clone());
+                        spawn_local(async move {
+                            match DATABASE.health().await {
+                                Ok(_) => info!("Healthy connection"),
+                                Err(e) => info!("Database connection health: {e:?}"),
+                            }
+                        });
+                    }
                 }
+                self.state = d.0;
             }
             Err(e) => {
                 info!("2");
@@ -113,6 +126,19 @@ impl MtechServer {
 
         if let Ok(state) = self.context.app_state_rx.try_recv() {
             gloo_console::info!(format!("Got a new state: {state:?}"));
+            
+            if let AppState::NoAuth(reason) = &state {
+                let toast = &mut self.context.shared_ctx.toasts;
+
+                let error_toast = Toast {
+                    kind: ToastKind::Error,
+                    text: reason.into(),
+                    options: ToastOptions::default()
+                        .show_progress(true)
+                        .duration_in_seconds(6.0),
+                };
+                toast.add(error_toast);
+            }
             self.state = state;
         }
     }

@@ -185,7 +185,7 @@ impl FileBrowser {
             self.source_dir_size = total_size;
         }
 
-        self.toasts.show(ui.ctx());
+        self.shared_ctx.toasts.show(ui.ctx());
         if let Ok(Some(cmd)) = self.command_rx.try_recv() {
             block_on(async {
                 self.run_command(cmd).await;
@@ -679,7 +679,7 @@ impl FileBrowser {
                     .show_progress(true)
                     .duration_in_seconds(6.0),
             };
-            self.toasts.add(copy_toast);
+            self.shared_ctx.toasts.add(copy_toast);
 
             for path in &self.copied_items_src {
                 match self
@@ -735,7 +735,7 @@ impl FileBrowser {
                         .show_progress(true)
                         .duration_in_seconds(6.0),
                 };
-                self.toasts.add(paste_toast);
+                self.shared_ctx.toasts.add(paste_toast);
             }
 
             info!(

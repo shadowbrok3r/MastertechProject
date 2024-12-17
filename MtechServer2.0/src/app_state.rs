@@ -1,8 +1,8 @@
-use displays::{app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, ui_tools::toasts::Toasts, virtual_filesystem::FileSystem};
+use displays::{app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, virtual_filesystem::FileSystem};
 use crate::{pages::{login_page::Login, signup_page::Signup, account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{github_issue::GithubIssue, web_console::websockets::WebSocketClient}};
 use database::{schema::{prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskPayload, UserSettings}, Database};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use eframe::{egui::{Align2, Context}, CreationContext};
+use eframe::{egui::Context, CreationContext};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use crossbeam::channel::{self, Receiver, Sender};
 use serde_json::Value;
@@ -101,8 +101,6 @@ pub struct MtechServerContext {
     pub style: Option<egui_dock::Style>,
     #[serde(skip)]
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
-    #[serde(skip)]
-    pub toasts: Toasts,
     pub notifications: Vec<Notification>,
     pub read_notifications: bool,
 
@@ -231,7 +229,6 @@ impl MtechServer {
             style: None,
             added_nodes: Vec::new(),
             new_note: false,
-            toasts: Toasts::new().anchor(Align2::RIGHT_TOP, (5.0, 5.0)),
             notifications: Vec::new(),
             read_notifications: false,
             total_download_size: 0.0,

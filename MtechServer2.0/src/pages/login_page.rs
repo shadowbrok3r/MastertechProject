@@ -81,8 +81,13 @@ impl Login {
                 appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
             }
             Err(e) => {
+                
                 gloo_console::info!(e.to_string());
-                appstate_tx.try_send(AppState::NoAuth(e.to_string()))?;
+                if e.to_string().contains("Already connected") {
+                    appstate_tx.try_send(AppState::Authenticated(MainPages::Tasks))?;
+                } else {
+                    appstate_tx.try_send(AppState::NoAuth(e.to_string()))?;
+                }
             },
         }
         Ok(())
@@ -174,34 +179,20 @@ impl MtechServer {
                                                         && !login.username.is_empty()
                                                     {
                                                         refresh = true;
-                                                        info!("ENTER PRESSED");
+                                                        // info!("ENTER PRESSED");
                                                         let user = login.username.clone();
                                                         let pass = login.password.clone();
                                                         let email = format!("{user}@pclaptops.com");
                                                         let tx = db_tx.clone();
                                                         let app_tx = appstate_tx.clone();
                                                         spawn_local(async move {
-                                                            let res = Login::login(
+                                                            let _ = Login::login(
                                                                 email,
                                                                 pass,
                                                                 tx,
                                                                 app_tx.clone(),
                                                             )
                                                             .await;
-                                                            match res {
-                                                                Ok(_) => app_tx
-                                                                    .try_send(
-                                                                        AppState::Authenticated(
-                                                                            MainPages::Tasks,
-                                                                        ),
-                                                                    )
-                                                                    .unwrap(),
-                                                                Err(e) => app_tx
-                                                                    .try_send(AppState::NoAuth(
-                                                                        e.to_string(),
-                                                                    ))
-                                                                    .unwrap(),
-                                                            }
                                                         });
                                                     }
                                                 }

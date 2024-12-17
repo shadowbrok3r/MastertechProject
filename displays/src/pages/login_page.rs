@@ -181,7 +181,7 @@ impl MtechServer {
                                                         && !login.username.is_empty()
                                                     {
                                                         refresh = true;
-                                                        info!("ENTER PRESSED");
+                                                        // info!("ENTER PRESSED");
                                                         let user = login.username.clone();
                                                         let pass = login.password.clone();
                                                         let email = format!("{user}@pclaptops.com");
