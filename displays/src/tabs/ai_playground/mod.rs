@@ -1,12 +1,11 @@
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
 };
 use crate::{ai::{oa_client::new_oa_client, tool_call::{assistant_call_with_response_ai_tools, get_or_retrieve_thread}}, app_state::SharedContext, markdown_editor::viewer, openai::Threads, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{code_view_ui, CodeTheme};
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 use crossbeam::channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
-use egui_modal::ModalStyle;
 use bytes::Bytes;
 use log::info;
 use core::str;
@@ -21,7 +20,8 @@ pub struct AiPlayground {
     response_rx: Receiver<ChatMessage>,
     /// Save AI chats to local storage // SurrealDB for persistence
     pub save_chats: bool,
-    image_id: String
+    image_id: String,
+    open_modal: bool,
 }
 
 pub type ImageType = (String, Bytes);
@@ -81,6 +81,7 @@ impl Default for AiPlayground {
             response_tx, response_rx,
             save_chats: false,
             image_id: String::new(),
+            open_modal: false,
         }
     }
 }
@@ -583,17 +584,19 @@ impl AiPlayground {
                                                 uri,
                                                 bytes: egui_bytes,
                                             };
-
-                                            let mut style = ModalStyle::default();
-                                            style.default_height = Some(400.);
-                                            style.default_width = Some(500.);
                                             
-                                            let modal = egui_modal::Modal::new(
-                                                ui.ctx(), 
-                                                "nested_modal"
-                                            )
-                                            .with_style(&style)
-                                            .with_close_on_outside_click(true);
+                                            let modal = eframe::egui::Modal::new(
+                                                Id::new(format!("{file_id}"))
+                                            ).show(ui.ctx(), |ui| {
+                                                if self.image_id.eq(file_id) {
+                                                    Image::new(image_source)
+                                                        .show_loading_spinner(true)
+                                                        .fit_to_original_size(0.8)
+                                                        .max_size(Vec2::new(800., 700.))
+                                                        .ui(ui);
+                                                    info!("Available size: {:?}", ui.available_size());
+                                                }
+                                            });
                                             // .button(ui, "Close")
 
                                             if Button::new(
@@ -608,26 +611,13 @@ impl AiPlayground {
                                             .ui(ui)
                                             .clicked() {
                                                 self.image_id = file_id.to_string();
-                                                modal.open();
+                                                self.open_modal = true;
                                             // if Image::new(image_source.clone()).show_loading_spinner(true).max_size(ui.available_size()/2.).fit_to_original_size(0.8).ui(ui).clicked(){
                                             }
-
-                                            modal.show(|ui| {
-                                                if self.image_id.eq(file_id) {
-                                                    Image::new(image_source)
-                                                        .show_loading_spinner(true)
-                                                        .fit_to_original_size(0.8)
-                                                        .max_size(Vec2::new(800., 700.))
-                                                        .ui(ui);
-                                                    info!("Available size: {:?}", ui.available_size());
-                                                }
-                                            });
-                                            // if self.show_modal && !modal.is_open() {
-                                            //     Window::new("Image {file_id}")).show(ui.ctx(), |ui| {
-
-                                                    
-                                            //     });
-                                            // }
+                                            
+                                            if modal.backdrop_response.clicked() {
+                                                self.open_modal = false;
+                                            }
                                         },
                                         _ => {}
                                     }

@@ -322,7 +322,9 @@ fn setup_custom_fonts(ctx: &Context) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         "Monaspace".to_owned(),
-        FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Regular.otf")),
+        std::sync::Arc::new(
+            FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Regular.otf"))
+        ),
     ); // .ttf and .otf supported
     // Put my font first (highest priority):
     fonts
@@ -332,7 +334,9 @@ fn setup_custom_fonts(ctx: &Context) {
         .insert(0, "Monaspace".to_owned());
     fonts.font_data.insert(
         "Regular".to_owned(),
-        FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Regular.otf")),
+        std::sync::Arc::new(
+            FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Regular.otf"))
+        ),
     );
     fonts.families.insert(
         FontFamily::Name("Regular".into()),
@@ -340,7 +344,9 @@ fn setup_custom_fonts(ctx: &Context) {
     );
     fonts.font_data.insert(
         "Bold".to_owned(),
-        FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Bold.otf")),
+        std::sync::Arc::new(
+            FontData::from_static(include_bytes!("../../MtechServer2.0/assets/fonts/MonaspaceNeon-Bold.otf"))
+        ),
     );
     fonts
         .families
