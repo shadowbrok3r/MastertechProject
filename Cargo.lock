@@ -1920,9 +1920,9 @@ dependencies = [
 [[package]]
 name = "egui_dock"
 version = "0.14.0"
+source = "git+https://github.com/bryceberger/egui_dock.git?rev=4ea4ba1#4ea4ba1d77fa1c6f994042f50b486e431a25490f"
 dependencies = [
  "duplicate",
- "eframe",
  "egui 0.30.0",
  "paste",
  "serde",
