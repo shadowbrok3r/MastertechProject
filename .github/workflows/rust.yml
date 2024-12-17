@@ -23,8 +23,6 @@ jobs:
 
       - name: Download and Install Trunk
         run: wget -qO- https://github.com/trunk-rs/trunk/releases/download/v0.21.5/trunk-x86_64-unknown-linux-musl.tar.gz | tar -xzf-
-      - name: list contents of directory
-        run: ls -las 
       - name: Build with Trunk
         working-directory: ./MtechServer2.0  # Move into the correct directory
         run: ../trunk build --release --config Trunk.toml
