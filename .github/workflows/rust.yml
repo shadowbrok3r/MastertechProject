@@ -32,7 +32,7 @@ jobs:
   docker:
     name: Build and Push Docker Image
     needs: trunk  # Ensure Rust build completes first
-    runs-on: ubuntu-server2  # Use self-hosted runner
+    runs-on: self-hosted  # Use self-hosted runner
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
