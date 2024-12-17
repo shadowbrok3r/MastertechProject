@@ -581,6 +581,24 @@ pub async fn create_full_task_payload(
     Ok(())
 }
 
+impl PrestashopPayload {
+
+}
+
+impl TaskNotePayload {
+
+}
+
+impl TaskPayload {
+
+}
+
+impl LiveTaskPayload {
+
+}
+
+
+
 pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
     let api_call = Prestashop::default();
     let mut query = HashMap::new();
