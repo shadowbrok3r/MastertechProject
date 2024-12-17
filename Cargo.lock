@@ -30,16 +30,6 @@ checksum = "c71b1793ee61086797f5c80b6efa2b8ffa6d5dd703f118545808a7f2e27f7046"
 
 [[package]]
 name = "accesskit"
-version = "0.16.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99b76d84ee70e30a4a7e39ab9018e2b17a6a09e31084176cc7c0b2dec036ba45"
-dependencies = [
- "enumn",
- "serde",
-]
-
-[[package]]
-name = "accesskit"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3d3b8f9bae46a948369bc4a03e815d4ed6d616bd00de4051133a5019dc31c5a"
@@ -54,7 +44,7 @@ version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c5dd55e6e94949498698daf4d48fb5659e824d7abec0d394089656ceaf99d4f"
 dependencies = [
- "accesskit 0.17.1",
+ "accesskit",
  "accesskit_consumer",
  "atspi-common",
  "serde",
@@ -68,7 +58,7 @@ version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f47983a1084940ba9a39c077a8c63e55c619388be5476ac04c804cfbd1e63459"
 dependencies = [
- "accesskit 0.17.1",
+ "accesskit",
  "hashbrown 0.15.2",
  "immutable-chunkmap",
 ]
@@ -79,7 +69,7 @@ version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7329821f3bd1101e03a7d2e03bd339e3ac0dc64c70b4c9f9ae1949e3ba8dece1"
 dependencies = [
- "accesskit 0.17.1",
+ "accesskit",
  "accesskit_consumer",
  "hashbrown 0.15.2",
  "objc2",
@@ -93,7 +83,7 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fcee751cc20d88678c33edaf9c07e8b693cd02819fe89053776f5313492273f5"
 dependencies = [
- "accesskit 0.17.1",
+ "accesskit",
  "accesskit_atspi_common",
  "async-channel",
  "async-executor",
@@ -111,7 +101,7 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24fcd5d23d70670992b823e735e859374d694a3d12bfd8dd32bd3bd8bedb5d81"
 dependencies = [
- "accesskit 0.17.1",
+ "accesskit",
  "accesskit_consumer",
  "hashbrown 0.15.2",
  "paste",
@@ -126,7 +116,7 @@ version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a6a48dad5530b6deb9fc7a52cc6c3bf72cdd9eb8157ac9d32d69f2427a5e879"
 dependencies = [
- "accesskit 0.17.1",
+ "accesskit",
  "accesskit_macos",
  "accesskit_unix",
  "accesskit_windows",
@@ -1818,7 +1808,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "775cfde491852059e386c4e1deb4aef381c617dc364184c6f6afee99b87c402b"
 dependencies = [
  "emath 0.29.1",
- "serde",
 ]
 
 [[package]]
@@ -1876,12 +1865,10 @@ version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53eafabcce0cb2325a59a98736efe0bf060585b437763f8c476957fb274bb974"
 dependencies = [
- "accesskit 0.16.3",
  "ahash 0.8.11",
  "emath 0.29.1",
  "epaint 0.29.1",
  "nohash-hasher",
- "serde",
 ]
 
 [[package]]
@@ -1890,7 +1877,7 @@ version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "252d52224d35be1535d7fd1d6139ce071fb42c9097773e79f7665604f5596b5e"
 dependencies = [
- "accesskit 0.17.1",
+ "accesskit",
  "ahash 0.8.11",
  "emath 0.30.0",
  "epaint 0.30.0",
@@ -1933,11 +1920,10 @@ dependencies = [
 [[package]]
 name = "egui_dock"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fe4e3414481dea5ed59fdfa88f2e00b6ea60fbe758ca7a8636d0dbed93ab9cf"
 dependencies = [
  "duplicate",
- "egui 0.29.1",
+ "eframe",
+ "egui 0.30.0",
  "paste",
  "serde",
 ]
@@ -1989,13 +1975,13 @@ dependencies = [
 
 [[package]]
 name = "egui_plot"
-version = "0.29.0"
+version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8dca4871c15d51aadb79534dcf51a8189e5de3426ee7b465eb7db9a0a81ea67"
+checksum = "c226cae80a6ee10c4d3aaf9e33bd9e9b2f1c0116b6036bdc2a1cfc9d2d0dcc10"
 dependencies = [
  "ahash 0.8.11",
- "egui 0.29.1",
- "emath 0.29.1",
+ "egui 0.30.0",
+ "emath 0.30.0",
 ]
 
 [[package]]
@@ -2009,9 +1995,6 @@ name = "emath"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1fe0049ce51d0fb414d029e668dd72eb30bc2b739bf34296ed97bd33df544f3"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "emath"
@@ -2118,7 +2101,6 @@ dependencies = [
  "emath 0.29.1",
  "nohash-hasher",
  "parking_lot",
- "serde",
 ]
 
 [[package]]
