@@ -1,8 +1,7 @@
 use crate::app_state::{AppState, MainPages, MtechServer};
 use displays::ui_tools::theme_config::set_custom_style;
 use eframe::egui::{
-    Color32, Context, Frame, Margin, Rounding, Stroke,
-    Vec2, Window,
+    Color32, Context, Frame, Margin, Rounding, Stroke, Vec2, Window
 };
 use egui_dock::DockState;
 use log::info;

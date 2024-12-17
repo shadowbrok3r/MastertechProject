@@ -119,7 +119,7 @@ impl MasterTechApp{
                                         .has_focus()
                                     {
                                         if enter && !login.password.is_empty() && !login.username.is_empty(){
-                                            info!("ENTER PRESSED");
+                                            // info!("ENTER PRESSED");
                                             let user = login.username.clone();
                                             let pass = login.password.clone();
                                             let email = format!("{user}@pclaptops.com");

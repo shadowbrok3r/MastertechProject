@@ -408,7 +408,7 @@ impl MastertechContext {
                                         if self.shared_ctx.current_user.is_some() {
                                             self.submit_tur_mastertech();
                                         } else {
-                                            let toast = &mut self.toasts;
+                                            let toast = &mut self.shared_ctx.toasts;
                                             let error_toast = Toast {
                                                 kind: ToastKind::Error,
                                                 text: "You are not logged in".into(),

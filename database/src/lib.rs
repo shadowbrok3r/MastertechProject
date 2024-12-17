@@ -6,7 +6,7 @@ use schema::User;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, sync::RwLock};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws, Wss}, // Ws
+    engine::remote::ws::{Client as WsClient, Ws, Wss}, // {local::{SurrealKv, Db}, }
     opt::{
         auth::{Jwt, Record as SurrealRec},
         capabilities::Capabilities,
@@ -64,6 +64,8 @@ pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
 pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
 pub const DB_URL_LOCAL: &str = "localhost:8000";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
+// pub const DB_PATH: &str = "./surrealkv";
+// pub static DATABASE: Lazy<Surreal<Db>> = Lazy::new(Surreal::init);
 
 pub fn set_db_selection(selection: DatabaseSelection) {
     let mut db_selection = DB_SELECTION.write().unwrap();

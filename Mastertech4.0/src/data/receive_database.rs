@@ -32,7 +32,7 @@ impl MasterTechApp {
                             let _ = self.context.app_state_tx.try_send(AppState::NoAuth("No user detected".to_string()));
                         }
                         let _ = self.context.app_state_tx.try_send(AppState::Authenticated(MainPages::Tasks));
-                        let toast = &mut self.context.toasts;
+                        let toast = &mut self.context.shared_ctx.toasts;
                         let auth_toast = Toast {
                             kind: ToastKind::Success,
                             text: format!("Already Connected").into(),
@@ -45,7 +45,7 @@ impl MasterTechApp {
                         info!("8");
                         info!("{e:?}");
                         // eframe::web::storage::local_storage_get(key)
-                        let toast = &mut self.context.toasts;
+                        let toast = &mut self.context.shared_ctx.toasts;
                         let auth_toast = Toast {
                             kind: ToastKind::Error,
                             text: format!("{e:?} \nYou may need to login again").into(),

@@ -94,7 +94,7 @@ impl MasterTechApp {
                 }
             }
             None => {
-                let toast = &mut self.context.toasts;
+                let toast = &mut self.context.shared_ctx.toasts;
 
                 let error_toast = Toast {
                     kind: ToastKind::Error,
@@ -180,7 +180,7 @@ impl MasterTechApp {
 
         if let Ok(keys) = self.context.cps_keys_rx.try_recv() {
             if keys.webroot_key.contains("Error") {
-                let toast = &mut self.context.toasts;
+                let toast = &mut self.context.shared_ctx.toasts;
                 self.context.output_text =
                     "Error fetching Keys. Is SW\\/PCLCPS\\/O on ticket?".to_string();
                 let error_toast = Toast {
