@@ -126,7 +126,7 @@ impl ChatView {
         
         TopBottomPanel::bottom(id)
             .frame(bottom_panel_frame)
-            .default_height(500.0)
+            .default_height(ui.available_height()/1.2)
             .resizable(true)
             .show_inside(ui, |ui| 
         {
@@ -168,9 +168,8 @@ impl ChatView {
                         };
 
                         // If there are multiple threads, assign each as needed (retain only the last)
-                        for thread in self.messages.iter().filter_map(|m| m.id_customer_thread.clone()) {
-                            new_note.id_customer_thread = Some(thread);
-                        }
+                        new_note.id_customer_thread = self.messages.first().cloned().unwrap_or_default().id_customer_thread;
+
                         info!("new_note: {new_note:?}");
                         PlatformSpawner::spawn(async move {
                             if let Err(e) = new_note.create_task_note().await {

@@ -62,7 +62,7 @@ const NS: &str = "Mastertech";
 pub const STORAGE_URL: &str = "https://storage-api.master-tech.app";
 pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
 pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
-pub const DB_URL_LOCAL: &str = "localhost:8000/rpc";
+pub const DB_URL_LOCAL: &str = "localhost:8000";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
 
 pub fn set_db_selection(selection: DatabaseSelection) {
@@ -85,7 +85,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        DATABASE.connect::<Wss>(DB_URL).await?;
+        DATABASE.connect::<Ws>(DB_URL_LOCAL).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt {

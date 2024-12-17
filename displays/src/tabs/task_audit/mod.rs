@@ -160,7 +160,7 @@ impl TaskAuditViewer {
                             .color(ui.style().visuals.error_fg_color)
                             .monospace()
                         )
-                        .default_open(false)
+                        .default_open(true)
                         .id_salt(format!("Order Notes - {}", header))
                         .show_unindented(ui, |ui| 
                     {
@@ -230,9 +230,9 @@ impl TaskAuditViewer {
                 }
                 ui.add_space(10.);
                 let label = if self.services_viewer.open_hotkeys {
-                    " Hide Hotkeys"
+                    " Hide Hotkeys "
                 } else {
-                    " Show Hotkeys"
+                    " Show Hotkeys "
                 };
                 if Button::new(label).ui(ui).clicked() {
                     self.services_viewer.open_hotkeys = !self.services_viewer.open_hotkeys;
@@ -821,7 +821,7 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
         resp: &eframe::egui::Response,
     ) -> Option<Box<PrestashopOrderData>> {
         match column {
-            0 => {
+            0 | 1 => {
                 if resp.clicked() {
                     self.chat_view.messages.clear();
                     self.selected = Some(row.clone());
@@ -900,7 +900,19 @@ impl RowCodec<PrestashopOrderData> for Codec {
         match column {
             0 => dst.push_str(&src_row.0),
             1 => dst.push_str(&src_row.1),
-            2 => dst.push_str(&src_row.2),
+            2 => {
+                // Parse the input into a NaiveDateTime
+                let naive_datetime = NaiveDateTime::parse_from_str(
+                    &src_row.2,
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                .expect("Failed to parse datetime");
+                // Convert to a DateTime with Utc timezone
+                let datetime: DateTime<Utc> = DateTime::from_naive_utc_and_offset(naive_datetime, Utc);
+                // Format the DateTime into yyyy/mm/dd
+                let formatted_date = datetime.format("%m/%d/%Y").to_string();
+                dst.push_str(&formatted_date);
+            },
             3 => dst.push_str(&src_row.3),
             4 => dst.push_str(&src_row.4),
             5 => dst.push_str(&src_row.5),

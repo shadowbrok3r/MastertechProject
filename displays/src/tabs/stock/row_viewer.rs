@@ -1,9 +1,11 @@
 use crate::egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, TrivialConfig, UiActionContext}, RowViewer, UiAction};
-use eframe::egui::{Button, Color32, KeyboardShortcut, Response, RichText, TextEdit, Ui, Widget};
+use eframe::egui::{Button, Color32, KeyboardShortcut, OpenUrl, Response, RichText, TextEdit, Ui, Widget};
 use egui_extras::Column as TableColumnConfig;
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use log::info;
+
+const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct StockData {
@@ -198,7 +200,14 @@ impl RowViewer<SerialsData> for SerialsViewer {
                         .show(ui)
                         .response
                 }
-                2 => Button::new(&row.2).ui(ui),
+                // 2 => {
+                //     if row.2.ne("Not Attached") {
+                //         Hyperlink::from_label_and_url(
+                //             format!(" {}", row.2.clone()), 
+                //             format!("{BASE_URL}{}", row.2.clone())
+                //         ).open_in_new_tab(true).ui(ui)
+                //     }
+                // },
                 4 => ui.checkbox(&mut row.4, ""),
                 _ => unreachable!(),
             }
@@ -206,22 +215,25 @@ impl RowViewer<SerialsData> for SerialsViewer {
         })
         .inner
     }
-
-    // fn on_cell_view_response(
-    //     &mut self,
-    //     row: &SerialsData,
-    //     column: usize,
-    //     resp: &eframe::egui::Response,
-    // ) -> Option<Box<SerialsData>> {
-    //     match column {
-    //         2 => {
-    //             // if resp.clicked() {
-    //             // Some(Box::new(row.clone()))
-    //             None
-    //         }
-    //         _ => None,
-    //     }
-    // }
+    
+    fn on_cell_view_response(
+        &mut self,
+        row: &SerialsData,
+        column: usize,
+        resp: &eframe::egui::Response,
+    ) -> Option<Box<SerialsData>> {
+        match column {
+            2 => {
+                if resp.clicked() {
+                    OpenUrl::new_tab(format!("{BASE_URL}{}", row.2.clone()));
+                    None
+                } else { None }
+            },
+            _ => { 
+                None 
+            }
+        }
+    }
 
     fn set_cell_value(&mut self, src: &SerialsData, dst: &mut SerialsData, column: usize) {
         info!("Source: {:?}\nDest: {:?}\nCol: {:?}", src.2, dst.2, column);
@@ -268,13 +280,7 @@ impl RowViewer<SerialsData> for SerialsViewer {
     fn new_empty_row(&mut self) -> SerialsData {
         // Instead of requiring `Default` trait for row data types, the viewer is
         // responsible of providing default creation method.
-        SerialsData(
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-        )
+        SerialsData::default()
     }
 
     fn column_render_config(&mut self, column: usize) -> TableColumnConfig {
@@ -335,7 +341,7 @@ impl RowCodec<SerialsData> for Codec {
     }
 
     fn create_empty_decoded_row(&mut self) -> SerialsData {
-        SerialsData("".to_string(), "".to_string(), "".to_string(), "".to_string(), false)
+        SerialsData::default()
     }
 }
 
