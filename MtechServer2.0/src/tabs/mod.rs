@@ -106,29 +106,33 @@ impl TabViewer for MtechServerContext {
         if response.clicked() {
             match tab.as_str() {
                 "Store Stock" => {
-                    if let Some(usr) = &self.shared_ctx.current_user {
-                        let stock_tx = self.shared_ctx.stock_channel.0.clone();
-                        let store_selection = match usr.clone().store {
-                            Store::RIV => 76,
-                            Store::LTN => 73,
-                            Store::MUR => 74,
-                            Store::AF => 72,
-                            Store::WJ => 78,
-                            Store::ORE => 75,
-                            Store::SAN => 77,
-                        };
-                        spawn_local(async move {
-                            let stock = get_stock(stock_tx.clone(), store_selection).await;
-                            info!("Stock call: {stock:?} for Store: {:?}", store_selection);
-                        });
+                    if self.shared_ctx.serials_table.len() == 0 {
+                        if let Some(usr) = &self.shared_ctx.current_user {
+                            let stock_tx = self.shared_ctx.stock_channel.0.clone();
+                            let store_selection = match usr.clone().store {
+                                Store::RIV => 76,
+                                Store::LTN => 73,
+                                Store::MUR => 74,
+                                Store::AF => 72,
+                                Store::WJ => 78,
+                                Store::ORE => 75,
+                                Store::SAN => 77,
+                            };
+                            spawn_local(async move {
+                                let stock = get_stock(stock_tx.clone(), store_selection).await;
+                                info!("Stock call: {stock:?} for Store: {:?}", store_selection);
+                            });
+                        }
                     }
                 },
                 "Company Stock" => {
-                    let ex_stock_tx = self.shared_ctx.extra_stock_channel.0.clone();
-                    spawn_local(async move {
-                        let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
-                        info!("Extra Stock {stock_quantities:?}");
-                    });
+                    if self.shared_ctx.stock_quantity_table.len() == 0 {
+                        let ex_stock_tx = self.shared_ctx.extra_stock_channel.0.clone();
+                        spawn_local(async move {
+                            let stock_quantities = get_extra_stock_info(ex_stock_tx).await;
+                            info!("Extra Stock {stock_quantities:?}");
+                        });
+                    }
                 },
                 "Completed Tasks" => {
                     // First, make sure there are no completed tasks loaded.

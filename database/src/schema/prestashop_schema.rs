@@ -175,7 +175,12 @@ impl<'a> Prestashop<'a> {
     where
         T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
     {
-        let url = format!("{PRESTASHOP_API_URL_WASM}/{resource}/{id}?output_format=JSON");
+        let url = if !self.display.is_empty() && self.display.ne("full"){
+            format!("{PRESTASHOP_API_URL_WASM}/{resource}/{id}?display={}&output_format=JSON", self.display)
+        } else {
+            format!("{PRESTASHOP_API_URL_WASM}/{resource}/{id}?output_format=JSON")
+        };
+
         let response: Value = self
             .client
             .get(url.clone())
@@ -325,22 +330,14 @@ pub struct Address {
 pub struct Employee {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
-    /// ✔️	isName
     pub id_store: String,
     pub lastname: String,
-    /// ✔️	isName
     pub firstname: String,
-    /// ✔️	isEmail
     pub email: String,
-    /// ❌	isBool
     pub active: String,
-    /// ✔️	isInt
     pub id_profile: String,
-    /// ❌	isUnsignedInt
     pub id_last_order: String,
-    /// ❌	isUnsignedInt
     pub id_last_customer_message: String,
-    /// ❌	isUnsignedInt
     pub id_last_customer: String,
     pub initials: String,
 }
@@ -354,7 +351,6 @@ pub struct Order {
     pub id_address_invoice: String,  // ✔️
     pub id_customer: String,         // ✔️
     pub current_state: String,
-    // pub id_cart: String, // ✔️
     pub invoice_number: String, // ❌
     pub invoice_date: String,   // ❌
     pub payment: String,
@@ -372,6 +368,7 @@ pub struct Order {
     pub shipping_number: String, // Tracking number
     pub order_type: String, // Configurator / Sales Order
     // note: String, // ❌
+    // #[serde(skip_serializing_if = "Option::is_none")]
     pub associations: Associations,
 }
 
@@ -404,21 +401,21 @@ pub struct OrderRow {
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct Customer {
-    pub lastname: String,  //  	isCustomerName 	✔️ 	✔️ 	255
-    pub firstname: String, //  	isCustomerName 	✔️ 	✔️ 	255
-    pub email: String,     //  	isEmail 	✔️ 	✔️ 	255
+    pub lastname: String,
+    pub firstname: String,
+    pub email: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct CustomerMessage {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
-    pub id_employee: String,        //  isUnsignedId   ❌ 		Employee ID
-    pub id_customer_thread: String, //	               ❌ 		Customer Thread ID
-    pub message: String,            //  isCleanHtml    ✔️ 	     16777216
-    pub file_name: String,          //		           ❌
-    pub private: String,            //  isBool 	       ❌
-    pub date_add: String,           // 	isDate 	       ❌
+    pub id_employee: String,
+    pub id_customer_thread: String,
+    pub message: String,
+    pub file_name: String,
+    pub private: String,
+    pub date_add: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]

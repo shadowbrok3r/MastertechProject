@@ -46,7 +46,8 @@ pub trait EmployeeHelper {
     /// Find a User based on Employee info -> id_employee
     async fn find_user(&mut self) -> Result<Option<User>, Error>;
     /// Pull all of my services given Employee info -> id_employee
-    async fn get_my_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error>;
+    async fn get_my_services_in_repair(&mut self) -> Result<Vec<OrderNumber>, Error>;
+    async fn get_all_my_services(&mut self) -> Result<Vec<OrderNumber>, Error>;
     /// Get all orders in my store given Employee info -> id_location
     async fn get_services_in_my_store(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error>;
     /// Get all Orders of which are my Return For Service's
@@ -1080,21 +1081,40 @@ impl EmployeeHelper for Employee {
         Ok(orders_vec)
     }
 
-    async fn get_my_services(&mut self, start_idx: i32, offset: i32) -> Result<Vec<OrderNumber>, Error> {
+    async fn get_my_services_in_repair(&mut self) -> Result<Vec<OrderNumber>, Error> {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
-        let pagination = format!("{},{}",start_idx.clone(), offset);
         query.insert("filter[id_employee_sales_rep]", &self.id);
         query.insert("filter[id_store]", &self.id_store);
         query.insert("filter[id_order_type]", "2");
+        query.insert("filter[current_state]", "30");
         query.insert("sort", "[id_DESC]");
-        query.insert("limit", &pagination);
         query.insert("output_format", "JSON");
         api_call.display = "[id]";
 
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await?;
+        info!("Orders list: {orders:?}");
+        Ok(orders)
+    }
+
+    async fn get_all_my_services(&mut self) -> Result<Vec<OrderNumber>, Error> {
+        let mut api_call = Prestashop::default();
+        let mut query: HashMap<&str, &str> = HashMap::new();
+        query.insert("filter[id_employee_sales_rep]", &self.id);
+        query.insert("filter[id_store]", &self.id_store);
+        query.insert("filter[id_order_type]", "2");
+        query.insert("filter[current_state]", "30");
+        query.insert("sort", "[id_DESC]");
+        query.insert("limit", "20");
+        query.insert("output_format", "JSON");
+        api_call.display = "[id]";
+
+        let orders: Vec<OrderNumber> = api_call
+            .request_resources_wasm("orders", query.clone())
+            .await?;
+        info!("Orders list: {orders:?}");
         Ok(orders)
     }
 
@@ -1148,15 +1168,17 @@ impl EmployeeHelper for Employee {
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await.context("Pulling orders list")?;
+        info!("Orders list: {orders:?}");
         Ok(orders)
     }
 
     async fn to_prestashop_payload(&mut self, order_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> {
-        let api_call = Prestashop::default();
+        let mut api_call = Prestashop::default();
         let mut query = HashMap::new();
         info!("Pulling order {order_number}");
         query.insert("filter[id_order]", order_number);
         query.insert("output_format", "JSON");
+        api_call.display = "[id,id_address_invoice,id_customer,current_state,date_add,id_employee_sales_rep,id_employee_split_rep,id_store]";
 
 
         let order: prestashop_schema::Order = api_call
@@ -1169,6 +1191,7 @@ impl EmployeeHelper for Employee {
         }
 
         let sales_rep: Option<Employee>  = if !order.id_employee_sales_rep.eq("checkinshelf") && !order.id_employee_sales_rep.eq("0"){
+            api_call.display = "[id,id_store,lastname,firstname,email,initials]";
             Some(
                 api_call
                 .request_subresources_by_id_wasm(
@@ -1185,6 +1208,7 @@ impl EmployeeHelper for Employee {
         };
 
         let split_rep: Option<Employee> = if !order.id_employee_split_rep.eq("0") {
+            api_call.display = "[id,id_store,lastname,firstname,email,initials]";
             let employee_2: Employee = api_call
                 .request_subresources_by_id_wasm(
                     "employees",
@@ -1205,6 +1229,7 @@ impl EmployeeHelper for Employee {
             cust.lastname = "Shelf".to_string();
             cust
         } else {
+            api_call.display = "[lastname,firstname,email]";
             api_call
                 .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
                 .await.context("Pulling customer")?
