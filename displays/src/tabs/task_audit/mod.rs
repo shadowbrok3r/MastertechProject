@@ -359,8 +359,9 @@ impl TaskAuditViewer {
             TaskAudit::MyInRepair => {
                 PlatformSpawner::spawn(async move {
                     // Fetch services within the range
+                    let time = web_time::Instant::now();
                     let orders = employee
-                        .get_my_services(start_idx, start_idx+10)
+                        .get_my_services_in_repair()
                         .await;
 
                     // Handle the fetched services
@@ -378,6 +379,8 @@ impl TaskAuditViewer {
                         },
                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e)
                     };
+                    let elapsed = time.elapsed();
+                    info!("Time elapsed: {elapsed:?}");
                 });
             },
             TaskAudit::InRepair => {
@@ -432,7 +435,7 @@ impl TaskAuditViewer {
                 PlatformSpawner::spawn(async move {
                     // Fetch services within the range
                     let orders = employee
-                        .get_all_services_in_my_store(start_idx, start_idx+10)
+                        .get_all_my_services()
                         .await;
 
                     // Handle the fetched services
@@ -456,7 +459,7 @@ impl TaskAuditViewer {
                 PlatformSpawner::spawn(async move {
                     // Fetch services within the range
                     let orders = employee
-                        .get_my_services(start_idx, start_idx+10)
+                        .get_my_services_in_repair()
                         .await;
 
                     // Handle the fetched services
@@ -472,7 +475,7 @@ impl TaskAuditViewer {
                                 }
                             }
                         },
-                        Err(e) => log::info!("Error with get_my_services: {:?}", e)
+                        Err(e) => log::info!("Error with get_my_services_in_repair: {:?}", e)
                     };
                 });
             },
