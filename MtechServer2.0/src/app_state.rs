@@ -1,9 +1,8 @@
-use displays::{app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, virtual_filesystem::FileSystem};
-use log::info;
+use displays::{app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, modals::{create_task_modal::Tur, ModalType}, virtual_filesystem::FileSystem};
 use crate::{pages::{login_page::Login, signup_page::Signup, account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{github_issue::GithubIssue, web_console::websockets::WebSocketClient}};
 use database::{schema::{prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskPayload, UserSettings}, Database};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use eframe::{egui::Context, CreationContext};
+use eframe::CreationContext;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use crossbeam::channel::{self, Receiver, Sender};
 use serde_json::Value;
@@ -321,33 +320,6 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
 
     (tree, open_tabs)
 }
-
-// impl MtechServerContext {
-//     pub fn handle_modals(&mut self, ctx: &Context) {
-
-//         for (title, modal_type) in self.opened_modals.iter_mut() {
-//             // let input = RawInput::default();
-//             // let full_output = ctx.run(input, |ctx| {
-//                 // info!("Got a new modal: {title:?}");
-//                 let action = modal_type.ui(ctx, title.clone(), 750., 850.);
-//                 if let Some(action) = action {
-//                     if let ModalAction::Close = action {
-//                         info!("Close action received");
-//                         self.close_modal = Some(title.clone());
-//                     }
-//                 }
-//             // });
-//             // for (x, _y) in full_output.viewport_output.iter() {
-//             //     info!("Viewport ID: {x:?}");
-//             // }
-//         }
-//         if let Some(modal) = &self.close_modal {
-//             info!("modal: {modal}");
-//             self.opened_modals.remove_entry(modal);
-//             self.close_modal = None;
-//         }
-//     }
-// }
 
 #[cfg(target_arch="wasm32")]
 pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> Result<(AppState, Option<database::schema::User>), Error> {
