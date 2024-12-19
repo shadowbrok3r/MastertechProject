@@ -87,7 +87,7 @@ impl Database {
         password: String,
         jwt: Option<String>,
     ) -> anyhow::Result<Self, anyhow::Error> {
-        DATABASE.connect::<Wss>(DB_URL).await?;
+        DATABASE.connect::<Wss>(DB_URL_DEV).await?;
         DATABASE.use_ns(NS).use_db(DB).await?;
 
         match jwt {

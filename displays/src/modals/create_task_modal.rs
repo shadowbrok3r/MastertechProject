@@ -1,4 +1,4 @@
-use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_TABLE},DATABASE};
+use database::{schema::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Priority, Status, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User},DATABASE};
 use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Layout, Margin, RichText, Stroke, TextEdit, Ui, Vec2, Widget};
 use database::schema::{get_data::get_user_from_email, utilities::{get_prestashop_payload, create_full_task_payload}};
 use crate::{ui_tools::autocomplete::AutoCompleteTextEdit, DisplayModal, PlatformSpawner, Spawner};
