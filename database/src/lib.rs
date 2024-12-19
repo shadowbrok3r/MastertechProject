@@ -6,7 +6,7 @@ use schema::User;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{fmt::Debug, sync::RwLock};
 use surrealdb::{
-    engine::remote::ws::{Client as WsClient, Ws, Wss}, // {local::{SurrealKv, Db}, }
+    engine::remote::ws::{Client as WsClient, Wss}, // {local::{SurrealKv, Db}, }
     opt::{
         auth::{Jwt, Record as SurrealRec},
         capabilities::Capabilities,
