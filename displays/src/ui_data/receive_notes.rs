@@ -25,7 +25,9 @@ impl SharedContext {
                         let task = self
                             .tasks
                             .iter_mut()
-                            .find(|task| task.id == chat_view.messages.first().cloned().unwrap_or_default().task_id.clone().unwrap());
+                            .find(|task| 
+                                Some(task.id.clone()) == chat_view.messages.first().cloned().unwrap_or_default().task_id.clone()
+                            );
 
                         if let Some(task) = task {
                             handle_live_notes(note_payload.clone(), task).unwrap_or(());

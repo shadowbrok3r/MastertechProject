@@ -33,12 +33,22 @@ impl Deref for ModalType{
 impl ModalWindow for ModalType {
     fn ui(&mut self, ctx: &Context, title: String, _min_width: f32, _min_height: f32) -> Option<ModalAction> {
         let mut open = ctx.input(|i| !i.key_pressed(Key::Escape));
+        let mut modal_action = None;
+        let mut close_requested = false; // Decoupled flag for modal close
         let style= &ctx.style().visuals;
         let mut shadow = Shadow::default();
         shadow.blur = 1.0;
         shadow.spread = 3.0;
         shadow.color = style.window_stroke.color;
         let title_color = RichText::new(title.clone()).color(style.warn_fg_color);
+
+        let mut handle_action = |action: ModalAction| {
+            if let ModalAction::Close = action {
+                close_requested = true; // Update modal open state
+            }
+            modal_action = Some(action); // Capture the action
+        };
+
         let window = Window::new(title_color)
             .frame(
                 Frame::default()
@@ -53,44 +63,42 @@ impl ModalWindow for ModalType {
             .open(&mut open)
             .title_bar(true);
 
-        let response = window.show(ctx, |ui| {
-            
-            let item_spacing_y = ui.spacing().item_spacing.y;
-            ui.spacing_mut().item_spacing.y = 0.0;
-
-            Frame {
-                inner_margin: Margin::same(0.0),
-                ..Default::default()
+        window.show(ctx, |ui| {
+            match self {
+                ModalType::CreateTaskModal(create_task_modal) => create_task_modal.display(ui, &mut handle_action),
+                ModalType::TaskModal(task_modal) => task_modal.display(ui, &mut handle_action),
+                ModalType::ChatView(chat_view) => {
+                    chat_view.ui(ui);
+                    None
+                },
+                ModalType::Null => None,
             }
-            .show(ui, |ui| {
-                ui.add_space(item_spacing_y);
-
-                Frame {
-                    inner_margin: Margin::same(0.0),
-                    ..Default::default()
-                }
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = item_spacing_y;
-                    match self {
-                        ModalType::CreateTaskModal(create_task_modal) => create_task_modal.display(ui),
-                        ModalType::TaskModal(task_modal) => task_modal.display(ui),
-                        ModalType::ChatView(chat_view) => {
-                            chat_view.ui(ui);
-                            None
-                        },
-                        ModalType::Null => None,
-                    }
-                })
-                .inner
-            })
-            .inner
         });
 
-        if open.eq(&false){
-            return Some(ModalAction::Close)
+        // Synchronize the `open` state after the window logic is processed
+        if close_requested {
+            open = false; // Close the modal based on the flag
         }
 
-        response.and_then(|response| response.inner.and(Some(ModalAction::None)))
+        if !open {
+            return Some(ModalAction::Close);
+        }
+        modal_action
+        // if let Some(x) = &response {
+        //     if let Some(y) = &x.inner {
+        //         if let Some(action) = &y {
+        //             if let &ModalAction::Close = action {
+        //                 open = false;
+        //             }
+        //         }
+        //     }
+        // }
+
+        // if !open {
+        //     return Some(ModalAction::Close);
+        // }
+
+        // response.and_then(|response| response.inner.and(Some(ModalAction::None)))
     }
 }
 
