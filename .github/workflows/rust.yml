@@ -60,8 +60,8 @@ jobs:
     needs: docker
     runs-on: self-hosted
     steps:
-      - uses: actions-hub/kubectl@master
+      - uses: ghostzero/kubectl@v1
         env:
-          KUBE_CONFIG: ${{ secrets.KUBECONFIG }}
+          KUBE_CONFIG_DATA: ${{ secrets.KUBECONFIG }}
         with:
-          args: rollout restart deployment mtechserver-beta -n rust
+          args: '"rollout restart deployment mtechserver-beta -n rust"'
