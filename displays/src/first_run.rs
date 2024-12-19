@@ -15,6 +15,7 @@ use log::info;
 
 impl SharedContext {
     pub fn load_data(&mut self, ctx: &Context) -> bool {
+        self.timer = Some(web_time::Instant::now());
         // get all of our channel Senders from crossbeam to get user/store/completed tasks,
         // as well as store users and live task notifications
         let live_tasks_tx = self.live_tasks_tx.clone();
@@ -109,6 +110,11 @@ impl SharedContext {
                         layout.search_inputs.clear();
                     }
                     layout.loading = true;
+                    if let Some(time) = self.timer {
+                        if time.elapsed() > web_time::Duration::from_secs(5) {
+                            layout.loading = false;
+                        }
+                    }
             });
             // Filter and append new tasks
             let existing_tasks = &mut self.tasks;

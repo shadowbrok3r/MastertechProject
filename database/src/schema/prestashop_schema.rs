@@ -275,11 +275,13 @@ impl<'a> Prestashop<'a> {
             .json()
             .await?;
 
-        // info!("response: {:#?}", response);
-        let x: T = from_value(response[resource_name].clone())?;
+        info!("response: {:#?}", response);
+        let t: T = from_value(response[resource_name].get(0).cloned().unwrap_or_default())?;
+        info!("Value: {t:?}");
+        // let x: T = from_value(t.get(0).cloned().unwrap_or_default())?;
         // info!("x: {x:#?}");
 
-        Ok(x)
+        Ok(t)
     }
 
     pub async fn delete_resource_wasm(
@@ -334,11 +336,6 @@ pub struct Employee {
     pub lastname: String,
     pub firstname: String,
     pub email: String,
-    pub active: String,
-    pub id_profile: String,
-    pub id_last_order: String,
-    pub id_last_customer_message: String,
-    pub id_last_customer: String,
     pub initials: String,
 }
 
@@ -346,29 +343,51 @@ pub struct Employee {
 pub struct Order {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub order_type_name: Option<String>,
+    #[serde(default)]
     pub id_address_delivery: String, // ✔️
+    #[serde(default)]
     pub id_address_invoice: String,  // ✔️
+    #[serde(default)]
     pub id_customer: String,         // ✔️
+    #[serde(default)]
     pub current_state: String,
-    pub invoice_number: String, // ❌
-    pub invoice_date: String,   // ❌
+    #[serde(default)]
+    pub invoice_number: String,
+    #[serde(default)]
+    pub invoice_date: String,  
+    #[serde(default)]
     pub payment: String,
-    pub date_add: String, // ❌
-    pub date_upd: String, // ❌
+    #[serde(default)]
+    pub date_add: String,
+    #[serde(default)]
+    pub date_upd: String,
+    #[serde(default)]
     pub id_employee_sales_rep: String,
+    #[serde(default)]
     pub id_employee_split_rep: String,
+    #[serde(default)]
     pub id_employee_editing: String,
+    #[serde(default)]
     pub id_order_everest: String,
+    #[serde(default)]
     pub id_store: String,   // 1 = warehouse
+    #[serde(default)]
     pub total_paid: String, // ✔️
+    #[serde(default)]
     pub total_products_wt: String,
+    #[serde(default)]
     pub reference: String, // what prestashop sees since order id and reference are different...
+    #[serde(default)]
     pub id_order_parent: String, // no idea
+    #[serde(default)]
     pub shipping_number: String, // Tracking number
+    #[serde(default)]
     pub order_type: String, // Configurator / Sales Order
-    // note: String, // ❌
+    // note: String,
     // #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub associations: Associations,
 }
 
@@ -531,11 +550,6 @@ impl SubResource for Employee {
             "lastname" => Some(self.lastname.clone()),
             "firstname" => Some(self.firstname.clone()),
             "email" => Some(self.email.clone()),
-            "active" => Some(self.active.to_string()),
-            "id_profile" => Some(self.id_profile.to_string()),
-            "id_last_order" => Some(self.id_last_order.to_string()),
-            "id_last_customer_message" => Some(self.id_last_customer_message.to_string()),
-            "id_last_customer" => Some(self.id_last_customer.to_string()),
             _ => None,
         }
     }

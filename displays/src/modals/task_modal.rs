@@ -40,6 +40,7 @@ pub struct TaskModal {
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
 pub enum ModalAction {
+    #[default]
     TicketInfoPage,
     PartOrderPage,
     ComputerInfoPage,
@@ -47,7 +48,6 @@ pub enum ModalAction {
     ImportTask,
     Close,
     TaskPage,
-    #[default]
     None,
 }
 
@@ -59,7 +59,7 @@ impl Default for TaskModal {
             min_width: Some(600.0),
             min_height: Some(600.0),
             default_height: Some(800.0),
-            current_page_state: ModalAction::None,
+            current_page_state: ModalAction::TaskPage,
             chat_view: ChatView::default(),
             spo: SpecialPartOrder::default(),
         }
@@ -70,7 +70,7 @@ impl TaskModal {
     pub fn new(chat_view: ChatView, task: TaskPayload) -> Self {
         Self {
             title: task.task_name.clone(),
-            current_page_state: ModalAction::None,
+            current_page_state: ModalAction::TaskPage,
             task,
             min_width: Some(600.0),
             min_height: Some(600.0),

@@ -245,35 +245,32 @@ impl TaskLayout {
 
                                 if let Some(action) = res{
                                     let ids = tasks.iter().map(|t| t.id.clone()).collect::<Vec<RecordId>>();
+
                                     match action{
                                         TaskActions::MarkComplete => {
                                             PlatformSpawner::spawn(async move {
-                                                for id in ids{
+                                                // for id in ids{
                                                     let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                        .bind(("record", id.clone()))
+                                                        .bind(("record", ids.clone()))
                                                         .bind(("completion", true))
                                                         .await.unwrap().take(0).unwrap();
-                                                }
+                                                // }
                                             });
                                         },
                                         TaskActions::MarkIncomplete => {
                                             PlatformSpawner::spawn(async move {
-                                                for id in ids{
+                                                // for id in ids{
                                                     let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                        .bind(("record", id.clone()))
+                                                        .bind(("record", ids.clone()))
                                                         .bind(("completion", false))
                                                         .await.unwrap().take(0).unwrap();
-                                                }
+                                                // }
                                             });
                                         },
                                         TaskActions::MarkDueToday => {
                                             PlatformSpawner::spawn(async move {
-                                                for id in ids{
-                                                    let query = "fn::mark_all_due_today($id)";
-                                                    info!("ID: {:?}", id.clone());
-                                                    let _ = DATABASE.set("id", id).await.unwrap();
-                                                    let _x: Option<Record> = DATABASE.query(query).await.unwrap().take(0).unwrap();
-                                                }
+                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_due_today($ids)")
+                                                    .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
                                             });
                                         }, _ => {}
                                     }

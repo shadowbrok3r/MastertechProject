@@ -1,7 +1,7 @@
-# [target.wasm32-unknown-unknown]
-# rustflags = ["-C", "target-feature=+atomics,+bulk-memory,+mutable-globals"] # , "-Awarnings" "--cfg=web_sys_unstable_apis", 
-# [build]
-# target = [ "wasm32-unknown-unknown"]
+[target.wasm32-unknown-unknown]
+rustflags = [ "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals"] # , "-Awarnings" "--cfg=web_sys_unstable_apis",
+[build]
+target = [ "wasm32-unknown-unknown"]
 
 # [unstable]
 # build-std = ["std,panic_abort"]

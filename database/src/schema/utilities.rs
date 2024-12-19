@@ -190,32 +190,10 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
 pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String, _len_tx: Sender<u64>) -> Result<(), Error> {
     debug!("get_tasks");
 
-    let mut offset = 0;
-    let limit = 2; // Number of tasks per chunk
-    // let len_query = r#"
-    //     RETURN (
-    //         SELECT *, (
-    //             SELECT * FROM task_note 
-    //                 WHERE task_id == $parent.id
-    //         ) AS task_note 
-    //         FROM task 
-    //         WHERE $this.assignee.store == $store AND $this.completed IS false
-    //         FETCH 
-    //             service_ticket, 
-    //             service_ticket.computer, 
-    //             service_ticket.customer
-    //     )
-    // "#;
+    // let mut offset = 0;
+    // let limit = 2; // Number of tasks per chunk
 
-    // let len_results: Option<u64> = DATABASE
-    //     .query(len_query)
-    //     .bind(("store", store.clone()))
-    //     .await?
-    //     .take(0)?;
-
-    // len_tx.try_send(len_results.unwrap_or_default())?;
-
-    loop {
+    // loop {
         let query = r#"
             SELECT *, (
                 SELECT * FROM task_note 
@@ -223,39 +201,40 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String, _l
             ) AS task_note 
             FROM task 
             WHERE $this.assignee.store == $store AND $this.completed IS false
-            LIMIT $limit START $offset
             FETCH 
                 service_ticket, 
                 service_ticket.computer, 
                 service_ticket.customer
+            
         "#; // PARALLEL WITH INDEX idx_store_due_date
 
+        // LIMIT $limit START $offset
         let start_query = Instant::now(); // Start timing the query
 
-        warn!("Querying at offset: {offset}");
+        // warn!("Querying at offset: {offset}");
 
         let query_results: Vec<TaskPayload> = DATABASE
             .query(query)
             .bind(("store", store.clone()))
-            .bind(("limit", limit))
-            .bind(("offset", offset))
+            // .bind(("limit", limit))
+            // .bind(("offset", offset))
             .await?
             .take(0)?;
 
         let query_duration = start_query.elapsed(); // Measure query duration
-        warn!("Query execution time for chunk (offset: {offset}): {query_duration:?}");
+        warn!("Query execution time for chunk {query_duration:?}");
 
         
-        // Break the loop if no more results
-        if query_results.is_empty() {
-            break;
-        }
+        // // Break the loop if no more results
+        // if query_results.is_empty() {
+        //     break;
+        // }
 
         tx.try_send(query_results)?;
 
-        // Update the offset for the next chunk
-        offset += limit;
-    }
+        // // Update the offset for the next chunk
+        // offset += limit;
+    // }
 
     
     Ok(())
@@ -263,9 +242,9 @@ pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String, _l
 
 pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_completed_tasks");
-    let mut offset = 0;
-    let limit = 2; // Number of tasks per chunk
-    loop {
+    // let mut offset = 0;
+    // let limit = 2; // Number of tasks per chunk
+    // loop {
         let query = r#"
             SELECT *, (
                 SELECT * FROM task_note 
@@ -273,37 +252,37 @@ pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: 
             ) AS task_note 
             FROM task 
             WHERE $this.assignee.store == $store AND $this.completed IS true
-            LIMIT $limit START $offset
             FETCH 
                 service_ticket, 
                 service_ticket.computer, 
                 service_ticket.customer
-        "#;
+            
+        "#; // PARALLEL
         
         let start_query = Instant::now(); // Start timing the query
-        warn!("Querying at offset: {offset}");
+        // warn!("Querying at offset: {offset}");
 
         let query_results: Vec<TaskPayload> = DATABASE
             .query(query)
             .bind(("store", store.clone()))
-            .bind(("limit", limit))
-            .bind(("offset", offset))
+            // .bind(("limit", limit))
+            // .bind(("offset", offset))
             .await?
             .take(0)?;
 
         let query_duration = start_query.elapsed(); // Measure query duration
-        warn!("Query execution time for chunk (offset: {offset}): {query_duration:?}\ntask len: {}", query_results.len());
+        warn!("Query execution time for chunk {query_duration:?}\ntask len: {}", query_results.len());
 
         // Break the loop if no more results
-        if query_results.is_empty() {
-            break;
-        }
+        // if query_results.is_empty() {
+        //     break;
+        // }
 
         tx.try_send(query_results)?;
 
         // Update the offset for the next chunk
-        offset += limit;
-    }
+        // offset += limit;
+    // }
     Ok(())
 }
 
