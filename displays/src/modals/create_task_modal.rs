@@ -70,18 +70,8 @@ impl CreateTaskModal {
     }
 }
 
-// impl ModalTypes for CreateTaskModal {
-//     fn modal_state(&mut self) -> &mut ModalState {
-//         &mut self.state
-//     }
-//     fn title(mut self, title: String) -> Self {
-//         self.modal_state().title = Some(title);
-//         self
-//     }
-// }
-
 impl DisplayModal for CreateTaskModal {
-    fn display(&mut self, ui: &mut Ui) -> Option<ModalAction> {
+    fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
         let avail_size = Vec2::new(680., 580.);
 
         StripBuilder::new(ui)
@@ -153,10 +143,14 @@ impl DisplayModal for CreateTaskModal {
                                                     if let Some(tx) = self.prestashop_api_tx.clone()
                                                     {
                                                         ui.add_space(50.0);
-                                                        if let ModalAction::Close = self
-                                                            .create_task(ui, avail_size, tx.clone())
-                                                        {
-                                                            self.current_page_state = ModalAction::Close
+                                                        let action = self
+                                                        .create_task(
+                                                            ui, 
+                                                            avail_size, 
+                                                            tx.clone()
+                                                        );
+                                                        if let ModalAction::Close = action {
+                                                            action_handler(ModalAction::Close);
                                                         }
                                                     }
                                                 }
@@ -167,17 +161,8 @@ impl DisplayModal for CreateTaskModal {
                                                         &mut self.tur.task_data,
                                                         avail_size,
                                                     );
-                                                }
-                                                _ => {
-                                                    if let Some(tx) = self.prestashop_api_tx.clone()
-                                                    {
-                                                        if let ModalAction::Close = self
-                                                            .create_task(ui, avail_size, tx.clone())
-                                                        {
-                                                            self.current_page_state = ModalAction::Close
-                                                        }
-                                                    }
-                                                }
+                                                },
+                                                _ => {}
                                             };
                                         });
                                         s.empty();
@@ -187,6 +172,9 @@ impl DisplayModal for CreateTaskModal {
                 });
             });
 
+        if self.current_page_state == ModalAction::Close {
+            action_handler(ModalAction::Close);
+        }
         Some(self.current_page_state.clone())
     }
 }
@@ -206,6 +194,7 @@ impl CreateTaskModal {
                 strip.cell(|ui| self.tur.tur_sheet(ui, prestashop_api_tx.clone()));
 
                 strip.strip(|s| {
+                    let mut lost_focus = false;
                     s.size(Size::exact(70.0))
                         .size(Size::exact(35.0))
                         .size(Size::exact(150.0))
@@ -231,22 +220,30 @@ impl CreateTaskModal {
 
                                 ui.add_space(15.0);
                                 let mut inputs = BTreeSet::new();
+
                                 for user in self.store_users.iter_mut() {
                                     let parsed = user.email.split_once("@").unwrap_or(("", "")).0;
                                     inputs.insert(parsed.to_string());
                                 }
-                                let _result =
-                                    AutoCompleteTextEdit::new(&mut self.assignee, inputs.clone())
-                                        .highlight_matches(true)
-                                        .max_suggestions(3)
-                                        .set_text_edit_properties(move |text_edit| {
-                                            text_edit
-                                                .hint_text("Assignee")
-                                                .desired_width(200.0)
-                                                .font(FontId::proportional(12.0))
-                                                .frame(true)
-                                        })
-                                        .ui(ui);
+
+                                let r = AutoCompleteTextEdit::new(
+                                    &mut self.assignee, 
+                                    inputs.clone()
+                                )
+                                .highlight_matches(true)
+                                .max_suggestions(3)
+                                .set_text_edit_properties(move |text_edit| {
+                                    text_edit
+                                        .hint_text("Assignee")
+                                        .desired_width(200.0)
+                                        .font(FontId::proportional(12.0))
+                                        .frame(true)
+                                })
+                                .ui(ui);
+                            
+                                if r.lost_focus() {
+                                    lost_focus = true;
+                                }
                             });
 
                             s.cell(|ui| {
@@ -280,13 +277,17 @@ impl CreateTaskModal {
                             });
                             s.cell(|ui| {
                                 ui.vertical_centered(|ui| {
-                                    TextEdit::multiline(&mut self.description)
+                                    let r = TextEdit::multiline(&mut self.description)
                                         .hint_text("Task Description")
                                         .margin(Margin::symmetric(6.0, 4.0))
                                         .desired_rows(6)
                                         .code_editor()
                                         .desired_width(200.0)
                                         .ui(ui);
+
+                                    if lost_focus {
+                                        r.request_focus();
+                                    }
 
                                     ui.add_space(15.0);
                                     let btn = Button::new("Submit")
@@ -300,7 +301,8 @@ impl CreateTaskModal {
 
                                     if ui.add_enabled(enabled, btn).clicked()
                                     {
-                                        info!("ASSIGNEE: {:?}", self.assignee.clone());
+                                        self.current_page_state = ModalAction::Close;
+                                        info!("ASSIGNEE: {:?}\nSTATE: {:?}", self.assignee.clone(), self.current_page_state);
                                         let time =
                                             NaiveTime::from_hms_milli_opt(0, 0, 0, 0).unwrap();
                                         let date = NaiveDateTime::new(self.due_date, time);
@@ -337,7 +339,7 @@ impl CreateTaskModal {
                                         );
 
                                         PlatformSpawner::spawn(async move {
-                                            if !payload.ticket_data.service_number.is_empty() {
+                                            if payload.ticket_data.service_number.len() == 7 {
                                                 warn!("Submitting Ticket\n=====> PRE CONVERTED: {:?}\n\n", payload.ticket_data.clone());
                                                 let mut ticket_data: TicketData = payload.ticket_data.into();
                                                 warn!("=====> POST CONVERTED: {:?}\n\n", ticket_data.clone());
@@ -398,7 +400,6 @@ impl CreateTaskModal {
                                                 }
                                             }
                                         });
-                                        self.current_page_state = ModalAction::Close;
                                     }
                                 });
                             });

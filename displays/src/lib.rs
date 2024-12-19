@@ -225,6 +225,6 @@ pub trait Task {
 }
 
 pub trait DisplayModal {
-    fn display(&mut self, ui: &mut Ui) -> Option<ModalAction>;
+    fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction>;
     // fn set_state(self, action: ModalAction);
 }

@@ -70,7 +70,7 @@ impl TaskModal {
     pub fn new(chat_view: ChatView, task: TaskPayload) -> Self {
         Self {
             title: task.task_name.clone(),
-            current_page_state: ModalAction::TaskPage,
+            current_page_state: ModalAction::TicketInfoPage,
             task,
             min_width: Some(600.0),
             min_height: Some(600.0),
@@ -104,7 +104,7 @@ pub struct SpecialPartOrder {
 }
 
 impl DisplayModal for TaskModal {
-    fn display(&mut self, ui: &mut Ui) -> Option<ModalAction> {
+    fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction> {
         let avail_size = Vec2::new(680.0, 620.0);
 
         StripBuilder::new(ui)
@@ -234,11 +234,7 @@ impl DisplayModal for TaskModal {
                                                     ModalAction::TaskPage => {
                                                         display_task_page(ui, &mut self.task)
                                                     }
-                                                    _ => display_ticket_page(
-                                                        ui,
-                                                        &mut self.task,
-                                                        avail_size,
-                                                    ),
+                                                    _ => {}
                                                 };
                                             });
                                         });
@@ -248,7 +244,9 @@ impl DisplayModal for TaskModal {
                         });
                 });
             });
-        
+        if self.current_page_state == ModalAction::Close {
+            action_handler(ModalAction::Close);
+        }
         Some(self.current_page_state.clone())
     }
 }

@@ -117,11 +117,11 @@ impl ChatView {
 
         let note = self.messages.first().cloned().unwrap_or_default();
         let task_id = note.clone().task_id;
-        let salt = if let Some(id) = note.task_id {
-            id
-        } else { note.id };
+        // let salt = if let Some(id) = note.task_id {
+        //     id
+        // } else { note.id };
 
-        let id = ui.auto_id_with(salt);
+        let id = ui.auto_id_with(format!("Chat {}", self.title.clone()));
 
         
         TopBottomPanel::bottom(id)

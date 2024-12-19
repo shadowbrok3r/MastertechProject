@@ -13,10 +13,10 @@ impl SharedContext {
         if let Ok(action) = self.ui_actions_rx.try_recv() {
             match action {
                 TaskUiActions::OpenTaskModal(task) => {
-                    
                     if let Some(usr) = self.current_user.clone() {
-                        let task_modal = if !task.task_note.is_empty() {
-                            TaskModal::new(ChatView::new(
+                        let task_modal = if task.service_ticket.is_some() {
+                            TaskModal::new(
+                                ChatView::new(
                                     task.task_note.clone(),
                                     usr,
                                     self.store_users.clone()
@@ -24,15 +24,16 @@ impl SharedContext {
                                 task.clone()
                             )
                         } else {
-                            TaskModal::new(
-                                ChatView::new(
-                                    task.task_note.clone(),
-                                    usr,
-                                    self.store_users.clone(),
-                                ),
-                                task.clone()
-                            )
+                            let mut task_modal = TaskModal::default();
+                            task_modal.chat_view = ChatView::new(
+                                task.task_note.clone(),
+                                usr,
+                                self.store_users.clone()
+                            );
+                            task_modal.task = task.clone();
+                            task_modal
                         };
+                        
                         let title = format!("{} Task View", task_modal.title);
 
                         if self.opened_modals.get(&title).is_some() {
