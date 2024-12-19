@@ -172,6 +172,8 @@ pub struct SharedContext {
     pub switching_store: bool,
     pub refresh: bool,
     pub payload_len: u64,
+    #[serde(skip)]
+    pub timer: Option<web_time::Instant>
 }
 
 impl SharedContext {
@@ -291,6 +293,7 @@ impl SharedContext {
             show_tasks_viewport: HashMap::new(),
             switching_store: false,
             refresh: false,
+            timer: None
         }
     }
 
@@ -317,6 +320,7 @@ impl SharedContext {
         }
     }
 }
+
 fn setup_custom_fonts(ctx: &Context) {
     // Start with the default fonts (we will be adding to them rather than replacing them).
     let mut fonts = FontDefinitions::default();

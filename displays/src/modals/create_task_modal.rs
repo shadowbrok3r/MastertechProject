@@ -60,6 +60,7 @@ impl CreateTaskModal {
             store_users,
             prestashop_api_tx: Some(prestashop_api_tx),
             tur: Tur::default(),
+            current_page_state: ModalAction::TicketInfoPage,
             ..Default::default()
         }
     }
@@ -152,11 +153,11 @@ impl DisplayModal for CreateTaskModal {
                                                     if let Some(tx) = self.prestashop_api_tx.clone()
                                                     {
                                                         ui.add_space(50.0);
-                                                        self.create_task(
-                                                            ui,
-                                                            avail_size,
-                                                            tx.clone(),
-                                                        );
+                                                        if let ModalAction::Close = self
+                                                            .create_task(ui, avail_size, tx.clone())
+                                                        {
+                                                            self.current_page_state = ModalAction::Close
+                                                        }
                                                     }
                                                 }
                                                 ModalAction::ImportTask => {
@@ -197,8 +198,6 @@ impl CreateTaskModal {
         avail_size: Vec2,
         prestashop_api_tx: Sender<PrestashopPayload>,
     ) -> ModalAction {
-        let mut action = ModalAction::None;
-
         StripBuilder::new(ui)
             .size(Size::exact(avail_size.y / 4.0))
             .size(Size::exact(115.0))
@@ -365,12 +364,8 @@ impl CreateTaskModal {
                                                 )
                                                 .await
                                                 {
-                                                    Ok(records) => {
-                                                        info!("Created Records: {records:?}")
-                                                    }
-                                                    Err(e) => {
-                                                        error!("Error sending payload: {e:?}")
-                                                    }
+                                                    Ok(_) => info!("Created Records"),
+                                                    Err(e) => error!("Error sending payload: {e:?}")
                                                 }
                                             } else {
                                                 info!("Creating Regular Task");
@@ -384,13 +379,18 @@ impl CreateTaskModal {
                                                             payload.task_data.everest_initials =
                                                                 usr.everest_initials;
 
-                                                            match DATABASE
-                                                                .create::<Option<RecordId>>(TASK_TABLE)
-                                                                .content(payload.task_data)
-                                                                .await {
-                                                                    Ok(created_task) => info!("Created Task: {created_task:?}"),
-                                                                    Err(e) => error!("Error creating task: {e:?}")
-                                                                }
+                                                            let query: Result<surrealdb::Response, surrealdb::Error> = DATABASE
+                                                                .query("CREATE task CONTENT $content")
+                                                                .bind(("content", payload.task_data))
+                                                                .await;
+
+                                                            match query {
+                                                                Ok(mut res) => {
+                                                                    let result: Option<RecordId> = res.take(0).unwrap_or_default();
+                                                                    info!("Result: {result:?}");
+                                                                },
+                                                                Err(e) => error!("Error creating task: {e:?}")
+                                                            }
                                                                 
                                                         }
                                                     }
@@ -398,7 +398,7 @@ impl CreateTaskModal {
                                                 }
                                             }
                                         });
-                                        action = ModalAction::Close;
+                                        self.current_page_state = ModalAction::Close;
                                     }
                                 });
                             });
@@ -407,7 +407,7 @@ impl CreateTaskModal {
                 strip.empty();
             });
 
-        action
+        self.current_page_state.clone()
     }
 }
 

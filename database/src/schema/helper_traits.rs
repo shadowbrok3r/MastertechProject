@@ -1176,28 +1176,33 @@ impl EmployeeHelper for Employee {
         let mut api_call = Prestashop::default();
         let mut query = HashMap::new();
         info!("Pulling order {order_number}");
-        query.insert("filter[id_order]", order_number);
+        query.insert("filter[id]", order_number);
         query.insert("output_format", "JSON");
         api_call.display = "[id,id_address_invoice,id_customer,current_state,date_add,id_employee_sales_rep,id_employee_split_rep,id_store]";
 
 
         let order: prestashop_schema::Order = api_call
-            .request_subresources_by_id_wasm("orders", "order", order_number)
+            .find_resource_wasm("orders", query.clone())
             .await.context("Pulling order")?;
 
+        api_call.display = "full";
         if order.id_customer.is_empty() 
         {
             return Err(anyhow::anyhow!("order.id_customer is empty")).into();
         }
 
+        api_call.display = "[id,id_store,lastname,firstname,email,initials]";
+
         let sales_rep: Option<Employee>  = if !order.id_employee_sales_rep.eq("checkinshelf") && !order.id_employee_sales_rep.eq("0"){
-            api_call.display = "[id,id_store,lastname,firstname,email,initials]";
+            let mut new_query = query.clone();
+            new_query.clear();
+            new_query.insert("filter[id]", &order.id_employee_sales_rep);
+            new_query.insert("output_format", "JSON");
             Some(
                 api_call
-                .request_subresources_by_id_wasm(
+                .find_resource_wasm(
                     "employees",
-                    "employee",
-                    &order.id_employee_sales_rep,
+                    new_query
                 )
                 .await.context("Pulling employee")?
             )
@@ -1208,12 +1213,14 @@ impl EmployeeHelper for Employee {
         };
 
         let split_rep: Option<Employee> = if !order.id_employee_split_rep.eq("0") {
-            api_call.display = "[id,id_store,lastname,firstname,email,initials]";
+            let mut new_query = query.clone();
+            new_query.clear();
+            new_query.insert("filter[id]", &order.id_employee_split_rep);
+            new_query.insert("output_format", "JSON");
             let employee_2: Employee = api_call
-                .request_subresources_by_id_wasm(
+                .find_resource_wasm(
                     "employees",
-                    "employee",
-                    &order.id_employee_split_rep,
+                    new_query
                 )
                 .await.context("Pulling split rep")?;
 
@@ -1230,8 +1237,15 @@ impl EmployeeHelper for Employee {
             cust
         } else {
             api_call.display = "[lastname,firstname,email]";
+            let mut new_query = query.clone();
+            new_query.clear();
+            new_query.insert("filter[id]", &order.id_customer);
+            new_query.insert("output_format", "JSON");
             api_call
-                .request_subresources_by_id_wasm("customers", "customer", &order.id_customer)
+                .find_resource_wasm(
+                    "customers", 
+                    new_query
+                )
                 .await.context("Pulling customer")?
         };
         

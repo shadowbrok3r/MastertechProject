@@ -58,7 +58,7 @@ pub struct TaskAuditViewer {
     pub services_viewer: TaskRowViewer,
     loading: bool,
     index: HashMap<String, i32>,
-    counter: i32,
+    time: Option<web_time::Instant>,
     pub service_map: HashMap<String, DataTable<PrestashopOrderData>>,
 }
 
@@ -71,8 +71,8 @@ impl TaskAuditViewer {
             order_channel,
             loading: false,
             index: HashMap::new(),
-            counter: 0,
             service_map: HashMap::new(),
+            time: None
         }
     }
 
@@ -206,6 +206,7 @@ impl TaskAuditViewer {
                     } else {
                         Vec::new()
                     };
+                    self.time = Some(web_time::Instant::now());
                     Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx);
                 }
                 ui.add_space(10.);
@@ -226,6 +227,7 @@ impl TaskAuditViewer {
                     } else {
                         Vec::new()
                     };
+                    self.time = Some(web_time::Instant::now());
                     Self::get_services(selected.clone(), current_user.clone(), order_tx, svcs, start_idx);
                 }
                 ui.add_space(10.);
@@ -302,6 +304,7 @@ impl TaskAuditViewer {
                         Vec::new()
                     };
                     info!("Services from cache: {:?}", svcs.clone());
+                    self.time = Some(web_time::Instant::now());
                     Self::get_services(selected.clone(), current_user, order_tx, svcs, start_idx);
                 }
             
@@ -309,6 +312,12 @@ impl TaskAuditViewer {
                     ui.ctx().request_repaint();
                     ui.add_space(10.);
                     Spinner::new().color(ui.style().visuals.error_fg_color).ui(ui);
+                }
+                
+                if let Some(time) = self.time.clone() {
+                    if time.elapsed() > web_time::Duration::from_secs(5) {
+                        self.loading = false;
+                    }
                 }
             });
             ui.add_space(5.);
@@ -326,6 +335,7 @@ impl TaskAuditViewer {
         current_orders: Vec<String>,
         start_idx: i32
     ) {
+        let time = web_time::Instant::now();
         let usr = current_user.clone().unwrap_or_default();
         let id = usr.id_prestashop.unwrap_or_default();
         let mut employee = Employee::default();
@@ -358,8 +368,7 @@ impl TaskAuditViewer {
             },
             TaskAudit::MyInRepair => {
                 PlatformSpawner::spawn(async move {
-                    // Fetch services within the range
-                    let time = web_time::Instant::now();
+                    // Fetch services within the range            
                     let orders = employee
                         .get_my_services_in_repair()
                         .await;
@@ -379,15 +388,13 @@ impl TaskAuditViewer {
                         },
                         Err(e) => log::info!("Error getting check-in shelf services: {:?}", e)
                     };
-                    let elapsed = time.elapsed();
-                    info!("Time elapsed: {elapsed:?}");
                 });
             },
             TaskAudit::InRepair => {
                 PlatformSpawner::spawn(async move {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("30", start_idx, start_idx+10)
+                        .get_services_by_status("30", start_idx, start_idx+20)
                         .await;
 
                     // Handle the fetched services
@@ -459,7 +466,7 @@ impl TaskAuditViewer {
                 PlatformSpawner::spawn(async move {
                     // Fetch services within the range
                     let orders = employee
-                        .get_my_services_in_repair()
+                        .get_all_my_services()
                         .await;
 
                     // Handle the fetched services
@@ -480,13 +487,14 @@ impl TaskAuditViewer {
                 });
             },
         }
+        let elapsed = time.elapsed();
+        info!("Time elapsed: {elapsed:?}");
     }
 
-    pub fn receive(&mut self, current_user: User, store_users: Vec<User>, frame: &mut eframe::Frame) {
+    pub fn receive(&mut self, current_user: User, store_users: Vec<User>, _frame: &mut eframe::Frame) {
         if let  Ok(order) = self.order_channel.1.try_recv() {
-            self.counter += 1;
             self.loading = true;
-
+            
             let key = self.audit_selection.clone().as_str();
             let sales_rep = order
                 .sales_rep
@@ -548,17 +556,15 @@ impl TaskAuditViewer {
             }
 
 
-            if self.counter == 10 {
-                self.counter = 0;
-                self.loading = false;
-                if let Some(storage) = frame.storage_mut() {
-                    match serde_json::to_string(&self.service_map) {
-                        Ok(service_map) => storage.set_string("service_data", service_map),
-                        Err(e) => info!("error converting service_data to string: {e:?}"),
-                    }
-                }
-            }
-            log::warn!("idx: {:?}\ncounter: {}", self.index, self.counter);
+            // if let Sself.time.el {
+                // self.loading = false;
+                // if let Some(storage) = frame.storage_mut() {
+                //     match serde_json::to_string(&self.service_map) {
+                //         Ok(service_map) => storage.set_string("service_data", service_map),
+                //         Err(e) => info!("error converting service_data to string: {e:?}"),
+                //     }
+                // }
+            // }
         }
     
         if let Ok(notes) = self.services_viewer.notes_channel.1.try_recv() {
