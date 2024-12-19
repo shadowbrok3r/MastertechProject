@@ -62,6 +62,6 @@ jobs:
     steps:
       - uses: actions-hub/kubectl@master
         env:
-          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          KUBE_CONFIG: ${{ secrets.KUBECONFIG }}
         with:
           args: rollout restart deployment mtechserver-beta -n rust
