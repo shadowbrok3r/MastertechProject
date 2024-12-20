@@ -300,6 +300,124 @@ impl<'a> Prestashop<'a> {
 
         Ok(response) 
     }
+
+    pub async fn create_customer_thread(
+        &self, 
+        service_number: &str, 
+        id_customer: &str
+    ) 
+        -> anyhow::Result<super::helper_traits::Response, anyhow::Error> 
+    {
+        // Prepare the XML payload
+        let payload = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
+                <customer_thread>
+                    <id_lang>1</id_lang>
+                    <id_contact>0</id_contact>
+                    <id_order>{}</id_order>
+                    <token>{}</token>
+                    <id_customer >{}</id_customer>
+                </customer_thread>
+            </prestashop>"#, 
+            service_number, service_number, id_customer
+        );
+
+        // Send HTTP POST request with the XML payload
+        info!("Payload: {:?}", payload);
+        let response_text = self.client
+            .post(format!("{PRESTASHOP_API_URL_WASM}/customer_threads"))
+            .header("Content-type", "application/xml")
+            .body(payload)
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        info!("response text: {response_text:?}");
+        // Parse the XML response to extract values
+        let id = response_text
+            .split("<id><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></id>").next())
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+
+        let date_add = response_text
+            .split("<date_add><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></date_add>").next())
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
+
+        let date_upd = response_text
+            .split("<date_upd><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></date_upd>").next())
+            .unwrap_or(""); // Optional field, so we handle it accordingly
+
+        Ok(super::helper_traits::Response {
+            date_add: super::helper_traits::convert_date_string(date_add)?.to_string(), //,
+            id: id.to_string(),
+            date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
+        })
+    }
+
+    pub async fn create_customer_message(
+        &self,
+        id_employee: &str,
+        id_customer_thread: &str,
+        note: &str
+    ) -> anyhow::Result<super::helper_traits::Response, anyhow::Error> {
+        // Prepare the XML payload
+        let payload = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
+                <customer_message>
+                    <id_lang>1</id_lang>
+                    <id_employee>{}</id_employee>
+                    <id_customer_thread>{}</id_customer_thread>
+                    <message>{}</message>
+                    <private>1</private>
+                    <id_order_message_type>0</id_order_message_type>
+                </customer_message>
+            </prestashop>"#,
+            id_employee, id_customer_thread, note
+        );
+
+        // Send HTTP POST request with the XML payload
+        info!("Payload: {:?}", payload);
+        let response_text = self.client
+            .post(format!("{PRESTASHOP_API_URL_WASM}/customer_messages"))
+            .header("Content-type", "application/xml")
+            .body(payload)
+            .send()
+            .await?
+            .text()
+            .await?;
+
+        info!("response text: {response_text:?}");
+        // Parse the XML response to extract values
+        let id = response_text
+            .split("<id><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></id>").next())
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
+
+        let date_add = response_text
+            .split("<date_add><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></date_add>").next())
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
+
+        let date_upd = response_text
+            .split("<date_upd><![CDATA[")
+            .nth(1)
+            .and_then(|s| s.split("]]></date_upd>").next())
+            .unwrap_or(""); // Optional field, so we handle it accordingly
+
+        Ok(super::helper_traits::Response {
+            date_add: super::helper_traits::convert_date_string(date_add)?.to_string(), //,
+            id: id.to_string(),
+            date_upd: super::helper_traits::convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]

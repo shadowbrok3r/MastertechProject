@@ -308,11 +308,10 @@ impl CreateTaskModal {
                                         let date = NaiveDateTime::new(self.due_date, time);
                                         let y = date.and_utc().to_rfc3339();
                                         let so = self.tur.ticket_data.service_number.clone();
-                                        let service_number =
-                                            if !so.is_empty() { Some(so) } else { None };
+                                        let service_number = if !so.is_empty() { Some(so) } else { None };
 
                                         let assignee = self.assignee.clone();
-                                        let mut payload = self.tur.clone();                                        
+                                        let mut payload = self.tur.clone();                   
                                         payload.task_data.priority = self.task_priority.clone();
                                         payload.task_data.due_date = y.clone();
                                         payload.task_data.completed = false;
@@ -372,14 +371,13 @@ impl CreateTaskModal {
                                             } else {
                                                 info!("Creating Regular Task");
                                                 let email = format!("{assignee}@pclaptops.com");
-
+                                                
                                                 match get_user_from_email(email).await {
                                                     Ok(user) => {
                                                         if let Some(usr) = user {
 
                                                             payload.task_data.assignee = usr.id;
-                                                            payload.task_data.everest_initials =
-                                                                usr.everest_initials;
+                                                            payload.task_data.everest_initials = usr.everest_initials;
 
                                                             let query: Result<surrealdb::Response, surrealdb::Error> = DATABASE
                                                                 .query("CREATE task CONTENT $content")
@@ -388,8 +386,7 @@ impl CreateTaskModal {
 
                                                             match query {
                                                                 Ok(mut res) => {
-                                                                    let result: Option<RecordId> = res.take(0).unwrap_or_default();
-                                                                    info!("Result: {result:?}");
+                                                                    let _: Option<RecordId> = res.take(0).unwrap_or_default();
                                                                 },
                                                                 Err(e) => error!("Error creating task: {e:?}")
                                                             }
