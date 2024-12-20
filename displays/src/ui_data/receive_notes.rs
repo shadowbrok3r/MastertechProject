@@ -6,10 +6,11 @@ use surrealdb::Action;
 impl SharedContext {
     pub fn receive_notes(&mut self) {
         if let Ok(mut note_payload) = self.notes_rx.try_recv() {
-            info!("New note: {:?}", note_payload);
+            info!("receive_notes -> New note: {:?}", note_payload);
             self.new_note = true;
             
-            for (_, modal) in self.opened_modals.iter_mut() {
+            for (title, modal) in self.opened_modals.iter_mut() {
+                info!("receive_notes -> {}-{:?}", title, modal);
                 if let Some(ref note_task_id) = note_payload.1.task_id {
                     if let ModalType::TaskModal(task_modal) = modal {
                         handle_live_notes(note_payload.clone(), &mut task_modal.task).unwrap_or(());
@@ -30,6 +31,7 @@ impl SharedContext {
                             );
 
                         if let Some(task) = task {
+                            info!("receive_notes -> We have a task, inserting note into modal");
                             handle_live_notes(note_payload.clone(), task).unwrap_or(());
                             if task.id == *note_task_id {
                                 if let Action::Delete = note_payload.0 {
@@ -37,6 +39,11 @@ impl SharedContext {
                                 } else {
                                     chat_view.insert_note(&mut note_payload.1);
                                 }
+                            }
+                        } else {
+                            info!("receive_notes -> No task, inserting note into modal");
+                            if let Action::Create = note_payload.0 {
+                                chat_view.insert_note(&mut note_payload.1);
                             }
                         }
                     }

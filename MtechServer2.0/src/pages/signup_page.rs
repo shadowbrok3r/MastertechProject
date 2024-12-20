@@ -1,7 +1,7 @@
 use serde::Serialize;
 use crate::app_state::{AppState, MtechServer};
 use crossbeam::channel::Sender;
-use database::{schema::Store, Database};
+use database::{schema::{helper_traits::UserHelper, Store, User}, Database};
 use eframe::egui::{Align, Button, CentralPanel, Color32, ComboBox, Context, Direction, FontId, Frame, Layout, RichText, TextEdit, Vec2, Widget};
 use egui_extras::{Size, StripBuilder};
 use log::{error, info};
@@ -20,27 +20,43 @@ pub struct Signup {
     pub everest_initials: String,
     pub email: String,
     pub password: String,
+    pub id_prestashop: Option<u64>,
+    pub id_store: Option<String>,
 }
 
 impl Signup{
     pub fn signup(&self, db_tx: Sender<anyhow::Result<Database, anyhow::Error>>, _appstate_tx: Sender<AppState>){
-        let first_initial = self.first_name.chars().nth(0).unwrap();
-        let last_initial = self.last_name.chars().nth(0).unwrap();
+        let first_initial = self.first_name.clone().chars().nth(0).unwrap_or_default();
+        let last_initial = self.last_name.clone().chars().nth(0).unwrap_or_default();
 
         let initials = format!("{first_initial}{last_initial}").to_uppercase();
 
-
-        let signup: Signup = Self { // serde_json::json!(
+        let mut signup: Signup = Self { // serde_json::json!(
             name: format!("{} {}", self.first_name.clone(), self.last_name.clone()),
             email: self.email.clone(),
             password: self.password.clone(),
             everest_initials: initials,
             store: self.store.clone(),
+            first_name: self.first_name.clone(),
+            last_name: self.last_name.clone(),
             ..Default::default()
         };
 
         let email = signup.email.clone();
         spawn_local(async move {
+            let mut user = User::default();
+            user.email = email.clone();
+            let usr = user.find_employee_by_email().await;
+
+            if let Ok(employee) = usr {
+                signup = Signup {
+                    id_prestashop: Some(employee.id.parse::<u64>().unwrap_or_default()),
+                    id_store: Some(employee.id_store),
+                    everest_initials: employee.initials,
+                    ..signup.clone()
+                };
+            }
+
             let database = Database::signup(signup.clone(), email).await;
 
             // #[cfg(target_arch="wasm32-unknown-unknown")]
@@ -69,6 +85,7 @@ impl Signup{
                                 let encoded: String = general_purpose::STANDARD.encode(&compressed);
                                 info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), usr.len());
                                 wasm_cookies::set("user", &encoded, &cookie_opts);
+                                wasm_cookies::set("jwt", cookie.as_insecure_token(), &cookie_opts);
                             }
                             info!("set cookies");
                         }else{ info!("no usr"); }

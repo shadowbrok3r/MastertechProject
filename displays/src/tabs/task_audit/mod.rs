@@ -1,7 +1,7 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use log::info;
 use surrealdb::RecordId;
 use crate::{app_state::SharedContext, PlatformSpawner};
@@ -571,7 +571,7 @@ impl TaskAuditViewer {
             info!("Got notes: {notes:?}");
             if self.services_viewer.selected.is_some() {
                 info!("Creating chat view");
-                self.services_viewer.chat_view = ChatView::new(notes, current_user, store_users);
+                self.services_viewer.chat_view = ChatView::new(notes, current_user, store_users, None);
             }
         }
 
@@ -586,22 +586,22 @@ impl TaskAuditViewer {
 }
 
 impl TaskRowViewer {
-    async fn get_order_notes(order_number: String) -> anyhow::Result<Vec<TaskNotePayload>, anyhow::Error> {
-        let existing_notes = get_task_notes_from_service_number(order_number.clone()).await?;
+    async fn get_order_notes(service_number: String) -> anyhow::Result<Vec<TaskNotePayload>, anyhow::Error> {
+        let existing_notes = get_task_notes_from_db_with_service_number(service_number.clone()).await?;
         if !existing_notes.is_empty() {
             info!("We already have notes");
             Ok(existing_notes)
         } else {
             let mut note = TaskNotePayload::default();
-            let notes = note.get_notes_from_order_number(&order_number).await?;
+            let notes = note.get_notes_from_service_number(&service_number).await?;
             info!("notes: {notes:?}");
             Ok(notes)
         }
     }
 
-    async fn get_prestashop_order(order_number: String) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
+    async fn get_prestashop_order(service_number: String) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
         info!("Did not have a task, creating");
-        let value = get_prestashop_payload(&order_number).await?;
+        let value = get_prestashop_payload(&service_number).await?;
         let mut customer = CustomerData::default();
         let mut ticket = TicketPayload::default();
         let mut task: TaskPayload = TaskPayload::default();
@@ -835,9 +835,9 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
                     self.chat_view.messages.clear();
                     self.selected = Some(row.clone());
                     let notes_tx = self.notes_channel.0.clone();
-                    let order_number = row.0.clone();
+                    let service_number = row.0.clone();
                     PlatformSpawner::spawn(async move {
-                        match Self::get_order_notes(order_number).await {
+                        match Self::get_order_notes(service_number).await {
                             Ok(notes) => notes_tx.try_send(notes).unwrap(),
                             Err(e) => info!("Error {e:?}"),
                         };

@@ -1,5 +1,6 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{helper_traits::TaskNotePayloadHelper, TaskNotePayload, User}};
+use surrealdb::RecordId;
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use crate::{PlatformSpawner, Spawner};
@@ -19,7 +20,8 @@ pub struct ChatView{
     pub delete: Option<TaskNotePayload>,
     pub users: BTreeSet<String>,
     pub edit_text: HashMap<String, TaskNotePayload>,
-    pub allow_edit: HashSet<String>
+    pub allow_edit: HashSet<String>,
+    pub task_id: Option<RecordId>
 }
 
 impl Default for ChatView{
@@ -33,12 +35,13 @@ impl Default for ChatView{
             users: BTreeSet::new(),
             edit_text: HashMap::new(),
             allow_edit: HashSet::new(),
+            task_id: None
         }
     }
 }
 
 impl ChatView {
-    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, users: Vec<User>) -> Self {
+    pub fn new(messages: Vec<TaskNotePayload>, current_user: User, users: Vec<User>, task_id: Option<RecordId>) -> Self {
         // info!("Before messages: {messages:?}");
         let mut users_set = BTreeSet::new();
         for user in users {
@@ -61,7 +64,8 @@ impl ChatView {
             delete: None,
             users: users_set,
             edit_text: note_ids,
-            allow_edit: HashSet::new()
+            allow_edit: HashSet::new(),
+            task_id
         }
     }
 
@@ -115,13 +119,9 @@ impl ChatView {
             .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(c_panel_marg)
             .inner_margin(Margin::same(6.0)).rounding(Rounding::same(10.0));
 
-        let note = self.messages.first().cloned().unwrap_or_default();
-        let task_id = note.clone().task_id;
-        // let salt = if let Some(id) = note.task_id {
-        //     id
-        // } else { note.id };
+        let task_id = self.task_id.clone();
 
-        let id = ui.auto_id_with(format!("Chat {}", self.title.clone()));
+        let id = ui.auto_id_with(format!("Chat {:?}", task_id));
 
         
         TopBottomPanel::bottom(id)
@@ -167,12 +167,23 @@ impl ChatView {
                             ..Default::default() 
                         };
 
-                        // If there are multiple threads, assign each as needed (retain only the last)
+                        // We only need a single thread ID
                         new_note.id_customer_thread = self.messages.first().cloned().unwrap_or_default().id_customer_thread;
 
+                        // If there is a thread, its definitely associated to a Service
+                        // otherwise, it could be a regular task with no associated Service
+                        // if let Some(thread) = &new_note.id_customer_thread {
+                        //     if !thread.is_empty() {
+
+                        //     }
+                        // } else {
+
+                        // }
+
                         info!("new_note: {new_note:?}");
+
                         PlatformSpawner::spawn(async move {
-                            if let Err(e) = new_note.create_task_note().await {
+                            if let Err(e) = new_note.handle_note_creation().await {
                                 error!("Failed to create task note: {:?}", e);
                             } else {
                                 info!("Task note successfully created.");

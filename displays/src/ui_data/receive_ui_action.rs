@@ -19,7 +19,8 @@ impl SharedContext {
                                 ChatView::new(
                                     task.task_note.clone(),
                                     usr,
-                                    self.store_users.clone()
+                                    self.store_users.clone(),
+                                    Some(task.id.clone())
                                 ),
                                 task.clone()
                             )
@@ -28,7 +29,8 @@ impl SharedContext {
                             task_modal.chat_view = ChatView::new(
                                 task.task_note.clone(),
                                 usr,
-                                self.store_users.clone()
+                                self.store_users.clone(),
+                                Some(task.id.clone())
                             );
                             task_modal.task = task.clone();
                             task_modal
@@ -61,13 +63,13 @@ impl SharedContext {
                     }
                 }
                 TaskUiActions::OpenChatModal(pld) => {
-                    info!("Got Chat action: {:?}", pld.0.clone());
+                    info!("receive_ui_action -> Got Chat action: {:?}", pld.0.clone());
 
                     let note_payload = pld.clone();
                     PlatformSpawner::spawn(async move {
                         match get_or_insert_notes(note_payload).await {
-                            Ok(_) => info!("get_or_insert_notes ran ok"),
-                            Err(e) => info!("Error with get_or_insert_notes: {e:?}"),
+                            Ok(_) => info!("receive_ui_action -> get_or_insert_notes ran ok"),
+                            Err(e) => info!("receive_ui_action -> Error with get_or_insert_notes: {e:?}"),
                         }
                     });
                     if let Some(current_user) = self.current_user.as_ref() {
@@ -75,6 +77,7 @@ impl SharedContext {
                             pld.1.to_owned(),
                             current_user.clone(), // Some(pld.0.clone()),
                             self.store_users.clone(),
+                            Some(pld.0.clone())
                         );
                         let task = self
                             .tasks
@@ -94,19 +97,20 @@ impl SharedContext {
                                 .entry(title)
                                 .or_insert(ModalType::ChatView(chat_modal));
                         }
-                        // info!("self.opened_modals: {:?}", self.opened_modals);
+                        // info!("receive_ui_action -> self.opened_modals: {:?}", self.opened_modals);
                     }
                 }
                 TaskUiActions::Response(_res) => (),
                 TaskUiActions::Editing(_record_id) => (),
                 TaskUiActions::CommitChanges(_record_id) => (),
                 TaskUiActions::OpenViewport(task) => {
-                    info!("TaskUiActions::OpenViewport");
+                    info!("receive_ui_action -> TaskUiActions::OpenViewport");
                     let modal = TaskModal::new(
                         ChatView::new(
                             task.task_note.clone(),
                             self.current_user.clone().unwrap_or_default(),
                             self.store_users.clone(),
+                            Some(task.id.clone())
                         ),
                         task.clone(),
                     );
@@ -120,7 +124,7 @@ impl SharedContext {
                             is_visible: Arc::new(AtomicBool::new(true)),
                             modal: ModalType::TaskModal(modal),
                         });
-                        info!("self.show_tasks_viewport: {:?}", self.show_tasks_viewport);
+                        info!("receive_ui_action -> self.show_tasks_viewport: {:?}", self.show_tasks_viewport);
                 },
                 TaskUiActions::None => (),
                 
@@ -145,16 +149,16 @@ async fn get_or_insert_notes(note_payload: (surrealdb::RecordId, Vec<TaskNotePay
 
     if let Some(note) = existing_note {
         match note.get_thread_id_from_order().await {
-            Ok(thread_id) => info!("Thread ID: {thread_id:?}"),
-            Err(e) => info!("Error getting thread ID from order: {e:?}"),
+            Ok(thread_id) => info!("receive_ui_action -> Thread ID: {thread_id:?}"),
+            Err(e) => info!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
         }
     } else {
-        info!("There were not any notes, checking prestashop");
+        info!("receive_ui_action -> There were not any notes, checking prestashop");
         let mut tmp_note = TaskNotePayload::default();
         tmp_note.task_id = Some(task_id);
         match tmp_note.get_thread_id_from_order().await {
-            Ok(thread_id) => info!("Thread ID: {thread_id:?}"),
-            Err(e) => info!("Error getting thread ID from order: {e:?}"),
+            Ok(thread_id) => info!("receive_ui_action -> Thread ID: {thread_id:?}"),
+            Err(e) => info!("receive_ui_action -> Error getting thread ID from order: {e:?}"),
         }
     }
     Ok(())

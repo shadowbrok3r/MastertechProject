@@ -102,17 +102,20 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
             }
             style.raised ^= true;
         } else if text.starts_with('@') {
-            style.usertag ^= true;
+            style.usertag = true;
             skip = 0;
+            let end_idx = text[1..]
+                .find(&[' ', '\n'][..])
+                .map_or_else(|| text.len(), |i| i + 2);
             // Find the end of the mention (e.g., until a space or end of text)
-            let end_idx = text.find(' ').unwrap_or_else(|| text.len());
+            // let end_idx = text.find(' ').unwrap_or_else(|| text.len());
 
             // Extract the mention text
             let mention_text = &text[..end_idx];
 
             // Append the '@' symbol with Pinkish color
             job.append(
-                "@",
+                &text[0..],
                 0.0,
                 TextFormat::simple(FontId::default(), Color32::from_rgb(191, 33, 101)),
             );
@@ -126,6 +129,7 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
 
             // Move to the text after the mention
             text = &text[end_idx..];
+            style.usertag = false;
         } else {
             skip = 0;
         }
@@ -135,6 +139,7 @@ pub fn highlight_easymark(egui_style: &Style, mut text: &str) -> text::LayoutJob
         let line_end = text[skip..]
             .find('\n')
             .map_or_else(|| text.len(), |i| (skip + i + 1));
+        // i think i need to handle the @ completely separate from the rest of the special chars...
         let end = text[skip..]
             .find(&['*', '`', '~', '_', '/', '$', '^', '\\', '<', '[', '@'][..])
             .map_or_else(|| text.len(), |i| (skip + i).max(1));

@@ -100,17 +100,17 @@ pub async fn query_user_from_email(email: String) -> Result<User, Error> {
     user.clone().context("No User Found") // Ok(user.unwrap())
 }
 
-pub async fn get_task_notes_from_service_number(service_number: String) -> Result<Vec<TaskNotePayload>, Error> {
+pub async fn get_task_notes_from_db_with_service_number(service_number: String) -> Result<Vec<TaskNotePayload>, Error> {
     debug!("get_task_from_service_number");
     let query_results: Vec<TaskNotePayload> = DATABASE
-        .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number")
+        .query("SELECT * FROM task_note WHERE task_id.service_number == $service_number PARALLEL")
         .bind(("service_number", service_number.clone()))
         .await?
         .take(0)?;
 
     if query_results.is_empty() {
         let alt_query: Vec<TaskNotePayload> = DATABASE
-            .query("SELECT * FROM task_note WHERE service_number == $service_number")
+            .query("SELECT * FROM task_note WHERE service_number == $service_number PARALLEL")
             .bind(("service_number", service_number))
             .await?
             .take(0)?;
@@ -371,7 +371,7 @@ pub async fn get_notifications(
     debug!("get_notifications");
     DATABASE.set("id", id).await?;
     let notifications: Vec<Notification> = DATABASE
-        .query("SELECT * FROM notification WHERE user == $id")
+        .query("SELECT * FROM notification WHERE user == $id PARALLEL")
         .await?
         .take(0)?;
     // info!("Notifications: {:?}", notifications.clone());
@@ -552,9 +552,11 @@ pub async fn create_full_task_payload(
 
     info!("create_task_record: {create_task_record:?}");
 
-    for mut note in task_notes {
-        let res = note.create_task_note().await;
-        info!("Task Note Creation from Mastertech: {res:?}");
+    if !task_notes.is_empty() {
+        for mut note in task_notes {
+            let res = note.handle_note_creation().await;
+            info!("Task Note Creation from Mastertech: {res:?}");
+        }
     }
 
     Ok(())
