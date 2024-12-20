@@ -9,6 +9,7 @@ use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use log::{debug, info, warn};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Debug};
 use surrealdb::RecordId;
@@ -93,9 +94,8 @@ pub async fn query_user_from_email(email: String) -> Result<User, Error> {
             .await?;
     }
 
-    info!("Email: {}", email);
+    info!("schema/utilities.rs -> Email: {}", email);
     let user: Option<User> = DATABASE.query(query).await?.take(0)?;
-    info!("user: {:?}", user.clone());
     // let usr: User = serde_json::from_value(user.get(0).unwrap().clone())?;
     user.clone().context("No User Found") // Ok(user.unwrap())
 }
@@ -114,10 +114,10 @@ pub async fn get_task_notes_from_db_with_service_number(service_number: String) 
             .bind(("service_number", service_number))
             .await?
             .take(0)?;
-        info!("get_task_notes_from_service_number: {alt_query:?}");
+        info!("schema/utilities.rs -> get_task_notes_from_service_number: {alt_query:?}");
         Ok(alt_query)
     } else {
-        info!("get_task_notes_from_service_number: {query_results:?}");
+        info!("schema/utilities.rs -> get_task_notes_from_service_number: {query_results:?}");
         Ok(query_results)
     }
 }
@@ -132,7 +132,7 @@ where
         .query("SELECT * FROM $table WHERE id == $id")
         .await?
         .take(0)?;
-    info!("Record: {:?}", record);
+    info!("schema/utilities.rs -> Record: {:?}", record);
     Ok(record)
 }
 
@@ -149,7 +149,7 @@ where
     DATABASE.set("id", id).await?;
     DATABASE.set("table", table).await?;
     let record: Option<bool> = DATABASE.query(query.clone()).await?.take(1)?;
-    info!("Query: {:?}  // {}", record, query);
+    info!("schema/utilities.rs -> Query: {:?}  // {}", record, query);
     Ok(record)
 }
 
@@ -351,7 +351,7 @@ pub async fn modify_connected_client(
 }
 
 pub async fn delete_task(id: RecordId) -> Result<(), Error> {
-    info!("deleting id: {id:?}");
+    info!("schema/utilities.rs -> deleting id: {id:?}");
     let x = id.clone();
     let delete_result: Option<Record> = DATABASE.delete(
         (TASK_TABLE, id.key().to_string())
@@ -359,7 +359,7 @@ pub async fn delete_task(id: RecordId) -> Result<(), Error> {
     .await
     .unwrap();
 
-    info!("delete_result: {delete_result:?} for {:?}", x.key().to_string());
+    info!("schema/utilities.rs -> delete_result: {delete_result:?} for {:?}", x.key().to_string());
     
     Ok(())
 }
@@ -374,7 +374,7 @@ pub async fn get_notifications(
         .query("SELECT * FROM notification WHERE user == $id PARALLEL")
         .await?
         .take(0)?;
-    // info!("Notifications: {:?}", notifications.clone());
+    // info!("schema/utilities.rs -> Notifications: {:?}", notifications.clone());
     tx.try_send(notifications)?;
     Ok(())
 }
@@ -400,12 +400,12 @@ pub trait TaskNoteMod {
 impl TaskNoteMod for TaskNotePayload {
     async fn delete_note(&mut self) -> Result<(), Error> {
         let id = self.id.clone();
-        info!("deleting id: {:?}", id.clone());
+        info!("schema/utilities.rs -> deleting id: {:?}", id.clone());
         DATABASE.set("id", id.key().to_string().clone()).await?;
         let y: Option<Record> = DATABASE
             .delete((TASK_NOTE_TABLE, id.key().to_string()))
             .await?;
-        info!("Deleted note: {:?}", y);
+        info!("schema/utilities.rs -> Deleted note: {:?}", y);
         Ok(())
     }
 }
@@ -422,7 +422,7 @@ pub async fn update_task_notes(new_msg: String, task_id: RecordId) -> Result<(),
     DATABASE.set("note", task_note).await.unwrap();
     let update_task: Vec<Record> = DATABASE.query(query).await?.take(0)?;
 
-    info!("Updated notes: {update_task:?}");
+    info!("schema/utilities.rs -> Updated notes: {update_task:?}");
     Ok(())
 }
 
@@ -438,7 +438,7 @@ impl NotificationMod for Notification {
         let query: Option<Record> = DATABASE
             .delete(("notification", self.id.key().to_string()))
             .await?;
-        info!("Deleted notification: {query:?}");
+        info!("schema/utilities.rs -> Deleted notification: {query:?}");
         Ok(())
     }
 
@@ -448,7 +448,7 @@ impl NotificationMod for Notification {
             .query("UPDATE notification SET status = 'Read' WHERE id == $id")
             .await?
             .take(0)?;
-        info!("Updated notification: {query:?}");
+        info!("schema/utilities.rs -> Updated notification: {query:?}");
         Ok(())
     }
 }
@@ -462,7 +462,7 @@ pub async fn create_full_task_payload(
     task_notes: Vec<TaskNotePayload>,
     send_specs: bool,
 ) -> anyhow::Result<(), anyhow::Error> {
-    info!("Send_Payload");
+    info!("schema/utilities.rs -> Send_Payload");
     let queried_salesman = query_user_from_email(ticket_data.salesman.clone()).await?;
     let _queried_tech = query_user_from_email(ticket_data.tech.clone()).await?;
 
@@ -487,7 +487,7 @@ pub async fn create_full_task_payload(
             .update(cust.key().to_string())
             .content(customer_data.clone())
             .await?;
-        info!("Customer updated: {update_cust_record:?}");
+        info!("schema/utilities.rs -> Customer updated: {update_cust_record:?}");
 
         if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await? {
             if send_specs {
@@ -495,25 +495,25 @@ pub async fn create_full_task_payload(
                     .update(computer_record.key().to_string())
                     .content(computer_data)
                     .await?;
-                info!("create_computer_record: {create_computer_record:?}");
+                info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
             }
         } else {
             let create_computer_record: Option<RecordId> = DATABASE
                 .create(COMPUTER_TABLE)
                 .content(computer_data)
                 .await?;
-            info!("create_computer_record: {create_computer_record:?}");
+            info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
         }
         if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await? {
             let service_ticket_record: Vec<RecordId> = DATABASE
                 .update(ticket.key().to_string())
                 .content(ticket_data)
                 .await?;
-            info!("service_ticket_record: {service_ticket_record:?}");
+            info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
         } else {
             let service_ticket_record: Option<RecordId> =
                 DATABASE.create(TICKET_TABLE).content(ticket_data).await?;
-            info!("service_ticket_record: {service_ticket_record:?}");
+            info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
         }
     } else {
         match DATABASE
@@ -521,7 +521,7 @@ pub async fn create_full_task_payload(
             .content(customer_data.clone())
             .await
         {
-            Ok(create_cust_record) => info!("Created Record: {create_cust_record:?}"),
+            Ok(create_cust_record) => info!("schema/utilities.rs -> Created Record: {create_cust_record:?}"),
             Err(e) => log::error!("Error with create_cust_record: {e:?}"),
         }
         if send_specs {
@@ -530,7 +530,7 @@ pub async fn create_full_task_payload(
                 .content(computer_data)
                 .await
             {
-                Ok(create_computer_record) => info!("Created Record: {create_computer_record:?}"),
+                Ok(create_computer_record) => info!("schema/utilities.rs -> Created Record: {create_computer_record:?}"),
                 Err(e) => log::error!("Error with create_computer_record: {e:?}"),
             }
         }
@@ -539,23 +539,23 @@ pub async fn create_full_task_payload(
             .content(ticket_data)
             .await
         {
-            Ok(create_ticket_record) => info!("Created Record: {create_ticket_record:?}"),
+            Ok(create_ticket_record) => info!("schema/utilities.rs -> Created Record: {create_ticket_record:?}"),
             Err(e) => log::error!("Error with create_ticket_record: {e:?}"),
         }
     }
 
-    info!("Task Data: {:?}", &task_data);
+    info!("schema/utilities.rs -> Task Data: {:?}", &task_data);
 
     let create_task_record: Option<Record> = DATABASE
         .create(TASK_TABLE)
         .content(task_data).await?;
 
-    info!("create_task_record: {create_task_record:?}");
+    info!("schema/utilities.rs -> create_task_record: {create_task_record:?}");
 
     if !task_notes.is_empty() {
         for mut note in task_notes {
             let res = note.handle_note_creation().await;
-            info!("Task Note Creation from Mastertech: {res:?}");
+            info!("schema/utilities.rs -> Task Note Creation from Mastertech: {res:?}");
         }
     }
 
@@ -613,10 +613,10 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         .await?;
 
     if order.id_customer.is_empty() {
-        info!("Order is likely gonna fuKKKK");
+        info!("schema/utilities.rs -> Order is likely gonna fuKKKK");
     }
 
-    info!("order: {order:#?}");
+    info!("schema/utilities.rs -> order: {order:#?}");
 
     let sales_rep: Option<Employee> = if !order.id_employee_sales_rep.eq("0") {
         let employee: Employee = api_call
@@ -627,7 +627,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
             )
             .await?;
 
-        info!("employee: {employee:#?}");
+        info!("schema/utilities.rs -> employee: {employee:#?}");
         Some(employee)
     } else {
         None
@@ -642,7 +642,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
             )
             .await?;
 
-        info!("employee: {sales_rep:#?}");
+        info!("schema/utilities.rs -> employee: {sales_rep:#?}");
         Some(employee_2)
     } else {
         None
@@ -657,7 +657,7 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
         .await?;
 
 
-    info!("address: {address:#?}");
+    info!("schema/utilities.rs -> address: {address:#?}");
 
     let customer = CustomerData {
         id: RecordId::from((
@@ -682,4 +682,48 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
             customer_messages,
         }
     )
+}
+
+
+#[derive(Serialize)]
+#[allow(dead_code)]
+pub struct PhoneNumberFormatter {
+    pub cache: HashMap<String, String>,
+    #[serde(skip)]
+    pub re_digits: Regex,
+    #[serde(skip)]
+    pub re_dashes: Regex,
+}
+
+impl Default for PhoneNumberFormatter {
+    fn default() -> Self {
+        Self {
+            cache: HashMap::new(),
+            re_digits: Regex::new(r"^(\d{3})(\d{3})(\d{4})$").unwrap(),
+            re_dashes: Regex::new(r"^(\d{3})-(\d{3})-(\d{4})$").unwrap(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl PhoneNumberFormatter {
+    pub fn format_phone_number(&mut self, phone: &str) -> Option<String> {
+        if let Some(cached) = self.cache.get(phone) {
+            return Some(cached.clone());
+        }
+
+        let formatted = if let Some(caps) = self.re_digits.captures(phone) {
+            Some(format!("({}) {}-{}", &caps[1], &caps[2], &caps[3]))
+        } else if let Some(caps) = self.re_dashes.captures(phone) {
+            Some(format!("({}) {}-{}", &caps[1], &caps[2], &caps[3]))
+        } else {
+            None
+        };
+
+        if let Some(ref result) = formatted {
+            self.cache.insert(phone.to_string(), result.clone());
+        }
+
+        formatted
+    }
 }
