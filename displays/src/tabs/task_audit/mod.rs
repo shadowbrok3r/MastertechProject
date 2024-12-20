@@ -1,16 +1,15 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
-use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
-use log::info;
-use surrealdb::RecordId;
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use crate::{app_state::SharedContext, PlatformSpawner};
 use crossbeam::channel::{Receiver, Sender};
-// use core::f32;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use itertools::Itertools;
 use egui_extras::Column;
-use serde::{Deserialize, Serialize};
+use surrealdb::RecordId;
+use log::info;
 
 const BASE_URL: &str = "https://pclaptops.mojo11.com/pcladmin/index.php?controller=AdminOrders&vieworder=&id_order=";
 impl SharedContext {

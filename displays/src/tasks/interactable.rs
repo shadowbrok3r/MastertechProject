@@ -1,8 +1,7 @@
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use database::schema::{Priority, Status, TaskPayload, TicketPayload, User};
 use eframe::egui::{
-    Align, Button, Color32, ComboBox, FontId, Id, Response, RichText, Stroke, TextEdit, Ui, Vec2,
-    Widget,
+    Align, Button, Color32, ComboBox, FontId, Id, Margin, Response, RichText, Stroke, TextEdit, Ui, Vec2, Widget
 };
 use egui_extras::DatePickerButton;
 use log::info;
@@ -17,6 +16,7 @@ impl Interaction for TaskPayload {
         // ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(0.5, Color32::from_additive_luminance(110));
         let text_edit = TextEdit::singleline(&mut self.task_name)
             .desired_width(ui.available_width() -10.)
+            .margin(Margin::symmetric(6.0, 3.5))
             .horizontal_align(Align::Min)
             .vertical_align(Align::Center)
             .ui(ui);
@@ -41,6 +41,7 @@ impl Interaction for TaskPayload {
         let text_edit = TextEdit::multiline(&mut ticket.checkin_notes)
             .desired_rows(5)
             .desired_width(ui.available_width())
+            .margin(Margin::symmetric(6.0, 3.5))
             .horizontal_align(Align::Center)
             .ui(ui);
 
@@ -65,6 +66,7 @@ impl Interaction for TaskPayload {
 
         let text_edit = TextEdit::multiline(&mut self.task_description)
             .desired_rows(6)
+            .margin(Margin::symmetric(6.0, 3.5))
             .desired_width(ui.available_width())
             .horizontal_align(Align::Center)
             .ui(ui);

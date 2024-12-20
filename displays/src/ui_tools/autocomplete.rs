@@ -1,5 +1,5 @@
 use eframe::egui::text::{CCursor, CCursorRange};
-use eframe::egui::TextBuffer;
+use eframe::egui::{Margin, TextBuffer};
 use eframe::egui::{
     popup,
     text::LayoutJob,
@@ -154,7 +154,7 @@ where
         let text_edit_id = ui.next_auto_id();
         ui.skip_ahead_auto_ids(1);
 
-        let mut text_edit = TextEdit::singleline(text_field).id(text_edit_id);
+        let mut text_edit = TextEdit::singleline(text_field).margin(Margin::symmetric(10.0, 3.5)).id(text_edit_id);
         if let Some(set_properties) = set_properties {
             text_edit = set_properties(text_edit);
         }

@@ -42,7 +42,7 @@ impl Default for ChatView{
 
 impl ChatView {
     pub fn new(messages: Vec<TaskNotePayload>, current_user: User, users: Vec<User>, task_id: Option<RecordId>) -> Self {
-        // info!("Before messages: {messages:?}");
+        // info!("chats/mod.rs -> Before messages: {messages:?}");
         let mut users_set = BTreeSet::new();
         for user in users {
             let parsed_email = user.email.split_once('@');
@@ -75,7 +75,7 @@ impl ChatView {
             // Apply diffs to the existing note
             let diffs = existing_note.diff(&new_note);
             existing_note.apply_mut(diffs);
-            info!("Updated existing note: {:?}", existing_note);
+            info!("chats/mod.rs -> Updated existing note: {:?}", existing_note);
         } else {
             self.messages.push(new_note.clone());
         }
@@ -84,7 +84,7 @@ impl ChatView {
     pub fn delete_note(&mut self, note_to_delete: &TaskNotePayload){
         let index = self.messages.iter().position(|n| n == note_to_delete);
         if let Some(idx) = index {
-            info!("Deleting Note @ {idx}");
+            info!("chats/mod.rs -> Deleting Note @ {idx}");
             self.messages.remove(idx);
         }
     }
@@ -98,34 +98,23 @@ impl ChatView {
                 error!("Error deleting note: {e:?}");
             }
         }
-        let mut shadow = Shadow::default();
-        shadow.blur = 10.0;
-        shadow.spread = 5.0;
-        shadow.color = Color32::from_rgb(40,36,40);
 
         let mut b_panel_marg = Margin::default();
         let mut c_panel_marg = Margin::default();
         c_panel_marg.top = 10.0;
         b_panel_marg.bottom = 10.0;
-        let color = Color32::from_rgb(6,6,10);
 
         let markdown_editor = &mut self.markdown_editor;
         markdown_editor.inputs = self.users.clone();
-        let central_panel_frame = Frame::none().fill(color)
-            .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-            .inner_margin(Margin::same(6.0)).rounding(Rounding::same(10.0));
-
-        let bottom_panel_frame = Frame::none().fill(color)
-            .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(c_panel_marg)
-            .inner_margin(Margin::same(6.0)).rounding(Rounding::same(10.0));
+        let central_panel_frame = Frame::none().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
+            .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+            .inner_margin(Margin::same(6.0));
 
         let task_id = self.task_id.clone();
 
         let id = ui.auto_id_with(format!("Chat {:?}", task_id));
 
-        
         TopBottomPanel::bottom(id)
-            .frame(bottom_panel_frame)
             .default_height(ui.available_height()/1.2)
             .resizable(true)
             .show_inside(ui, |ui| 
@@ -139,7 +128,7 @@ impl ChatView {
             {
                 if response.clicked() || enter_pressed {
                     let txt = markdown_editor.submit();
-                    info!("Txt: {txt}");
+                    info!("chats/mod.rs -> Txt: {txt}");
                     markdown_editor.clear();
                     new_msg = Some(txt.clone());
 
@@ -180,13 +169,13 @@ impl ChatView {
 
                         // }
 
-                        info!("new_note: {new_note:?}");
+                        info!("chats/mod.rs -> new_note: {new_note:?}");
 
                         PlatformSpawner::spawn(async move {
                             if let Err(e) = new_note.handle_note_creation().await {
                                 error!("Failed to create task note: {:?}", e);
                             } else {
-                                info!("Task note successfully created.");
+                                info!("chats/mod.rs -> Task note successfully created.");
                             }
                         });
                     }
@@ -309,15 +298,22 @@ impl ChatView {
                                                     if self.allow_edit.contains(&id.to_string()) {
                                                         if let Some(msg) = self.edit_text.get_mut(&id.to_string()){
                                                             let mut task_note = msg.clone();
+                                                            // if note_pre_edit.ne(&msg.note) {
                                                             PlatformSpawner::spawn(async move {
                                                                 match task_note.modify_prestashop_note().await {
-                                                                    Ok(res) => info!("Modify note response:: {res:?}"),
+                                                                    Ok(res) => info!("chats/mod.rs -> Modify note response:: {res:?}"),
                                                                     Err(e) => error!("Error modifying note: {e:?}"),
                                                                 }
                                                             });
                                                             item.note = msg.note.clone();
                                                         }
                                                     }
+                                                    self.allow_edit.remove(&id.to_string());
+                                                }
+                                                let cancel_btn = Button::new(RichText::new("Cancel").weak().color(Color32::LIGHT_RED))
+                                                    .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+
+                                                if cancel_btn.clicked(){
                                                     self.allow_edit.remove(&id.to_string());
                                                 }
                                             } else {
@@ -346,8 +342,8 @@ impl ChatView {
                                                 let mut item = item.clone();
                                                 PlatformSpawner::spawn(async move {
                                                     match item.delete_note().await{
-                                                        Ok(_) => info!("Deleted Note"),
-                                                        Err(e) => error!("Error deleting note: {e:?}"),
+                                                        Ok(_) => info!("chats/mod.rs -> Deleted Note"),
+                                                        Err(e) => error!("chats/mod.rs -> Error deleting note: {e:?}"),
                                                     }
                                                 })
                                             }
@@ -387,7 +383,10 @@ impl ChatView {
                                             
                                             if self.allow_edit.contains(&item.id.to_string()) {
                                                 if let Some(msg) = self.edit_text.get_mut(&item.id.to_string()){
-                                                    TextEdit::multiline(&mut msg.note).show(ui);
+                                                    TextEdit::multiline(&mut msg.note)
+                                                        .margin(Margin::symmetric(10.0, 3.5))
+                                                        .desired_width(f32::INFINITY)
+                                                        .show(ui);
                                                 }
                                             } else {
                                                 viewer::easy_mark(ui, &item.note);

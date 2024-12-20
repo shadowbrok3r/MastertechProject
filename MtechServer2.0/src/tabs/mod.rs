@@ -1,4 +1,3 @@
-pub mod customer;
 pub mod github_issue;
 pub mod query_builder;
 pub mod quote_fulfilled_tasks;
@@ -35,7 +34,7 @@ impl TabViewer for MtechServerContext {
             "SEB Lookup" => self.seb_lookup(ui),
             "Task Audit" => self.shared_ctx.task_table_viewer(ui),
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
-            // "Customers" => self.customer_view(ui),
+            "Customers" => self.shared_ctx.customer_view(ui),
             // "Terminal" => self.terminal(ui),
             _ => {}
         }

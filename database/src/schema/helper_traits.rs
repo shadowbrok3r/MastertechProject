@@ -391,31 +391,22 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         {
             self.id_customer_thread = Some(id_customer_thread);
             // Is this sent from the website or mastertech?
-            info!(
-                "Sent from website, {:?} - {:?}",
-                self.id_customer_thread, self.id_employee
-            );
+            info!("helper_traits -> Sent from website, {:?} - {:?}", self.id_customer_thread, self.id_employee);
             let response = self.create_customer_message().await?;
-            info!("Before struct diffing TaskNotePayload: {:?}", self.clone());
+            info!("helper_traits -> handle_note_creation -> Before struct diffing TaskNotePayload: {:?}", self.clone());
             // Update task note with Prestashop details
             let id = if self.id.key().to_string().is_empty() {
                 let task_note_default = TaskNotePayload::default();
-                info!(
-                    "ID is empty, assigning a new id: {:?}",
-                    task_note_default.id
-                );
+                info!("helper_traits -> handle_note_creation -> ID is empty, assigning a new id: {:?}", task_note_default.id);
                 task_note_default.id
             } else {
                 if !response.id.to_string().is_empty() {
                     let id = RecordId::from((TASK_NOTE_TABLE, response.id.to_string().clone()));
-                    info!("id is not empty, creating with cust message id: {id:?}");
+                    info!("helper_traits -> handle_note_creation -> id is not empty, creating with cust message id: {id:?}");
                     id
                 } else {
                     let task_note_default = TaskNotePayload::default();
-                    info!(
-                        "ID is empty, assigning a new id: {:?}",
-                        task_note_default.id
-                    );
+                    info!("helper_traits -> handle_note_creation -> ID is empty, assigning a new id: {:?}", task_note_default.id);
                     task_note_default.id
                 }
             };
@@ -430,7 +421,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             let diffs = self.diff(&updated_value);
             self.apply_mut(diffs);
 
-            info!("After struct diffing TaskNotePayload: {:?}", self.clone());
+            info!("helper_traits -> handle_note_creation -> After struct diffing TaskNotePayload: {:?}", self.clone());
 
             self.create_task_note_in_db().await?;
 
@@ -439,13 +430,13 @@ impl TaskNotePayloadHelper for TaskNotePayload {
         } else if id_customer_thread.is_empty() && !self.service_number.is_empty() {
 
             let create_thread_response = self.create_customer_thread().await?;
-            info!("We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
+            info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we HAVE a service number, creating thread.");
             self.id_customer_thread = Some(create_thread_response.id);
             self.created_at = create_thread_response.date_add;
 
         } else if id_customer_thread.is_empty() && self.service_number.is_empty() {
 
-            info!("We do NOT have a customer thread ID, and we do NOT a service number. creating a regular task note. {:?}", self.clone());
+            info!("helper_traits -> handle_note_creation -> We do NOT have a customer thread ID, and we do NOT a service number. creating a regular task note. {:?}", self.clone());
             if self.task_id.is_none() {
 
             }
@@ -453,7 +444,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
         } else {
             // Handle other cases
-            info!("This is an odd case... {:?}", self.clone());
+            info!("helper_traits -> handle_note_creation -> This is an odd case... {:?}", self.clone());
         }
         self.check_tagged_user_in_note().await?;
 
@@ -474,17 +465,14 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             // Simulate database query for user with the email
             let tagged_user: Option<User> = employee.find_user().await?;
             if let (Some(id), Some(tagged_user)) = (task_id.clone(), tagged_user) {
-                info!(
-                    "There is an ID, and there IS a tagged user: {:?} / {:?}",
-                    id, tagged_user
-                );
+                info!("helper_traits -> check_tagged_user_in_note -> There is an ID, and there IS a tagged user: {id:?} / {tagged_user:?}");
                 let task_name: Option<String> = DATABASE
                     .query("SELECT VALUE task_name FROM task WHERE id == $task_id")
                     .bind(("task_id", task_id.clone()))
                     .await?
                     .take(0)?;
 
-                info!("Task Name: {:?}", task_name);
+                info!("helper_traits -> check_tagged_user_in_note -> Task Name: {:?}", task_name);
                 let name = if let Some(name) = task_name {
                     name
                 } else {
@@ -512,7 +500,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 
     async fn create_notification(&mut self, notification: Notification) -> Result<(), Error> {
-        info!("Creating notification: {:?}", notification);
+        info!("helper_traits -> Creating notification: {:?}", notification);
         let _: Option<Record> = DATABASE
             .query("CREATE notification CONTENT $notif")
             .bind(("notif", notification))
@@ -554,7 +542,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     async fn update_task_note_with_current_time(&mut self) -> Result<(), Error> {
         // Logic to update task note with the current time
         self.created_at = chrono::Utc::now().to_rfc3339();
-        info!("Created_at was empty, now it is {:?}", self.created_at);
+        info!("helper_traits -> Created_at was empty, now it is {:?}", self.created_at);
         Ok(())
     }
 
@@ -623,7 +611,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             );
             Ok(service_number.unwrap_or_default())
         } else {
-            info!("No order number found");
+            info!("helper_traits -> No order number found");
             Ok(String::new())
         }
     }
@@ -631,7 +619,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     async fn get_thread_id_from_order(&mut self) -> Result<String> {
         let mut threads = Vec::new();
         if let Ok(service_number) = self.get_order_by_task_id().await {
-            info!("Calling API for thread ID");
+            info!("helper_traits -> Calling API for thread ID");
             
             if !service_number.is_empty() {
                 let api_call = Prestashop::default();
@@ -644,13 +632,13 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                     .request_resources_wasm("customer_threads", query.clone())
                     .await?;
                 
-                info!("Got customer threads: {customer_threads:?}");
+                info!("helper_traits -> Got customer threads: {customer_threads:?}");
                 for thread in customer_threads {
                     for msg in thread.associations.customer_messages.iter() {
-                        info!("Checking if msg ID exists in database: {:?}", &msg);
+                        info!("helper_traits -> Checking if msg ID exists in database: {:?}", &msg);
                         let exists = self.check_existing_note_record(&msg.id).await?;
                         if exists.is_none() {
-                            info!("WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+                            info!("helper_traits -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
                             let customer_message: CustomerMessage = api_call
                                 .request_subresources_by_id_wasm(
                                     "customer_messages",
@@ -689,23 +677,23 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                                 user,
                                 service_number: service_number.to_string()
                             };
-                            info!("Creating a new task_note: {task_note:?}");
+                            info!("helper_traits -> Creating a new task_note: {task_note:?}");
 
                             task_note.create_task_note_in_db().await?;
 
-                            info!("Created note: {task_note:?}");
+                            info!("helper_traits -> Created note: {task_note:?}");
                         } else {
-                            info!("Message already exists: {:?}", exists);
+                            info!("helper_traits -> Message already exists: {:?}", exists);
                         }
-                        info!("Message existence in database: {exists:?}");
+                        info!("helper_traits -> Message existence in database: {exists:?}");
                     }
                     threads.push(thread);
                 }
             } else {
-                info!("Service number is empty. not querying Presta {service_number:?}");
+                info!("helper_traits -> Service number is empty. not querying Presta {service_number:?}");
             }
         } else {
-            info!("Error getting order number from task id\nIs there a task ID??");
+            info!("helper_traits -> Error getting order number from task id\nIs there a task ID??");
         }
 
         // Extract the first customer thread ID if available
@@ -715,14 +703,14 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             .next()
             .unwrap_or_default();
 
-        info!("Customer thread id from order: {id_customer_thread:?}");
+        info!("helper_traits -> Customer thread id from order: {id_customer_thread:?}");
 
         Ok(id_customer_thread)
     }
 
     async fn get_notes_from_service_number(&mut self, service_number: &str) -> Result<Vec<TaskNotePayload>> {
         let mut notes = Vec::new();
-        info!("Calling get_notes_from_service_number");
+        info!("helper_traits -> Calling get_notes_from_service_number");
         
         if !service_number.is_empty() {
             let api_call = Prestashop::default();
@@ -735,13 +723,13 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 .request_resources_wasm("customer_threads", query.clone())
                 .await?;
             
-            info!("Got customer threads: {customer_threads:?}");
+            info!("helper_traits -> Got customer threads: {customer_threads:?}");
             for thread in customer_threads {
                 for msg in thread.associations.customer_messages.iter() {
-                    info!("Checking if msg ID exists in database: {:?}", &msg);
+                    info!("helper_traits -> Checking if msg ID exists in database: {:?}", &msg);
                     let exists = self.check_existing_note_record(&msg.id).await?;
                     if exists.is_none() {
-                        info!("WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
+                        info!("helper_traits -> WE NEED TO CREATE THIS MESSAGE IN OUR DATABASE: {msg:?}");
                         let customer_message: CustomerMessage = api_call
                             .request_subresources_by_id_wasm(
                                 "customer_messages",
@@ -779,7 +767,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                             service_number: service_number.to_string(),
                             user,
                         };
-                        info!("Creating a new task_note: {task_note:?}");
+                        info!("helper_traits -> Creating a new task_note: {task_note:?}");
                         
 
                         let note: Option<Record> = DATABASE
@@ -790,9 +778,9 @@ impl TaskNotePayloadHelper for TaskNotePayload {
 
                         notes.push(task_note);
 
-                        info!("Created note: {note:?}");
+                        info!("helper_traits -> Created note: {note:?}");
                     } else {
-                        info!("Message already exists: {:?}", exists);
+                        info!("helper_traits -> Message already exists: {:?}", exists);
                         let query_results: Vec<TaskNotePayload> = DATABASE
                             .query("SELECT * FROM task_note WHERE id_customer_message == $id_customer_message")
                             .bind(("id_customer_message", msg.id.clone()))
@@ -805,7 +793,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                 }
             }
         } else {
-            info!("Order number is still empty? {service_number:?}");
+            info!("helper_traits -> Order number is still empty? {service_number:?}");
         }
         Ok(notes)
     }
@@ -825,7 +813,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             // .bind(("id_customer_thread", thread_id.clone()))
             .await?
             .take(0)?;
-        info!("Message existence query results: {query_results:?}");
+        info!("helper_traits -> Message existence query results: {query_results:?}");
 
         for res in query_results.iter() {
             if res.id != self.id {
@@ -836,92 +824,34 @@ impl TaskNotePayloadHelper for TaskNotePayload {
     }
 
     async fn modify_prestashop_note(&mut self) -> Result<Response, Error> {
-        let thread_id = self.get_thread_id_from_order().await?;
-        let id_employee = self.id_employee.as_deref().unwrap_or("");
-
         let id_customer_thread = if let Some(thread_id) = self.id_customer_thread.as_ref() {
             thread_id.clone()
         } else {
-            thread_id
+            self.get_thread_id_from_order().await?
         };
 
         // Check if id_employee or id_customer_thread is empty
-        if id_employee.is_empty() {
+        if self.id_employee.is_none() || self.id_customer_message.is_none() || id_customer_thread.is_empty() {
             return Err(anyhow::anyhow!("id_employee is empty")).into();
         }
 
-        if id_customer_thread.is_empty() {
-            return Err(anyhow::anyhow!("id_customer_thread is empty")).into();
-        }
+        let id_customer_message = self.id_customer_message.clone().unwrap_or_default();
+        let id_employee = self.id_employee.clone().unwrap_or_default();
+        let presta_api = Prestashop::default();
 
-        if self.id_customer_message.is_none() {
-            return Err(anyhow::anyhow!("id_customer_thread is empty")).into();
-        }
-
-        // Prepare the XML payload
-        let begin = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><prestashop xmlns:xlink=\"http://www.w3.org/1999/xlink\">";
-        let end = "</prestashop>";
-
-        let payload = format!(
-            r#"
-            {begin}
-            <customer_message>
-            <id_lang>1</id_lang>
-            <id_employee>{id_employee}</id_employee>
-            <id_customer_thread>{id_customer_thread}</id_customer_thread>
-            <id>{}</id>
-            <message>{}</message>
-            <private>1</private>
-            <id_order_message_type>0</id_order_message_type>
-            </customer_message>
-            {end}
-            "#,
-            self.id_customer_message.clone().unwrap(),
-            self.note
-        );
-
-        // Send HTTP POST request with the XML payload
-        let _client = reqwest::Client::new();
-        info!("Payload: {:?}", payload);
-        // let response_text = client
-        //     .post("https://pcl.master-tech.app/api/customer_messages")
-        //     .header("Content-type", "application/xml")
-        //     .body(payload)
-        //     .send()
-        //     .await?
-        //     .text()
-        //     .await?;
-
-        // // Parse the XML response to extract values
-        // let id = response_text
-        //     .split("<id><![CDATA[")
-        //     .nth(1)
-        //     .and_then(|s| s.split("]]></id>").next())
-        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'id' from response"))?;
-
-        // let date_add = response_text
-        //     .split("<date_add><![CDATA[")
-        //     .nth(1)
-        //     .and_then(|s| s.split("]]></date_add>").next())
-        //     .ok_or_else(|| anyhow::anyhow!("Failed to parse 'date_add' from response"))?;
-
-        // let date_upd = response_text
-        //     .split("<date_upd><![CDATA[")
-        //     .nth(1)
-        //     .and_then(|s| s.split("]]></date_upd>").next())
-        //     .unwrap_or(""); // Optional field, so we handle it accordingly
-
-        // Return a Response struct with extracted values
-        Ok(Response {
-            date_add: String::new(), //convert_date_string(date_add)?.to_string(), //,
-            id: String::new(),       //id.to_string(),
-            date_upd: String::new(), //convert_date_string(date_upd)?.to_string(), // date_upd.to_string(),
-        })
+        Ok(
+            presta_api.modify_customer_message(
+                &id_customer_message, 
+                &id_employee,
+                &id_customer_thread,
+                &self.note
+            ).await?
+        )
     }
 
     async fn delete_note(&mut self) -> Result<(), Error> {
         let id = self.id.clone();
-        info!("deleting id: {:?}", &id);
+        info!("helper_traits -> deleting id: {:?}", &id);
         if let (Some(thread_id), Some(message_id)) = (
             self.id_customer_thread.as_ref(),
             self.id_customer_message.as_ref(),
@@ -929,18 +859,18 @@ impl TaskNotePayloadHelper for TaskNotePayload {
             if !thread_id.is_empty() && !message_id.is_empty() {
                 self.delete_prestashop_note().await?;
             } else {
-                info!("Thread ID or Message ID is empty: {thread_id:?} / {message_id:?}");
+                info!("helper_traits -> Thread ID or Message ID is empty: {thread_id:?} / {message_id:?}");
                 let delete_res: Option<Record> = DATABASE
                     .delete((TASK_NOTE_TABLE, id.key().to_string()))
                     .await?;
-                info!("delete_res: {delete_res:?}");
+                info!("helper_traits -> delete_res: {delete_res:?}");
             }
         } else {
-            info!("Not deleting prestashop note, there is either no thread id or no message id");
+            info!("helper_traits -> Not deleting prestashop note, there is either no thread id or no message id");
             let delete_res: Option<Record> = DATABASE
                 .delete((TASK_NOTE_TABLE, id.key().to_string()))
                 .await?;
-            info!("Deleted note: {:?}", delete_res);
+            info!("helper_traits -> Deleted note: {:?}", delete_res);
         }
         Ok(())
     }
@@ -953,7 +883,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                     .delete_resource_wasm("customer_messages", &cust_msg_id.clone())
                     .await?;
 
-                info!("Delete Result for customer message: {delete_result:?}");
+                info!("helper_traits -> Delete Result for customer message: {delete_result:?}");
 
                 let delete_res: Option<Record> = DATABASE
                     .query("DELETE task_note WHERE id_customer_message == $id_customer_message")
@@ -961,7 +891,7 @@ impl TaskNotePayloadHelper for TaskNotePayload {
                     .await?
                     .take(0)?;
 
-                info!("Deleted note: {:?}", delete_res);
+                info!("helper_traits -> Deleted note: {:?}", delete_res);
             }
         }
         Ok(())
@@ -1095,7 +1025,7 @@ impl EmployeeHelper for Employee {
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await?;
-        info!("Orders list: {orders:?}");
+        info!("helper_traits -> Orders list: {orders:?}");
         Ok(orders)
     }
 
@@ -1114,7 +1044,7 @@ impl EmployeeHelper for Employee {
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await?;
-        info!("Orders list: {orders:?}");
+        info!("helper_traits -> Orders list: {orders:?}");
         Ok(orders)
     }
 
@@ -1156,7 +1086,7 @@ impl EmployeeHelper for Employee {
         let mut api_call = Prestashop::default();
         let mut query: HashMap<&str, &str> = HashMap::new();
         let pagination = format!("{},{}",start_idx.clone(), offset);
-        info!("Pagination: {pagination}");
+        info!("helper_traits -> Pagination: {pagination}");
         query.insert("filter[id_store]", &self.id_store);
         query.insert("filter[id_order_type]", "2");
         query.insert("filter[current_state]", status);
@@ -1168,14 +1098,14 @@ impl EmployeeHelper for Employee {
         let orders: Vec<OrderNumber> = api_call
             .request_resources_wasm("orders", query.clone())
             .await.context("Pulling orders list")?;
-        info!("Orders list: {orders:?}");
+        info!("helper_traits -> Orders list: {orders:?}");
         Ok(orders)
     }
 
     async fn to_prestashop_payload(&mut self, service_number: &str) -> Result<prestashop_schema::PrestashopPayload, Error> {
         let mut api_call = Prestashop::default();
         let mut query = HashMap::new();
-        info!("Pulling order {service_number}");
+        info!("helper_traits -> Pulling order {service_number}");
         query.insert("filter[id]", service_number);
         query.insert("output_format", "JSON");
         api_call.display = "[id,id_address_invoice,id_customer,current_state,date_add,id_employee_sales_rep,id_employee_split_rep,id_store]";
@@ -1224,7 +1154,7 @@ impl EmployeeHelper for Employee {
                 )
                 .await.context("Pulling split rep")?;
 
-            info!("employee: {sales_rep:#?}");
+            info!("helper_traits -> employee: {sales_rep:#?}");
             Some(employee_2)
         } else {
             None
@@ -1288,27 +1218,27 @@ impl UserHelper for User {
     }
 
     async fn save_mastertech_ui_layout(&mut self, settings: Value) -> Result<(), Error>{
-        info!("Settings for MASTERTECH: {:?}", settings.clone());
+        info!("helper_traits -> Settings for MASTERTECH: {:?}", settings.clone());
         match DATABASE
             .query("UPDATE $auth.id SET user_settings.ui_layout.mastertech = $settings")
             .bind(("settings", settings))
             .await
         {
-            Ok(res) => info!("Result: {res:?}"),
-            Err(e) => info!("Error updating User Settings: {e:?}"),
+            Ok(res) => info!("helper_traits -> Result: {res:?}"),
+            Err(e) => info!("helper_traits -> Error updating User Settings: {e:?}"),
         }
         Ok(())
     }
     
     async fn save_mtechserver_ui_layout(&mut self, settings: Value) -> Result<(), Error>{
-        info!("Settings for MTECHSERVER: {:?}", settings.clone());
+        info!("helper_traits -> Settings for MTECHSERVER: {:?}", settings.clone());
         match DATABASE
             .query("UPDATE $auth.id SET user_settings.ui_layout.mtechserver = $settings")
             .bind(("settings", settings))
             .await
         {
-            Ok(res) => info!("Result: {res:?}"),
-            Err(e) => info!("Error updating User Settings: {e:?}"),
+            Ok(res) => info!("helper_traits -> Result: {res:?}"),
+            Err(e) => info!("helper_traits -> Error updating User Settings: {e:?}"),
         }
         Ok(())
     }
@@ -1488,7 +1418,7 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
                 )
                 .await?;
     
-            info!("employee: {employee:#?}");
+            info!("helper_traits -> employee: {employee:#?}");
             Some(employee)
         } else {
             None
@@ -1505,7 +1435,7 @@ impl <'a>PrestashopPayloadHelper<'a> for PrestashopPayload {
                 )
                 .await?;
     
-            info!("employee: {employee_2:#?}");
+            info!("helper_traits -> employee: {employee_2:#?}");
             Some(employee_2)
         } else {
             None
@@ -1620,7 +1550,7 @@ impl From<PrestashopPayload> for TaskPayload {
                     ticket.checkin_notes = service.check_in_notes.clone();
                 }
             } else {
-                info!("Theres a couple.... {:?}", service_details);
+                info!("helper_traits -> Theres a couple.... {:?}", service_details);
             }
         }
 

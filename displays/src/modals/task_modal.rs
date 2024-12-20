@@ -2,7 +2,7 @@ use crate::{chats::ChatView, DisplayModal, PlatformSpawner, Spawner};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use core::f32;
-use database::schema::{utilities::delete_task, Store, TaskPayload};
+use database::schema::{utilities::{delete_task, PhoneNumberFormatter}, Store, TaskPayload};
 use eframe::egui::{
     scroll_area::ScrollBarVisibility, Align, Button, Color32, ComboBox, Direction, FontId, Grid,
     Layout, Margin, RichText, ScrollArea, Separator, Style, TextEdit, Ui, Vec2, Vec2b, Widget
@@ -67,7 +67,16 @@ impl Default for TaskModal {
 }
 
 impl TaskModal {
-    pub fn new(chat_view: ChatView, task: TaskPayload) -> Self {
+    pub fn new(chat_view: ChatView, mut task: TaskPayload) -> Self {
+
+        if let Some(ticket) = task.service_ticket.as_mut() {
+            if let Some(customer) = ticket.customer.as_mut() {
+                let mut formatter = PhoneNumberFormatter::default();
+                let phone_num = customer.phone_number.clone();
+                customer.phone_number = formatter.format_phone_number(&phone_num).unwrap_or(phone_num);
+            }
+        }
+
         Self {
             title: task.task_name.clone(),
             current_page_state: ModalAction::TicketInfoPage,
@@ -281,7 +290,6 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
         let customer = ticket.customer.as_ref();
         StripBuilder::new(ui)
             .size(Size::exact(100.0))
-            .size(Size::exact(115.0))
             .size(Size::exact(60.0))
             .size(Size::exact(100.0))
             .vertical(|mut strip| {
@@ -294,6 +302,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                                 ui.group(|ui| {
                                     Grid::new("group2")
                                         .min_col_width(150.0)
+                                        .spacing(Vec2::new(2.5, 6.0))
                                         .with_row_color(|num, style| return_colors(num, style))
                                         .show(ui, |ui| {
                                             ui.colored_label(Color32::LIGHT_RED, "Technician:");
@@ -307,25 +316,17 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                                             ui.colored_label(Color32::LIGHT_RED, "Split Rep:");
                                             ui.label(&ticket.sales_rep);
                                             ui.end_row();
-
-                                            ui.colored_label(Color32::LIGHT_RED, "Checkin Rep:");
-                                            ui.label(&ticket.checkin_rep);
-                                        });
-                                });
-                            });
-                            s.empty();
-                            s.cell(|ui| {
-                                ui.group(|ui| {
-                                    Grid::new("group1")
-                                        .min_col_width(150.0)
-                                        .with_row_color(|num, style| return_colors(num, style))
-                                        .show(ui, |ui| {
-                                            ui.colored_label(Color32::LIGHT_RED, "SO#:");
-                                            ui.label(format!("{}", ticket.service_number));
+                                            
+                                            ui.colored_label(Color32::LIGHT_RED, "Terms:");
+                                            ui.label(&ticket.terms);
                                             ui.end_row();
-                                            let x = ticket.created_at.as_ref();
-                                            if let Some(x) = x {
-                                                let date = x.parse::<DateTime<Utc>>();
+
+                                            ui.colored_label(Color32::LIGHT_RED, "Total on Order:");
+                                            ui.label(&ticket.ticket_total);
+                                            ui.end_row();
+                                            let created_at = ticket.created_at.as_ref();
+                                            if let Some(ticket_created) = created_at {
+                                                let date = ticket_created.parse::<DateTime<Utc>>();
                                                 if let Ok(date) = date {
                                                     ui.colored_label(
                                                         Color32::LIGHT_RED,
@@ -335,38 +336,6 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                                                     ui.end_row();
                                                 }
                                             }
-                                            ui.end_row();
-                                        });
-                                });
-                            });
-                        });
-                });
-                strip.strip(|s| {
-                    s.size(Size::exact(300.0))
-                        .size(Size::exact(12.0))
-                        .size(Size::exact(300.0))
-                        .horizontal(|mut s| {
-                            s.cell(|ui| {
-                                ui.group(|ui| {
-                                    // ui.colored_label(Color32::LIGHT_RED, "Order Details");
-                                    Grid::new("group3")
-                                        .min_col_width(150.0)
-                                        .with_row_color(|num, style| return_colors(num, style))
-                                        .show(ui, |ui| {
-                                            ui.colored_label(Color32::LIGHT_RED, "Terms:");
-                                            ui.label(&ticket.terms);
-                                            ui.end_row();
-
-                                            ui.colored_label(Color32::LIGHT_RED, "Total on Order:");
-                                            ui.label(&ticket.ticket_total);
-                                            ui.end_row();
-
-                                            ui.colored_label(Color32::LIGHT_RED, "Order Type:");
-                                            ui.label(&ticket.doc_alias);
-                                            ui.end_row();
-                                            ui.colored_label(Color32::LIGHT_RED, "");
-                                            ui.end_row();
-                                            ui.colored_label(Color32::LIGHT_RED, "");
                                         });
                                 });
                             });
@@ -376,22 +345,13 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                                     ui.group(|ui| {
                                         // ui.colored_label(Color32::LIGHT_RED, "Customer Information");
                                         Grid::new("customer_data")
-                                            .spacing(Vec2::new(0.0, 6.0))
+                                            .spacing(Vec2::new(2.5, 6.0))
                                             .max_col_width(150.0)
                                             .min_col_width(150.0)
                                             .with_row_color(|num, style| return_colors(num, style))
                                             .show(ui, |ui| {
-                                                // ui.colored_label(Color32::LIGHT_RED, "Other Services:");
-                                                // ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), |ui| {
-                                                //     ui.label(&customer.services.as_ref().unwrap());
-                                                // });
-                                                // ui.end_row();
-
                                                 ui.colored_label(Color32::LIGHT_RED, "ID:");
-                                                ui.label(format!(
-                                                    "{}",
-                                                    customer.id.key().to_string()
-                                                ));
+                                                ui.label(RichText::new(customer.id.key().to_string()).monospace());
                                                 ui.end_row();
 
                                                 ui.colored_label(Color32::LIGHT_RED, "Name:");
@@ -408,11 +368,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
 
                                                 ui.colored_label(Color32::LIGHT_RED, "Email:");
                                                 ui.label(&customer.email);
-                                                // ui.colored_label(Color32::LIGHT_RED, "SPO Links:");
-                                                // ui.with_layout(Layout::centered_and_justified(Direction::LeftToRight), |ui| {
-                                                //     ui.label(&customer.part_order_links);
-                                                // });
-                                                // ui.end_row();
+                                                
                                             });
                                     });
                                 }
@@ -436,8 +392,8 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                                             TextEdit::multiline(
                                                 &mut ticket.checkin_notes.to_string(),
                                             )
-                                            .margin(Margin::same(5.0))
-                                            .desired_rows(8)
+                                            .margin(Margin::symmetric(10., 3.5))
+                                            .desired_rows(15)
                                             .desired_width(ui.available_width())
                                             .ui(ui);
                                         });
@@ -452,8 +408,8 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                                             TextEdit::multiline(
                                                 &mut task.task_description.to_string(),
                                             )
-                                            .margin(Margin::same(5.0))
-                                            .desired_rows(8)
+                                            .margin(Margin::symmetric(10.0, 3.5))
+                                            .desired_rows(15)
                                             .desired_width(ui.available_width())
                                             .ui(ui);
                                         });
@@ -583,7 +539,10 @@ fn display_computer_page(ui: &mut Ui, task: &mut TaskPayload, avail_size: Vec2) 
                                                 if let Some(seb_info) = seb_info{
 
                                                     // ui.colored_label(Color32::LIGHT_RED, "Order Details");
-                                                    Grid::new("group3").spacing(Vec2::new(0.0, 6.0)).max_col_width(avail_size.x / 2.15).min_col_width(avail_size.x / 2.15).with_row_color(|num, style| return_colors(num, style))
+                                                    Grid::new("group3").spacing(Vec2::new(0.0, 6.0))
+                                                    .max_col_width(avail_size.x / 2.15)
+                                                    .min_col_width(avail_size.x / 2.15)
+                                                    .with_row_color(|num, style| return_colors(num, style))
                                                     .show(ui, |ui| {
                                                         ui.colored_label(Color32::LIGHT_RED, "InstalledDeviceId:");
                                                         ui.label(&seb_info.InstalledDeviceId);

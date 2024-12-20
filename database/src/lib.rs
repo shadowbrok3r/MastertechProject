@@ -95,7 +95,7 @@ impl Database {
                 info!("Have a JWT, attempting token auth");
                 DATABASE.authenticate(jwt.clone()).await?;
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                info!("Returned Auth: {user:?}");
+                // info!("Returned Auth: {user:?}");
                 Ok( Self { jwt: Some(jwt.into()), user } )
             }
             None => {
@@ -112,7 +112,7 @@ impl Database {
                     .await?;
 
                 let user: Option<User> = DATABASE.query("SELECT * FROM user WHERE id == $auth.id").await?.take(0)?;
-                info!("Returned Auth: {user:?}");
+                // info!("Returned Auth: {user:?}");
                 Ok( Self { jwt: Some(jwt), user } )
             }
         }

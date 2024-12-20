@@ -10,3 +10,4 @@ pub mod stock;
 pub mod stock_quantities;
 pub mod json_viewer;
 pub mod ai_playground;
+pub mod customer;

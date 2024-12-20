@@ -358,6 +358,6 @@ pub fn check_authentication(db_tx: Sender<anyhow::Result<Database, Error>>) -> R
         });
         state = AppState::Authenticated(MainPages::Tasks);
     }
-    log::info!("State // user   {:?} // {:?}", state, current_user);
+    // log::info!("State // user   {:?} // {:?}", state, current_user);
     Ok((state, current_user))
 }
