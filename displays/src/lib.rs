@@ -103,6 +103,26 @@ pub enum TaskUiActions {
     None,
 }
 
+// // In your crate with `egui`
+// pub trait EguiRenderable {
+//     fn render(&self, ui: &mut egui::Ui) -> egui::Response;
+// }
+
+// // In your `database::schema` crate
+// use crate::egui::EguiRenderable;
+
+// impl EguiRenderable for Notification {
+//     fn render(&self, ui: &mut egui::Ui) -> egui::Response {
+//         ui.label(self.notification_description)
+//     }
+// }
+// impl Widget for &mut Notification {
+//     fn ui(self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
+//         ui.label(self.notification_description)
+//     }
+// }
+
+
 pub trait Displayable {
     fn display_cards(&mut self, ui: &mut Ui, store_users: &Vec<User>, tx: Sender<TaskUiActions>);
 }

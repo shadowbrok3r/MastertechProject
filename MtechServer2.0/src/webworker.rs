@@ -96,3 +96,21 @@ pub async fn get_completed_tasks_for_store() -> anyhow::Result<Vec<TaskPayload>,
 
     Ok(query_results)
 }
+
+
+// pub async fn get_stock(location: u64) -> anyhow::Result<Vec<RawStockData>, anyhow::Error> {
+//     let res: Option<StockData> = DATABASE
+//         .query("RETURN fn::store_stock($location, 5000)")
+//         .bind(("location", location))
+//         .await?
+//         .take(0)?;
+//     Ok(res.unwrap_or_default())
+// }
+
+// pub async fn get_extra_stock_info() -> anyhow::Result<Vec<ExtraInventoryData>, anyhow::Error> {
+//     let res: Vec<ExtraInventoryData> = DATABASE
+//         .query("RETURN fn::get_stock_extra_info(5000)")
+//         .await?
+//         .take(0)?;
+//     Ok(res)
+// }

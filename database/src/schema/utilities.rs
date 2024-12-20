@@ -187,102 +187,68 @@ pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String, _len_tx: Sender<u64>) -> Result<(), Error> {
+pub async fn get_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_tasks");
 
-    // let mut offset = 0;
-    // let limit = 2; // Number of tasks per chunk
+    let query = r#"
+        SELECT *, (
+            SELECT * FROM task_note 
+                WHERE task_id == $parent.id
+        ) AS task_note 
+        FROM task 
+        WHERE $this.assignee.store == $store AND $this.completed IS false
+        FETCH 
+            service_ticket, 
+            service_ticket.computer, 
+            service_ticket.customer
+        PARALLEL
+    "#; // WITH INDEX idx_store_due_date
 
-    // loop {
-        let query = r#"
-            SELECT *, (
-                SELECT * FROM task_note 
-                    WHERE task_id == $parent.id
-            ) AS task_note 
-            FROM task 
-            WHERE $this.assignee.store == $store AND $this.completed IS false
-            FETCH 
-                service_ticket, 
-                service_ticket.computer, 
-                service_ticket.customer
-            PARALLEL
-        "#; // PARALLEL WITH INDEX idx_store_due_date
+    let start_query = Instant::now(); // Start timing the query
 
-        // LIMIT $limit START $offset
-        let start_query = Instant::now(); // Start timing the query
+    let query_results: Vec<TaskPayload> = DATABASE
+        .query(query)
+        .bind(("store", store.clone()))
+        .await?
+        .take(0)?;
 
-        // warn!("Querying at offset: {offset}");
+    let query_duration = start_query.elapsed(); // Measure query duration
+    warn!("Query execution time for chunk {query_duration:?}");
 
-        let query_results: Vec<TaskPayload> = DATABASE
-            .query(query)
-            .bind(("store", store.clone()))
-            // .bind(("limit", limit))
-            // .bind(("offset", offset))
-            .await?
-            .take(0)?;
+    tx.try_send(query_results)?;
 
-        let query_duration = start_query.elapsed(); // Measure query duration
-        warn!("Query execution time for chunk {query_duration:?}");
-
-        
-        // // Break the loop if no more results
-        // if query_results.is_empty() {
-        //     break;
-        // }
-
-        tx.try_send(query_results)?;
-
-        // // Update the offset for the next chunk
-        // offset += limit;
-    // }
-
-    
     Ok(())
 }
 
 pub async fn get_completed_tasks_for_store(tx: Sender<Vec<TaskPayload>>, store: String) -> Result<(), Error> {
     debug!("get_completed_tasks");
-    // let mut offset = 0;
-    // let limit = 2; // Number of tasks per chunk
-    // loop {
-        let query = r#"
-            SELECT *, (
-                SELECT * FROM task_note 
-                    WHERE task_id == $parent.id
-            ) AS task_note 
-            FROM task 
-            WHERE $this.assignee.store == $store AND $this.completed IS true
-            FETCH 
-                service_ticket, 
-                service_ticket.computer, 
-                service_ticket.customer
-            PARALLEL
-        "#; // PARALLEL
-        
-        let start_query = Instant::now(); // Start timing the query
-        // warn!("Querying at offset: {offset}");
+    let query = r#"
+        SELECT *, (
+            SELECT * FROM task_note 
+                WHERE task_id == $parent.id
+        ) AS task_note 
+        FROM task 
+        WHERE $this.assignee.store == $store AND $this.completed IS true
+        FETCH 
+            service_ticket, 
+            service_ticket.computer, 
+            service_ticket.customer
+        PARALLEL
+    "#; // PARALLEL
+    
+    let start_query = Instant::now(); // Start timing the query
 
-        let query_results: Vec<TaskPayload> = DATABASE
-            .query(query)
-            .bind(("store", store.clone()))
-            // .bind(("limit", limit))
-            // .bind(("offset", offset))
-            .await?
-            .take(0)?;
+    let query_results: Vec<TaskPayload> = DATABASE
+        .query(query)
+        .bind(("store", store.clone()))
+        .await?
+        .take(0)?;
 
-        let query_duration = start_query.elapsed(); // Measure query duration
-        warn!("Query execution time for chunk {query_duration:?}\ntask len: {}", query_results.len());
+    let query_duration = start_query.elapsed(); // Measure query duration
+    warn!("Query execution time for chunk {query_duration:?}\ntask len: {}", query_results.len());
 
-        // Break the loop if no more results
-        // if query_results.is_empty() {
-        //     break;
-        // }
-
-        tx.try_send(query_results)?;
-
-        // Update the offset for the next chunk
-        // offset += limit;
-    // }
+    tx.try_send(query_results)?;
+    
     Ok(())
 }
 
@@ -364,14 +330,10 @@ pub async fn delete_task(id: RecordId) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn get_notifications(
-    tx: Sender<Vec<Notification>>,
-    id: RecordId,
-) -> anyhow::Result<(), anyhow::Error> {
+pub async fn get_notifications(tx: Sender<Vec<Notification>>) -> anyhow::Result<(), anyhow::Error> {
     debug!("get_notifications");
-    DATABASE.set("id", id).await?;
     let notifications: Vec<Notification> = DATABASE
-        .query("SELECT * FROM notification WHERE user == $id PARALLEL")
+        .query("SELECT * FROM notification WHERE user == $auth.id PARALLEL")
         .await?
         .take(0)?;
     // info!("schema/utilities.rs -> Notifications: {:?}", notifications.clone());

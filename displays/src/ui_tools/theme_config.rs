@@ -519,7 +519,9 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
     custom_style.spacing.combo_width = 100.0;
     custom_style.interaction.selectable_labels = true;
     custom_style.interaction.interact_radius = 10.0;
-
+    custom_style.interaction.show_tooltips_only_when_still = false;
+    custom_style.interaction.tooltip_delay = 0.1;
+    
     custom_style.visuals = Visuals {
         dark_mode: true,
         override_text_color: Some(config.text_color),

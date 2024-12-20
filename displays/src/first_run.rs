@@ -5,7 +5,7 @@ use crate::{
 use database::{
     live_data::listen_data,
     schema::{
-        utilities::{get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE // Status, Store, 
+        utilities::{get_notifications, get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE // Status, Store, 
     },
 };
 use eframe::egui::Context;
@@ -31,24 +31,30 @@ impl SharedContext {
 
             if self.tasks.is_empty() || self.store_users.is_empty() {
                 let initial_tasks_tx = self.initial_tasks_tx.clone();
-                let len_tx = self.payload_len_channel.0.clone();
                 let store_users_tx = self.store_users_tx.clone();
                 let store = usr.store.as_str().to_string().clone();
-
+                let notifs_tx = self.notification_tx.clone();
                 PlatformSpawner::spawn(async move {
                     let get_store_users = get_store_users(store_users_tx, user.clone().store).await;
                     info!("get_store_users: {get_store_users:?}");
                 });
 
                 PlatformSpawner::spawn(async move {
-                    let get_tasks = get_tasks_for_store(initial_tasks_tx, store, len_tx).await;
+                    let get_tasks = get_tasks_for_store(initial_tasks_tx, store).await;
                     info!("get_tasks: {get_tasks:?}");
                 });
+
+                PlatformSpawner::spawn(async move {
+                    let get_notifications = get_notifications(notifs_tx).await;
+                    info!("get_notifications: {get_notifications:?}");
+                });
+                
                 self.task_layouts
                     .iter_mut()
                     .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
                     .for_each(|(_, layout)| {
                         layout.loading = false;
+                        
                 });
             }
 
@@ -109,7 +115,6 @@ impl SharedContext {
                         layout.assignees.clear();
                         layout.search_inputs.clear();
                     }
-                    layout.loading = true;
                     if let Some(time) = self.timer {
                         if time.elapsed() > web_time::Duration::from_secs(5) {
                             layout.loading = false;
@@ -161,10 +166,6 @@ impl SharedContext {
             });
             self.ai_playground.selected_thread = thread_obj.id;
             self.ai_playground.set_threads(thread_map);
-        }
-
-        if let Ok(len) = self.payload_len_channel.1.try_recv() {
-            self.payload_len = len;
         }
 
         self.task_audit_table.receive(self.current_user.clone().unwrap_or_default(), self.store_users.clone(), frame);
