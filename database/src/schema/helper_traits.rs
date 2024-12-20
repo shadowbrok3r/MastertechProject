@@ -3,28 +3,39 @@ use super::{
     prestashop_schema::{self, CustomerMessage, CustomerThread, Employee, Prestashop, PrestashopPayload}, ComputerData, ConnectedClient, CustomerData, ExtendedSeb, Notification, Record, SpecialPartOrder, Store, TaskNotePayload, TaskPayload, TicketData, TicketPayload, User, TASK_NOTE_TABLE
 };
 use crate::{schema::{CUSTOMER_TABLE, TASK_TABLE, TICKET_TABLE}, DATABASE};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use crate::schema::deserializer::deserialize_to_string;
+use std::{collections::HashMap, fmt::Debug};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
-use chrono::{NaiveDateTime, TimeZone, Utc};
-use log::{debug, info};
-use regex::Regex;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::Value;
-use std::{collections::HashMap, fmt::Debug};
 use structdiff::StructDiff;
 use surrealdb::RecordId;
-use crate::schema::deserializer::deserialize_to_string;
+use log::{debug, info};
+use serde_json::Value;
+use regex::Regex;
+
 /// Macro to implement GetDataFromId for structs with an 'id' field
-macro_rules! _get_id {
-    ($struct_name:ident) => {
-        #[async_trait(?Send)]
-        impl GetDataFromId for $struct_name {
-            async fn get_id(&mut self) -> &RecordId {
-                &mut self.id
-            }
-        }
-    };
-}
+// macro_rules! _get_id {
+//     ($struct_name:ident) => {
+//         #[async_trait(?Send)]
+//         impl GetDataFromId for $struct_name {
+//             async fn get_id(&mut self) -> &RecordId {
+//                 &mut self.id
+//             }
+//         }
+//     };
+// }
+
+
+
+
+// impl TaskStatus for User {
+//     fn get_user_statuses(&self) -> String {
+//         self..clone()
+//     }
+// }
+
 
 /// Get the associated data tied to an ID
 #[async_trait(?Send)]
@@ -104,7 +115,6 @@ pub trait UserHelper {
 
     // async fn save_theme_config() -> Result<(), Error>;
 }
-
 
 /// A trait for assisting with operations involving the ComputerData struct
 #[async_trait(?Send)]

@@ -77,6 +77,10 @@ impl Updatable for TaskPayload {
             Status::Complete => {
                 _query = format!("UPDATE $id SET status=$status, completed=true");
                 DATABASE.set("status", Status::Complete).await?;
+            },
+            Status::CustomStatus(status) => {
+                _query = format!("UPDATE $id SET status=$status, completed=true");
+                DATABASE.set("status", status).await?;
             }
         }
 

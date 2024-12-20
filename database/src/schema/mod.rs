@@ -583,6 +583,64 @@ pub enum Status {
     Todo,
     InRepair,
     Complete,
+    CustomStatus(String),
+}
+// Trait that all statuses (including user-defined ones) can implement
+// trait TaskStatuses {
+//     fn get_user_statuses(&self) -> Vec<Status>;
+//     fn add_new_user_status(&self) -> Vec<Status>;
+// }
+// impl TaskStatuses for Status {
+//     fn get_user_statuses(&self) -> Vec<Status> {
+//         match self {
+//             Status::Todo => todo!(),
+//             Status::InRepair => todo!(),
+//             Status::Complete => todo!(),
+//             Status::CustomStatus(_) => todo!(),
+//         }
+//     }
+
+//     fn add_new_user_status(&self) -> Vec<Status> {
+//         todo!()
+//     }
+// }
+// // Implement the TaskStatus trait for your predefined statuses
+// impl TaskStatuses for User {
+//     fn get_user_statuses(&self) -> &str {
+//         match self {
+//             Status::Todo => "Todo",
+//             Status::InRepair => "In Repair",
+//             Status::Complete => "Complete",
+//             Status::CustomStatuses(user_statuses) => {
+
+//             }
+//         }
+//     }
+    
+//     fn add_new_user_status(&self) -> Vec<Status> {
+        
+//         self.user_statuses.push(value);
+//     }
+// }
+
+impl Status {
+    pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
+    pub fn as_str(&self) -> &str {
+        match self {
+            Status::Todo => "Todo",
+            Status::InRepair => "In Repair",
+            Status::Complete => "Complete",
+            Status::CustomStatus(status) => &status
+        }
+    }
+}
+
+impl User {
+    pub fn add_custom_status(&mut self, _new_status: &str) {
+        // if let Status::CustomStatus(ref mut user_statuses) = self {
+        //     user_statuses.push(new_status.to_string());
+        // }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -810,7 +868,8 @@ pub struct User {
     pub user_settings: UserSettings,
     pub id_prestashop: Option<u64>,
     pub id_store: Option<String>,
-    pub chat_threads: Option<Vec<ChatThreads>>
+    pub chat_threads: Option<Vec<ChatThreads>>,
+    pub user_statuses: Vec<Status>
 }
 
 impl Default for User {
@@ -826,7 +885,8 @@ impl Default for User {
             user_settings: UserSettings::default(),
             id_store: None,
             id_prestashop: None,
-            chat_threads: None
+            chat_threads: None,
+            user_statuses: Status::VALUES.to_vec(),
         }
     }
 }
@@ -857,28 +917,6 @@ impl Priority {
     }
     pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::Fire];
 }
-
-impl Status {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Status::Todo => "Todo",
-            Status::InRepair => "In Repair",
-            Status::Complete => "Complete",
-        }
-    }
-    pub const VALUES: [Self; 3] = [Self::Todo, Self::InRepair, Self::Complete];
-}
-
-// #[derive(Debug, Clone, Default, Serialize)]
-// pub struct Tur {
-//     pub data: PrestashopPayload,
-//     pub ticket_data: TicketPayload,
-//     pub task_data: TaskPayload,
-//     pub customer_data: CustomerData,
-//     pub task_notes: Vec<TaskNotePayload>,
-//     pub store_users: Vec<User>,
-// }
-// 
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClientId(pub RecordId);

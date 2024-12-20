@@ -111,7 +111,6 @@ impl TaskLayout {
         ScrollArea::horizontal()
             .show_viewport(ui, |ui, _|
         {
-            
             StripBuilder::new(ui)
                 .cell_layout(Layout::top_down_justified(Align::Center))
                 .size(Size::exact(30.0))
@@ -119,30 +118,21 @@ impl TaskLayout {
                 .size(Size::exact(x))
                 .vertical(|mut strip| 
             {
-                // if self.column_names.len() > 0 {
-                    strip.strip(|strip| 
-                    {
-                        strip.sizes(column_width, self.column_names.len())
-                            .horizontal(
-                                |strip| self.headers(strip, style.clone())
-                            );
-                    });
+                strip.strip(|strip| 
+                {
+                    strip
+                        .sizes(column_width, self.column_names.len())
+                        .horizontal(|strip| self.headers(strip, style.clone()));
+                });
 
-                    strip.empty();
+                strip.empty();
 
-                    strip.strip(|strip| 
-                    {
-                        strip.sizes(column_width, self.column_names.len())
-                            .horizontal(
-                                |mut strip| self.columns(strip.borrow_mut(), style.clone())
-                            );
-                    });
-                // } else { 
-                //     strip.cell(|ui| {
-                //         ui.label("Loading..");
-                //         Spinner::new().size(50.).color(Color32::from_rgb(150, 10, 150)).ui(ui);
-                //     });
-                //  }
+                strip.strip(|strip| 
+                {
+                    strip
+                        .sizes(column_width, self.column_names.len())
+                        .horizontal( |mut strip| self.columns(strip.borrow_mut(), style.clone()));
+                });
             });
         });
     }
@@ -168,204 +158,203 @@ impl TaskLayout {
             .outer_margin(Margin::symmetric(8.0, 1.0))
             .rounding(style.visuals.window_rounding)
             .stroke(style.visuals.window_stroke);
-        // if self.task_map.keys().len() == self.column_names.len() {
+
         let mut idx = 0;
-            for (name, tasks) in self.task_map.iter() {
-                idx += 1;
-                s.cell(|ui|{
-                    if ui.available_width() < 10.0 || ui.available_height() < 10.0 {
-                        info!("First strip avail size: {:?}", ui.available_size());
-                    }
-                    header_frame.show(ui, |ui|
+        for (name, tasks) in self.task_map.iter() {
+            idx += 1;
+            s.cell(|ui|{
+                if ui.available_width() < 10.0 || ui.available_height() < 10.0 {
+                    info!("First strip avail size: {:?}", ui.available_size());
+                }
+                header_frame.show(ui, |ui|
+                {
+                    ui.horizontal_top(|ui| 
                     {
-                        ui.horizontal_top(|ui| 
+                        ui.with_layout(Layout::left_to_right(Align::Min), |ui| 
                         {
-                            ui.with_layout(Layout::left_to_right(Align::Min), |ui| 
-                            {
-                                let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
-                                let mut margin = Margin::default();
-                                margin.top = 6.0;
-                                margin.left = 4.0;
-                                
-                                TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
-
-                                ui.add_space(15.);
-                                
-                                let mut count = 0;
-                                let current_date = Utc::now().date_naive();
-                                for task in tasks{
-                                    let due_date = DateTime::parse_from_rfc3339(&task.due_date);
-                                    if let Ok(date) = due_date {
-                                        let date = date.with_timezone(&Utc).date_naive();
-                                        if date < current_date && !task.completed{ count += 1; }
-                                    }
-                                }
-                                if count > 0 {
-                                    ui.small("Overdue");
-                                    ui.add_space(5.0);
-                                    ui.colored_label(Color32::DARK_RED, RichText::new(format!("{count}")).small());
-                                }
-                                ui.add_space(15.);
-                                let response = Button::new(RichText::new(name.to_owned())
-                                        .color(style.visuals.warn_fg_color)
-                                        .size(13.0).monospace()
-                                    )
-                                    .fill(style.visuals.noninteractive().bg_fill)
-                                    .rounding(Rounding::same(2.))
-                                    .min_size(Vec2::new(60.0, 15.0))
-                                    .ui(ui);
-
-                                if response.clicked(){
-                                    ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
-                                }
-                                
-                                let res = popup_below_widget(
-                                    ui, 
-                                    format!("sub_menu-{:?}",name).into(), 
-                                    &response, 
-                                    PopupCloseBehavior::CloseOnClickOutside, 
-                                    |ui| 
-                                {
-                                    ui.vertical_centered_justified(|ui| {
-                                        ui.set_width(200.0);
-                                        if ui.button("Mark all Complete").clicked(){
-                                            return TaskActions::MarkComplete;
-                                        }
-                                        ui.add_space(5.0);
-                                        if ui.button("Mark all Incomplete").clicked(){
-                                            return TaskActions::MarkIncomplete;
-                                        }
-                                        ui.add_space(5.0);
-                                        if ui.button("Mark all Due Today").clicked(){
-                                            return TaskActions::MarkDueToday;
-                                        }
-                                        TaskActions::None
-                                    }).inner
-                                });
-
-                                if let Some(action) = res{
-                                    let ids = tasks.iter().map(|t| t.id.clone()).collect::<Vec<RecordId>>();
-
-                                    match action{
-                                        TaskActions::MarkComplete => {
-                                            PlatformSpawner::spawn(async move {
-                                                // for id in ids{
-                                                    let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                        .bind(("record", ids.clone()))
-                                                        .bind(("completion", true))
-                                                        .await.unwrap().take(0).unwrap();
-                                                // }
-                                            });
-                                        },
-                                        TaskActions::MarkIncomplete => {
-                                            PlatformSpawner::spawn(async move {
-                                                // for id in ids{
-                                                    let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
-                                                        .bind(("record", ids.clone()))
-                                                        .bind(("completion", false))
-                                                        .await.unwrap().take(0).unwrap();
-                                                // }
-                                            });
-                                        },
-                                        TaskActions::MarkDueToday => {
-                                            PlatformSpawner::spawn(async move {
-                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_due_today($ids)")
-                                                    .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
-                                            });
-                                        }, _ => {}
-                                    }
-                                }
-                            });
+                            let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
+                            let mut margin = Margin::default();
+                            margin.top = 6.0;
+                            margin.left = 4.0;
                             
-                            ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
-                            {
-                                let button = Button::new(
-                                    RichText::new("✚")
-                                        .color(style.visuals.warn_fg_color)
-                                    )
-                                    .rounding(style.visuals.menu_rounding)
-                                    .fill(Color32::from_rgb(22,22,22))
-                                    .min_size(Vec2::new(30.0, 15.0))
-                                    .ui(ui);
+                            TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
 
-                                ui.add_space(20.0);
-
-                                if button.clicked(){
-                                    let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
+                            ui.add_space(15.);
+                            
+                            let mut count = 0;
+                            let current_date = Utc::now().date_naive();
+                            for task in tasks{
+                                let due_date = DateTime::parse_from_rfc3339(&task.due_date);
+                                if let Ok(date) = due_date {
+                                    let date = date.with_timezone(&Utc).date_naive();
+                                    if date < current_date && !task.completed{ count += 1; }
                                 }
+                            }
+                            if count > 0 {
+                                ui.small("Overdue");
+                                ui.add_space(5.0);
+                                ui.colored_label(Color32::DARK_RED, RichText::new(format!("{count}")).small());
+                            }
+                            ui.add_space(15.);
+                            let response = Button::new(RichText::new(name.to_owned())
+                                    .color(style.visuals.warn_fg_color)
+                                    .size(13.0).monospace()
+                                )
+                                .fill(style.visuals.noninteractive().bg_fill)
+                                .rounding(Rounding::same(2.))
+                                .min_size(Vec2::new(60.0, 15.0))
+                                .ui(ui);
 
-                                let selected = self.sort_by.entry(name.clone()).or_default();
-                                let txt = match selected.direction {
-                                    SortDirection::Asc => ("↗", ui.style().visuals.warn_fg_color),
-                                    SortDirection::Desc => ("↘", ui.style().visuals.error_fg_color),
-                                };
-                                let selected_text = match selected.field {
-                                    SortField::Default => RichText::new(format!("Priority {}", txt.0)).color(txt.1).small(),
-                                    SortField::Date => RichText::new(format!("Date {}", txt.0)).color(txt.1).small(),
-                                    SortField::Name => RichText::new(format!("Name {}", txt.0)).color(txt.1).small(),
-                                };
-                                ComboBox::new(format!("SortBy for {name:?}-{idx}"), "")
-                                    .selected_text(selected_text)
-                                    .width(70.)
-                                    .show_ui(ui, |ui| {
-                                        if ui.selectable_value(
-                                            &mut selected.field, 
-                                            SortField::Default, 
-                                            RichText::new(format!("Priority {}", txt.0)).color(txt.1).small())
-                                        .clicked() {
-                                            if let Some(last_field) = self.last_sort_field.clone() {
-                                                if last_field == SortField::Default {
-                                                    // Toggle the direction if the same field is clicked again
-                                                    selected.direction = match selected.direction {
-                                                        SortDirection::Asc => SortDirection::Desc,
-                                                        SortDirection::Desc => SortDirection::Asc,
-                                                    };
-                                                }
+                            if response.clicked(){
+                                ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-{:?}",name).into()));
+                            }
+                            
+                            let res = popup_below_widget(
+                                ui, 
+                                format!("sub_menu-{:?}",name).into(), 
+                                &response, 
+                                PopupCloseBehavior::CloseOnClickOutside, 
+                                |ui| 
+                            {
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.set_width(200.0);
+                                    if ui.button("Mark all Complete").clicked(){
+                                        return TaskActions::MarkComplete;
+                                    }
+                                    ui.add_space(5.0);
+                                    if ui.button("Mark all Incomplete").clicked(){
+                                        return TaskActions::MarkIncomplete;
+                                    }
+                                    ui.add_space(5.0);
+                                    if ui.button("Mark all Due Today").clicked(){
+                                        return TaskActions::MarkDueToday;
+                                    }
+                                    TaskActions::None
+                                }).inner
+                            });
+
+                            if let Some(action) = res{
+                                let ids = tasks.iter().map(|t| t.id.clone()).collect::<Vec<RecordId>>();
+
+                                match action{
+                                    TaskActions::MarkComplete => {
+                                        PlatformSpawner::spawn(async move {
+                                            // for id in ids{
+                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                    .bind(("record", ids.clone()))
+                                                    .bind(("completion", true))
+                                                    .await.unwrap().take(0).unwrap();
+                                            // }
+                                        });
+                                    },
+                                    TaskActions::MarkIncomplete => {
+                                        PlatformSpawner::spawn(async move {
+                                            // for id in ids{
+                                                let _x: Option<Record> = DATABASE.query("fn::mark_all_completion($record, $completion)")
+                                                    .bind(("record", ids.clone()))
+                                                    .bind(("completion", false))
+                                                    .await.unwrap().take(0).unwrap();
+                                            // }
+                                        });
+                                    },
+                                    TaskActions::MarkDueToday => {
+                                        PlatformSpawner::spawn(async move {
+                                            let _x: Option<Record> = DATABASE.query("fn::mark_all_due_today($ids)")
+                                                .bind(("ids", ids.clone())).await.unwrap().take(0).unwrap();
+                                        });
+                                    }, _ => {}
+                                }
+                            }
+                        });
+                        
+                        ui.with_layout(Layout::right_to_left(Align::Max), |ui| 
+                        {
+                            let button = Button::new(
+                                RichText::new("✚")
+                                    .color(style.visuals.warn_fg_color)
+                                )
+                                .rounding(style.visuals.menu_rounding)
+                                .fill(Color32::from_rgb(22,22,22))
+                                .min_size(Vec2::new(30.0, 15.0))
+                                .ui(ui);
+
+                            ui.add_space(20.0);
+
+                            if button.clicked(){
+                                let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
+                            }
+
+                            let selected = self.sort_by.entry(name.clone()).or_default();
+                            let txt = match selected.direction {
+                                SortDirection::Asc => ("↗", ui.style().visuals.warn_fg_color),
+                                SortDirection::Desc => ("↘", ui.style().visuals.error_fg_color),
+                            };
+                            let selected_text = match selected.field {
+                                SortField::Default => RichText::new(format!("Priority {}", txt.0)).color(txt.1).small(),
+                                SortField::Date => RichText::new(format!("Date {}", txt.0)).color(txt.1).small(),
+                                SortField::Name => RichText::new(format!("Name {}", txt.0)).color(txt.1).small(),
+                            };
+                            ComboBox::new(format!("SortBy for {name:?}-{idx}"), "")
+                                .selected_text(selected_text)
+                                .width(70.)
+                                .show_ui(ui, |ui| {
+                                    if ui.selectable_value(
+                                        &mut selected.field, 
+                                        SortField::Default, 
+                                        RichText::new(format!("Priority {}", txt.0)).color(txt.1).small())
+                                    .clicked() {
+                                        if let Some(last_field) = self.last_sort_field.clone() {
+                                            if last_field == SortField::Default {
+                                                // Toggle the direction if the same field is clicked again
+                                                selected.direction = match selected.direction {
+                                                    SortDirection::Asc => SortDirection::Desc,
+                                                    SortDirection::Desc => SortDirection::Asc,
+                                                };
                                             }
-                                            // Update the last selected field
-                                            self.last_sort_field = Some(SortField::Default);
                                         }
-                                        if ui.selectable_value(
-                                            &mut selected.field, 
-                                            SortField::Name, 
-                                            RichText::new(format!("Name {}", txt.0)).color(txt.1).small())
-                                        .clicked() {
-                                            if let Some(last_field) = self.last_sort_field.clone() {
-                                                if last_field == SortField::Name {
-                                                    // Toggle the direction if the same field is clicked again
-                                                    selected.direction = match selected.direction {
-                                                        SortDirection::Asc => SortDirection::Desc,
-                                                        SortDirection::Desc => SortDirection::Asc,
-                                                    };
-                                                }
+                                        // Update the last selected field
+                                        self.last_sort_field = Some(SortField::Default);
+                                    }
+                                    if ui.selectable_value(
+                                        &mut selected.field, 
+                                        SortField::Name, 
+                                        RichText::new(format!("Name {}", txt.0)).color(txt.1).small())
+                                    .clicked() {
+                                        if let Some(last_field) = self.last_sort_field.clone() {
+                                            if last_field == SortField::Name {
+                                                // Toggle the direction if the same field is clicked again
+                                                selected.direction = match selected.direction {
+                                                    SortDirection::Asc => SortDirection::Desc,
+                                                    SortDirection::Desc => SortDirection::Asc,
+                                                };
                                             }
-                                            // Update the last selected field
-                                            self.last_sort_field = Some(SortField::Name);
                                         }
-                                        if ui.selectable_value(
-                                            &mut selected.field, 
-                                            SortField::Date, 
-                                            RichText::new(format!("Date {}", txt.0)).color(txt.1).small())
-                                        .clicked() {
-                                            if let Some(last_field) = self.last_sort_field.clone() {
-                                                if last_field == SortField::Date {
-                                                    // Toggle the direction if the same field is clicked again
-                                                    selected.direction = match selected.direction {
-                                                        SortDirection::Asc => SortDirection::Desc,
-                                                        SortDirection::Desc => SortDirection::Asc,
-                                                    };
-                                                }
+                                        // Update the last selected field
+                                        self.last_sort_field = Some(SortField::Name);
+                                    }
+                                    if ui.selectable_value(
+                                        &mut selected.field, 
+                                        SortField::Date, 
+                                        RichText::new(format!("Date {}", txt.0)).color(txt.1).small())
+                                    .clicked() {
+                                        if let Some(last_field) = self.last_sort_field.clone() {
+                                            if last_field == SortField::Date {
+                                                // Toggle the direction if the same field is clicked again
+                                                selected.direction = match selected.direction {
+                                                    SortDirection::Asc => SortDirection::Desc,
+                                                    SortDirection::Desc => SortDirection::Asc,
+                                                };
                                             }
-                                            // Update the last selected field
-                                            self.last_sort_field = Some(SortField::Date);
                                         }
-                                });
+                                        // Update the last selected field
+                                        self.last_sort_field = Some(SortField::Date);
+                                    }
                             });
                         });
                     });
                 });
-            }
-        // }
+            });
+        }
     }
 
     fn columns(&mut self, s: &mut Strip, style: Arc<Style>) {
@@ -376,9 +365,7 @@ impl TaskLayout {
             .stroke(style.visuals.window_stroke);
 
         let mut inputs = BTreeSet::new();
-
-        // if self.task_map.keys().len() == self.column_names.len() {
-            // if self.task_map.iter().map(|m| m.1.iter().map(|i| i.))
+        
         for (name, tasks) in self.task_map.iter_mut(){
             let sort_by = self.sort_by.entry(name.clone()).or_default();
             let direction = &sort_by.direction;

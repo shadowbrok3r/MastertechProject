@@ -26,7 +26,9 @@ impl SharedContext {
                     self.rerun_filtering_my_tasks = false;
                     // log::info!("Reruning my tasks filter");
                     let mut map = BTreeMap::new();
-                    let mut user_settings = [Status::Todo, Status::InRepair];
+                    let mut user_settings = current_user.user_statuses.clone();
+                    user_settings.push(Status::Todo);
+                    user_settings.push(Status::InRepair);
                     let mut statuses = vals
                         .iter_mut()
                         .filter(|s| user_settings.iter_mut().any(|st| st == *s))
@@ -40,9 +42,9 @@ impl SharedContext {
                                 .filter_by_status(&status)
                                 .filter_by_assignee(current_user);
                             
-                            if !filtered.is_empty() {
+                            // if !filtered.is_empty() {
                                 map.entry(status.as_str().to_string()).or_insert(filtered);
-                            }
+                            // }
                         }
                     });
                     layout.task_map = map;
@@ -63,9 +65,9 @@ impl SharedContext {
                             .filter_by_status(&status)
                             .filter_by_assignee(current_user);
 
-                        if !filtered.is_empty() {
+                        // if !filtered.is_empty() {
                             map.entry(status.as_str().to_string()).or_insert(filtered);
-                        }
+                        // }
                     }
                 });
                 let col_names = vals
@@ -73,8 +75,12 @@ impl SharedContext {
                     .map(|v| v.as_str().to_string())
                     .collect::<Vec<String>>();
 
-                let layout =
-                    TaskLayout::new(map, col_names, self.ui_actions_tx.clone(), users.clone());
+                let layout = TaskLayout::new(
+                    map, 
+                    col_names, 
+                    self.ui_actions_tx.clone(), 
+                    users.clone()
+                );
                 self.task_layouts.insert(page.to_string(), layout);
             }
         } else {
