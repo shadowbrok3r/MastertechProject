@@ -199,13 +199,12 @@ impl MtechServer {
                             self.context.task_map.clear();
                             self.context.shared_ctx.task_layouts.clear();
                             let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
-                            let len_tx = self.context.shared_ctx.payload_len_channel.0.clone();
                             let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
                             let store_selection = std::convert::Into::<Store>::into(*selected);
                             
                             info!("Store: {store_selection:?}//{:?}", store_selection.clone().as_str().to_string());
                             spawn_local(async move {
-                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string(), len_tx).await;
+                                let store_tasks = get_tasks_for_store(tasks_tx.clone(), store_selection.clone().as_str().to_string()).await;
                                 let get_store_users = get_store_users(store_users_tx, store_selection).await;
                 
                                 info!("get_tasks_for_store: {store_tasks:?}");
@@ -325,12 +324,13 @@ impl MtechServer {
                             Separator::default().shrink(20.0).ui(ui);
                             ui.add_space(10.0);
                             ui.vertical_centered(|ui| {
-                                if ui.button(RichText::new("Show Notifications").heading()).clicked() {
-                                    let user_id = usr.clone().id;
-                                    spawn_local(async move {
-                                        let notifications = get_notifications(notif_tx.clone(), user_id).await;
-                                        info!("Get Notifications: {notifications:?}");
-                                    });
+                                if self.context.shared_ctx.notifications.is_empty() {
+                                    if ui.button(RichText::new("Show Notifications").heading()).clicked() {
+                                        spawn_local(async move {
+                                            let notifications = get_notifications(notif_tx.clone()).await;
+                                            info!("Get Notifications: {notifications:?}");
+                                        });
+                                    }
                                 }
                             });
 
@@ -351,7 +351,7 @@ impl MtechServer {
                                 }
                             });
                             let row_height = 100.;
-                            let total_rows = self.context.notifications.len();
+                            let total_rows = self.context.shared_ctx.notifications.len();
                             let scroll_area = ScrollArea::vertical().auto_shrink(false);
                             ui.ctx().options_mut(|o| o.line_scroll_speed = 15.0);
 
@@ -360,6 +360,7 @@ impl MtechServer {
                                     let mut notifications: Vec<Notification> =
                                         if self.context.read_notifications {
                                             self.context
+                                                .shared_ctx
                                                 .notifications
                                                 .iter()
                                                 .filter(|n| n.status == "Read")
@@ -367,6 +368,7 @@ impl MtechServer {
                                                 .collect()
                                         } else {
                                             self.context
+                                                .shared_ctx
                                                 .notifications
                                                 .iter()
                                                 .filter(|n| n.status == "Unread")
@@ -567,7 +569,6 @@ impl MtechServer {
         });
     }
 }
-
 
 
 /*

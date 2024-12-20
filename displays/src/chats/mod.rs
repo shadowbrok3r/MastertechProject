@@ -318,7 +318,8 @@ impl ChatView {
                                                 }
                                             } else {
                                                 let edit_btn = Button::new(RichText::new("🖊").weak().color(Color32::LIGHT_RED))
-                                                    .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                                    .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
+                                                    .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"));
 
                                                 if edit_btn.clicked(){
                                                     self.allow_edit.insert(item.id.to_string()); 
@@ -326,7 +327,8 @@ impl ChatView {
                                             }
 
                                             let copy_btn = Button::new(RichText::new("🗐").weak().color(Color32::LIGHT_RED))
-                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
+                                                .on_hover_text(RichText::new("Copy Task Note"));
 
                                             if copy_btn.clicked(){
                                                 ui.ctx().copy_text(item.note.clone());
@@ -335,9 +337,17 @@ impl ChatView {
                                             ui.add_space(6.0);
 
                                             let btn = Button::new(RichText::new("🗙").weak().color(Color32::LIGHT_RED))
-                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                                .rounding(Rounding::same(f32::INFINITY))
+                                                .small()
+                                                .min_size(Vec2::new(30.0, 14.0))
+                                                .ui(ui)
+                                                .on_hover_text(
+                                                    RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
+                                                        .strong()
+                                                        .color(Color32::LIGHT_RED)
+                                                );
 
-                                            if btn.clicked(){
+                                            if btn.double_clicked(){
                                                 self.delete = Some(item.clone());
                                                 let mut item = item.clone();
                                                 PlatformSpawner::spawn(async move {
