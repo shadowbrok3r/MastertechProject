@@ -61,27 +61,15 @@ pub async fn get_completed_tasks(input: Input, scope: WorkerScope<WebWorker>, id
         Some(input.0.clone())
     ).await?;
 
-    let mut offset = 0;
-    let limit = 2; // Number of tasks per chunk
-    loop {
+    let tasks = get_completed_tasks_for_store().await?;
 
-        let tasks = get_completed_tasks_for_store(offset, limit).await?;
-        // Break the loop if no more results
-        if tasks.is_empty() {
-            break;
-        }
-
-        scope.respond(id, Output { tasks });
-        
-        // Update the offset for the next chunk
-        offset += limit;
-    }
+    scope.respond(id, Output { tasks });
 
     Ok(())
 }
 
 
-pub async fn get_completed_tasks_for_store(offset: i32, limit: i32) -> anyhow::Result<Vec<TaskPayload>, anyhow::Error> {
+pub async fn get_completed_tasks_for_store() -> anyhow::Result<Vec<TaskPayload>, anyhow::Error> {
     let query = r#"
         SELECT *, (
             SELECT * FROM task_note 
@@ -89,26 +77,22 @@ pub async fn get_completed_tasks_for_store(offset: i32, limit: i32) -> anyhow::R
         ) AS task_note 
         FROM task 
         WHERE $this.assignee.store == $auth.store AND $this.completed IS true
-        LIMIT $limit START $offset
         FETCH 
             service_ticket, 
             service_ticket.computer, 
             service_ticket.customer
+            PARALLEL
     "#;
     
     let start_query = web_time::Instant::now(); // Start timing the query
-    gloo_console::warn!(format!("Querying at offset: {offset}"));
 
     let query_results: Vec<TaskPayload> = DATABASE
         .query(query)
-        // .bind(("store", store.clone()))
-        .bind(("limit", limit))
-        .bind(("offset", offset))
         .await?
         .take(0)?;
 
     let query_duration = start_query.elapsed(); // Measure query duration
-    gloo_console::warn!(format!("Query execution time for chunk (offset: {offset}): {query_duration:?}\ntask len: {}", query_results.len()));
+    gloo_console::warn!(format!("Query execution time for completed tasks {query_duration:?}"));
 
     Ok(query_results)
 }
