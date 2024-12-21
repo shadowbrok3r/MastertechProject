@@ -34,7 +34,8 @@ pub struct TaskLayout{
     pub sort_by: HashMap<String, SortOptions>,
     #[difference(skip)]
     pub last_sort_field: Option<SortField>,    
-    pub loading: bool
+    pub loading: bool,
+    new_status: String,
 }
 
 
@@ -66,7 +67,8 @@ impl TaskLayout {
             task: None,
             sort_by: HashMap::new(),
             last_sort_field: None,
-            loading: false
+            loading: false,
+            new_status: String::new()
         }
     }
 
@@ -281,8 +283,50 @@ impl TaskLayout {
                             ui.add_space(20.0);
 
                             if button.clicked(){
-                                let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
+                                ui.memory_mut(|mem| mem.open_popup(format!("sub_menu-create-{:?}",name).into()));
                             }
+                            
+                            popup_below_widget(
+                                ui, 
+                                format!("sub_menu-create-{:?}", name).into(), 
+                                &button, 
+                                PopupCloseBehavior::CloseOnClickOutside, 
+                                |ui| 
+                            {
+                                ui.vertical_centered_justified(|ui| {
+                                    ui.set_width(200.0);
+                                    let create_task_button = Button::new(
+                                        RichText::new("Create Task")
+                                            .color(ui.style().visuals.warn_fg_color)
+                                        )
+                                        .rounding(ui.style().visuals.menu_rounding)
+                                        .fill(Color32::from_rgb(22,22,22))
+                                        .min_size(Vec2::new(30.0, 15.0))
+                                        .ui(ui);
+
+                                    if create_task_button.clicked(){
+                                        let _ = self.ui_actions_tx.try_send(TaskUiActions::CreateTaskModal);
+                                    }
+
+                                    ui.add_space(5.0);
+
+                                    // let create_status_button = Button::new(
+                                    //     RichText::new("Create new status")
+                                    //         .color(ui.style().visuals.warn_fg_color)
+                                    //     )
+                                    //     .rounding(ui.style().visuals.menu_rounding)
+                                    //     .fill(Color32::from_rgb(22,22,22))
+                                    //     .min_size(Vec2::new(30.0, 15.0))
+                                    //     .ui(ui);
+
+                                    let accepted_by_keyboard = ui.ctx().input_mut(|i| i.key_pressed(eframe::egui::Key::Enter));
+                                    TextEdit::singleline(&mut self.new_status).show(ui);
+
+                                    if accepted_by_keyboard && !self.new_status.is_empty() {
+                                        info!("Got a new status: {}", self.new_status);
+                                    }
+                                });
+                            });
 
                             let selected = self.sort_by.entry(name.clone()).or_default();
                             let txt = match selected.direction {

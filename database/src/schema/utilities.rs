@@ -1,7 +1,7 @@
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Notification, TicketData, TicketPayload};
 use crate::{
     schema::{
-        helper_traits::TaskNotePayloadHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ClientId, Cmd, ConnectedClient, Priority, Record, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
+        helper_traits::TaskNotePayloadHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, Cmd, ConnectedClient, Priority, Record, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
     },
     DATABASE,
 };
@@ -293,11 +293,12 @@ pub async fn get_connected_clients(
     Ok(())
 }
 
-pub async fn disconnect_client(tx: Sender<Vec<ClientId>>, id: ClientId) -> Result<(), Error> {
-    DATABASE.set("id", id.0.key().to_string()).await?;
-    let query: Vec<ClientId> = DATABASE
-        .update("UPDATE connected_client SET connected = false WHERE id == $id")
-        .await?;
+pub async fn disconnect_client(tx: Sender<Vec<RecordId>>, id: RecordId) -> Result<(), Error> {
+    let query: Vec<RecordId> = DATABASE
+        .query("UPDATE connected_client SET connected = false WHERE id == $id")
+        .bind(("id", id.key().to_string()))
+        .await?
+        .take(0)?;
     tx.try_send(query)?;
 
     Ok(())

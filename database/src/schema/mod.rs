@@ -59,34 +59,9 @@ pub struct RecordResult {
     pub record: Option<String>,
 }
 
-// Implement Eq and Ord for ClientId using the inner RecordId's string representation
-impl Eq for UserId {}
-impl PartialEq for UserId {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.eq(&other.0)
-    }
-}
-impl Ord for UserId {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.to_string().cmp(&other.0.to_string())
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RecordSuccess {
     pub success: bool,
-}
-
-impl Default for UserId {
-    fn default() -> Self {
-        UserId(RecordId::from((String::new(), String::new())).clone())
-    }
-}
-
-impl Default for TaskId {
-    fn default() -> Self {
-        TaskId(RecordId::from((String::new(), String::new())).clone())
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Difference)]
@@ -568,7 +543,7 @@ pub enum NotificationStatus {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ModifyNotification {
-    pub id: NotificationId,
+    pub id: RecordId,
     pub everest_initials: Option<String>,
     /// either Read or Unread
     pub status: Option<NotificationStatus>,
@@ -917,30 +892,3 @@ impl Priority {
     }
     pub const VALUES: [Self; 5] = [Self::Normal, Self::Rfs, Self::Qc, Self::Express, Self::Fire];
 }
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ClientId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ComputerId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct CustomerId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct TicketId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd)]
-pub struct UserId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct TaskId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct TaskNoteId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct SebId(pub RecordId);
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct NotificationId(pub RecordId);
