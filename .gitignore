@@ -25,4 +25,6 @@ Mastertech4.0/data.enc
 Mastertech4.0/git-MasterTech.exe
 output.log
 .rust-analyzer/*
+.VSCodeCounter/*
+.VSCodeCounter
 # Mastertech4.0\.cargo\config.toml

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use database::schema::{
-    ComputerData, ComputerId, DriveData, LocalSebData, SystemInformation, COMPUTER_TABLE,
+    ComputerData, DriveData, LocalSebData, SystemInformation, COMPUTER_TABLE,
 };
 use dotenv::dotenv;
 use futures_util::FutureExt;

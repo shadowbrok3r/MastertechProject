@@ -1,5 +1,5 @@
 use crate::{app_state::MastertechContext, tabs::tur_sheet::scaffold::HardwareTest::{HddFail, HddNotTested, HddPass, RamFail, RamNotTested, RamPass, SsdFail, SsdNotTested, SsdPass}};
-use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Layout, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
+use eframe::egui::{vec2, Align, Button, Color32, ComboBox, FontId, Grid, Key, KeyboardShortcut, Layout, Margin, Modifiers, RichText, ScrollArea, Stroke, TextEdit, Ui, Vec2, Widget };
 use database::schema::{CustomerData, GetKeysResponse, LiveTaskPayload, LocalSebData, TicketData};
 use displays::ui_tools::{autocomplete::AutoCompleteTextEdit, toasts::{Toast, ToastKind, ToastOptions}};
 use get_ticket::{request_seb_info, SendRequest};
@@ -446,6 +446,7 @@ impl MastertechContext {
                                     TextEdit::multiline(&mut self.ticket_data.checkin_notes)
                                     .hint_text(RichText::new("Checkin Notes").weak())
                                     .font(FontId::proportional(15.0))
+                                    .margin(Margin::symmetric(10., 6.))
                                     .desired_rows(4)
                                 );
                             });
@@ -462,6 +463,7 @@ impl MastertechContext {
                                     .min_size(vec2(ui.available_width()-4.0, ui.available_height() - 80.0))
                                     .hint_text(RichText::new("Recommendations").weak())
                                     .font(FontId::proportional(15.0))
+                                    .margin(Margin::symmetric(10., 6.))
                                     .desired_rows(4).ui(ui);
                             // });
                             // ui.shrink_height_to_current(); 

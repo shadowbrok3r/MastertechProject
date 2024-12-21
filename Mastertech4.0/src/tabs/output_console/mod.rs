@@ -1,5 +1,5 @@
 use displays::ui_tools::{color_between_delimiters, color_matching_text};
-use eframe::egui::{text::LayoutJob, Color32, FontId, TextEdit, TextFormat, Ui};
+use eframe::egui::{text::LayoutJob, Color32, FontId, Margin, TextEdit, TextFormat, Ui};
 
 use crate::app_state::MastertechContext;
 
@@ -75,6 +75,7 @@ impl MastertechContext {
             TextEdit::multiline(&mut self.output_text.to_string())
                 .font(FontId::proportional(10.0))
                 .hint_text("Output")
+                .margin(Margin::symmetric(10., 6.))
                 .layouter(&mut layouter),
         );
     }

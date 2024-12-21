@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = [ "MtechServer2.0", "database" , "displays"] #  , "Mastertech4.0", "axum_middleware", , "websocket_server", "websocket_server2"  
+members = [ "MtechServer2.0", "database" , "displays"] #  , "Mastertech4.0", "axum_middleware", "websocket_server", "websocket_server2"  
 
 [workspace.dependencies]
 database = { path = "database" }
-eframe = { version="=0.30", features=["persistence", "serde",  "default_fonts", "accesskit", "glow"], default-features=false }
+eframe = { version="0.30", features=["persistence", "serde",  "default_fonts", "glow"], default-features=false }
 egui_extras = { version = "0.30", features = ["datepicker", "syntect", "serde", "image" ]}
 image = { version = "0.25.5", features = ["jpeg", "png"] }
 surrealdb = { version = "=2.1.4", features = ["protocol-ws"] } 
@@ -41,8 +41,6 @@ chrono = { version = "0.4", default-features = false, features = ["now"] } # fea
 egui-modal = "0.5"
 async-openai-wasm = { version = "0.26" }
 async-openai = {version = "0.26"}
-
-# rayon = "1"
 
 
 [profile.dev]
