@@ -86,16 +86,18 @@ impl MastertechContext{
         };
 
         let tx = self.shared_ctx.connected_clients_tx.clone();
+        let mut clients = self.shared_ctx.clients.clone();
         let uuid = self.client_uuid.clone();
+        info!("uuid: {:?}", uuid.clone());
         spawn(async move {
-            match query_id(CONNECTED_CLIENT_TABLE.to_string(), uuid.key().to_string().clone()).await {
+            match query_id::<ConnectedClient>(CONNECTED_CLIENT_TABLE.to_string(), uuid.clone()).await {
                 Ok(id) => {
-                    if let Some(id) = id {
+                    if let Some(_) = id {
                         info!("Client: {id:?} already exists");
                         
                         let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                            .query("UPDATE $id SET connected = true")
-                            .bind(("id", id.clone()))
+                            .query("UPDATE connected_client SET connected = true WHERE id == $id")
+                            .bind(("id", uuid.clone()))
                             .await?.take(0);
     
                         match res{
@@ -103,15 +105,18 @@ impl MastertechContext{
                             Err(e) => error!("Error Updating Client: {e:?}"),
                         }
                     } else {
-                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                            .query("CREATE connected_client CONTENT $content")
-                            .bind(("content", connected_client.clone()))
-                            .await?.take(0);
+                        let res: Option<ConnectedClient> = DATABASE
+                            .create((CONNECTED_CLIENT_TABLE, connected_client.connection_string.clone()))
+                            .content(connected_client.clone())
+                            .await?;
     
                         match res{
-                            Ok(data) => tx.try_send(data.clone())?,
-                            Err(e) => {
-                                error!("Error Creating Client: {e:?}");
+                            Some(data) => {
+                                    clients.push(data);
+                                    tx.try_send(clients)?;
+                                },
+                            None => {
+                                error!("Error Creating Client");
                                 let res: Option<Record> = DATABASE
                                     .upsert(uuid.clone())
                                     .merge(connected_client)
@@ -127,7 +132,7 @@ impl MastertechContext{
                         info!("Client: {:?} already exists", uuid.key().to_string().clone());
                 
                         let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                            .query("UPDATE $id SET connected = true")
+                            .query("UPDATE connected_client SET connected = true WHERE id == $id")
                             .bind(("id", uuid.key().to_string().clone().clone()))
                             .await?.take(0);
     

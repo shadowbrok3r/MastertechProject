@@ -156,6 +156,7 @@ impl WebSocketClient{
     }
     
     pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)
+        ui.set_min_height(400.0);
         StripBuilder::new(ui)
             .size(Size::exact(25.0)) // .sizes(size, strip_count)
             .size(Size::exact(25.0))

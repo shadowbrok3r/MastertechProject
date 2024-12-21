@@ -1,9 +1,9 @@
 use crate::{SortDirection, Sortable};
 use chrono::{DateTime, Timelike};
-use database::schema::{Priority, TaskPayload};
+use database::schema::{ConnectedClient, Priority, TaskPayload};
 
-impl Sortable for Vec<TaskPayload> {
-    fn default_sort(&mut self) -> &mut Vec<TaskPayload> {
+impl Sortable<TaskPayload> for Vec<TaskPayload> {
+    fn default_sort(&mut self,  sort_direction: SortDirection) -> &mut Vec<TaskPayload> {
         let priority_mapping = |priority: &Priority| -> i32 {
             match priority {
                 Priority::Express => 2,
@@ -15,17 +15,27 @@ impl Sortable for Vec<TaskPayload> {
         };
 
         self.sort_by(|a, b| {
-            let date_a = get_date_without_time(a);
-            let date_b = get_date_without_time(b);
+            let date_a = get_date_without_time(&a.due_date);
+            let date_b = get_date_without_time(&b.due_date);
 
             if date_a < date_b {
-                return std::cmp::Ordering::Less;
+                match sort_direction {
+                    SortDirection::Asc => return std::cmp::Ordering::Less,
+                    SortDirection::Desc => return std::cmp::Ordering::Less.reverse(),
+                }
             } else if date_a > date_b {
-                return std::cmp::Ordering::Greater;
+                match sort_direction {
+                    SortDirection::Asc => return std::cmp::Ordering::Greater,
+                    SortDirection::Desc => return std::cmp::Ordering::Greater.reverse(),
+                }
             } else {
                 let priority_a = priority_mapping(&a.priority);
                 let priority_b = priority_mapping(&b.priority);
-                return priority_b.cmp(&priority_a);
+                let ordering = priority_b.cmp(&priority_a);
+                match sort_direction {
+                    SortDirection::Asc => return ordering,
+                    SortDirection::Desc => return ordering.reverse(),
+                }
             }
         });
 
@@ -33,8 +43,8 @@ impl Sortable for Vec<TaskPayload> {
     }
     fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<TaskPayload>{
         self.sort_by(|a: &TaskPayload, b: &TaskPayload| {
-            let date_a = get_date_without_time(a);
-            let date_b = get_date_without_time(b);
+            let date_a = get_date_without_time(&a.due_date);
+            let date_b = get_date_without_time(&b.due_date);
             
             let ordering = date_a.cmp(&date_b);
             
@@ -46,7 +56,6 @@ impl Sortable for Vec<TaskPayload> {
     
         self
     }
-
     fn sort_by_name(&mut self, sort_direction: SortDirection) -> &mut Vec<TaskPayload> {
         self.sort_by(|a, b| {
             let name_a = &a.task_name.to_lowercase();
@@ -62,13 +71,61 @@ impl Sortable for Vec<TaskPayload> {
     
         self
     }
-    
-
 }
 
-fn get_date_without_time(task: &TaskPayload) -> chrono::prelude::DateTime<chrono::prelude::Utc> {
+impl Sortable<ConnectedClient> for Vec<ConnectedClient> {
+    fn default_sort(&mut self,  sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
+        self.sort_by(|a, b| {
+            let name_a = &a.connection_string.to_lowercase();
+            let name_b = &b.connection_string.to_lowercase();
+            
+            let ordering = name_a.cmp(name_b);
+    
+            match sort_direction {
+                SortDirection::Asc => ordering,              // Default alphabetical ordering (A-Z)
+                SortDirection::Desc => ordering.reverse(),   // Reverse alphabetical ordering (Z-A)
+            }
+        });
+    
+        self
+    }
+
+    fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
+        self.sort_by(|a: &ConnectedClient, b: &ConnectedClient| {
+            let date_a = get_date_without_time(&a.created_at.as_ref().cloned().unwrap_or_default());
+            let date_b = get_date_without_time(&b.created_at.as_ref().cloned().unwrap_or_default());
+            
+            let ordering = date_a.cmp(&date_b);
+            
+            match sort_direction {
+                SortDirection::Asc => ordering,               // Use default ordering for ascending
+                SortDirection::Desc => ordering.reverse(),    // Reverse ordering for descending
+            }
+        });
+    
+        self
+    }
+
+    fn sort_by_name(&mut self, sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
+        self.sort_by(|a, b| {
+            let name_a = &a.connection_string.to_lowercase();
+            let name_b = &b.connection_string.to_lowercase();
+            
+            let ordering = name_a.cmp(name_b);
+    
+            match sort_direction {
+                SortDirection::Asc => ordering,              // Default alphabetical ordering (A-Z)
+                SortDirection::Desc => ordering.reverse(),   // Reverse alphabetical ordering (Z-A)
+            }
+        });
+    
+        self
+    }
+}
+
+fn get_date_without_time(date_string: &String) -> chrono::prelude::DateTime<chrono::prelude::Utc> {
     // info!("date: {:?}", &task.due_date);
-    let date = DateTime::parse_from_rfc3339(&task.due_date).unwrap();
+    let date = DateTime::parse_from_rfc3339(date_string).unwrap();
     date.with_hour(2)
         .unwrap()
         .with_minute(2)
@@ -79,17 +136,4 @@ fn get_date_without_time(task: &TaskPayload) -> chrono::prelude::DateTime<chrono
         .unwrap()
         .into()
 }
-
-/*
-fn get_date_without_time(task: &TaskPayload) -> anyhow::Result<DateTime<Utc>, anyhow::Error> {
-    info!("date: {:?}", &task.due_date);
-    let date = DateTime::parse_from_rfc3339(&task.due_date)?;
-    let final_date = date
-        .with_hour(2).unwrap()
-        .with_minute(2).unwrap()
-        .with_second(2).unwrap()
-        .with_nanosecond(3).unwrap().into();
-    Ok(final_date)
-}
-*/
 

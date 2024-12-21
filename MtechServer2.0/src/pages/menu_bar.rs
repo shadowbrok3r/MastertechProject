@@ -193,10 +193,8 @@ impl MtechServer {
                         });
             
                         if *selected != current {
-                            self.context.task_map.clear();
                             self.context.shared_ctx.store_users.clear();
                             self.context.shared_ctx.tasks.clear();
-                            self.context.task_map.clear();
                             self.context.shared_ctx.task_layouts.clear();
                             let tasks_tx = self.context.shared_ctx.initial_tasks_tx.clone();
                             let store_users_tx = self.context.shared_ctx.store_users_tx.clone();
@@ -226,9 +224,8 @@ impl MtechServer {
                                     self.state = AppState::Authenticated(MainPages::WebConsole);
                                     let live_clients_tx = self.context.shared_ctx.live_clients_tx.clone();
                                     let tx = self.context.shared_ctx.connected_clients_tx.clone();
-                                    let user = usr.clone();
                                     spawn_local(async move {
-                                        let get_connected_clients = get_connected_clients(tx, user.clone()).await;
+                                        let get_connected_clients = get_connected_clients(tx).await;
                                         info!("get_connected_clients: {get_connected_clients:?}");
                                     });
                                     spawn_local(async move {
@@ -344,10 +341,10 @@ impl MtechServer {
                                     RichText::new("Unread").color(Color32::from_rgb(191, 33, 101)),
                                 );
                                 if read_button.clicked() {
-                                    self.context.read_notifications = true;
+                                    self.context.shared_ctx.read_notifications = true;
                                 }
                                 if unread_button.clicked() {
-                                    self.context.read_notifications = false;
+                                    self.context.shared_ctx.read_notifications = false;
                                 }
                             });
                             let row_height = 100.;
@@ -358,7 +355,7 @@ impl MtechServer {
                             scroll_area.show_rows(ui, row_height, total_rows, |ui, row_range| {
                                 for row in row_range {
                                     let mut notifications: Vec<Notification> =
-                                        if self.context.read_notifications {
+                                        if self.context.shared_ctx.read_notifications {
                                             self.context
                                                 .shared_ctx
                                                 .notifications

@@ -122,18 +122,18 @@ pub async fn get_task_notes_from_db_with_service_number(service_number: String) 
     }
 }
 
-pub async fn query_id<T>(table: String, id: T) -> Result<Option<RecordId>, Error>
+pub async fn query_id<T>(_table: String, id: RecordId) -> Result<Option<T>, Error>
 where
-    T: Serialize + Debug + Clone + 'static,
+    T: Serialize + Debug + Clone + 'static + for <'de> Deserialize <'de>
 {
-    DATABASE.set("id", id).await?;
-    DATABASE.set("table", table).await?;
-    let record: Option<RecordId> = DATABASE
-        .query("SELECT * FROM $table WHERE id == $id")
-        .await?
-        .take(0)?;
-    info!("schema/utilities.rs -> Record: {:?}", record);
-    Ok(record)
+    let mut record: surrealdb::Response = DATABASE
+        .query("SELECT * FROM <record>$id")
+        .bind(("id", id.clone()))
+        // .bind(("table", table.clone()))
+        .await?;
+
+    info!("schema/utilities.rs/query_id -> Record: {:?}\nSELECT * FROM ${id:?}", record);
+    Ok(record.take::<Option<T>>(0)?)
 }
 
 pub async fn check_id_existence<T>(table: String, id: T) -> Result<Option<bool>, Error>
@@ -271,7 +271,7 @@ pub async fn get_associated_task_notes(
 pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), Error> {
     debug!("get_store_users");
     let data: Vec<User> = DATABASE
-        .query("SELECT * FROM user WHERE store == $store")
+        .query("SELECT * FROM user WHERE store == $store PARALLEL")
         .bind(("store", store))
         .await?
         .take(0)?;
@@ -279,16 +279,13 @@ pub async fn get_store_users(tx: Sender<Vec<User>>, store: Store) -> Result<(), 
     Ok(())
 }
 
-pub async fn get_connected_clients(
-    tx: Sender<Vec<ConnectedClient>>,
-    user_id: User,
-) -> Result<(), Error> {
+pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(), Error> {
     debug!("get_connected_clients");
-    DATABASE.set("id", user_id.id).await?;
     let query: Vec<ConnectedClient> = DATABASE
-        .query("SELECT * FROM connected_client WHERE assigned_user == $id")
+        .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id PARALLEL")
         .await?
         .take(0)?;
+    info!("Clients: {:?}", query);
     tx.try_send(query)?;
     Ok(())
 }
@@ -304,13 +301,9 @@ pub async fn disconnect_client(tx: Sender<Vec<RecordId>>, id: RecordId) -> Resul
     Ok(())
 }
 
-pub async fn modify_connected_client(
-    tx: Sender<Vec<ConnectedClient>>,
-    user_id: User,
-) -> Result<(), Error> {
-    DATABASE.set("id", user_id.id).await?;
+pub async fn modify_connected_client(tx: Sender<Vec<ConnectedClient>>) -> Result<(), Error> {
     let query: Vec<ConnectedClient> = DATABASE
-        .query("SELECT * FROM connected_client WHERE assigned_user == $id")
+        .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id")
         .await?
         .take(0)?;
     tx.try_send(query)?;
@@ -445,17 +438,19 @@ pub async fn create_full_task_payload(
     task_data.everest_initials = queried_salesman.everest_initials;
     task_data.assignee = queried_salesman.id;
 
-    if let Some(cust) = query_id(CUSTOMER_TABLE.to_string(), customer_id).await? {
-        let update_cust_record: Vec<RecordId> = DATABASE
-            .update(cust.key().to_string())
+    if let Some(cust_record) = query_id::<CustomerData>(CUSTOMER_TABLE.to_string(), customer_id.clone()).await? {
+        info!("schema/utilities.rs -> cust_record: {cust_record:?}");
+        let update_cust_record: Option<Record> = DATABASE
+            .update(customer_id)
             .content(customer_data.clone())
             .await?;
         info!("schema/utilities.rs -> Customer updated: {update_cust_record:?}");
 
-        if let Some(computer_record) = query_id(COMPUTER_TABLE.to_string(), computer_id).await? {
+        if let Some(computer_record) = query_id::<ComputerData>(COMPUTER_TABLE.to_string(), computer_id.clone()).await? {
+            info!("schema/utilities.rs -> computer_record: {computer_record:?}");
             if send_specs {
-                let create_computer_record: Vec<RecordId> = DATABASE
-                    .update(computer_record.key().to_string())
+                let create_computer_record: Option<Record> = DATABASE
+                    .update(computer_id)
                     .content(computer_data)
                     .await?;
                 info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
@@ -467,9 +462,10 @@ pub async fn create_full_task_payload(
                 .await?;
             info!("schema/utilities.rs -> create_computer_record: {create_computer_record:?}");
         }
-        if let Some(ticket) = query_id(TICKET_TABLE.to_string(), ticket_id).await? {
-            let service_ticket_record: Vec<RecordId> = DATABASE
-                .update(ticket.key().to_string())
+        if let Some(ticket) = query_id::<TicketData>(TICKET_TABLE.to_string(), ticket_id.clone()).await? {
+            info!("schema/utilities.rs -> ticket record: {ticket:?}");
+            let service_ticket_record: Option<Record> = DATABASE
+                .update(ticket_id)
                 .content(ticket_data)
                 .await?;
             info!("schema/utilities.rs -> service_ticket_record: {service_ticket_record:?}");
