@@ -1,19 +1,21 @@
-use database::live_data::{handle_live_delete, update_or_insert_anything};
-use crate::{app_state::SharedContext, ui_tools::toasts::{Toast, ToastKind, ToastOptions}};
+use database::{live_data::{handle_live_delete, update_or_insert_anything}, schema::ConnectedClient};
+use displays::ui_tools::toasts::{Toast, ToastKind, ToastOptions};
+use crate::app_state::MtechServerContext;
 use eframe::egui::{Color32, RichText};
-use log::info;
+use std::collections::BTreeMap;
 use surrealdb::Action;
+use log::info;
 
-impl SharedContext {
+impl MtechServerContext {
     pub fn receive_client(&mut self) {
-        if let Ok((action, new_client)) = self.live_clients_rx.try_recv() {
+        if let Ok((action, new_client)) = self.shared_ctx.live_clients_rx.try_recv() {
             info!("new_client: {action:?} // {new_client:?}");
 
             if let (Some(usr), Some(current_user)) =
-                (&new_client.assigned_user, &self.current_user)
+                (&new_client.assigned_user, &self.shared_ctx.current_user)
             {
                 if usr == &current_user.id {
-                    let toast = &mut self.toasts;
+                    let toast = &mut self.shared_ctx.toasts;
                     let txt = match action {
                         Action::Create => RichText::new(format!(
                             "Client has connected: {}",
@@ -50,24 +52,38 @@ impl SharedContext {
 
             match action {
                 Action::Create => {
-                    update_or_insert_anything(&mut self.clients, new_client.clone())
+                    update_or_insert_anything(&mut self.shared_ctx.clients, new_client.clone())
                         .unwrap_or(())
                 }
                 Action::Update => {
-                    update_or_insert_anything(&mut self.clients, new_client.clone())
+                    update_or_insert_anything(&mut self.shared_ctx.clients, new_client.clone())
                         .unwrap_or(())
                 }
                 Action::Delete => {
-                    handle_live_delete(&mut self.clients, new_client.clone()).unwrap_or(())
+                    handle_live_delete(&mut self.shared_ctx.clients, new_client.clone()).unwrap_or(())
                 }
                 _ => (),
             };
         }
 
-        if let Ok(connected_clients) = self.connected_clients_rx.try_recv() {
-            self.clients = connected_clients.clone();
+        if let Ok(connected_clients) = self.shared_ctx.connected_clients_rx.try_recv() {
+            self.shared_ctx.clients = connected_clients.clone();
+            let mut client_map = BTreeMap::new();
+            let connected = self.shared_ctx.clients.iter().filter(|c| c.connected).cloned().collect::<Vec<ConnectedClient>>();
+            let disconnected = self.shared_ctx.clients.iter().filter(|c| c.connected == false).cloned().collect::<Vec<ConnectedClient>>();
+
+            client_map.insert("Connected".to_string(), connected);
+            client_map.insert("Disconnected".to_string(), disconnected);
+
+            self.web_console_layout.client_map = client_map;
+            // for client in self.shared_ctx.clients.iter() {
+            //     self.web_console_layout.ws_clients
+            //         .entry(client.connection_string.clone())
+            //         .or_insert(ws_client);
+            // }
             for client in connected_clients {
                 self
+                    .shared_ctx
                     .undock_client
                     .insert(client.connection_string, false);
             }

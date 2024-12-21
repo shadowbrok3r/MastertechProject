@@ -484,6 +484,7 @@ pub struct ConnectedClient {
     pub friendly_name: Option<String>,
     pub customer: Option<RecordId>,
     pub last_update: Option<String>,
+    pub created_at: Option<String>,
 }
 
 impl Default for ConnectedClient {
@@ -498,6 +499,7 @@ impl Default for ConnectedClient {
             friendly_name: Default::default(),
             customer: Default::default(),
             last_update: Default::default(),
+            created_at: Default::default(),
         }
     }
 }
@@ -844,7 +846,7 @@ pub struct User {
     pub id_prestashop: Option<u64>,
     pub id_store: Option<String>,
     pub chat_threads: Option<Vec<ChatThreads>>,
-    pub user_statuses: Vec<Status>
+    pub user_statuses: Option<Vec<Status>>
 }
 
 impl Default for User {
@@ -861,7 +863,7 @@ impl Default for User {
             id_store: None,
             id_prestashop: None,
             chat_threads: None,
-            user_statuses: Status::VALUES.to_vec(),
+            user_statuses: None,
         }
     }
 }

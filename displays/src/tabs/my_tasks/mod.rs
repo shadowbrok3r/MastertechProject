@@ -26,7 +26,7 @@ impl SharedContext {
                     self.rerun_filtering_my_tasks = false;
                     // log::info!("Reruning my tasks filter");
                     let mut map = BTreeMap::new();
-                    let mut user_settings = current_user.user_statuses.clone();
+                    let mut user_settings = current_user.user_statuses.clone().unwrap_or_default();
                     user_settings.push(Status::Todo);
                     user_settings.push(Status::InRepair);
                     let mut statuses = vals

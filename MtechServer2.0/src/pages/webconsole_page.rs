@@ -200,13 +200,10 @@ impl MtechServer {
                         .ui(ui)
                         .clicked()
                     {
-                        let usr = self.context.shared_ctx.current_user.clone();
-                        if let Some(user) = usr {
-                            let tx = self.context.shared_ctx.connected_clients_tx.clone();
-                            spawn_local(async move {
-                                get_connected_clients(tx, user).await.unwrap();
-                            });
-                        }
+                        let tx = self.context.shared_ctx.connected_clients_tx.clone();
+                        spawn_local(async move {
+                            get_connected_clients(tx).await.unwrap();
+                        });
                     }
                 });
 
@@ -254,7 +251,7 @@ impl MtechServer {
 
                 let mut inputs = BTreeSet::new();
 
-                for client in self.context.clients.clone() {
+                for client in self.context.shared_ctx.clients.clone() {
                     let connection_string = client.connection_string.clone();
                     inputs.insert(connection_string.clone());
                     if let Some(friendly_name) = client.friendly_name {
@@ -265,7 +262,7 @@ impl MtechServer {
                 ScrollArea::vertical().show_viewport(ui, |ui, _| {
                     let search_input = self.context.client_search_input.clone();
 
-                    let clients = self.context.clients.clone();
+                    let clients = self.context.shared_ctx.clients.clone();
                     let mut client_vec = Vec::new();
                     if !search_input.is_empty() {
                         for client in
@@ -317,9 +314,9 @@ impl MtechServer {
                                                     column_frame.show(ui, |ui| {
                                                         ui.set_min_size(Vec2::new(400., 400.));
                                                         ui.vertical_centered_justified(|ui| {
-                                                            ui.horizontal(|ui| {
-                                                                self.context.headers(ui, client)
-                                                            });
+                                                            // ui.horizontal(|ui| {
+                                                            //     self.context.client_headers(ui, client)
+                                                            // });
                                                             if let Some(ws_client) = self
                                                                 .context
                                                                 .ws_clients
@@ -382,9 +379,9 @@ impl MtechServer {
                                                     column_frame.show(ui, |ui| {
                                                         ui.set_min_size(Vec2::new(400., 400.));
                                                         ui.vertical_centered_justified(|ui| {
-                                                            ui.horizontal(|ui| {
-                                                                self.context.headers(ui, client)
-                                                            });
+                                                            // ui.horizontal(|ui| {
+                                                            //     self.context.headers(ui, client)
+                                                            // });
                                                             if let Some(ws_client) = self
                                                                 .context
                                                                 .ws_clients

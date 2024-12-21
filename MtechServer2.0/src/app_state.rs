@@ -1,6 +1,6 @@
-use crate::{pages::{login_page::Login, signup_page::Signup, account_settings_page::AccountMod, downloads_page::GithubRelease}, tabs::{github_issue::GithubIssue, web_console::websockets::WebSocketClient}};
-use displays::{app_state::SharedContext, channel_manager::ChannelManager, chats::ChatView, modals::{create_task_modal::Tur, ModalType}, virtual_filesystem::FileSystem};
-use database::{schema::{prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, TaskPayload, UserSettings}, Database};
+use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::{github_issue::GithubIssue, web_console::{websockets::WebSocketClient, WebConsoleLayout}}};
+use displays::{app_state::SharedContext, channel_manager::ChannelManager, virtual_filesystem::FileSystem};
+use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -52,17 +52,10 @@ pub struct MtechServerContext {
     pub app_state_tx: Sender<AppState>,
     #[serde(skip)]
     pub app_state_rx: Receiver<AppState>,
-    /// {Connected clients}
-    pub clients: Vec<ConnectedClient>,
     /// {WebSocket clients by ID}
     #[serde(skip)]
     pub ws_clients: HashMap<String, WebSocketClient>,
 
-    // Task Related Fields
-    /// {Map of tasks by key}
-    pub task_map: BTreeMap<String, Vec<TaskPayload>>,
-    /// {Live task payload from database}
-    pub live_tasks: Option<LiveTaskPayload>,
 
     // Communication with other Services
     /// {Database communication channel}
@@ -89,20 +82,12 @@ pub struct MtechServerContext {
     pub client_search_inputs: HashMap<String, String>,
     pub edited_task: TaskPayload,
 
-    /// {Current UI modal}
-    #[serde(skip)]
-    pub opened_modals: HashMap<String, ModalType>,
-    pub close_modal: Option<String>,
-    #[serde(skip)]
-    pub chat_modal: Option<ChatView>,
     /// {Open tabs in the UI}
     pub open_tabs: HashSet<String>,
     #[serde(skip)]
     pub style: Option<egui_dock::Style>,
     #[serde(skip)]
     pub added_nodes: Vec<(SurfaceIndex, NodeIndex)>,
-    pub read_notifications: bool,
-
 
     // System Data and Settings
     pub user_settings: UserSettings,
@@ -154,10 +139,9 @@ pub struct MtechServerContext {
     #[serde(skip)]
     pub bridge: gloo_worker::WorkerBridge<crate::webworker::WebWorker>,
 
-    // Other Components
-    pub tur: Tur,
     /// Do we need to refresh the UI?
     pub refresh: bool,
+    pub web_console_layout: WebConsoleLayout
 }
 
 impl MtechServer {
@@ -184,13 +168,8 @@ impl MtechServer {
         let context = MtechServerContext {
             shared_ctx: SharedContext::new(cc),
             first_run: true,
-            clients: Vec::new(),
             bridge,
             data_update,
-
-            task_map: BTreeMap::new(),
-            live_tasks: None,
-            close_modal: None,
             // CHANNEL SENDERS / RECEIVERS
             db_tx,
             db_rx,
@@ -202,11 +181,8 @@ impl MtechServer {
             seb_channel,
 
             // MODALS / LAYOUTS
-            tur: Tur::default(),
             
             edited_task: TaskPayload::default(),
-            opened_modals: HashMap::new(),
-            chat_modal: None,
             seb_email: String::new(),
 
             file_system: FileSystem::new(),
@@ -218,9 +194,6 @@ impl MtechServer {
             wants_to_undock: false,
             error: Default::default(),
 
-            // MISC / EVERYTHING ELSE
-            // bridge: Some(bridge),
-            // data_update: Some(data_update),
             search_input: String::new(),
             client_search_input: String::new(),
             client_search_inputs: HashMap::new(),
@@ -228,7 +201,6 @@ impl MtechServer {
             style: None,
             added_nodes: Vec::new(),
             new_note: false,
-            read_notifications: false,
             total_download_size: 0.0,
             download_progress: 0.0,
             user_settings: UserSettings::default(),
@@ -236,6 +208,7 @@ impl MtechServer {
             get_settings: true,
 
             refresh: false,
+            web_console_layout: WebConsoleLayout::new(BTreeMap::new()),
         };
 
         Self {

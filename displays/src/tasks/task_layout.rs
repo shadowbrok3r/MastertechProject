@@ -1,4 +1,5 @@
 use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Style, TextEdit, Ui, Vec2, Widget};
+use serde::Serialize;
 use crate::{Displayable, FilterTasks, SortDirection, Sortable, TaskUiActions};
 use database::schema::{Record, TaskPayload, User};
 use egui_extras::{Size, Strip, StripBuilder};
@@ -39,13 +40,13 @@ pub struct TaskLayout{
 }
 
 
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq, Serialize)]
 pub struct SortOptions {
     pub field: SortField,
     pub direction: SortDirection,
 }
 
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq, Serialize)]
 pub enum SortField {
     #[default]
     Default,
@@ -105,6 +106,20 @@ impl TaskLayout {
         self
     }
 
+    pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
+        info!("Finding ID: {task_id:?}");
+        // Search for the task by ID
+        for (_, tasks) in self.task_map.iter_mut(){
+            for task in tasks.iter_mut(){
+                if task.id.key().to_string() == *task_id{
+                    info!("Got a match");
+                    return Some(task);
+                }
+            }
+        }
+        None
+    }
+    
     pub fn layout_cols(&mut self, ui: &mut Ui) {
         ui.style_mut().visuals.window_rounding = ui.style().visuals.window_rounding;
         let column_width = Size::exact(450.0);
@@ -137,20 +152,6 @@ impl TaskLayout {
                 });
             });
         });
-    }
-
-    pub fn begin_edit(&mut self, task_id: &String) -> Option<&mut TaskPayload>{
-        info!("Finding ID: {task_id:?}");
-        // Search for the task by ID
-        for (_, tasks) in self.task_map.iter_mut(){
-            for task in tasks.iter_mut(){
-                if task.id.key().to_string() == *task_id{
-                    info!("Got a match");
-                    return Some(task);
-                }
-            }
-        }
-        None
     }
 
     fn headers(&mut self, mut s: Strip, style: Arc<Style>){
@@ -414,7 +415,7 @@ impl TaskLayout {
             let sort_by = self.sort_by.entry(name.clone()).or_default();
             let direction = &sort_by.direction;
             match sort_by.field {
-                SortField::Default => tasks.default_sort(),
+                SortField::Default => tasks.default_sort(direction.clone()),
                 SortField::Date => tasks.sort_by_date(direction.clone()),
                 SortField::Name => tasks.sort_by_name(direction.clone()),
             };

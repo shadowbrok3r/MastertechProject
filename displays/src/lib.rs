@@ -192,16 +192,16 @@ pub trait FilterClients {
 }
 
 
-#[derive(Default, PartialEq, Clone)]
+#[derive(Default, PartialEq, Clone, serde::Serialize)]
 pub enum SortDirection{
     #[default]
     Asc,
     Desc
 }
-pub trait Sortable {
-    fn default_sort(&mut self) -> &mut Vec<TaskPayload>;
-    fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<TaskPayload>;
-    fn sort_by_name(&mut self, sort_direction: SortDirection) -> &mut Vec<TaskPayload>;
+pub trait Sortable <T> {
+    fn default_sort(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
+    fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
+    fn sort_by_name(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
 }
 
 pub trait LiveUpdate {
