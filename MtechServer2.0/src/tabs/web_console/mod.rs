@@ -1,16 +1,17 @@
-use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, Color32, ComboBox, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
+use displays::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts}, virtual_filesystem::FileSystem, FilterClients, SortDirection};
 use database::schema::{ConnectedClient, utilities::get_connected_clients};
-use displays::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts}, virtual_filesystem::FileSystem, SortDirection};
 use egui_extras::{Size, Strip, StripBuilder};
-use serde::Serialize;
-use websockets::WebSocketClient;
+use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
 use crate::app_state::MtechServerContext;
 use wasm_bindgen_futures::spawn_local;
+use websockets::WebSocketClient;
 use std::collections::BTreeSet;
+use chrono::{DateTime, Local};
 use std::borrow::BorrowMut;
 use displays::Sortable;
+use serde::Serialize;
 use std::sync::Arc;
 use log::info;
 
@@ -322,6 +323,7 @@ impl WebConsoleLayout {
         let mut inputs = BTreeSet::new();
         
         for (name, clients) in self.client_map.iter_mut(){
+            
             let sort_by = self.sort_by.entry(name.clone()).or_default();
             let direction = &sort_by.direction;
             match sort_by.field {
@@ -332,14 +334,19 @@ impl WebConsoleLayout {
             
             for client in clients.iter(){
                 inputs.insert(client.connection_string.clone());
-                // inputs.insert(client.friendly_name.as_ref().cloned().unwrap_or_default());
+                inputs.insert(client.friendly_name.as_ref().cloned().unwrap_or_default());
                 // inputs.insert(client.client_hash.clone());
             }
 
             s.cell(|ui| {
                 column_frame.show(ui, |ui| {
                     ui.vertical_centered_justified(|ui| {
-                        let row_height = 450.;
+                        // let row_height = if self.ws_clients.get(&client.).is_some() {
+                        //     50.
+                        // } else {
+                        //     400.
+                        // };
+                        let row_height = 50.;
                         let total_rows = clients.len(); 
                         let scroll_area = ScrollArea::vertical().auto_shrink(false);
                         ui.ctx().options_mut(|o| o.line_scroll_speed = 30.0);
@@ -350,15 +357,18 @@ impl WebConsoleLayout {
                             // Iterate only over the rows in the current viewport range.
                             for row in row_range {
                                 if !search_input.is_empty() {
-                                    ui.scroll_to_cursor(Some(Align::Center));
+                                    ui.scroll_to_cursor(Some(Align::BOTTOM));
                                 }
-                                if let Some(client) = clients.get_mut(row) {
+                                let mut filtered_clients = clients.filter_by_client(inputs.clone(), search_input.clone());
+
+                                if let Some(client) = filtered_clients.get_mut(row) {
                                     let connection_string = client.connection_string.clone();
+                                    self.undock_client.entry(connection_string.clone()).or_insert(false);
                                     let color = if client.connected{ Color32::LIGHT_BLUE } else { Color32::LIGHT_RED };
                             
                                     let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 14))
                                         .inner_margin(Margin::same(4.0)).outer_margin(Margin::symmetric(5.0, 3.0))
-                                        .rounding(Rounding::same(10.0)).stroke(Stroke::new(1.0, color));
+                                        .rounding(Rounding::same(10.0)).stroke(Stroke::new(0.5, color));
                             
                                     let undock = if let Some(undock) = self.undock_client.get(&connection_string){
                                         undock
@@ -397,11 +407,11 @@ impl WebConsoleLayout {
             .fill(Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(3.0, 0.0))
-            .rounding(Rounding::same(5.0))
-            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
+            .rounding(Rounding::same(5.0));
+
         header_frame.show(ui, |ui| {
             ui.horizontal_top(|ui| {
-                ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     let button = Button::new(RichText::new("✖").color(Color32::LIGHT_RED))
                         .fill(Color32::TRANSPARENT)
                         .min_size(Vec2::new(30.0, ui.available_height()))
@@ -479,7 +489,7 @@ impl WebConsoleLayout {
                     if ui.button(formatted_text).clicked() {};
                 });
 
-                ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let button = Button::new(RichText::new("⮫").color(Color32::LIGHT_RED))
                         .fill(Color32::TRANSPARENT)
                         .min_size(Vec2::new(30.0, ui.available_height()))
@@ -501,7 +511,18 @@ impl WebConsoleLayout {
                         let _ = tx.try_send(ClientUiAction::ExportHistory(client.clone()));
                     }
 
+                    ui.add_space(10.);
+                    
+                    let parsed_date = DateTime::parse_from_rfc3339(
+                        &client.last_update.as_ref().cloned().unwrap_or_default()
+                    )
+                    .unwrap_or_default()
+                    .with_timezone(&Local);
+            
+                    let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
+                    ui.label(RichText::new(formatted_date));
                     ui.add_space(45.0);
+                    
                 });
             });
         });

@@ -181,7 +181,6 @@ impl MtechServer {
             seb_channel,
 
             // MODALS / LAYOUTS
-            
             edited_task: TaskPayload::default(),
             seb_email: String::new(),
 

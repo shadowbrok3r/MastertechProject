@@ -127,7 +127,7 @@ where
     T: Serialize + Debug + Clone + 'static + for <'de> Deserialize <'de>
 {
     let mut record: surrealdb::Response = DATABASE
-        .query("SELECT * FROM <record>$id")
+        .query("SELECT * FROM $id")
         .bind(("id", id.clone()))
         // .bind(("table", table.clone()))
         .await?;
@@ -136,19 +136,22 @@ where
     Ok(record.take::<Option<T>>(0)?)
 }
 
-pub async fn check_id_existence<T>(table: String, id: T) -> Result<Option<bool>, Error>
+pub async fn check_id_existence<T>(_table: String, id: T) -> Result<Option<bool>, Error>
 where
     T: Serialize + Debug + Clone + 'static,
 {
     let query = format!(
         r#"
-        LET $query = (SELECT $id FROM $table);
+        LET $query = (SELECT * FROM $id);
         IF $query != NULL || NONE {{ true }} ELSE {{ false }};
     "#
     );
-    DATABASE.set("id", id).await?;
-    DATABASE.set("table", table).await?;
-    let record: Option<bool> = DATABASE.query(query.clone()).await?.take(1)?;
+    let record: Option<bool> = DATABASE
+        .query(query.clone())
+        .bind(("id", id))
+        .await?
+        .take(1)?;
+
     info!("schema/utilities.rs -> Query: {:?}  // {}", record, query);
     Ok(record)
 }

@@ -15,7 +15,7 @@ impl MtechServer {
         TopBottomPanel::top("egui_dock::MenuBar").show(ctx, |ui| {
             menu::bar(ui, |ui| {
                 if let Some(usr) = self.context.shared_ctx.current_user.as_mut() {
-                    ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         ui.add_space(1.0);
                         ui.menu_button(RichText::new("View"), |ui| {
                             // allow certain tabs to be toggled
@@ -212,7 +212,7 @@ impl MtechServer {
 
                     });
 
-                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(8.0);
                         let txt =
                             RichText::new(format!(" {} ", usr.name.clone())).color(Color32::from_rgb(100, 50, 100));

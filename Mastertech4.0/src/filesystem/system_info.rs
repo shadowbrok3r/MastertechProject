@@ -59,9 +59,9 @@ pub trait ComputerInfo {
 #[async_trait]
 impl ComputerInfo for ComputerData {
     async fn get_computer_data(&mut self) -> anyhow::Result<Self, anyhow::Error> {
-        info!("Getting sysinfo");
+        info!("Filesystem -> get_computer_data -> Getting sysinfo");
         let sys = System::new_all();
-        info!("Pulling Drive information");
+        info!("Filesystem -> get_computer_data -> Pulling Drive information");
         let mut disks = Disks::new_with_refreshed_list();
         let client = Client::new();
 
@@ -75,7 +75,7 @@ impl ComputerInfo for ComputerData {
                         .to_formatted_string(&Locale::en),
                     drive_letter: disk.mount_point().to_str().unwrap_or("").to_string(),
                 });
-                info!("DriveData: {:?}", disk.name());
+                info!("Filesystem -> get_computer_data -> DriveData: {:?}", disk.name());
             }
         }
 
@@ -86,13 +86,13 @@ impl ComputerInfo for ComputerData {
                 Err(err)
             })
             .and_then(|data| {
-                info!("Pulled SEB Data successfully: {data:#?}");
+                info!("Filesystem -> get_computer_data -> Pulled SEB Data successfully: {data:#?}");
                 Ok(data)
             });
 
         #[cfg(target_os = "windows")]
         {
-            info!("pulling GPU");
+            info!("Filesystem -> get_computer_data -> pulling GPU");
             // Using Powershell instead using Get-CimInstance because wmic is deprecated in favor
             // of it
             let process = tokio::process::Command::new("powershell")
@@ -101,19 +101,19 @@ impl ComputerInfo for ComputerData {
                 .output()
                 .await;
 
-            info!("Process: {process:?}");
+            info!("Filesystem -> get_computer_data -> Process: {process:?}");
 
             let x = process.unwrap().stdout;
-            info!("x: {x:?}");
+            info!("Filesystem -> get_computer_data -> x: {x:?}");
 
             let gpu = String::from_utf8(x).unwrap_or(String::new());
-            info!("GPU: {gpu:?}");
+            info!("Filesystem -> get_computer_data -> GPU: {gpu:?}");
             self.gpu = gpu.clone().trim().to_string();
         }
 
         #[cfg(target_os = "linux")]
         {
-            info!("Pulling linux gpu");
+            info!("Filesystem -> get_computer_data -> Pulling linux gpu");
             let re = Regex::new(r"\[(.*)\]").unwrap();
             let gpu = String::from_utf8(
                 tokio::process::Command::new("sh")
@@ -139,22 +139,23 @@ impl ComputerInfo for ComputerData {
             self.seb_info = Some(seb_info);
         }
 
-        info!("Pulling CPU");
+        info!("Filesystem -> get_computer_data -> Pulling CPU");
         self.cpu = sys.cpus()[0].brand().trim().to_string();
-        info!("Pulling RAM");
+        info!("Filesystem -> get_computer_data -> Pulling RAM");
         self.ram = (sys.total_memory() / (1024 * 1024 * 1024) + 1)
             .to_formatted_string(&Locale::en)
             .trim()
             .to_string();
-        info!("Pulling OS");
+        info!("Filesystem -> get_computer_data -> Pulling OS");
         self.operating_system = System::long_os_version().unwrap_or_default();
-        info!("Pulling Hostname");
+        info!("Filesystem -> get_computer_data -> Pulling Hostname");
         self.hostname = System::host_name().unwrap_or_default();
 
         let client_hash = generate_client_id(self.hostname.clone(), self.cpu.trim().to_string());
         let id = format!("{}:{}", self.hostname.clone(), client_hash.split_at(9).0);
-
+        info!("Filesystem -> get_computer_data -> ID: {id}");
         self.id = RecordId::from((COMPUTER_TABLE, id.clone().as_str()));
+        info!("Filesystem -> get_computer_data -> RecordID: {:?}", self.id.clone());
         Ok(self.to_owned())
     }
 
@@ -400,11 +401,11 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 pub fn generate_client_id(hostname: String, cpu: String) -> String {
     let cpu_id = env::var("PROCESSOR_IDENTIFIER").unwrap_or_else(|_| "unknown-cpu".to_string());
     let combined = format!("{}-{}-{}", hostname, cpu, cpu_id);
-    info!("combined: {}", combined.clone());
+    info!("Filesystem -> generate_client_id -> combined: {}", combined.clone());
     let mut hasher = Sha256::new();
     hasher.update(combined.as_bytes());
     let result = hasher.finalize();
     let hex_string = hex::encode(result);
-    info!("hex_string: {}", hex_string.clone());
+    info!("Filesystem -> generate_client_id -> hex_string: {}", hex_string.clone());
     hex_string
 }

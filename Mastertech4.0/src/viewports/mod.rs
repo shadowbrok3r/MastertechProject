@@ -48,7 +48,7 @@ impl MasterTechApp{
                             if let Some(url) = &self.context.url{
                                 std::thread::sleep(Duration::from_secs(10));
                                 info!("Trying to reconnect");
-                                self.context.make_ws_connection(&url.to_string(), ui.ctx().clone());
+                                self.context.make_ws_connection(&url.to_string(), ui.ctx().clone(), self.context.client_uuid.clone());
                             }
                         }
                     }

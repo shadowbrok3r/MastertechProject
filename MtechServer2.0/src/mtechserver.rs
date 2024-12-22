@@ -1,4 +1,4 @@
-use crate::app_state::{AppState, MainPages, MtechServer};
+use crate::{app_state::{AppState, MainPages, MtechServer}, tabs::web_console::WebConsoleLayout};
 use displays::ui_tools::theme_config::set_custom_style;
 use eframe::egui::{
     Color32, Context, Frame, Margin, Rounding, Stroke, Vec2, Window
@@ -70,46 +70,50 @@ impl eframe::App for MtechServer {
         // do some initial setting up
         if self.context.first_run { self.first_run(frame); }
 
-        // if self.context.wants_to_undock {
-        //     for client in self.context.shared_ctx.clients.clone() {
-        //         let undock = if let Some(undock) =
-        //             self.context.undock_client.get(&client.connection_string)
-        //         {
-        //             undock
-        //         } else {
-        //             &false
-        //         };
+        if self.context.web_console_layout.wants_to_undock {
+            let layout = &mut self.context.web_console_layout;
+            let undock_client = layout.undock_client.clone();
+            for client in self.context.shared_ctx.clients.clone() {
+                let should_we_undock = if let Some(undock) = undock_client.get(&client.connection_string)
+                {
+                    undock
+                } else {
+                    &false
+                };
 
-        //         if *undock {
-        //             let color = if client.connected {
-        //                 Color32::LIGHT_BLUE
-        //             } else {
-        //                 Color32::LIGHT_RED
-        //             };
+                if *should_we_undock {
+                    let color = if client.connected {
+                        Color32::LIGHT_BLUE
+                    } else {
+                        Color32::LIGHT_RED
+                    };
 
-        //             let column_frame = Frame::default()
-        //                 .fill(Color32::from_rgb(12, 12, 14))
-        //                 .inner_margin(Margin::same(4.0))
-        //                 .outer_margin(Margin::symmetric(5.0, 3.0))
-        //                 .rounding(Rounding::same(10.0))
-        //                 .stroke(Stroke::new(1.0, color));
+                    let column_frame = Frame::default()
+                        .fill(Color32::from_rgb(12, 12, 14))
+                        .inner_margin(Margin::same(4.0))
+                        .outer_margin(Margin::symmetric(5.0, 3.0))
+                        .rounding(Rounding::same(10.0))
+                        .stroke(Stroke::new(1.0, color));
 
-        //             Window::new(&client.connection_string)
-        //                 .frame(column_frame)
-        //                 .max_size(Vec2::new(700., 400.))
-        //                 .show(ctx, |ui| {
-        //                     ui.vertical_centered_justified(|ui| {
-        //                         ui.horizontal(|ui| self.context.headers(ui, client.clone()));
-        //                         if let Some(ws_client) =
-        //                             self.context.ws_clients.get_mut(&client.connection_string)
-        //                         {
-        //                             ws_client.show(ui);
-        //                         }
-        //                     });
-        //                 });
-        //         }
-        //     }
-        // }
+                    Window::new(&client.connection_string)
+                        .frame(column_frame)
+                        .max_size(Vec2::new(700., 400.))
+                        .show(ctx, |ui| {
+                            ui.vertical_centered_justified(|ui| {
+                                
+                                let tx = layout.ui_actions_channel.0.clone();
+                                
+                                ui.horizontal(|ui| WebConsoleLayout::client_headers(ui, tx, &client.clone(), undock_client.clone()));
+                                if let Some(ws_client) =
+                                    layout.ws_clients.get_mut(&client.connection_string)
+                                {
+                                    ws_client.show(ui);
+                                }
+                            });
+                        });
+                }
+            }
+        }
 
         // Branch out all the different crossbeam channels to receive
         // in their own methods to clean up a lot of boilerplate code

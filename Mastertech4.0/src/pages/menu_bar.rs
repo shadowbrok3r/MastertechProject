@@ -51,7 +51,7 @@ impl MasterTechApp {
                             }
                         }
                     });
-                    ui.with_layout(Layout::right_to_left(eframe::egui::Align::Min), |ui| {
+                    ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                         ui.add_space(8.0);
                         let txt =
                             RichText::new(usr.name.clone()).color(Color32::from_rgb(100, 50, 100));
@@ -281,7 +281,7 @@ impl MasterTechApp {
                         ui.add_space(20.);
                         ui.style_mut().visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_additive_luminance(60));
                         ui.visuals_mut().widgets.inactive.bg_fill = Color32::from_additive_luminance(120);
-                        let reset_ui = Button::new(RichText::new("Reset Ui Layout").color(Color32::LIGHT_RED).monospace()).ui(ui);
+                        let reset_ui = Button::new(RichText::new(" Reset Ui Layout ").color(Color32::LIGHT_RED).monospace()).ui(ui);
                     
                         if reset_ui.clicked() {
                             let tree = default_tree();
@@ -298,7 +298,7 @@ impl MasterTechApp {
                             self.context.open_tabs = tree.1;
                         }
                         ui.add_space(5.);
-                        let submit = Button::new(RichText::new("Save Ui Layout").monospace()).ui(ui);
+                        let submit = Button::new(RichText::new(" Save Ui Layout ").monospace()).ui(ui);
                         if submit.clicked() {
                             let val = serde_json::to_value(self.tree.clone()).unwrap_or_default();
                             usr.user_settings.ui_layout.mastertech = val.clone();
@@ -369,7 +369,7 @@ impl MasterTechApp {
                         ui.label("Show tasks in: ");
 
                         ui.add_space(ui.available_width() / 6.0);
-                        ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.computer_data.id.key().to_string()).monospace());
+                        ui.colored_label(Color32::LIGHT_RED, RichText::new(self.context.client_title.clone()).monospace());
                         ui.colored_label(Color32::WHITE, RichText::new("Client ID: ").monospace());
 
                         let progress = self.context.progress;

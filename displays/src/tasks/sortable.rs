@@ -75,27 +75,15 @@ impl Sortable<TaskPayload> for Vec<TaskPayload> {
 
 impl Sortable<ConnectedClient> for Vec<ConnectedClient> {
     fn default_sort(&mut self,  sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
-        self.sort_by(|a, b| {
-            let name_a = &a.connection_string.to_lowercase();
-            let name_b = &b.connection_string.to_lowercase();
-            
-            let ordering = name_a.cmp(name_b);
-    
-            match sort_direction {
-                SortDirection::Asc => ordering,              // Default alphabetical ordering (A-Z)
-                SortDirection::Desc => ordering.reverse(),   // Reverse alphabetical ordering (Z-A)
-            }
-        });
-    
-        self
+        self.sort_by_date(sort_direction)
     }
 
     fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<ConnectedClient> {
         self.sort_by(|a: &ConnectedClient, b: &ConnectedClient| {
-            let date_a = get_date_without_time(&a.created_at.as_ref().cloned().unwrap_or_default());
-            let date_b = get_date_without_time(&b.created_at.as_ref().cloned().unwrap_or_default());
+            let date_a = &a.last_update.as_ref().cloned().unwrap_or_default();
+            let date_b = &b.last_update.as_ref().cloned().unwrap_or_default();
             
-            let ordering = date_a.cmp(&date_b);
+            let ordering = date_b.cmp(&date_a);
             
             match sort_direction {
                 SortDirection::Asc => ordering,               // Use default ordering for ascending
@@ -123,7 +111,7 @@ impl Sortable<ConnectedClient> for Vec<ConnectedClient> {
     }
 }
 
-fn get_date_without_time(date_string: &String) -> chrono::prelude::DateTime<chrono::prelude::Utc> {
+pub fn get_date_without_time(date_string: &String) -> chrono::prelude::DateTime<chrono::prelude::Utc> {
     // info!("date: {:?}", &task.due_date);
     let date = DateTime::parse_from_rfc3339(date_string).unwrap();
     date.with_hour(2)
