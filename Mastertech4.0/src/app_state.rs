@@ -189,6 +189,8 @@ pub struct MastertechContext {
     pub update_settings: bool,
     pub get_settings: bool,
     pub seb_email: String,
+    pub client_friendly_name: String,
+    pub client_title: String
 }
 
 impl MasterTechApp {
@@ -217,6 +219,7 @@ impl MasterTechApp {
             shared_ctx: SharedContext::new(cc),
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
+            client_friendly_name: String::new(),
             url: None,
             error: Default::default(),
             frontend: None,
@@ -329,6 +332,7 @@ impl MasterTechApp {
             update_settings: false,
             get_settings: true,
             seb_email: String::new(),
+            client_title: String::new()
         };
         
         let context = mastertech_context;

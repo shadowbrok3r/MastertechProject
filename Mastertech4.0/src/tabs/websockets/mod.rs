@@ -1,5 +1,5 @@
 use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, Cmd, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
-use eframe::{egui::{Align, Button, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
+use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use log::error;
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
@@ -10,44 +10,65 @@ use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
 use crossbeam::channel::{Receiver, Sender};
 use anyhow::{Result, Error};
-use surrealdb::RecordId;
+use surrealdb::{RecordId, Response};
 use bincode::serialize;
 use tracing::info;
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
         if !self.show_ws_viewport.load(Ordering::Relaxed) {
-            let _db_tx = self.db_tx.clone();
+            TopBottomPanel::top("Client Top Panel").show_inside(ui, |ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button("Connect").clicked() {
+                        self.connect(ui.ctx().clone());
+                    }
 
-            if self.shared_ctx.current_user.is_none(){
-                let _ = self.app_state_tx.send(crate::app_state::AppState::NoAuth("No User".to_string()));
-            }
-            
-            ui.vertical_centered(|ui| {
-                if ui.button("Connect").clicked()
-                {
-                    self.connect(ui.ctx().clone());
-                }
+                    if ui.add_enabled(
+                        !self.client_friendly_name.is_empty(), 
+                        Button::new("Update Name")
+                    )
+                        .clicked() 
+                    {
+                        let name = self.client_friendly_name.clone();
+                        let client = self.client_uuid.clone();
+                        spawn(async move {
+                            let update_client: Response = DATABASE.query("UPDATE $client SET friendly_name = $name")
+                                .bind(("name", name))
+                                .bind(("client", client))
+                                .await?;
     
-                if !self.error.is_empty() {
-                    TopBottomPanel::top("error").show_inside(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.colored_label(Color32::RED, format!("Error: {}", &self.error));
+                            info!("websockets -> update_client: {update_client:?}");
+                            Ok::<(), Error>(())
                         });
-                    });
-                }
+                    }
+
+                    TextEdit::singleline(&mut self.client_friendly_name)
+                        .margin(Margin::symmetric(10., 6.))
+                        .ui(ui);
+
+                });
             });
-    
-            if let Some(ref mut frontend) = self.frontend {
-                let connected = frontend.initialize_websocket(ui);
-                if !connected{ 
-                    if let Some(url) = &self.url{
-                        std::thread::sleep(Duration::from_secs(10));
-                        info!("Trying to reconnect");
-                        self.make_ws_connection(&url.to_string(), ui.ctx().clone());
+
+            if !self.error.is_empty() {
+                TopBottomPanel::bottom("error").show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(Color32::RED, format!("Error: {}", &self.error));
+                    });
+                });
+            }
+
+            CentralPanel::default().show_inside(ui, |ui| {
+                if let Some(ref mut frontend) = self.frontend {
+                    let connected = frontend.initialize_websocket(ui);
+                    if !connected{ 
+                        if let Some(url) = &self.url{
+                            std::thread::sleep(Duration::from_secs(10));
+                            info!("websockets -> Trying to reconnect");
+                            self.make_ws_connection(&url.to_string(), ui.ctx().clone(), self.client_uuid.clone());
+                        }
                     }
                 }
-            }
+            });
         }
     }
 
@@ -57,117 +78,84 @@ impl MastertechContext{
             self.computer_data.cpu.trim().to_string()
         );
 
-        let url_string = format!(
-            "{}:{}", 
-            self.computer_data.hostname.clone(), 
-            client_hash.split_at(9).0
-        );
-
-        self.url = Some(
-            format!(
-                "wss://sock.master-tech.app/websocket?room_id={}&role=client",  
-                // "ws://localhost:8081/websocket?role=client&room_id={}",
-                url_string.clone()
-            )
-        );
 
         let computer_id = &self.computer_data.id.clone();
-        
-        self.client_uuid = RecordId::from((CONNECTED_CLIENT_TABLE.to_string(), computer_id.key().to_string().clone()));
-        
+
+        info!("websockets -> self.client_uuid.clone(): {:?}", self.client_uuid.clone());
+
+        let cust_id = if self.customer_data.name.is_empty() {
+            Some(self.customer_data.id.clone())
+        } else {
+            None
+        };
 
         let connected_client = ConnectedClient {
             id: self.client_uuid.clone(),
             client_hash,
-            connected: true,
-            assigned_user: Some(self.shared_ctx.current_user.as_ref().unwrap().id.clone()),
-            connection_string: url_string.clone(),
+            connected: false,
+            assigned_user: Some(self.shared_ctx.current_user.as_ref().cloned().unwrap_or_default().id),
+            connection_string: self.client_title.clone(),
+            customer: cust_id,
+            computer: Some(computer_id.clone()),
             ..Default::default()
         };
 
-        let tx = self.shared_ctx.connected_clients_tx.clone();
-        let mut clients = self.shared_ctx.clients.clone();
         let uuid = self.client_uuid.clone();
-        info!("uuid: {:?}", uuid.clone());
+
+        info!("websockets -> uuid: {:?}", connected_client.id.clone());
+
         spawn(async move {
-            match query_id::<ConnectedClient>(CONNECTED_CLIENT_TABLE.to_string(), uuid.clone()).await {
-                Ok(id) => {
-                    if let Some(_) = id {
-                        info!("Client: {id:?} already exists");
-                        
-                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                            .query("UPDATE connected_client SET connected = true WHERE id == $id")
-                            .bind(("id", uuid.clone()))
-                            .await?.take(0);
-    
-                        match res{
-                            Ok(data) => tx.try_send(data.clone())?,
-                            Err(e) => error!("Error Updating Client: {e:?}"),
-                        }
-                    } else {
-                        let res: Option<ConnectedClient> = DATABASE
-                            .create((CONNECTED_CLIENT_TABLE, connected_client.connection_string.clone()))
-                            .content(connected_client.clone())
-                            .await?;
-    
-                        match res{
-                            Some(data) => {
-                                    clients.push(data);
-                                    tx.try_send(clients)?;
-                                },
-                            None => {
-                                error!("Error Creating Client");
-                                let res: Option<Record> = DATABASE
-                                    .upsert(uuid.clone())
-                                    .merge(connected_client)
-                                    .await?.take();
-                                info!("last ditch effort: {:?}", res);
-                            },
-                        }
-                    }
-                },
-                Err(e) => {
+            let query_id = query_id::<ConnectedClient>(CONNECTED_CLIENT_TABLE.to_string(), uuid.clone()).await?;
+            info!("websockets -> query_id: {query_id:?}");
+            let res: Option<Record> = DATABASE
+                .create(uuid.clone())
+                .content(connected_client)
+                .await?
+                .take();
 
-                    if e.to_string().contains("already exists") {
-                        info!("Client: {:?} already exists", uuid.key().to_string().clone());
-                
-                        let res: Result<Vec<ConnectedClient>, surrealdb::Error> = DATABASE
-                            .query("UPDATE connected_client SET connected = true WHERE id == $id")
-                            .bind(("id", uuid.key().to_string().clone().clone()))
-                            .await?.take(0);
-    
-                        match res{
-                            Ok(data) => tx.try_send(data.clone())?,
-                            Err(e) => error!("Error Updating Client: {e:?}"),
-                        }
-                    }
-                },
-            }
-
+            info!("websockets -> Upsert: {res:?}");
             Ok::<(), Error>(())
         });
 
         if let Some(url) = &self.url{
-            self.make_ws_connection(&url.to_string(), ctx);
+            self.make_ws_connection(&url.to_string(), ctx, self.client_uuid.clone());
         }
     }
 
-    pub fn make_ws_connection(&mut self, url: &String, ctx: Context) {
-        info!("self.url: {}", url.clone());
+    pub fn make_ws_connection(&mut self, url: &String, ctx: Context, client_id: RecordId) {
+        info!("websockets -> self.url: {}", url.clone());
         let ctx = ctx.clone();
         let wakeup = move || ctx.request_repaint(); // wake up UI thread on new message
 
         match ewebsock::connect_with_wakeup(url, Default::default(), wakeup) {
             Ok((mut ws_sender, ws_receiver)) => {
-                info!("Connected to websocket server");
+                info!("websockets -> Connected to websocket server");
                 ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
                 if self.frontend.is_none() {
                     self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
                 }
+
+                spawn(async move {
+                    let update_client: Response = DATABASE.query("UPDATE $client SET connected = true, last_update = time::now()")
+                        .bind(("client", client_id.clone()))
+                        .await?;
+
+                    info!("websockets -> update_client: {update_client:?}");
+                    Ok::<(), Error>(())
+                });
+
                 self.error.clear();
             }
             Err(error) => {
-                info!("Failed to connect to {:?}: {}", &self.url, error);
+                info!("websockets -> Failed to connect to {:?}: {}", &self.url, error);
+                spawn(async move {
+                    let update_client: Response = DATABASE.query("UPDATE $client SET connected = false, last_update = time::now()")
+                        .bind(("client", client_id.clone()))
+                        .await?;
+
+                    info!("websockets -> update_client: {update_client:?}");
+                    Ok::<(), Error>(())
+                });
                 self.error = error;
             }
         };
@@ -233,7 +221,7 @@ impl WebConsoleFrontend {
             self.ws_sender.send(WsMessage::Binary(std::mem::take(cmd_output)));
         }
 
-        // if self.timeout_counter.elapsed().as_secs() > 10 { info!("Its been over 10 seconds since last ping"); }
+        // if self.timeout_counter.elapsed().as_secs() > 10 { info!("websockets -> Its been over 10 seconds since last ping"); }
 
         for event in self.events.clone() {
             match event{
@@ -243,11 +231,11 @@ impl WebConsoleFrontend {
                         WsMessage::Binary(bin) => {
                             self.history.push(format!("{:?}", deserialize_command(&bin.clone())));
                             let cmd = deserialize_command(&bin.clone());
-                            info!("Binary Message: {bin:?}");
+                            info!("websockets -> Binary Message: {bin:?}");
                             self.handle_command(cmd);
                         },
                         WsMessage::Text(txt) => {
-                            info!("Got txt from websocket connection: {:?}", txt.clone());
+                            info!("websockets -> Got txt from websocket connection: {:?}", txt.clone());
                             self.history.push(format!("Raw Command: {}", txt.clone()));
                             let tx = self.command_tx.clone();
                             let text = txt.clone();
@@ -270,7 +258,7 @@ impl WebConsoleFrontend {
                 },
                 WsEvent::Error(e) => {
                     connected = false;
-                    info!("{e:?}");
+                    info!("websockets -> {e:?}");
                     self.history.push(e.clone())
                 },
             }
@@ -295,7 +283,7 @@ impl WebConsoleFrontend {
             Cmd::Tuneup => {
                 self.history.push(format!("Cmd: {:?}", cmd));
                 let _tx = self.tx.clone();
-                info!("Cmd: {cmd:?}");
+                info!("websockets -> Cmd: {cmd:?}");
                 
                 // spawn(async move {
                 //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
@@ -304,7 +292,7 @@ impl WebConsoleFrontend {
             Cmd::Cps => {
                 self.history.push(format!("Cmd: {:?}", cmd));
                 let tx = self.tx.clone();
-                info!("Cmd: {cmd:?}");
+                info!("websockets -> Cmd: {cmd:?}");
                 spawn(async move {
                     handle_command_payload("SELECT * FROM Win32_OperatingSystem".to_string(), tx.clone()).await.unwrap();
                 });
@@ -312,7 +300,7 @@ impl WebConsoleFrontend {
             Cmd::Qc => {
                 self.history.push(format!("Cmd: {:?}", cmd));
                 let tx = self.tx.clone();
-                info!("Cmd: {cmd:?}");
+                info!("websockets -> Cmd: {cmd:?}");
                 spawn(async move {
                     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
                 });
@@ -320,7 +308,7 @@ impl WebConsoleFrontend {
             Cmd::SfcScan => {
                 self.history.push(format!("Cmd: {:?}", cmd));
                 let tx = self.tx.clone();
-                info!("Cmd: {cmd:?}");
+                info!("websockets -> Cmd: {cmd:?}");
                 
                 spawn(async move {
                     handle_command_payload("sfc /scannow".to_string(), tx.clone()).await.unwrap();
@@ -329,7 +317,7 @@ impl WebConsoleFrontend {
             Cmd::DismScan => {
                 self.history.push(format!("Cmd: {:?}", cmd));
                 let tx = self.tx.clone();
-                info!("Cmd: {cmd:?}");
+                info!("websockets -> Cmd: {cmd:?}");
 
                 spawn(async move {
                     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
@@ -338,7 +326,7 @@ impl WebConsoleFrontend {
             Cmd::ChkDsk => {
                 self.history.push(format!("Cmd: {:?}", cmd));
                 let _tx = self.tx.clone();
-                info!("Cmd: {cmd:?}");
+                info!("websockets -> Cmd: {cmd:?}");
                 
                 // spawn(async move {
                 //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
@@ -347,30 +335,30 @@ impl WebConsoleFrontend {
             Cmd::Mbr2Gpt => {
                 self.history.push(format!("Cmd: {:?}", cmd));
                 let _tx = self.tx.clone();
-                info!("Cmd: {cmd:?}");
+                info!("websockets -> Cmd: {cmd:?}");
                 // spawn(async move {
                 //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
                 // });
             },
             Cmd::ReadDir(path) => {
-                info!("READING DIR");
+                info!("websockets -> READING DIR");
                 let current_path = env::current_dir().unwrap_or_default();
-                info!("Current_path: {current_path:?}");
+                info!("websockets -> Current_path: {current_path:?}");
                 let contents = if path == "current" {
                     let paths = read_folder(&current_path, 2, false);
-                    info!("Current paths: {:?}", paths.clone());
+                    info!("websockets -> Current paths: {:?}", paths.clone());
                     let node = self.explorer.build_virtual_file_system(current_path, paths);
                     node // paths
                 } else {
                     let p: PathBuf = Path::new(path.as_str()).to_path_buf();
                     if p.is_dir() {
                         let paths = read_folder(&p, 2, false);
-                        info!("Paths: {:?}", paths.clone());
+                        info!("websockets -> Paths: {:?}", paths.clone());
                         let node = self.explorer.build_virtual_file_system(current_path, paths);
                         node // paths
                     } else {
                         let paths = read_folder(&current_path, 2, false);
-                        info!("Paths: {:?}", paths.clone());
+                        info!("websockets -> Paths: {:?}", paths.clone());
                         let node = self.explorer.build_virtual_file_system(current_path, paths);
                         node // paths
                     }
@@ -390,10 +378,10 @@ impl WebConsoleFrontend {
                 let mut p: PathBuf = Path::new(&new_path).to_path_buf();
                 if p.pop() {
                     let paths = read_folder(&p, 2, false);
-                    info!("Paths: {:?}", paths.clone());
+                    info!("websockets -> Paths: {:?}", paths.clone());
                     if paths.len() > 0 {
                         let node = self.explorer.build_virtual_file_system(p, paths);
-                        info!("Node: {:?}", node);
+                        info!("websockets -> Node: {:?}", node);
     
                         let payload = serialize(
                             &Cmd::DirContents(node)
@@ -410,10 +398,10 @@ impl WebConsoleFrontend {
                 let p: PathBuf = Path::new(&new_path).to_path_buf();
                 if p.is_dir() {
                     let paths = read_folder(&p, 2, false);
-                    info!("Paths: {:?}", paths.clone());
+                    info!("websockets -> Paths: {:?}", paths.clone());
                     if paths.len() > 0 {
                         let node = self.explorer.build_virtual_file_system(p, paths);
-                        info!("Node: {:?}", node);
+                        info!("websockets -> Node: {:?}", node);
     
                         let payload = serialize(
                             &Cmd::DirContents(node)
@@ -430,10 +418,10 @@ impl WebConsoleFrontend {
                 let tx = self.tx.clone();
                 let p = path.clone();
                 let interactive_rx = self.interactive_input.1.clone();
-                info!("executing: {path:?}");
+                info!("websockets -> executing: {path:?}");
                 spawn(async move {
                     let x = handle_windows_cmd_interactive(p, tx, interactive_rx).await;
-                    info!("x: {x:?}");
+                    info!("websockets -> x: {x:?}");
                 });
             },
             Cmd::InteractiveInput(cmd) => {
@@ -680,7 +668,7 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) -> Result<()
     loop {
         sleep(Duration::from_secs(4)).await;
         let systeminfo: SystemInformation = get_sysinfo().await?;
-        info!("{systeminfo:?}");
+        info!("websockets -> {systeminfo:?}");
         tx.send(serialize_system_info(&systeminfo))?;
         // if app.lock().await.finish { break; }
     }
@@ -698,7 +686,7 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Res
     use tokio::{process::{Child, ChildStdin}, time::Instant};
 
     let start = Instant::now();
-    info!("Executing command: {}", command_payload);
+    info!("websockets -> Executing command: {}", command_payload);
     let mut process: Child = Command::new("cmd")
         .arg("/C")
         .arg(&command_payload)
@@ -728,12 +716,12 @@ async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Res
     });
 
     let output = process.wait_with_output().await?;
-    info!("output: {:?}", output);
+    info!("websockets -> output: {:?}", output);
     let duration = start.elapsed();
-    info!("Command executed in {:?}", duration);
+    info!("websockets -> Command executed in {:?}", duration);
     let tx_clone = tx.clone();
     if !output.status.success() {
-        info!("output status not successfull");
+        info!("websockets -> output status not successfull");
         tx_clone.send(output.stderr).ok();
     }
 
@@ -767,7 +755,7 @@ async fn handle_windows_cmd_interactive(
     tokio::spawn(async move {
         
         let status = process.wait().await.expect("child process encountered an error");
-        info!("child status was: {}", status);
+        info!("websockets -> child status was: {}", status);
     });
 
     let tx_clone = tx.clone();
@@ -790,7 +778,7 @@ async fn handle_windows_cmd_interactive(
         while let Ok(input) = rx.recv() {
             if input != "quit".to_string() {
                 if let Err(e) = stdin.write_all(input.as_bytes()).await {
-                    info!("Failed to write to stdin: {}", e);
+                    info!("websockets -> Failed to write to stdin: {}", e);
                     break;
                 }
             } else { break; }
@@ -806,19 +794,19 @@ async fn handle_windows_cmd_interactive(
 //         if text == "quit".to_string(){
 //             // drop(child.stdin);
 //         } else {
-//             info!("We have stdin!!");
+//             info!("websockets -> We have stdin!!");
 //             let input = text.clone();
 //             match stdin.write_all(input.as_bytes()).await {
-//                 Ok(_) => info!("Wrote to stdin"),
+//                 Ok(_) => info!("websockets -> Wrote to stdin"),
 //                 Err(e) => error!("Error writing to stdin: {e:?}"),
 //             }
 //             match stdin.flush().await {
-//                 Ok(_) => info!("Flushed stdin"),
+//                 Ok(_) => info!("websockets -> Flushed stdin"),
 //                 Err(e) => error!("Error flushing stdin: {:?}", e),
 //             }
 //         }
 //     } else {
-//         info!("No stdin yet");
+//         info!("websockets -> No stdin yet");
 //         match handle_command_payload(text.clone(), tx.clone()).await {
 //             Ok(stdin) => {
 //                 *process = Some(stdin);
@@ -853,7 +841,7 @@ async fn handle_linux_cmd(
     // make progress on its own while we await for any output.
     tokio::spawn(async move {
         let status = process.wait().await.expect("child process encountered an error");
-        info!("child status was: {}", status);
+        info!("websockets -> child status was: {}", status);
     });
 
     let tx_clone = tx.clone();

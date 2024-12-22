@@ -1,9 +1,10 @@
 use displays::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
+use surrealdb::RecordId;
 use super::utilities::crypto::pass_hash::load_encrypted_user_data;
 use super::app_state::{AppState, MasterTechApp};
-use crate::tabs::tur_sheet::scaffold::AsanaResponse;
+use crate::{filesystem::system_info::generate_client_id, tabs::tur_sheet::scaffold::AsanaResponse};
 use super::filesystem::system_info::ComputerInfo;
-use database::{schema::ComputerData, Database};
+use database::{schema::{ComputerData, CONNECTED_CLIENT_TABLE}, Database};
 use eframe::egui::{Context, ViewportCommand};
 use database::schema::GetKeysResponse;
 use std::sync::{Arc, Condvar, Mutex};
@@ -57,17 +58,38 @@ impl MasterTechApp {
             self.context.output_text += &format!("{:#?}", &seb_inf);
         }
 
+        let client_hash = generate_client_id(
+            self.context.computer_data.hostname.clone(), 
+            self.context.computer_data.cpu.trim().to_string()
+        );
+
+        let url_string = format!(
+            "{}:{}", 
+            self.context.computer_data.hostname.clone(), 
+            client_hash.split_at(9).0
+        );
+
+        self.context.client_title = url_string.clone();
+
+        self.context.url = Some(
+            format!(
+                "wss://sock.master-tech.app/websocket?room_id={}&role=client",
+                url_string.clone()
+            )
+        );
+        
+        self.context.client_uuid = RecordId::from_table_key(
+            CONNECTED_CLIENT_TABLE.to_string(), 
+            url_string.clone().as_str()
+        );
+
         let loaded_data = load_encrypted_user_data(HASH);
         match loaded_data {
             Some(login) => {
                 spawn(async move {
                     let db = Database::new(login.username, login.password, None).await;
-                    info!("DB: {db:?}");
                     match tx.try_send(db) {
-                        Ok(_) => {
-                            info!("Sent DB connection");
-                            drop(tx)
-                        }
+                        Ok(_) => drop(tx),
                         Err(e) => error!("Error sending specs: {e:?}"),
                     }
                 });

@@ -485,6 +485,7 @@ pub struct ConnectedClient {
     pub customer: Option<RecordId>,
     pub last_update: Option<String>,
     pub created_at: Option<String>,
+    pub computer:  Option<RecordId>
 }
 
 impl Default for ConnectedClient {
@@ -500,6 +501,7 @@ impl Default for ConnectedClient {
             customer: Default::default(),
             last_update: Default::default(),
             created_at: Default::default(),
+            computer: Default::default(),
         }
     }
 }
