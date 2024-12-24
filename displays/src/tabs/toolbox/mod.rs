@@ -48,13 +48,13 @@ impl SharedContext {
                             let tx = self.filesystem.paths_channel.0.clone();
                             let name = usr.email.clone();
                             let parsed = name.split_once('@').unwrap().0.to_string().clone();
-                            PlatformSpawner::spawn(async move {
-                                let result = list_buckets(STORAGE_URL.to_string(), access_key, secret_key, parsed, "").await;
-                                match result {
-                                    Ok(buckets) => {let _ = tx.try_send(buckets);},
-                                    Err(err) => log::warn!("Error: {err:?}"),
-                                }
-                            });
+                            // PlatformSpawner::spawn(async move {
+                            //     let result = list_buckets(STORAGE_URL.to_string(), access_key, secret_key, parsed).await;
+                            //     match result {
+                            //         Ok(buckets) => {let _ = tx.try_send(buckets);},
+                            //         Err(err) => log::warn!("Error: {err:?}"),
+                            //     }
+                            // });
                         }
                     }
                 }
