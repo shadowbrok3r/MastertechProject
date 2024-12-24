@@ -1,35 +1,23 @@
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Id, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
-#[cfg(target_arch="wasm32")]
-#[cfg(feature="wasm")]
-use {
-    mime_guess::from_path,
-    rfd::FileHandle,
-    bytes::Bytes,
-    anyhow::{Result, Error},
-    reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url},
-    rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}},
-    futures::{StreamExt, Future},
-    std::iter,
-    database::STORAGE_URL,
-    wasm_bindgen_futures::spawn_local
-};
+use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
+use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
+use crate::{channel_manager::ChannelManager, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{Node, User};
-
+use futures::{StreamExt, Future};
+use anyhow::{Result, Error};
+use crate::PlatformSpawner;
+use mime_guess::from_path;
+use database::STORAGE_URL;
 use surrealdb::sql::Uuid;
-
-
+use rfd::FileHandle;
 use regex::Regex;
+use bytes::Bytes;
+use std::iter;
 use log::info;
-
 #[cfg(feature="tokio")]
-// #[cfg(target_arch="")]
-use {
-    // tokio::spawn,
-    std::path::PathBuf
-};
-#[cfg(target_arch="wasm32")]
+use std::path::PathBuf;
 pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
 
 #[derive(Debug, Clone)]
@@ -37,6 +25,7 @@ pub struct FileSystem {
     pub scroll_id: Id,
     pub root: Node,
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
+    pub paths_channel: (Sender<Vec<String>>, Receiver<Vec<String>>),
     #[allow(dead_code)]
     bytes_tx: Sender<(Vec<u8>, u64)>,
     selected_items: RefCell<HashSet<String>>,
@@ -55,10 +44,13 @@ pub struct FileSystem {
 impl FileSystem {
     pub fn new() -> Self {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
+        let paths_channel = <Vec<String>>::create_unbounded_channel();
+
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
             bytes_tx,
             bytes_rx,
+            paths_channel,
             root: Node::Folder(String::new(), HashMap::new()),
             selected_items: RefCell::new(HashSet::new()),
             progress: 0.0,
@@ -74,6 +66,15 @@ impl FileSystem {
         }
     }
 
+    pub fn receive(&mut self) {
+        if let Ok(received_paths) = self.paths_channel.1.try_recv() {
+            if !received_paths.is_empty() && self.paths.is_empty() {
+                log::info!("Files: {received_paths:?}");
+                self.build_file_system(received_paths);
+            }
+        }
+    }
+    
     pub fn set_user(&mut self, user: User) -> &mut Self {
         self.user = user;
         self
@@ -111,6 +112,10 @@ impl FileSystem {
         self 
     }
 
+    /// This is to build an actual filesystem structure for when we are working with Mastertech from the website
+    /// - Builds a 'virtual' filesystem since wasm doesnt know anything about PathBuf's. This is used in 
+    /// mastertech to build the actual filesystem hierarchy, then builds a 'Node' out of it, serializes it,
+    /// then sends it over websocket to the website
     #[cfg(feature="tokio")]
     pub fn build_virtual_file_system(&mut self, base_path: PathBuf, paths: Vec<PathBuf>) -> Node {
         let mut root = Node::Folder(base_path.display().to_string(), HashMap::new());
@@ -236,30 +241,15 @@ impl FileSystem {
                                     ui.set_width(200.0);
 
                                     if ui.button("Download").clicked(){
-
                                         info!("Path: {:?}", full_path.clone());
-                                        if cfg!(target_os="windows") || cfg!(target_os="linux"){
-                                            #[cfg(target_os="windows")]
-                                            self._download_selection_tokio(full_path.to_string(), label.clone());
-                                        } else {
-                                            #[cfg(target_arch="wasm32")]
-                                            self.download_selection(full_path.to_string(), label.clone());
-                                        }
+                                        self.download_selection(full_path.to_string(), label.clone());
                                     }
 
                                     ui.add_space(5.0);
 
                                     if ui.button("Upload").clicked(){
-                                        // if let Some(dir) = self.find_directory_full_path(&full_path){
-                                            info!("Dir: {:?}", full_path.clone());
-                                            if cfg!(target_os="windows") || cfg!(target_os="linux"){
-                                                #[cfg(target_os="windows")]
-                                                self.upload_tokio(full_path.to_string());
-                                            } else {
-                                                #[cfg(target_arch="wasm32")]
-                                                self.upload(full_path.to_string());
-                                            }
-                                        // }
+                                        info!("Dir: {:?}", full_path.clone());
+                                        self.upload(full_path.to_string());
                                     }
 
                                     ui.add_space(5.0);
@@ -299,13 +289,7 @@ impl FileSystem {
                                 if ui.button("Upload").clicked(){
                                     if let Some(dir) = self.find_directory_full_path(&label){
                                         info!("Dir: {:?}", dir.clone());
-                                        if cfg!(target_os="windows") || cfg!(target_os="linux"){
-                                            #[cfg(target_os="windows")]
-                                            self.upload_tokio(dir);
-                                        } else {
-                                            #[cfg(target_arch="wasm32")]
-                                            self.upload(dir);
-                                        }
+                                        self.upload(dir);
                                     }
                                 }
 
@@ -363,7 +347,6 @@ impl FileSystem {
                             ui.vertical_centered_justified(|ui| {
                                 ui.set_width(200.0);
                                 if ui.button("Download").clicked(){
-                                    #[cfg(target_arch="wasm32")]
                                     self.download_selection(full_path.clone(), label.clone());
                                 }
                             }).inner
@@ -400,8 +383,6 @@ impl FileSystem {
         self.directory_paths.iter().find(|path| path.ends_with(&format!("\\\\{label}"))).cloned()
     }
 
-    #[cfg(target_arch="wasm32")]
-    #[cfg(feature="wasm")]
     pub fn upload(&self, path: String) {
         let task = rfd::AsyncFileDialog::new().pick_files();
         let secret_key = self.secret_key.clone();
@@ -409,7 +390,7 @@ impl FileSystem {
         let name = self.user.email.clone();
         let parsed = name.split_once('@').unwrap().0.to_string().clone();
 
-        spawn_local(async move {
+        PlatformSpawner::spawn(async move {
             let result = Self::perform_upload(
                 &parsed.clone(),
                 &access_key.clone(),
@@ -429,7 +410,7 @@ impl FileSystem {
         let _access_key = self.access_key.clone();
         let name = self.user.email.clone();
         let _parsed = name.split_once('@').unwrap().0.to_string().clone();
-        // spawn(async move {
+        // tokio::spawn(async move {
         //     let result = Self::perform_upload(
         //         &name.clone(),
         //         &access_key.clone(),
@@ -441,28 +422,6 @@ impl FileSystem {
         // });
     }
 
-    #[cfg(feature="tokio")]
-    pub fn upload_tokio(&self, _path: String) {
-        // let task = rfd::AsyncFileDialog::new().pick_files();
-        // let secret_key = self.secret_key.clone();
-        // let access_key = self.access_key.clone();
-        // let name = self.user.email.clone();
-        // let parsed = name.split_once('@').unwrap().0.to_string().clone();
-        // spawn(async move {
-        //     let result = Self::perform_upload(
-        //         &parsed.clone(),
-        //         &access_key.clone(),
-        //         &secret_key.clone(),
-        //         &path.clone(),
-        //         task
-        //     ).await;
-
-        //     info!("Result: {result:?}");
-        // });
-    }
-    
-    #[cfg(target_arch="wasm32")]
-    #[cfg(feature="wasm")]
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
@@ -470,7 +429,7 @@ impl FileSystem {
         let access_key = self.access_key.clone();
         let name = self.user.email.to_lowercase().clone();
         let parsed = name.split_once('@').unwrap().0.to_string().clone();
-        spawn_local(async move {
+        PlatformSpawner::spawn(async move {
             let result = Self::perform_download(
                 &parsed.clone(),
                 &access_key,
@@ -485,34 +444,11 @@ impl FileSystem {
         });
     }
 
-    #[cfg(feature="tokio")]
-    fn _download_selection_tokio(&self, _path: String, _filename: String) {
-        // let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
-        // let tx = self.bytes_tx.clone();
-        // let secret_key = self.secret_key.clone();
-        // let access_key = self.access_key.clone();
-        // let name = self.user.email.to_lowercase().clone();
-        // let parsed = name.split_once('@').unwrap().0.to_string().clone();
-        // spawn(async move {
-        //     let result = Self::perform_download(
-        //         &parsed.clone(),
-        //         &access_key,
-        //         &secret_key,
-        //         tx.clone(),
-        //         &path,
-        //         &filename,
-        //         task
-        //     ).await;
-
-        //     info!("Result: {result:?}");
-        // });
-    }
-
     // fn delete_selection(&self, path: String, filename: String) {
         // let tx = self.bytes_tx.clone();
         // let secret_key = self.secret_key.clone();
         // let access_key = self.access_key.clone();
-        // spawn_local(async move {
+        // PlatformSpawner::spawn(async move {
         //     let name = self.user.email;
         //     let region = "us-west";
         //     let bucket = Bucket::new(
@@ -530,7 +466,6 @@ impl FileSystem {
         // });
     // }
 
-    #[cfg(target_arch="wasm32")]
     async fn perform_upload(
         name: &String, 
         access_key: &String, 
@@ -615,7 +550,7 @@ impl FileSystem {
         Ok(())
     }
     
-    #[cfg(target_arch="wasm32")]
+    // #[cfg(target_arch="wasm32")]
     async fn perform_download(
         name: &String, 
         access_key: &String, 

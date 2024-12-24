@@ -177,7 +177,6 @@ pub struct MastertechContext {
     pub progress: (f32, f32),
     pub special_part_order: SpecialPartOrder,
     pub toolbox: FileSystem,
-    pub minio_files: (Sender<Vec<String>>, Receiver<Vec<String>>),
     pub copied_items_tx: Sender<String>,
     pub copied_items_rx: Receiver<String>,
     pub github_releases: Vec<GithubRelease>,
@@ -206,7 +205,6 @@ impl MasterTechApp {
         let (cps_keys_tx, cps_keys_rx) = crossbeam::channel::unbounded::<GetKeysResponse>();
         let (app_state_tx, app_state_rx) = crossbeam::channel::unbounded::<AppState>();
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded::<(u64, u64)>();
-        let minio_files = <Vec<String>>::create_unbounded_channel();
         let (copied_items_tx, copied_items_rx) = crossbeam::channel::unbounded();
         let bytes_channel = <(Vec<u8>, u64)>::create_unbounded_channel();
         let github_releases_channel = <Vec<GithubRelease>>::create_unbounded_channel();
@@ -322,7 +320,6 @@ impl MasterTechApp {
             progress: (0.0, 0.0),
             special_part_order: SpecialPartOrder::default(),
             toolbox: FileSystem::new(),
-            minio_files,
             github_releases: Vec::new(),
             bytes_channel,
 

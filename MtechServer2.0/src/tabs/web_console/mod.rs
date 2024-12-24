@@ -17,7 +17,8 @@ use log::info;
 
 pub mod websockets;
 pub mod charts;
-pub mod display;
+// pub mod display;
+
 use crate::tabs::web_console::websockets::ClientHandler;
 
 pub enum ClientUiAction {

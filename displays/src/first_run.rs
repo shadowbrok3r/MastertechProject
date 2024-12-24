@@ -1,17 +1,10 @@
 
-use crate::{
-    app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner //,FilterTasks
-};
-use database::{
-    live_data::listen_data,
-    schema::{
-        utilities::{get_notifications, get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE // Status, Store, 
-    },
-};
-use eframe::egui::Context;
+use database::{live_data::listen_data,schema::{buckets::list_buckets, utilities::{get_notifications, get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}, STORAGE_URL};
+use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner};
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use std::collections::HashMap;
-use log::info;
+use eframe::egui::Context;
+use log::{info, warn};
 
 impl SharedContext {
     pub fn load_data(&mut self, ctx: &Context) -> bool {
@@ -28,6 +21,30 @@ impl SharedContext {
             info!("Getting Initial data: {}", self.store_selection);
             let user = usr.clone();
             let name = usr.name.clone();
+
+            if self.filesystem.paths.is_empty() {
+                if let (
+                    Some(access_key), 
+                    Some(secret_key)
+                ) = (
+                    usr.minio_access_key.clone(),
+                    usr.minio_secret_key.clone()
+                ) {
+                    info!("Retrieving minio files: {access_key:?}");
+                    self.filesystem.access_key = access_key.clone();
+                    self.filesystem.secret_key = secret_key.clone();
+                    let tx = self.filesystem.paths_channel.0.clone();
+                    let name = usr.email.clone();
+                    let parsed = name.split_once('@').unwrap().0.to_string().clone();
+                    PlatformSpawner::spawn(async move {
+                        let result = list_buckets(STORAGE_URL.to_string(), access_key, secret_key, parsed).await;
+                        match result {
+                            Ok(buckets) => {let _ = tx.try_send(buckets);},
+                            Err(err) => warn!("Error: {err:?}"),
+                        }
+                    });
+                }
+            }
 
             if self.tasks.is_empty() || self.store_users.is_empty() {
                 let initial_tasks_tx = self.initial_tasks_tx.clone();
@@ -168,6 +185,7 @@ impl SharedContext {
             self.ai_playground.set_threads(thread_map);
         }
 
+        self.filesystem.receive();
         self.task_audit_table.receive(self.current_user.clone().unwrap_or_default(), self.store_users.clone(), frame);
     }
 }

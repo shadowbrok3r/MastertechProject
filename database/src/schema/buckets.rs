@@ -34,12 +34,12 @@ pub async fn list_buckets(url: String, access_key: String, secret_key: String, n
     
     let parsed = ListObjectsV2::parse_response(&text)?;
 
-    #[cfg(target_arch="wasm32")] 
     log::info!("parsed: {parsed:?}");
 
     let mut vec = Vec::new();
     
     for prefix in parsed.common_prefixes{
+        log::info!("Getting strings from prefix: {prefix:?}");
         let mut list_objs = ListObjectsV2::new(&bucket, Some(&credentials));
         list_objs.query_mut().insert("prefix", prefix.prefix);
         list_objs.query_mut().insert("delimiter", "/");
