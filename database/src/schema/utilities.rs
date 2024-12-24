@@ -288,7 +288,7 @@ pub async fn get_connected_clients(tx: Sender<Vec<ConnectedClient>>) -> Result<(
         .query("SELECT * FROM connected_client WHERE assigned_user == $auth.id PARALLEL")
         .await?
         .take(0)?;
-    info!("Clients: {:?}", query);
+    // info!("Clients: {:?}", query);
     tx.try_send(query)?;
     Ok(())
 }

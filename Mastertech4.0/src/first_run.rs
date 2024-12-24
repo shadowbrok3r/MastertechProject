@@ -217,10 +217,6 @@ impl MasterTechApp {
             self.context.keys = keys;
         }
 
-        if let Ok(files) = self.context.minio_files.1.try_recv() {
-            self.context.toolbox.build_file_system(files);
-        }
-
         if let Ok(state) = self.context.app_state_rx.try_recv() {
             info!("Got a new state: {state:?}");
             self.state = state

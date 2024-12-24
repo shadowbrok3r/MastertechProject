@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -170,7 +170,9 @@ pub struct SharedContext {
     pub switching_store: bool,
     pub refresh: bool,
     #[serde(skip)]
-    pub timer: Option<web_time::Instant>
+    pub timer: Option<web_time::Instant>,
+    #[serde(skip)]
+    pub filesystem: FileSystem
 }
 
 impl SharedContext {
@@ -209,11 +211,6 @@ impl SharedContext {
 
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
-        
-        // let mut task_layouts = HashMap::new();
-        // task_layouts.insert("CompletedTasks".to_string(), Vec::new());
-        // task_layouts.insert("StoreTasks".to_string(), Vec::new());
-        // task_layouts.insert("MyTasks".to_string(), Vec::new());
         
         Self {
             current_user: None,
@@ -287,7 +284,8 @@ impl SharedContext {
             show_tasks_viewport: HashMap::new(),
             switching_store: false,
             refresh: false,
-            timer: None
+            timer: None,
+            filesystem: FileSystem::new()
         }
     }
 
