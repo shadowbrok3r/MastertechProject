@@ -160,15 +160,14 @@ impl MasterTechApp {
                 self.context.spinner = false;
             }
         }
-        // TODO
-        // Fix this, egui_file doesnt support 0.29 egui yet
-        // if let Some(dialog) = &mut self.context.open_file_dialog {
-        //     if dialog.show(&ctx).selected() {
-        //         if let Some(file) = dialog.path() {
-        //             self.context.opened_file = Some(file.to_path_buf());
-        //         }
-        //     }
-        // }
+
+        if let Some(dialog) = &mut self.context.open_file_dialog {
+            if dialog.show(&ctx).selected() {
+                if let Some(file) = dialog.path() {
+                    self.context.opened_file = Some(file.to_path_buf());
+                }
+            }
+        }
 
         while let Ok(res) = self.context.bytes_rx.try_recv() {
             self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);

@@ -25,7 +25,7 @@ pub struct FileSystem {
     pub scroll_id: Id,
     pub root: Node,
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
-    pub paths_channel: (Sender<Vec<String>>, Receiver<Vec<String>>),
+    pub paths_channel: (Sender<Node>, Receiver<Node>),
     #[allow(dead_code)]
     bytes_tx: Sender<(Vec<u8>, u64)>,
     selected_items: RefCell<HashSet<String>>,
@@ -44,7 +44,7 @@ pub struct FileSystem {
 impl FileSystem {
     pub fn new() -> Self {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
-        let paths_channel = <Vec<String>>::create_unbounded_channel();
+        let paths_channel = <Node>::create_unbounded_channel();
 
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
@@ -67,11 +67,12 @@ impl FileSystem {
     }
 
     pub fn receive(&mut self) {
-        if let Ok(received_paths) = self.paths_channel.1.try_recv() {
-            if !received_paths.is_empty() && self.paths.is_empty() {
-                log::info!("Files: {received_paths:?}");
-                self.build_file_system(received_paths);
-            }
+        if let Ok(node) = self.paths_channel.1.try_recv() {
+            // if !received_paths.is_empty() && self.paths.is_empty() {
+                log::info!("Files: {node:?}");
+                self.root = node;
+                // self.build_file_system(received_paths);
+            // }
         }
     }
     
