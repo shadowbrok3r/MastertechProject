@@ -20,7 +20,7 @@ impl TabViewer for MtechServerContext {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Self::Tab) {
         match tab.as_str() {
             "Lil menu" => self.simple_demo_menu(ui),
-            "My Tools" => self.shared_ctx.toolbox(ui),
+            "My Tools" => self.shared_ctx.filesystem.display(ui),
             "Store Tasks" => self.shared_ctx.store_tasks(ui),
             "My Tasks" => self.shared_ctx.my_tasks(ui),
             "Ai" => self.shared_ctx.ai_playground(ui),

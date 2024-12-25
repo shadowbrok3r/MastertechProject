@@ -122,7 +122,7 @@ impl eframe::App for MtechServer {
         // being received have literally one line in them that i dont want to
         // justify creating a separate file / module for
         self.receive();
-        self.context.shared_ctx.receive(frame);
+        self.context.shared_ctx.receive(frame, ctx);
         self.receive_database(frame, ctx);
         self.context.receive_client();
         self.context.shared_ctx.receive_inventory();

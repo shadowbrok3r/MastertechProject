@@ -46,13 +46,13 @@ pub struct WebConsoleLayout {
     #[serde(skip)]
     pub toasts: Toasts,
     #[serde(skip)]
-    pub file_system: FileSystem,
+    pub filesystem: FileSystem,
     #[serde(skip)]
     pub ws_clients: HashMap<String, WebSocketClient>
 }
 
 impl WebConsoleLayout {
-    pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>) -> Self 
+    pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>, filesystem: FileSystem) -> Self 
     {
         let ui_actions_channel = ClientUiAction::create_unbounded_channel();
         Self {  
@@ -65,7 +65,7 @@ impl WebConsoleLayout {
             undock_client: HashMap::new(),
             wants_to_undock: false,
             toasts: Toasts::new(),
-            file_system: FileSystem::new(),
+            filesystem,
             ws_clients: HashMap::new(),
             ui_actions_channel
         }
@@ -116,7 +116,7 @@ impl WebConsoleLayout {
                                 ws_sender,
                                 ws_receiver,
                                 client.clone(),
-                                self.file_system.clone(),
+                                self.filesystem.clone(),
                             );
                             
                             self.ws_clients

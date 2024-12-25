@@ -1,5 +1,5 @@
 use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::{github_issue::GithubIssue, web_console::{websockets::WebSocketClient, WebConsoleLayout}}};
-use displays::{app_state::SharedContext, channel_manager::ChannelManager, virtual_filesystem::FileSystem};
+use displays::{app_state::SharedContext, channel_manager::ChannelManager};
 use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -113,11 +113,6 @@ pub struct MtechServerContext {
     /// progress of downloading mastertech
     pub download_progress: f32,
 
-    // Virtual File System
-    /// {Virtual file system display}
-    #[serde(skip)]
-    pub file_system: FileSystem,
-
     // GitHub Issue Management
     /// {Used to create GitHub issues from the website}
     #[serde(skip)]
@@ -164,9 +159,10 @@ impl MtechServer {
                 ctx.request_repaint();
             })
             .spawn("./webworker.js");
-
+        let shared_ctx = SharedContext::new(cc);
+        let file_system = shared_ctx.filesystem.clone();
         let context = MtechServerContext {
-            shared_ctx: SharedContext::new(cc),
+            shared_ctx,
             first_run: true,
             bridge,
             data_update,
@@ -183,8 +179,6 @@ impl MtechServer {
             // MODALS / LAYOUTS
             edited_task: TaskPayload::default(),
             seb_email: String::new(),
-
-            file_system: FileSystem::new(),
             github_issue: GithubIssue::new(),
             github_releases: Vec::new(),
             url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_string(),
@@ -207,7 +201,8 @@ impl MtechServer {
             get_settings: true,
 
             refresh: false,
-            web_console_layout: WebConsoleLayout::new(BTreeMap::new()),
+            web_console_layout: WebConsoleLayout::new(BTreeMap::new(), file_system),
+            
         };
 
         Self {

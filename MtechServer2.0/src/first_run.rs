@@ -98,7 +98,7 @@ impl MtechServer {
                 }else {
                     if let Some(ref usr) = d.1 {
                         self.context.shared_ctx.current_user = Some(usr.clone());
-                        self.context.file_system.set_user(usr.clone());
+                        self.context.shared_ctx.filesystem.set_user(usr.clone());
                         spawn_local(async move {
                             match DATABASE.health().await {
                                 Ok(_) => info!("Healthy connection"),
