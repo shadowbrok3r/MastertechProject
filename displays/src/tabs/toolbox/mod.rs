@@ -1,5 +1,5 @@
 use database::{schema::buckets::list_buckets, STORAGE_URL};
-use eframe::egui::{Button, CentralPanel, Color32, Frame, Layout, Margin, Rounding, Stroke, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, Color32, Frame, Layout, Margin, Rounding, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use log::info;
 use crate::{app_state::SharedContext, PlatformSpawner, Spawner};
 
@@ -58,6 +58,8 @@ impl SharedContext {
                         }
                     }
                 }
+
+                TextEdit::singleline(&mut self.filesystem.enter_directory).ui(ui);
             });
         });
 
