@@ -131,7 +131,7 @@ impl MtechServer {
                                     ws_sender,
                                     ws_receiver,
                                     cli_clone.clone(),
-                                    self.context.file_system.clone(),
+                                    self.context.shared_ctx.filesystem.clone(),
                                 );
                                 self.context
                                     .ws_clients

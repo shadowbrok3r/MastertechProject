@@ -1,10 +1,11 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, Color32, Direction, Id, Layout, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, Ui, Widget};
+use async_lock::Mutex;
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Layout, Margin, Modifiers, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
-use std::{cell::RefCell, collections::{HashMap, HashSet}};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, sync::Arc};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use crate::{channel_manager::ChannelManager, Spawner};
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{Node, User};
+use database::schema::{Node, User, buckets::list_buckets};
 use futures::{StreamExt, Future};
 use anyhow::{Result, Error};
 use crate::PlatformSpawner;
@@ -12,67 +13,191 @@ use mime_guess::from_path;
 use database::STORAGE_URL;
 use surrealdb::sql::Uuid;
 use rfd::FileHandle;
-use regex::Regex;
+// use regex::Regex;
 use bytes::Bytes;
 use std::iter;
 use log::info;
 #[cfg(feature="tokio")]
 use std::path::PathBuf;
+
+/*
+/// Trait that can be used to modify the TextEdit
+type SetTextEditProperties = dyn FnOnce(TextEdit) -> TextEdit;
+
+/// An extension to the [`egui::TextEdit`] that allows for a dropdown box with autocomplete to popup while typing.
+pub struct AutoCompleteTextEdit<'a, T> {
+    /// Contents of text edit passed into [`egui::TextEdit`]
+    text_field: &'a mut String,
+    /// Data to use as the search term
+    search: T,
+    /// A limit that can be placed on the maximum number of autocomplete suggestions shown
+    max_suggestions: usize,
+    /// If true, highlights the macthing indices in the dropdown
+    highlight: bool,
+    /// Used to set properties on the internal TextEdit
+    set_properties: Option<Box<SetTextEditProperties>>,
+    filter: Option<Box<dyn Fn(&str) -> bool>>,
+    layouter: Option<&'a mut dyn FnMut(&Ui, &str, f32) -> Arc<eframe::egui::Galley>>,
+}
+
+*/
 pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
 
+/// The `Fetcher` trait abstracts the data fetching logic.
+/// Implement this trait for different data sources like S3, RemoteClient, etc.
+#[async_trait::async_trait(?Send)]
+pub trait Fetcher: Send{
+    async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error>;
+}
+
+#[async_trait::async_trait(?Send)]
+impl Fetcher for S3Fetcher {
+    async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error> {
+        list_buckets(self.credentials.clone(), self.bucket.clone(), prefix).await
+    }
+}
+
+/// Fetcher implementation for S3.
 #[derive(Debug, Clone)]
+pub struct S3Fetcher {
+    bucket: Bucket,
+    credentials: Credentials,
+}
+
+impl S3Fetcher {
+    /// Creates a new `S3Fetcher`.
+    pub fn new(access_key: &str, secret_key: &str, bucket_name: &str) -> Result<Box<dyn Fetcher>, Error> {
+        let bucket = Bucket::new(
+            STORAGE_URL.parse::<reqwest::Url>()?,
+            rusty_s3::UrlStyle::Path,
+            bucket_name.to_lowercase(),
+            "us-west"
+        )?;
+        
+        let credentials = Credentials::new(access_key.to_string(), secret_key.to_string());
+        
+        Ok( Box::new(S3Fetcher { bucket, credentials }) )
+    }
+}
+
+
+#[derive(Clone)]
 pub struct FileSystem {
+    /// Persistent Scroll ID so we dont have any 
+    /// clashes of ID's between multiple websocket clients
     pub scroll_id: Id,
+    /// The Entire Hierarchy of Folders/Files
     pub root: Node,
+    /// Sending progress of downloads/uploads to progress bar
+    bytes_tx: Sender<(Vec<u8>, u64)>,
+    /// Receiving progress of downloads/uploads to progress bar
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
     pub paths_channel: (Sender<Node>, Receiver<Node>),
-    #[allow(dead_code)]
-    bytes_tx: Sender<(Vec<u8>, u64)>,
+    /// Receive / Send FileSystemAction's from the UI
+    pub fs_actions_channel: (Sender<FileSystemAction>, Receiver<FileSystemAction>),
+    /// Selected files/folders
     selected_items: RefCell<HashSet<String>>,
-    directory_paths: HashSet<String>,
+    /// All of our paths
     pub paths: Vec<String>,
+    /// Total size of download/upload
     total_size: f32,
+    /// Progress bar for file/folder download/upload
     progress: f32,
-    pub enter_directory: String,
+    /// File to execute on Mastertech
     pub execute_file: String,
+    /// Detection event for opening a new directory
     pub open_folder: bool,
-    pub secret_key: String,
-    pub access_key: String,
-    pub user: User
+    /// Credentials for API calls to Minio
+    pub user: User,
+    /// Editable Current path used by a 
+    /// TextEdit for manual navigation
+    pub current_prefix: String,
+    /// Stack to track navigation history
+    pub navigation_stack: Vec<String>,
+    pub fetcher: Option<Arc<Mutex<Box<dyn Fetcher>>>>,
+}
+
+#[derive(Debug)]
+pub enum FileSystemAction{
+    Execute(String),
+    Select((Modifiers, String)),
+    EnterDirectory(String),
+    ExpandDirectory(String),
+    NavigateHome,
+    
 }
 
 impl FileSystem {
     pub fn new() -> Self {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
         let paths_channel = <Node>::create_unbounded_channel();
-
+        let fs_actions_channel = <FileSystemAction>::create_unbounded_channel();
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
-            bytes_tx,
-            bytes_rx,
+            bytes_tx, bytes_rx,
+            fs_actions_channel,
             paths_channel,
             root: Node::Folder(String::new(), HashMap::new()),
             selected_items: RefCell::new(HashSet::new()),
             progress: 0.0,
             total_size: 0.0,
             paths: Vec::new(),
-            directory_paths: HashSet::new(),
-            enter_directory: String::new(),
             execute_file: String::new(),
             open_folder: false,
-            secret_key: String::new(),
-            access_key: String::new(),
-            user: User::default()
+            user: User::default(),
+            current_prefix: "/".to_string(),
+            navigation_stack: Vec::new(),
+            fetcher: None,
         }
     }
 
-    pub fn receive(&mut self) {
-        if let Ok(node) = self.paths_channel.1.try_recv() {
-            // if !received_paths.is_empty() && self.paths.is_empty() {
-                log::info!("Files: {node:?}");
-                self.root = node;
-                // self.build_file_system(received_paths);
-            // }
+    pub fn receive(&mut self, ctx: &Context) {
+        if let Ok(new_node) = self.paths_channel.1.try_recv() {
+            log::info!("Files: {new_node:?}");
+            let insert_node = self.insert_node(new_node);
+            info!("InsertNode: {insert_node:?}");
+            ctx.request_repaint();
+        }
+
+        if let Ok(action) = self.fs_actions_channel.1.try_recv() {
+            log::info!("Action: {action:?}");
+            match action {
+                FileSystemAction::Execute(label) => {
+                    self.execute_file = label.clone();
+                },
+                FileSystemAction::Select((modifiers, label)) => {
+                    if self.selected_items.borrow().contains(&label) {
+                        // If the item was already selected, deselect it
+                        self.selected_items.borrow_mut().remove(&label);
+                    } 
+
+                    if modifiers.ctrl { 
+                        self.selected_items.borrow_mut().insert(label.clone());
+                    } else { // If the control key is not down, clear previous selection and select the current item
+                        self.selected_items.borrow_mut().clear();
+                        self.selected_items.borrow_mut().insert(label.clone());
+                    }
+                },
+                FileSystemAction::EnterDirectory(directory) => {
+                    if !self.current_prefix.ends_with('/'){
+                        self.current_prefix.push('/');
+                    }
+                    self.open_folder = true;
+                    info!("directory double clicked: {directory:?}");
+                    self.double_click_folder(&directory);
+                }
+                FileSystemAction::ExpandDirectory(directory) => {
+                    // self.current_prefix = directory.clone();
+                    info!("directory double clicked: {directory:?}");
+                    self.expand_folder(&directory);
+                },
+                FileSystemAction::NavigateHome => {
+                    self.navigation_stack.clear();
+                    self.current_prefix.clear();
+                    self.open_folder = true;
+                },
+            }
+            ctx.request_repaint();
         }
     }
     
@@ -81,36 +206,12 @@ impl FileSystem {
         self
     }
 
-    pub fn build_file_system(&mut self, paths: Vec<String>) -> &mut Self {
-        // Precompile the regex outside the loop
-        let file_pattern = Regex::new(r"\.[a-zA-Z]{1,4}$").unwrap();
-        self.paths = paths.clone();
-        for path in paths {
-            let parts: Vec<&str> = if path.contains('\\') { path.split('\\').collect() } else { path.split('/').collect() };
-            let mut current_path = String::new();
-            let mut current = &mut self.root;
-
-            for (_, part) in parts.iter().enumerate() {
-                // let part = part.to_string();
-                if Self::is_file(&part, &file_pattern) { // part.contains('.'){ // i == parts.len() - 1 { der.insert(part.to_string(), Node::File((path.clone(), part.to_string())));
-                    if let Node::Folder(ref mut full_path, ref mut folder) = current {
-                        let file_full_path = if full_path.contains('\\') { format!("{}\\{}", full_path, part) } else { format!("{}/{}", full_path, part) };
-                        folder.insert(part.to_string(), Node::File((file_full_path, part.to_string().clone())));
-                    }
-                } else { // It's a folder
-                    if !current_path.is_empty() {
-                        current_path += if current_path.contains('\\') { "\\" } else { "/" };
-                    }
-                    current_path += part;
-    
-                    if let Node::Folder(_, ref mut folder) = current {
-                        current = folder.entry(part.to_string()).or_insert_with(|| Node::Folder(current_path.clone(), HashMap::new()));
-                    }
-                }
-            }
-        }
-
-        self 
+    pub fn set_fetcher(&mut self, fetcher: Box<dyn Fetcher>){
+        self.fetcher = Some(
+            Arc::new(
+                Mutex::new(fetcher)
+            )
+        );
     }
 
     /// This is to build an actual filesystem structure for when we are working with Mastertech from the website
@@ -145,27 +246,97 @@ impl FileSystem {
         root 
     }
 
-    fn is_file(name: &str, file_pattern: &Regex) -> bool {
-        file_pattern.is_match(name)
-    }
-
     pub fn display(&mut self, ui: &mut Ui){
         let size = ui.available_size_before_wrap();
-        ScrollArea::vertical()
-            .id_salt(self.scroll_id)
-            .max_width(size.x)
-            .max_height(size.y)
-            .auto_shrink(false)
-            .show(ui, |ui| 
+        let mut inner_margin_top = Margin::default();
+        inner_margin_top.bottom = 5.0;
+
+        let btm_panel_frame = Frame::default()
+            .inner_margin(inner_margin_top.clone())
+            .rounding(Rounding::same(10.0));
+
+        let top_panel_frame = Frame::default()
+            .outer_margin(Margin::symmetric(5., 7.));
+
+        let panel_frame = Frame::default()
+            .fill(Color32::from_rgb(12, 12, 14))
+            .inner_margin(Margin::same(6.))
+            .rounding(Rounding::same(10.0))
+            .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
+        
+        ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
+
+        TopBottomPanel::top("FileBrowserTop")
+            .frame(top_panel_frame)
+            .show_separator_line(false)
+            .exact_height(38.)
+            .show_inside(ui, |ui| 
         {
-            let x = self.root.clone();
-            ui.with_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), |ui| {
-                self.display_path(ui, &x, "".to_string());
-            }).inner
-        }).inner;
+            ui.with_layout(Layout::left_to_right(eframe::egui::Align::Center), |ui| {
+                let pre_modified_path = self.current_prefix.clone();
+                let response = TextEdit::singleline(&mut self.current_prefix)
+                .desired_width(ui.available_width() / 2.)
+                .ui(ui);
+
+                if response.lost_focus() && self.current_prefix.ne(&pre_modified_path) {
+                    info!("Lost focus on self.current_prefix TextEdit");
+                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::EnterDirectory(self.current_prefix.clone()));
+                }
+
+                let home_res = ui.button("🏠").on_hover_text("Home");
+                if home_res.clicked(){
+                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::NavigateHome);
+                }
+
+                let parent_res = ui.button("⬆").on_hover_text("Parent Folder");
+                if parent_res.clicked() {
+                    let navigate_up = self.navigate_up();
+                    info!("Navigating up: {navigate_up:?}");
+                }
+
+                // ui.add_space(10.);
+                // ui.label(format!("Navigation Stack: {:?}", self.navigation_stack));
+
+                if self.open_folder {
+                    self.open_folder = false;
+                    self.request_contents(&self.current_prefix);
+                }
+            });
+        });
+
+        TopBottomPanel::bottom("FileBrowserBottom")
+            .frame(btm_panel_frame)
+            .show_separator_line(false)
+            .show_inside(ui, |ui| 
+        {
+            ui.vertical_centered(|ui | self.show_progress(ui));
+        });
+
+        ui.add_space(10.0);
+
+        CentralPanel::default().frame(panel_frame)
+            .show_inside(ui, |ui| 
+        {
+            ScrollArea::vertical()
+                .id_salt(self.scroll_id)
+                .max_width(size.x)
+                .max_height(size.y)
+                .auto_shrink(false)
+                .show(ui, |ui| 
+            {
+                ui.with_layout(Layout::from_main_dir_and_cross_align(Direction::TopDown, Align::Center), |ui| {
+                    self.display_directory_contents(
+                        ui, 
+                        self.get_current_folder().unwrap_or(&self.root)
+                    );
+                });
+            });
+        });
+        
     }
 
-    fn display_path(&mut self, ui: &mut Ui, node: &Node, current_path: String){
+    pub fn display_directory_contents(&self, ui: &mut Ui, node: &Node){
+        let tx = self.fs_actions_channel.0.clone();
         ui.vertical(|ui| 
         {
             let mut count = 0;
@@ -189,38 +360,22 @@ impl FileSystem {
                         
                         let id = ui.make_persistent_id(format!("virtual_fs_collapsing-header-{:?}-{}-{}", self.scroll_id, label, count));
 
-                        let collapsing_head = CollapsingState::load_with_default_open(
+                        let res = CollapsingState::load_with_default_open(
                             ui.ctx(), 
                             id, 
-                            self.open_folder
-                        );
-
-                        let res = collapsing_head.show_header(ui, |ui| 
+                            false
+                        )
+                        .show_header(ui, |ui| 
                         {
                             let is_selected = self.selected_items.borrow().contains(label);
                             let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗀   {}", label)));
 
                             if selectable_label.clicked() { // If the item was already selected, deselect it
-                                if self.selected_items.borrow().contains(label) {
-                                    // If the item was already selected, deselect it
-                                    self.selected_items.borrow_mut().remove(label);
-                                } 
-
-                                if modifiers.ctrl { 
-                                    self.selected_items.borrow_mut().insert(label.clone());
-                                } else { // If the control key is not down, clear previous selection and select the current item
-                                    self.selected_items.borrow_mut().clear();
-                                    self.selected_items.borrow_mut().insert(label.clone());
-                                }
+                                let _ = tx.try_send(FileSystemAction::Select((modifiers, full_path.clone())));
                             }
 
                             if selectable_label.double_clicked(){
-                                self.enter_directory = full_path.clone();
-                                self.open_folder = true;
-                                info!("label double clicked: {label:?} // {:?}", self.directory_paths);
-                                info!("self.find_directory_full_path(label): {:?}", self.find_directory_full_path(&full_path));
-                                let path = self.path_lookup(&label.clone());
-                                if let Some(path) = path { self.enter_directory = path.clone(); }
+                                let _ = tx.try_send(FileSystemAction::EnterDirectory(full_path.clone()));
                             }
 
                             if selectable_label.secondary_clicked(){
@@ -254,26 +409,28 @@ impl FileSystem {
                                     ui.add_space(5.0);
 
                                     if ui.button("Upload Folder").clicked(){
-                                        if let Some(dir) = self.find_directory_full_path(&label){
-                                            info!("Dir: {:?}", dir.clone());
-                                            if cfg!(target_os="windows") || cfg!(target_os="linux"){
-                                                #[cfg(target_os="windows")]
-                                                self.upload_folder(dir);
-                                            }
-                                        }
+                                    //     info!("Dir: {:?}", dir.clone());
+                                    //     if cfg!(target_os="windows") || cfg!(target_os="linux"){
+                                    //         #[cfg(target_os="windows")]
+                                    //         self.upload_folder(dir);
+                                    //     }
                                     }
                                 }).inner;
                             });
-                        }).body(|ui| 
-                            self.display_path(ui, &node, current_path.clone())
+                        })
+                        .body(|ui| 
+                            self.display_directory_contents(ui, &node)
                         );
+
+                        if res.0.clicked() {
+                            let _ = tx.try_send(FileSystemAction::ExpandDirectory(full_path.clone()));
+                        }
 
                         if res.0.secondary_clicked(){
                             ui.memory_mut(|mem| mem.open_popup(
                                 ui.make_persistent_id(format!("upload_file_menu"))
                             ));
                         }
-
 
                         popup_below_widget(
                             ui, 
@@ -286,44 +443,25 @@ impl FileSystem {
                                 ui.set_width(200.0);
 
                                 if ui.button("Upload").clicked(){
-                                    if let Some(dir) = self.find_directory_full_path(&label){
-                                        info!("Dir: {:?}", dir.clone());
-                                        self.upload(dir);
-                                    }
+                                    // self.upload(dir);
                                 }
 
                                 ui.add_space(5.0);
 
                                 if ui.button("Upload Folder").clicked(){
-                                    if let Some(dir) = self.find_directory_full_path(&label){
-                                        info!("Dir: {:?}", dir.clone());
-                                        if cfg!(target_os="windows") || cfg!(target_os="linux"){
-                                            #[cfg(target_os="windows")]
-                                            self.upload_folder(dir);
-                                        }
-                                    }
+                                    // self.upload_folder(dir);
                                 }
                             }).inner;
                         });
 
-                    } else if let Node::File((full_path, label)) = node{
+                    } else if let Node::File((full_path, label)) = node {
 
                         // let id = ui.make_persistent_id(format!("sub_menu-{:?}", full_path));
                         let file_selected = self.selected_items.borrow().contains(full_path);
                         let selectable_label = ui.selectable_label(file_selected, RichText::new(format!("🗋   {}", label)));
 
                         if selectable_label.clicked() {
-                            if self.selected_items.borrow().contains(full_path) {
-                                // If the item was already selected, deselect it
-                                self.selected_items.borrow_mut().remove(full_path);
-                            } 
-
-                            if modifiers.ctrl { 
-                                self.selected_items.borrow_mut().insert(full_path.clone());
-                            } else { // If the control key is not down, clear previous selection and select the current item
-                                self.selected_items.borrow_mut().clear();
-                                self.selected_items.borrow_mut().insert(full_path.clone());
-                            }
+                            let _ = tx.try_send(FileSystemAction::Select((modifiers, full_path.clone())));
                         }
 
                         if selectable_label.secondary_clicked(){
@@ -333,7 +471,7 @@ impl FileSystem {
                         }
 
                         if selectable_label.double_clicked(){
-                            self.execute_file = full_path.clone();
+                            let _ = tx.try_send(FileSystemAction::EnterDirectory(full_path.clone()));
                         }
 
                         popup_below_widget(
@@ -356,6 +494,117 @@ impl FileSystem {
         });
     }
 
+    fn request_contents(&self, folder_prefix: &str) {
+        // // Fetch the folder's contents
+        // let access_key = self.user.minio_access_key.clone().unwrap_or_default();
+        // let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        // let tx = self.paths_channel.0.clone();
+        // let name = self.user.email.clone();
+        // let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        // let path = folder_prefix.to_string().clone();
+        // PlatformSpawner::spawn(async move {
+        //     let result = list_buckets(STORAGE_URL, &access_key, &secret_key, &parsed, Some(&path)).await;
+        //     match result {
+        //         Ok(buckets) => {let _ = tx.try_send(buckets);},
+        //         Err(err) => log::warn!("Error: {err:?}"),
+        //     }
+        // });
+        if let Some(fetcher) = self.fetcher.clone() {
+            let tx = self.paths_channel.0.clone();
+            let path = folder_prefix.to_string().clone();
+            PlatformSpawner::spawn(async move {
+                let fetch_guard = fetcher.lock().await;
+                match fetch_guard.fetch(Some(&path)).await {
+                    Ok(buckets) => {let _ = tx.try_send(buckets);},
+                    Err(err) => log::warn!("Error: {err:?}"),
+                }
+            });
+        }
+    }
+
+    fn expand_folder(&self, folder_prefix: &str) {
+        self.request_contents(folder_prefix);
+    }
+
+    fn double_click_folder(&mut self, folder_prefix: &str) {
+
+        // Navigate to the new prefix
+        self.navigate_to(folder_prefix.to_string());
+
+        // Check if the folder's contents have already been fetched
+        if let Some(Node::Folder(_, ref children)) = self.root.find_folder(folder_prefix) {
+            // If children are already loaded (non-empty), no need to fetch
+            if !children.is_empty() {
+                info!("Folder '{}' already fetched. No need to re-fetch.", folder_prefix);
+            } else {
+                self.request_contents(folder_prefix);
+            }
+        } else {
+            self.request_contents(folder_prefix);
+        }
+    }
+
+    /// Merges a new `Node` into the existing file system.
+    ///
+    /// - **new_node**: The `Node` fetched from `list_directory` to merge.
+    ///
+    /// Returns `Ok(())` on success or an error if the merge fails.
+    pub fn insert_node(&mut self, new_node: Node) -> Result<(), Error> {
+        self.root.merge_node(new_node)
+    }
+
+    /// Sets the current view to the specified prefix.
+    ///
+    /// - **prefix**: The folder prefix to navigate to.
+    ///
+    /// This method updates `current_prefix` and manages the navigation stack.
+    pub fn navigate_to(&mut self, prefix: String) {
+        if prefix != self.current_prefix {
+            // Push the current prefix onto the navigation stack before navigating
+            if !self.current_prefix.is_empty() {
+                self.navigation_stack.push(self.current_prefix.clone());
+            }
+            self.current_prefix = prefix;
+            info!("Navigated to prefix: '{}'", self.current_prefix);
+        } else {
+            info!("Attempted to navigate to the same prefix: '{prefix}'. No action taken. self.current_prefix: '{}'", self.current_prefix);
+        }
+    }
+
+    /// Navigates back to the previous directory.
+    ///
+    /// Returns `Ok(true)` if navigation was successful, `Ok(false)` if already at root,
+    /// or an error if something goes wrong.
+    pub fn navigate_up(&mut self) -> Result<bool, Error> {
+        info!("self.navigation_stack: {:?}\nself.current_prefix: {}", self.navigation_stack, self.current_prefix);
+
+        if let Some(previous_prefix) = self.navigation_stack.pop() {
+            // Set the dispayed
+            info!("previous_prefix: '{previous_prefix}' -- self.current_prefix: {}", self.current_prefix);
+            self.current_prefix = previous_prefix;
+            info!("Navigated up to prefix: '{}'", self.current_prefix);
+            Ok(true)
+        } else {
+            // Already at root
+            info!("Already at root directory. Cannot navigate up. {}", self.current_prefix);
+            Ok(false)
+        }
+    }
+
+    /// Retrieves the `Node::Folder` corresponding to `current_prefix`.
+    ///
+    /// Returns a reference to the folder node if found.
+    pub fn get_current_folder(&self) -> Option<&Node> {
+        self.root.find_folder(&self.current_prefix)
+    }
+
+    /// Retrieves a mutable reference to the `Node::Folder` corresponding to `current_prefix`.
+    ///
+    /// Returns a mutable reference to the folder node if found.
+    pub fn get_current_folder_mut(&mut self) -> Option<&mut Node> {
+        self.root.find_folder_mut(&self.current_prefix)
+    }
+
     pub fn show_progress(&mut self, ui: &mut Ui) {
         while let Ok(x) = self.bytes_rx.try_recv() {
             self.total_size = x.1 as f32;
@@ -370,22 +619,10 @@ impl FileSystem {
         ProgressBar::new(self.progress / self.total_size).show_percentage().fill(Color32::from_rgba_premultiplied(50, 10, 50, 65)).ui(ui);
     }
 
-    fn path_lookup(&self, file_name: &str) -> Option<String> {
-        // info!("Self.paths: {:?}", self.paths);
-        self.paths.iter()
-            .find(|path| path.ends_with(format!("/{file_name}").as_str()) || path.ends_with(format!("\\{file_name}").as_str()))
-            .cloned() // returns a clone of the matching path, if found
-    }
-    
-    pub fn find_directory_full_path(&self, label: &str) -> Option<String> {
-        info!("self.direc_paths: {:?} // {:?}", self.directory_paths, &format!("\\\\{label}"));
-        self.directory_paths.iter().find(|path| path.ends_with(&format!("\\\\{label}"))).cloned()
-    }
-
     pub fn upload(&self, path: String) {
         let task = rfd::AsyncFileDialog::new().pick_files();
-        let secret_key = self.secret_key.clone();
-        let access_key = self.access_key.clone();
+        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
         let name = self.user.email.clone();
         let parsed = name.split_once('@').unwrap().0.to_string().clone();
 
@@ -405,8 +642,8 @@ impl FileSystem {
     #[cfg(feature="tokio")]
     pub fn upload_folder(&self, _path: String) {
         let _task = rfd::AsyncFileDialog::new().pick_folders();
-        let _secret_key = self.secret_key.clone();
-        let _access_key = self.access_key.clone();
+        let _secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        let _access_key = self.user.minio_access_key.clone().unwrap_or_default();
         let name = self.user.email.clone();
         let _parsed = name.split_once('@').unwrap().0.to_string().clone();
         // tokio::spawn(async move {
@@ -424,8 +661,8 @@ impl FileSystem {
     fn download_selection(&self, path: String, filename: String) {
         let task = rfd::AsyncFileDialog::new().set_file_name(filename.clone()).save_file();
         let tx = self.bytes_tx.clone();
-        let secret_key = self.secret_key.clone();
-        let access_key = self.access_key.clone();
+        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
         let name = self.user.email.to_lowercase().clone();
         let parsed = name.split_once('@').unwrap().0.to_string().clone();
         PlatformSpawner::spawn(async move {
@@ -445,8 +682,8 @@ impl FileSystem {
 
     // fn delete_selection(&self, path: String, filename: String) {
         // let tx = self.bytes_tx.clone();
-        // let secret_key = self.secret_key.clone();
-        // let access_key = self.access_key.clone();
+        // let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        // let access_key = self.user.minio_access_key.clone().unwrap_or_default();
         // PlatformSpawner::spawn(async move {
         //     let name = self.user.email;
         //     let region = "us-west";
@@ -602,4 +839,42 @@ impl FileSystem {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn test_navigation() {
+        let mut fs = FileSystem::new();
+        assert_eq!(fs.current_prefix, "");
+        assert!(fs.navigation_stack.is_empty());
+
+        // Navigate to "1-TUNEUP/"
+        fs.navigate_to("1-TUNEUP/".to_string());
+        assert_eq!(fs.current_prefix, "1-TUNEUP/");
+        assert_eq!(fs.navigation_stack, vec![""]);
+
+        // Navigate to "1-TUNEUP/Subfolder/"
+        fs.navigate_to("1-TUNEUP/Subfolder/".to_string());
+        assert_eq!(fs.current_prefix, "1-TUNEUP/Subfolder/");
+        assert_eq!(fs.navigation_stack, vec!["", "1-TUNEUP/"]);
+
+        // Navigate up
+        let result = fs.navigate_up();
+        assert!(result.unwrap());
+        assert_eq!(fs.current_prefix, "1-TUNEUP/");
+        assert_eq!(fs.navigation_stack, vec![""]);
+
+        // Navigate up again
+        let result = fs.navigate_up();
+        assert!(result.unwrap());
+        assert_eq!(fs.current_prefix, "");
+        assert!(fs.navigation_stack.is_empty());
+
+        // Attempt to navigate up from root
+        let result = fs.navigate_up();
+        assert!(result.unwrap());
+        assert_eq!(fs.current_prefix, "");
+        assert!(fs.navigation_stack.is_empty());
+    }
+}

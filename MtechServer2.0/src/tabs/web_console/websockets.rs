@@ -4,7 +4,7 @@ use regex::Regex;
 use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
-use displays::virtual_filesystem::FileSystem;
+use displays::virtual_filesystem::{Fetcher, FileSystem};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
 use egui_extras::{syntax_highlighting::{highlight, CodeTheme}, Size, StripBuilder};
@@ -33,10 +33,41 @@ pub enum WsDisplayState {
     ToolBox
 }
 
+// /// Fetcher implementation for a remote client via WebSockets.
+// pub struct RemoteClientFetcher {
+//     pub tx: Node,
+//     pub rx: Node,
+// }
+
+// impl RemoteClientFetcher {
+//     /// Creates a new `RemoteClientFetcher`.
+//     pub fn new() -> Self {
+//         let (tx, rx) = crossbeam::channel::unbounded::<Node>();
+//         RemoteClientFetcher {
+//             tx, rx
+//         }
+//     }
+// }
+
+// impl Fetcher for RemoteClientFetcher {
+//     async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error> {
+        
+//         self.tx.send(WsMessage::Binary(serialize(&Cmd::ReadDir(prefix.unwrap_or_default().to_string()))?));
+        
+//         // // Wait for the response
+//         // match self.ws_receiver.recv().await {
+//         //     Some(node) => Ok(node),
+//         //     None => Err(anyhow::anyhow!("No response received from remote client")),
+//         // }
+//         Ok(Node::Folder(String::new(), HashMap::new()))
+//     }
+// }
+
 pub struct WebSocketClient {
     pub client: ConnectedClient,
     pub ws_sender: WsSender,
     pub ws_receiver: WsReceiver,
+    // pub fetcher: RemoteClientFetcher,
     pub events: Vec<WsEvent>,
     pub input: String,
     pub messages: Vec<String>,
@@ -50,7 +81,7 @@ pub struct WebSocketClient {
     pub history: Vec<String>,
     pub loading: bool,
     pub timeout_counter: Instant,
-    pub file_system: FileSystem,
+    pub toolbox: FileSystem,
     pub state: WsDisplayState,
     pub explorer: FileSystem,
     pub path_edit: String,
@@ -61,7 +92,7 @@ pub struct WebSocketClient {
 }
 
 impl WebSocketClient{
-    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client: ConnectedClient, file_system: FileSystem) -> Self {
+    pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client: ConnectedClient, toolbox: FileSystem) -> Self {
         Self{
             client,
             ws_sender,
@@ -78,7 +109,7 @@ impl WebSocketClient{
             temps: VecDeque::new(),
             loading: false, 
             timeout_counter: Instant::now(),
-            file_system,
+            toolbox,
             state: WsDisplayState::Shell,
             explorer: FileSystem::new(),
             path_edit: String::new(),
@@ -353,11 +384,14 @@ impl WebSocketClient{
 
                 if response.lost_focus() {
                     info!("Lost focus on self.path_edit");
-                    if !self.path_edit.ends_with('\\'){
-                        self.path_edit.push('\\');
+                    if cfg!(target_os="windows") {
+                        if !self.path_edit.ends_with('\\'){
+                            self.path_edit.push('\\');
+                        }
                     }
                     self.current_path = self.path_edit.clone();
-                    match serialize(&Cmd::ChangeDirectory(self.path_edit.clone())){
+
+                    match serialize(&Cmd::ChangeDirectory(self.current_path.clone())){
                         Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
                         Err(e) => self.history.push(e.to_string()),
                     }
@@ -385,11 +419,11 @@ impl WebSocketClient{
         CentralPanel::default()
             .show_inside(ui, |ui| 
         {
-            self.explorer.display(ui);
+            self.explorer.display_directory_contents(ui, self.explorer.get_current_folder().unwrap_or(&self.explorer.root));
 
             if self.explorer.open_folder {
                 self.explorer.open_folder = false;
-                let new_dir = self.explorer.enter_directory.clone();
+                let new_dir = self.explorer.current_prefix.clone();
                 match serialize(&Cmd::ChangeDirectory(new_dir.clone())){
                     Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
                     Err(e) => self.history.push(e.to_string()),
@@ -414,17 +448,7 @@ impl WebSocketClient{
 
     fn show_tool_box(&mut self, ui: &mut Ui) {
         ui.group(|ui| {
-            self.file_system.display(ui);
-            let new_dir = self.file_system.enter_directory.clone();
-            if !new_dir.is_empty(){
-                info!("New directory: {:?}", new_dir);
-                match serialize(&Cmd::ReadDir(new_dir.clone())){
-                    Ok(bytes) => {
-                        self.ws_sender.send(WsMessage::Binary(bytes));
-                    },
-                    Err(e) => self.history.push(e.to_string()),
-                }
-            }
+            self.toolbox.display(ui);
         });
     }
 
@@ -688,7 +712,7 @@ impl ClientHandler for ConnectedClient {
         });
      }
 
-     fn delete_client(&mut self) {
+    fn delete_client(&mut self) {
         let id = self.id.clone();
         spawn_local(async move {
             let update_history: Result<Option<Record>, surrealdb::Error> = DATABASE

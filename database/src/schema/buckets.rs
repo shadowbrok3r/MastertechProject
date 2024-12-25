@@ -1,87 +1,86 @@
-use std::collections::{HashMap, VecDeque};
-
-use log::info;
-use rusty_s3::{actions::{list_objects_v2::ListObjectsContent, ListObjectsV2}, Bucket, Credentials, S3Action, UrlStyle::{self, Path}};
-use reqwest::{header::ACCEPT_ENCODING, Url};
+use rusty_s3::{actions::ListObjectsV2, Bucket, Credentials, S3Action};
+use reqwest::header::ACCEPT_ENCODING;
+use std::collections::HashMap;
 use anyhow::{Error, Result};
 use web_time::Duration;
+use log::info;
 
 use super::Node;
 
 
-// pub async fn list_buckets(url: String, access_key: String, secret_key: String, name: String) -> Result<Node, Error> {
-//     const ONE_HOUR: Duration = Duration::from_secs(3600);
+/*  pub async fn list_buckets(url: String, access_key: String, secret_key: String, name: String) -> Result<Node, Error> {
+    const ONE_HOUR: Duration = Duration::from_secs(3600);
 
-//     let bucket = Bucket::new(
-//         url.parse::<Url>().unwrap(), 
-//         Path, 
-//         name.to_lowercase(), 
-//         "us-west"
-//     )?;
+    let bucket = Bucket::new(
+        url.parse::<Url>().unwrap(), 
+        Path, 
+        name.to_lowercase(), 
+        "us-west"
+    )?;
     
-//     let credentials = Credentials::new(access_key, secret_key);
+    let credentials = Credentials::new(access_key, secret_key);
     
-//     let mut list_objects_action = ListObjectsV2::new(&bucket, Some(&credentials));
-//     list_objects_action.query_mut().insert("delimiter", "/");
+    let mut list_objects_action = ListObjectsV2::new(&bucket, Some(&credentials));
+    list_objects_action.query_mut().insert("delimiter", "/");
 
-//     let signed_url = list_objects_action.sign(ONE_HOUR);
+    let signed_url = list_objects_action.sign(ONE_HOUR);
     
-//     let client = Client::new();
+    let client = Client::new();
 
-//     let resp = client
-//         .get(signed_url)
-//         .header(ACCEPT_ENCODING, "br")
-//         .send()
-//         .await?
-//         .error_for_status()?;
+    let resp = client
+        .get(signed_url)
+        .header(ACCEPT_ENCODING, "br")
+        .send()
+        .await?
+        .error_for_status()?;
 
-//     let text = resp.text().await?;
+    let text = resp.text().await?;
     
-//     let parsed = ListObjectsV2::parse_response(&text)?;
+    let parsed = ListObjectsV2::parse_response(&text)?;
 
-//     log::info!("parsed: {:?}", parsed);
+    log::info!("parsed: {:?}", parsed);
 
-//     let mut vec = Vec::new();
-//     let mut root = Node::Folder(String::new(), HashMap::new());
-//     let mut current_path = String::new();
+    let mut vec = Vec::new();
+    let mut root = Node::Folder(String::new(), HashMap::new());
+    let mut current_path = String::new();
 
-//     for prefix in parsed.common_prefixes {
-//         log::info!("Getting strings from prefix: {prefix:?}");
-//         let mut list_objs = ListObjectsV2::new(&bucket, Some(&credentials));
-//         list_objs.query_mut().insert("prefix", prefix.prefix);
-//         list_objs.query_mut().insert("delimiter", "/");
+    for prefix in parsed.common_prefixes {
+        log::info!("Getting strings from prefix: {prefix:?}");
+        let mut list_objs = ListObjectsV2::new(&bucket, Some(&credentials));
+        list_objs.query_mut().insert("prefix", prefix.prefix);
+        list_objs.query_mut().insert("delimiter", "/");
 
-//         if let Node::Folder(_, ref mut folder) = root {
-//             root = folder.entry(part.to_string()).or_insert_with(|| Node::Folder(current_path.clone(), HashMap::new()));
-//         }
+        if let Node::Folder(_, ref mut folder) = root {
+            root = folder.entry(part.to_string()).or_insert_with(|| Node::Folder(current_path.clone(), HashMap::new()));
+        }
 
-//         let signed_url = list_objs.sign(ONE_HOUR);
+        let signed_url = list_objs.sign(ONE_HOUR);
 
-//         let resp = client
-//             .get(signed_url)
-//             .header(ACCEPT_ENCODING, "br")
-//             .send()
-//             .await?
-//             .error_for_status()?;
+        let resp = client
+            .get(signed_url)
+            .header(ACCEPT_ENCODING, "br")
+            .send()
+            .await?
+            .error_for_status()?;
 
-//         let text = resp.text().await?;
+        let text = resp.text().await?;
         
-//         let parsed_res = ListObjectsV2::parse_response(&text)?;
+        let parsed_res = ListObjectsV2::parse_response(&text)?;
 
-//         info!("Parsed Res: {:?}", parsed_res);
+        info!("Parsed Res: {:?}", parsed_res);
 
-//         if let Some(continuation_token) = &parsed_res.next_continuation_token {
-//             log::info!("We have a continuation token: {continuation_token:?}");
-//         }
+        if let Some(continuation_token) = &parsed_res.next_continuation_token {
+            log::info!("We have a continuation token: {continuation_token:?}");
+        }
 
-//         for contents in parsed_res.contents {
-//             vec.push(contents.key);
-//         }
-//     }
+        for contents in parsed_res.contents {
+            vec.push(contents.key);
+        }
+    }
 
-//     info!("All contents: {:?}", vec.len());
-//     Ok(root)
-// }
+    info!("All contents: {:?}", vec.len());
+    Ok(root)
+} */
 
 
 /// Lists the contents of the provided prefix (or root if `prefix` is None).
@@ -90,24 +89,13 @@ use super::Node;
 /// - Each subfolder is returned as a `Node::Folder(prefix, HashMap::new())` 
 ///   so that you can lazily fetch its contents later by calling the same function
 ///   with `prefix = Some("sub/folder/")`.
-pub async fn list_directory(
-    url: String,
-    access_key: String,
-    secret_key: String,
-    bucket_name: String,
+pub async fn list_buckets(
+    credentials: Credentials,
+    bucket: Bucket,
     prefix: Option<&str>, // if None => root
-) -> Result<Node, Box<dyn std::error::Error>> {
+) -> Result<Node, Error> {
     const ONE_HOUR: Duration = Duration::from_secs(3600);
-
-    // Create Bucket and Credentials
-    let bucket = Bucket::new(
-        url.parse::<Url>()?,
-        UrlStyle::Path,
-        bucket_name.to_lowercase(),
-        "us-west", // or your actual region
-    )?;
-    let credentials = Credentials::new(access_key, secret_key);
-
+    
     // Decide which prefix string to use
     let prefix_str = prefix.unwrap_or(""); // If None => ""
 
@@ -201,154 +189,278 @@ pub async fn list_directory(
 }
 
 
-// pub async fn list_buckets(
-//     url: String,
-//     access_key: String,
-//     secret_key: String,
-//     bucket_name: String,
-// ) -> Result<Node, Error> {
-//     const ONE_HOUR: Duration = Duration::from_secs(3600);
+impl Node {
+    /// Merges a new `Node::Folder` into the existing tree.
+    ///
+    /// - **new_node**: The `Node::Folder` to merge. Its `prefix` must correspond to an existing folder in the tree.
+    ///
+    /// Returns `Ok(())` on success or an error if the target folder is not found.
+    pub fn merge_node(&mut self, new_node: Node) -> Result<(), Error> {
+        match new_node {
+            Node::Folder(new_prefix, new_map) => {
+                info!("Merging folder: '{}'", new_prefix);
+                
+                let default_node = &mut Node::Folder(String::new(), HashMap::new());
+                // Find the target folder in the existing tree
+                let target_folder = self.find_folder_mut(&new_prefix)
+                    .ok_or_else(|| 
+                        Err::<&mut Node, anyhow::Error>(
+                            anyhow::anyhow!("Folder with prefix '{new_prefix}' not found")
+                        )
+                    ).unwrap_or(default_node);
+                
+                match target_folder {
+                    Node::Folder(_, ref mut children) => {
+                        for (_, node) in new_map {
+                            match node {
+                                Node::File((full_path, file_name)) => {
+                                    if children.contains_key(&file_name) {
+                                        info!("File '{}' already exists. Skipping.", full_path);
+                                    } else {
+                                        info!("Inserting file: '{}'", full_path);
+                                        children.insert(file_name.clone(), Node::File((full_path, file_name.clone())));
+                                    }
+                                }
+                                Node::Folder(sub_prefix, sub_map) => {
+                                    let subfolder_name = sub_prefix.trim_end_matches('/').rsplit('/').next().unwrap_or(&sub_prefix).to_string();
+                                    if children.contains_key(&subfolder_name) {
+                                        info!("Folder '{}' already exists. Skipping.", sub_prefix);
+                                    } else {
+                                        info!("Inserting folder: '{}'", sub_prefix);
+                                        children.insert(subfolder_name.clone(), Node::Folder(sub_prefix, sub_map));
+                                    }
+                                }
+                            }
+                        }
+                        Ok(())
+                    }
+                    _ => Err(anyhow::anyhow!("Target node is not a folder.")).into(),
+                }
+            }
+            Node::File(_) => {
+                Err(anyhow::anyhow!("Expected a Folder node, got File.")).into()
+            }
+        }
+    }
 
-//     // Create the Bucket and Credentials
-//     let bucket = Bucket::new(
-//         url.parse::<Url>()?,
-//         UrlStyle::Path,
-//         bucket_name.to_lowercase(),
-//         "us-west", // or your actual region
-//     )?;
-//     let credentials = Credentials::new(access_key, secret_key);
+    /// Helper function to find a mutable reference to a folder node with the given prefix.
+    ///
+    /// - **prefix**: The full prefix path to the folder (e.g., "folder/subfolder/").
+    ///
+    /// Returns a mutable reference to the `Node::Folder` if found, otherwise `None`.
+    pub fn find_folder_mut<'a>(&'a mut self, prefix: &str) -> Option<&'a mut Node> {
+        if prefix.is_empty() || prefix == "" {
+            return Some(self);
+        }
 
-//     // prefix_map: maps a prefix string -> Node::Folder(prefix, HashMap).
-//     // The empty prefix "" is our "root" folder node.
-//     let mut prefix_map: HashMap<String, Node> = HashMap::new();
+        // Split the prefix into parts, e.g., "folder/subfolder/" -> ["folder", "subfolder"]
+        let parts: Vec<&str> = prefix.trim_end_matches('/').split('/').collect();
 
-//     // Insert the root folder node:
-//     prefix_map.insert(
-//         "".to_string(),
-//         Node::Folder("root".to_string(), HashMap::new()),
-//     );
+        let mut current = self;
 
-//     // We'll process folders in BFS order, starting with the empty prefix
-//     let mut queue = VecDeque::new();
-//     queue.push_back("".to_string());
+        for part in &parts {
+            match current {
+                Node::Folder(_, ref mut children) => {
+                    if let Some(node) = children.get_mut(*part) {
+                        current = node;
+                    } else {
+                        // Folder does not exist
+                        return None;
+                    }
+                }
+                _ => {
+                    return None;
+                }
+            }
+        }
 
-//     let client = reqwest::Client::new();
+        Some(current)
+    }
 
-//     while let Some(prefix) = queue.pop_front() {
-//         // Temporarily remove this node from prefix_map so we can mutate it safely
-//         // (and so we don't hold any mutable reference to prefix_map).
-//         let mut node = match prefix_map.remove(&prefix) {
-//             Some(n) => n,
-//             None => {
-//                 log::error!("No node for prefix '{prefix}'. Skipping.");
-//                 continue;
-//             }
-//         };
+    /// Finds an immutable reference to a folder node with the given prefix.
+    ///
+    /// - **prefix**: The full prefix path to the folder (e.g., "folder/subfolder/").
+    ///
+    /// Returns an immutable reference to the `Node::Folder` if found, otherwise `None`.
+    pub fn find_folder(&self, prefix: &str) -> Option<&Node> {
+        if prefix.is_empty() || prefix == "" {
+            return Some(self);
+        }
 
-//         // We only do S3 listing if this is a folder
-//         let Node::Folder(_, ref mut folder_map) = node else {
-//             info!("Prefix \"{}\" is not a folder, skipping S3 listing.", prefix);
-//             // Put the node back
-//             prefix_map.insert(prefix.clone(), node);
-//             continue;
-//         };
+        // Split the prefix into parts, e.g., "folder/subfolder/" -> ["folder", "subfolder"]
+        let parts: Vec<&str> = prefix.trim_end_matches('/').split('/').collect();
 
-//         info!("Processing folder prefix: \"{}\"", prefix);
-//         let mut continuation_token: Option<String> = None;
+        let mut current = self;
 
-//         // In a loop, list objects until no more continuation tokens
-//         loop {
-//             let mut list_objects = ListObjectsV2::new(&bucket, Some(&credentials));
+        for part in &parts {
+            match current {
+                Node::Folder(_, ref children) => {
+                    if let Some(node) = children.get(*part) {
+                        current = node;
+                    } else {
+                        // Folder does not exist
+                        return None;
+                    }
+                }
+                _ => {
+                    return None;
+                }
+            }
+        }
 
-//             // If prefix is non-empty, specify it
-//             if !prefix.is_empty() {
-//                 list_objects.with_prefix(prefix.clone());
-//             }
+        Some(current)
+    }
+}
 
-//             // Use delimiter so S3 returns CommonPrefixes for subfolders
-//             list_objects.query_mut().insert("delimiter", "/");
 
-//             // If we have a continuation token from the previous page, apply it
-//             if let Some(ref token) = continuation_token {
-//                 info!("Using continuation token: {token}");
-//                 list_objects.with_continuation_token(token.clone());
-//             }
+/* pub async fn list_buckets(
+    url: String,
+    access_key: String,
+    secret_key: String,
+    bucket_name: String,
+) -> Result<Node, Error> {
+    const ONE_HOUR: Duration = Duration::from_secs(3600);
 
-//             // Sign and execute the request
-//             let signed_url = list_objects.sign(ONE_HOUR);
-//             let resp = client
-//                 .get(signed_url)
-//                 .header(ACCEPT_ENCODING, "br")
-//                 .send()
-//                 .await?
-//                 .error_for_status()?;
+    // Create the Bucket and Credentials
+    let bucket = Bucket::new(
+        url.parse::<Url>()?,
+        UrlStyle::Path,
+        bucket_name.to_lowercase(),
+        "us-west", // or your actual region
+    )?;
+    let credentials = Credentials::new(access_key, secret_key);
 
-//             let text = resp.text().await?;
-//             let parsed = ListObjectsV2::parse_response(&text)?;
+    // prefix_map: maps a prefix string -> Node::Folder(prefix, HashMap).
+    // The empty prefix "" is our "root" folder node.
+    let mut prefix_map: HashMap<String, Node> = HashMap::new();
 
-//             // ~~~~~ FILES ~~~~~
-//             for content in parsed.contents {
-//                 info!("Found file: '{}'", content.key);
-//                 let short_name = content
-//                     .key
-//                     .strip_prefix(&prefix)
-//                     .unwrap_or(&content.key)
-//                     .to_string();
+    // Insert the root folder node:
+    prefix_map.insert(
+        "".to_string(),
+        Node::Folder("root".to_string(), HashMap::new()),
+    );
 
-//                 folder_map.insert(
-//                     short_name.clone(),
-//                     Node::File((content.key.clone(), short_name)),
-//                 );
-//             }
+    // We'll process folders in BFS order, starting with the empty prefix
+    let mut queue = VecDeque::new();
+    queue.push_back("".to_string());
 
-//             // ~~~~~ SUBDIRECTORIES ~~~~~
-//             for cp in parsed.common_prefixes {
-//                 // For example: "some/folder/"
-//                 info!("Found subfolder (common prefix): '{}'", cp.prefix);
+    let client = reqwest::Client::new();
 
-//                 // Get subfolder name relative to the current prefix
-//                 let short_subfolder_name = cp
-//                     .prefix
-//                     .strip_prefix(&prefix)
-//                     .unwrap_or(&cp.prefix)
-//                     .trim_end_matches('/')
-//                     .to_string();
+    while let Some(prefix) = queue.pop_front() {
+        // Temporarily remove this node from prefix_map so we can mutate it safely
+        // (and so we don't hold any mutable reference to prefix_map).
+        let mut node = match prefix_map.remove(&prefix) {
+            Some(n) => n,
+            None => {
+                log::error!("No node for prefix '{prefix}'. Skipping.");
+                continue;
+            }
+        };
 
-//                 // If it's not in prefix_map yet, we create an entry for it
-//                 if !prefix_map.contains_key(&cp.prefix) {
-//                     prefix_map.insert(
-//                         cp.prefix.clone(),
-//                         Node::Folder(cp.prefix.clone(), HashMap::new()),
-//                     );
-//                 }
+        // We only do S3 listing if this is a folder
+        let Node::Folder(_, ref mut folder_map) = node else {
+            info!("Prefix \"{}\" is not a folder, skipping S3 listing.", prefix);
+            // Put the node back
+            prefix_map.insert(prefix.clone(), node);
+            continue;
+        };
 
-//                 // Insert a reference in the current folder
-//                 folder_map.insert(
-//                     short_subfolder_name,
-//                     prefix_map[&cp.prefix].clone(),
-//                 );
+        info!("Processing folder prefix: \"{}\"", prefix);
+        let mut continuation_token: Option<String> = None;
 
-//                 // Enqueue this subfolder prefix for BFS
-//                 queue.push_back(cp.prefix.clone());
-//             }
+        // In a loop, list objects until no more continuation tokens
+        loop {
+            let mut list_objects = ListObjectsV2::new(&bucket, Some(&credentials));
 
-//             // Check if there's another page
-//             if let Some(next_token) = parsed.next_continuation_token {
-//                 info!("Truncated result. Next token: {next_token}");
-//                 continuation_token = Some(next_token);
-//             } else {
-//                 break;
-//             }
-//         }
+            // If prefix is non-empty, specify it
+            if !prefix.is_empty() {
+                list_objects.with_prefix(prefix.clone());
+            }
 
-//         // Now that we've updated this folder, re-insert it into prefix_map
-//         prefix_map.insert(prefix.clone(), node);
-//     }
+            // Use delimiter so S3 returns CommonPrefixes for subfolders
+            list_objects.query_mut().insert("delimiter", "/");
 
-//     info!("Finished building the Node structure for bucket.");
+            // If we have a continuation token from the previous page, apply it
+            if let Some(ref token) = continuation_token {
+                info!("Using continuation token: {token}");
+                list_objects.with_continuation_token(token.clone());
+            }
 
-//     // Return the root node (which is stored under "")
-//     let root_node = prefix_map.remove("").unwrap();
-//     Ok(root_node)
-// }
+            // Sign and execute the request
+            let signed_url = list_objects.sign(ONE_HOUR);
+            let resp = client
+                .get(signed_url)
+                .header(ACCEPT_ENCODING, "br")
+                .send()
+                .await?
+                .error_for_status()?;
+
+            let text = resp.text().await?;
+            let parsed = ListObjectsV2::parse_response(&text)?;
+
+            // ~~~~~ FILES ~~~~~
+            for content in parsed.contents {
+                info!("Found file: '{}'", content.key);
+                let short_name = content
+                    .key
+                    .strip_prefix(&prefix)
+                    .unwrap_or(&content.key)
+                    .to_string();
+
+                folder_map.insert(
+                    short_name.clone(),
+                    Node::File((content.key.clone(), short_name)),
+                );
+            }
+
+            // ~~~~~ SUBDIRECTORIES ~~~~~
+            for cp in parsed.common_prefixes {
+                // For example: "some/folder/"
+                info!("Found subfolder (common prefix): '{}'", cp.prefix);
+
+                // Get subfolder name relative to the current prefix
+                let short_subfolder_name = cp
+                    .prefix
+                    .strip_prefix(&prefix)
+                    .unwrap_or(&cp.prefix)
+                    .trim_end_matches('/')
+                    .to_string();
+
+                // If it's not in prefix_map yet, we create an entry for it
+                if !prefix_map.contains_key(&cp.prefix) {
+                    prefix_map.insert(
+                        cp.prefix.clone(),
+                        Node::Folder(cp.prefix.clone(), HashMap::new()),
+                    );
+                }
+
+                // Insert a reference in the current folder
+                folder_map.insert(
+                    short_subfolder_name,
+                    prefix_map[&cp.prefix].clone(),
+                );
+
+                // Enqueue this subfolder prefix for BFS
+                queue.push_back(cp.prefix.clone());
+            }
+
+            // Check if there's another page
+            if let Some(next_token) = parsed.next_continuation_token {
+                info!("Truncated result. Next token: {next_token}");
+                continuation_token = Some(next_token);
+            } else {
+                break;
+            }
+        }
+
+        // Now that we've updated this folder, re-insert it into prefix_map
+        prefix_map.insert(prefix.clone(), node);
+    }
+
+    info!("Finished building the Node structure for bucket.");
+
+    // Return the root node (which is stored under "")
+    let root_node = prefix_map.remove("").unwrap();
+    Ok(root_node)
+} */
 
