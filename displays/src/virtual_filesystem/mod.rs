@@ -182,8 +182,6 @@ impl FileSystem {
                 });
 
                 for (label, node) in entries {
-                    
-                    
                     let modifiers = ui.input(|i| i.modifiers); // Get the current modifiers
 
                     if let Node::Folder(full_path, _) = node {
