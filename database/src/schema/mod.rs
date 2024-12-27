@@ -709,8 +709,8 @@ pub enum Cmd {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Node {
-    File((String, String)),
     Folder(String, HashMap<String, Node>),
+    File((String, String)),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy, Default, Eq, PartialOrd, Ord)]

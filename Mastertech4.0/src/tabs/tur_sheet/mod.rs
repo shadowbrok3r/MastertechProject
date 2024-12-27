@@ -102,7 +102,7 @@ impl MastertechContext {
                                                                         /*     ROW 1     */
                                                     let service_num = TextEdit::singleline(&mut self.ticket_data.service_number)
                                                         .hint_text("Service #  ")
-                                                        .char_limit(8)
+                                                        .char_limit(11)
                                                         .vertical_align(Align::Center)
                                                         .margin(vec2(4.0, 4.0))
                                                         .min_size(vec2(self.widget_size+2.0,14.0)).ui(ui);

@@ -1,18 +1,17 @@
-use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, Cmd, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
-use egui_extras::syntax_highlighting::{highlight, CodeTheme};
-use log::error;
+use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, Cmd, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
 use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem};
+use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
 use crossbeam::channel::{Receiver, Sender};
-use anyhow::{Result, Error};
 use surrealdb::{RecordId, Response};
+use anyhow::{Result, Error};
 use bincode::serialize;
-use tracing::info;
+use log::{error, info};
 
 impl MastertechContext{
     pub fn websockets(&mut self, ui: &mut Ui) {
@@ -77,7 +76,6 @@ impl MastertechContext{
             self.computer_data.hostname.clone(), 
             self.computer_data.cpu.trim().to_string()
         );
-
 
         let computer_id = &self.computer_data.id.clone();
 
@@ -208,7 +206,7 @@ impl WebConsoleFrontend {
         }
     }
 
-    pub fn handle_events(&mut self) -> bool{
+    pub fn receive(&mut self) -> bool{
         let mut connected = true;
 
         while let Some(event) = self.ws_receiver.try_recv() { self.events.push(event); }
@@ -462,7 +460,7 @@ impl WebConsoleFrontend {
     pub fn initialize_websocket(&mut self, ui: &mut Ui) -> bool {
         ui.vertical_centered(|ui | ui.heading("Received events:"));
         ui.separator();
-        self.connected = self.handle_events();
+        self.connected = self.receive();
         let theme = CodeTheme::dark(12.);
         ScrollArea::vertical()
             .animated(true)
