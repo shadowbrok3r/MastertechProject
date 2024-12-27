@@ -1,7 +1,7 @@
 use super::{prestashop_schema::PrestashopPayload, ComputerData, CustomerData, LiveTaskPayload, Notification, TicketData, TicketPayload};
 use crate::{
     schema::{
-        helper_traits::TaskNotePayloadHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, Cmd, ConnectedClient, Priority, Record, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
+        helper_traits::TaskNotePayloadHelper, prestashop_schema::{Address, Customer, CustomerMessage, CustomerThread, Employee, Order, Prestashop}, ConnectedClient, Priority, Record, Status, Store, TaskNotePayload, TaskPayload, User, COMPUTER_TABLE, CUSTOMER_TABLE, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE
     },
     DATABASE,
 };
@@ -154,18 +154,6 @@ where
 
     info!("schema/utilities.rs -> Query: {:?}  // {}", record, query);
     Ok(record)
-}
-
-pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
-    bincode::serialize(system_info).expect("Failed to serialize SystemInformation")
-}
-
-pub fn _deserialize_system_info(bytes: &[u8]) -> SystemInformation {
-    bincode::deserialize(bytes).expect("Failed to deserialize SystemInformation")
-}
-
-pub fn deserialize_command(bytes: &[u8]) -> Cmd {
-    bincode::deserialize(bytes).expect("Failed to deserialize Cmd")
 }
 
 pub async fn get_tasks(tx: Sender<Vec<TaskPayload>>) -> Result<(), Error> {

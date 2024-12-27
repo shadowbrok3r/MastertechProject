@@ -1,5 +1,5 @@
-use eframe::egui::{Response, Ui};
-use database::schema::{ConnectedClient, Priority, Status, Store, TaskNotePayload, TaskPayload, TicketPayload, User};
+use eframe::egui::{Modifiers, Response, Ui};
+use database::schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User};
 use modals::task_modal::ModalAction;
 // use crate::modals::{ModalResponse, ModalState};
 use serde::{Deserialize, Serialize};
@@ -247,4 +247,51 @@ pub trait Task {
 pub trait DisplayModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction>;
     // fn set_state(self, action: ModalAction);
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Cmd {
+    LiveData,
+    Command,
+    Tuneup,
+    Cps,
+    Qc,
+    SfcScan,
+    DismScan,
+    ChkDsk,
+    Mbr2Gpt,
+    TaskManager,
+    FileSystemAction(FileSystemAction),
+    UninstallProgram(String),
+    PullKeys(String),
+    PullTicket(String),
+    InteractiveInput(String),
+    CopyTools(String),
+    QuitInteractive,
+    ReadEvents,
+    Quit,
+    None,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum FileSystemAction{
+    Execute(String),
+    Select((Modifiers, String)),
+    EnterDirectory(String),
+    ExpandDirectory(String),
+    GetNode(Node),
+    NavigateHome,
+}
+
+pub fn serialize_system_info(system_info: &SystemInformation) -> Vec<u8> {
+    bincode::serialize(system_info).expect("Failed to serialize SystemInformation")
+}
+
+pub fn _deserialize_system_info(bytes: &[u8]) -> SystemInformation {
+    bincode::deserialize(bytes).expect("Failed to deserialize SystemInformation")
+}
+
+pub fn deserialize_command(bytes: &[u8]) -> Cmd {
+    bincode::deserialize(bytes).expect("Failed to deserialize Cmd")
 }

@@ -31,28 +31,28 @@ impl SharedContext {
                     user.minio_secret_key.clone()
                 ) {
                     info!("Retrieving minio files: {access_key:?}");
-                    let tx = self.filesystem.paths_channel.0.clone();
-                    self.filesystem.set_user(user.clone());
-                    let name = user.email.clone();
-                    let parsed = name.split_once('@').unwrap().0.to_string().clone();
+                    // let tx = self.filesystem.paths_channel.0.clone();
+                    // self.filesystem.set_user(user.clone());
+                    // let name = user.email.clone();
+                    // let parsed = name.split_once('@').unwrap().0.to_string().clone();
 
-                    let fetcher = S3Fetcher::new(&access_key, &secret_key, &parsed);
+                    // let fetcher = S3Fetcher::new(&access_key, &secret_key, &parsed);
 
-                    // match fetcher {
-                    //     Ok(fetcher) => self.filesystem.set_fetcher(fetcher),
-                    //     Err(e) => info!("Error creating S3 Fetcher: {e:?}"),
-                    // }
+                    // // match fetcher {
+                    // //     Ok(fetcher) => self.filesystem.set_fetcher(fetcher),
+                    // //     Err(e) => info!("Error creating S3 Fetcher: {e:?}"),
+                    // // }
 
-                    // if let Some(fetcher) = self.filesystem.fetcher.clone() {
-                        PlatformSpawner::spawn(async move {
+                    // // if let Some(fetcher) = self.filesystem.fetcher.clone() {
+                    //     PlatformSpawner::spawn(async move {
                             
-                            let get_bucket_contents = fetch_guard.fetch(None).await;
-                            match get_bucket_contents {
-                                Ok(buckets) => {let _ = tx.try_send(buckets);},
-                                Err(err) => warn!("Error: {err:?}"),
-                            }
-                        });
-                    // }
+                    //         let get_bucket_contents = fetch_guard.fetch(None).await;
+                    //         match get_bucket_contents {
+                    //             Ok(buckets) => {let _ = tx.try_send(buckets);},
+                    //             Err(err) => warn!("Error: {err:?}"),
+                    //         }
+                    //     });
+                    // // }
                 }
             }
 

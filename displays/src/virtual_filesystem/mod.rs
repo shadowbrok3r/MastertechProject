@@ -2,9 +2,9 @@ use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
-use crate::{channel_manager::ChannelManager, Spawner};
+use crate::{channel_manager::ChannelManager, Spawner, FileSystemAction};
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{Node, User, buckets::list_buckets};
+use database::schema::{buckets::list_buckets, Node, User};
 use futures::{StreamExt, Future};
 use anyhow::{Result, Error};
 use crate::PlatformSpawner;
@@ -27,21 +27,25 @@ pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
 #[async_trait::async_trait(?Send)]
 pub trait Fetcher: Send{
     async fn fetch(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error>;
-}
 
-#[async_trait::async_trait(?Send)]
-impl Fetcher for S3Fetcher {
-    async fn fetch(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error> {
-        tx.try_send(
-            list_buckets(
-                self.credentials.clone(), 
-                self.bucket.clone(), 
-                prefix
-            ).await
-        )?;
+    async fn receive(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error> {
         Ok(())
     }
 }
+
+// #[async_trait::async_trait(?Send)]
+// impl Fetcher for S3Fetcher {
+//     async fn fetch(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error> {
+//         tx.try_send(
+//             list_buckets(
+//                 self.credentials.clone(), 
+//                 self.bucket.clone(), 
+//                 prefix
+//             ).await
+//         )?;
+//         Ok(())
+//     }
+// }
 
 // /// Fetcher implementation for S3.
 #[derive(Debug, Clone)]
@@ -65,16 +69,8 @@ impl S3Fetcher {
         Self { bucket, credentials }
     }
 
-    // pub async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error> {
-    //     list_buckets(self.credentials.clone(), self.bucket.clone(), prefix).await
-    // }
 }
 
-type AsyncRequestFn = dyn Fn(&str) 
-    -> std::pin::Pin<Box<dyn Future<Output = Result<Node, Error>> + Send + 'static>> 
-    + Send 
-    + Sync 
-    + 'static;
 
 #[derive(Debug)]
 pub struct FileSystem {
@@ -87,7 +83,6 @@ pub struct FileSystem {
     bytes_tx: Sender<(Vec<u8>, u64)>,
     /// Receiving progress of downloads/uploads to progress bar
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
-    pub paths_channel: (Sender<Node>, Receiver<Node>),
     /// Receive / Send FileSystemAction's from the UI
     pub fs_actions_channel: (Sender<FileSystemAction>, Receiver<FileSystemAction>),
     /// Selected files/folders
@@ -111,27 +106,15 @@ pub struct FileSystem {
     pub navigation_stack: Vec<String>,
 }
 
-#[derive(Debug)]
-pub enum FileSystemAction{
-    Execute(String),
-    Select((Modifiers, String)),
-    EnterDirectory(String),
-    ExpandDirectory(String),
-    NavigateHome,
-    
-}
-
 impl FileSystem {
     pub fn new() -> Self {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
-        let paths_channel = <Node>::create_unbounded_channel();
         let fs_actions_channel = <FileSystemAction>::create_unbounded_channel();
         
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
             bytes_tx, bytes_rx,
             fs_actions_channel,
-            paths_channel,
             root: Node::Folder(String::new(), HashMap::new()),
             selected_items: RefCell::new(HashSet::new()),
             progress: 0.0,
@@ -146,51 +129,8 @@ impl FileSystem {
     }
 
     pub fn receive(&mut self, ctx: &Context) { // , requester: &mut dyn FnMut(&str)
-        if let Ok(new_node) = self.paths_channel.1.try_recv() {
-            log::info!("Files: {new_node:?}");
-            let insert_node = self.insert_node(new_node);
-            info!("InsertNode: {insert_node:?}");
-            ctx.request_repaint();
-        }
-
         if let Ok(action) = self.fs_actions_channel.1.try_recv() {
-            log::info!("Action: {action:?}");
-            match action {
-                FileSystemAction::Execute(label) => {
-                    self.execute_file = label.clone();
-                },
-                FileSystemAction::Select((modifiers, label)) => {
-                    if self.selected_items.borrow().contains(&label) {
-                        // If the item was already selected, deselect it
-                        self.selected_items.borrow_mut().remove(&label);
-                    } 
-
-                    if modifiers.ctrl { 
-                        self.selected_items.borrow_mut().insert(label.clone());
-                    } else { // If the control key is not down, clear previous selection and select the current item
-                        self.selected_items.borrow_mut().clear();
-                        self.selected_items.borrow_mut().insert(label.clone());
-                    }
-                },
-                FileSystemAction::EnterDirectory(directory) => {
-                    if !self.current_prefix.ends_with('/'){
-                        self.current_prefix.push('/');
-                    }
-                    self.open_folder = true;
-                    info!("directory double clicked: {directory:?}");
-                    self.double_click_folder(&directory);
-                }
-                FileSystemAction::ExpandDirectory(directory) => {
-                    // self.current_prefix = directory.clone();
-                    info!("directory double clicked: {directory:?}");
-                    self.expand_folder(&directory);
-                },
-                FileSystemAction::NavigateHome => {
-                    self.navigation_stack.clear();
-                    self.current_prefix.clear();
-                    self.open_folder = true;
-                },
-            }
+            self.handle_filesystem_action(&action);
             ctx.request_repaint();
         }
 
@@ -198,7 +138,6 @@ impl FileSystem {
             self.open_folder = false;
             self.request_contents(&self.current_prefix);
         }
-
     }
     
     pub fn set_user(&mut self, user: User) -> &mut Self {
@@ -206,6 +145,46 @@ impl FileSystem {
         self
     }
 
+    pub fn handle_filesystem_action(&mut self, action: &FileSystemAction) {
+        log::info!("Action: {action:?}");
+        match action {
+            FileSystemAction::Execute(label) => { self.execute_file = label.clone(); },
+            FileSystemAction::Select((modifiers, label)) => {
+                if self.selected_items.borrow().contains(label) {
+                    // If the item was already selected, deselect it
+                    self.selected_items.borrow_mut().remove(label);
+                } 
+
+                if modifiers.ctrl { 
+                    self.selected_items.borrow_mut().insert(label.clone());
+                } else { // If the control key is not down, clear previous selection and select the current item
+                    self.selected_items.borrow_mut().clear();
+                    self.selected_items.borrow_mut().insert(label.clone());
+                }
+            },
+            FileSystemAction::EnterDirectory(directory) => {
+                if cfg!(target_os="linux") && !self.current_prefix.ends_with('/'){
+                    self.current_prefix.push('/');
+                } else if cfg!(target_os="windows") && !self.current_prefix.ends_with('\\') {
+                    self.current_prefix.push('\\');
+                }
+                self.open_folder = true;
+                info!("directory double clicked: {directory:?}");
+                self.double_click_folder(&directory);
+            }
+            FileSystemAction::ExpandDirectory(directory) => self.expand_folder(&directory),
+            FileSystemAction::NavigateHome => {
+                self.navigation_stack.clear();
+                self.current_prefix.clear();
+                self.open_folder = true;
+            },
+            FileSystemAction::GetNode(new_node) => {
+                log::info!("Files: {new_node:?}");
+                let insert_node = self.insert_node(new_node.clone());
+                info!("InsertNode: {insert_node:?}");
+            },
+        }
+    }
     // pub fn set_fetcher(&mut self, fetcher: Box<dyn Fetcher>){
     //     self.fetcher = Some(
     //         Arc::new(
@@ -503,19 +482,6 @@ impl FileSystem {
         //         Err(err) => log::warn!("Error: {err:?}"),
         //     }
         // });
-        
-        // if let Some(ref requester) = self.request_contents {
-        //     let tx = self.paths_channel.0.clone();
-        //     // Clone the folder_prefix to a String that can outlive this function.
-        //     let folder_prefix_owned = folder_prefix.to_owned();
-        //     let requester = requester.clone();
-        //     PlatformSpawner::spawn(async move {
-        //         match requester(&folder_prefix_owned).await {
-        //             Ok(node) => {let _ = tx.try_send(node);},
-        //             Err(e) => info!("Error requesting resource: {e:?}"),
-        //         }
-        //     });
-        // }
         
         // if let Some(fetcher) = self.fetcher.clone() {
         //     let tx = self.paths_channel.0.clone();
