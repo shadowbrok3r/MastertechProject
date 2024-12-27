@@ -38,21 +38,21 @@ impl SharedContext {
 
                     let fetcher = S3Fetcher::new(&access_key, &secret_key, &parsed);
 
-                    match fetcher {
-                        Ok(fetcher) => self.filesystem.set_fetcher(fetcher),
-                        Err(e) => info!("Error creating S3 Fetcher: {e:?}"),
-                    }
+                    // match fetcher {
+                    //     Ok(fetcher) => self.filesystem.set_fetcher(fetcher),
+                    //     Err(e) => info!("Error creating S3 Fetcher: {e:?}"),
+                    // }
 
-                    if let Some(fetcher) = self.filesystem.fetcher.clone() {
+                    // if let Some(fetcher) = self.filesystem.fetcher.clone() {
                         PlatformSpawner::spawn(async move {
-                            let fetch_guard = fetcher.lock().await;
+                            
                             let get_bucket_contents = fetch_guard.fetch(None).await;
                             match get_bucket_contents {
                                 Ok(buckets) => {let _ = tx.try_send(buckets);},
                                 Err(err) => warn!("Error: {err:?}"),
                             }
                         });
-                    }
+                    // }
                 }
             }
 

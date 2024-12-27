@@ -33,35 +33,41 @@ pub enum WsDisplayState {
     ToolBox
 }
 
-// /// Fetcher implementation for a remote client via WebSockets.
-// pub struct RemoteClientFetcher {
-//     pub tx: Node,
-//     pub rx: Node,
-// }
+/// Fetcher implementation for a remote client via WebSockets.
+pub struct RemoteClientFetcher {
+    pub tx: crossbeam::channel::Sender<Node>,
+    pub rx: crossbeam::channel::Receiver<Node>,
+}
 
-// impl RemoteClientFetcher {
-//     /// Creates a new `RemoteClientFetcher`.
-//     pub fn new() -> Self {
-//         let (tx, rx) = crossbeam::channel::unbounded::<Node>();
-//         RemoteClientFetcher {
-//             tx, rx
-//         }
-//     }
-// }
+impl RemoteClientFetcher {
+    /// Creates a new `RemoteClientFetcher`.
+    pub fn new() -> Self {
+        let (tx, rx) = crossbeam::channel::unbounded::<Node>();
+        RemoteClientFetcher { tx, rx }
+    }
+}
 
-// impl Fetcher for RemoteClientFetcher {
-//     async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error> {
+impl Fetcher for RemoteClientFetcher {
+    async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error> {
         
-//         self.tx.send(WsMessage::Binary(serialize(&Cmd::ReadDir(prefix.unwrap_or_default().to_string()))?));
+        self.tx.send(
+            WsMessage::Binary(
+                serialize(
+                    &Cmd::ReadDir(
+                        prefix.unwrap_or_default().to_string()
+                    )
+                )?
+            )
+        );
         
-//         // // Wait for the response
-//         // match self.ws_receiver.recv().await {
-//         //     Some(node) => Ok(node),
-//         //     None => Err(anyhow::anyhow!("No response received from remote client")),
-//         // }
-//         Ok(Node::Folder(String::new(), HashMap::new()))
-//     }
-// }
+        // // Wait for the response
+        // match self.ws_receiver.recv().await {
+        //     Some(node) => Ok(node),
+        //     None => Err(anyhow::anyhow!("No response received from remote client")),
+        // }
+        Ok(Node::Folder(String::new(), HashMap::new()))
+    }
+}
 
 pub struct WebSocketClient {
     pub client: ConnectedClient,
@@ -120,7 +126,7 @@ impl WebSocketClient{
         }
     }
     
-    pub fn handle_events(&mut self) {
+    pub fn receive(&mut self) {
         while let Some(event) = self.ws_receiver.try_recv() { self.events.push(event); }
         // if self.timeout_counter.elapsed().as_secs() > 10 { info!("Its been over 10 seconds since last ping"); }
         // info!("Timer: {:?}", self.timeout_counter.elapsed().as_secs());
@@ -143,7 +149,7 @@ impl WebSocketClient{
                                 self.sysinfo = Some(sysinfo);
                                 // info!("normalized_ram_usage: {normalized_ram_usage:?}\nLen: {:?}", self.cpu_percentage.len());
                             } else if let Some(cmd) = deserializer::<Cmd>(bin){
-                                if let Cmd::DirContents(node) = cmd{ // (root, paths)
+                                if let Cmd::DirContents(node) = cmd { // (root, paths)
                                     self.explorer.root = node;
                                     if let Node::Folder(full_path, _) = &self.explorer.root{
                                         self.path_edit = full_path.clone();
@@ -194,7 +200,7 @@ impl WebSocketClient{
             .size(Size::remainder().at_most(400.))
             .vertical(|mut strip| 
         {
-            self.handle_events();
+            self.receive();
 
             // strip.cell(|ui| add_contents(ui));
             strip.strip(|strip| 

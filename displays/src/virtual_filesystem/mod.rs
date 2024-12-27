@@ -1,7 +1,6 @@
-use async_lock::Mutex;
 use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Layout, Margin, Modifiers, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
-use std::{cell::RefCell, collections::{HashMap, HashSet}, sync::Arc};
+use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use crate::{channel_manager::ChannelManager, Spawner};
 use crossbeam::channel::{Receiver, Sender};
@@ -20,44 +19,31 @@ use log::info;
 #[cfg(feature="tokio")]
 use std::path::PathBuf;
 
-/*
-/// Trait that can be used to modify the TextEdit
-type SetTextEditProperties = dyn FnOnce(TextEdit) -> TextEdit;
 
-/// An extension to the [`egui::TextEdit`] that allows for a dropdown box with autocomplete to popup while typing.
-pub struct AutoCompleteTextEdit<'a, T> {
-    /// Contents of text edit passed into [`egui::TextEdit`]
-    text_field: &'a mut String,
-    /// Data to use as the search term
-    search: T,
-    /// A limit that can be placed on the maximum number of autocomplete suggestions shown
-    max_suggestions: usize,
-    /// If true, highlights the macthing indices in the dropdown
-    highlight: bool,
-    /// Used to set properties on the internal TextEdit
-    set_properties: Option<Box<SetTextEditProperties>>,
-    filter: Option<Box<dyn Fn(&str) -> bool>>,
-    layouter: Option<&'a mut dyn FnMut(&Ui, &str, f32) -> Arc<eframe::egui::Galley>>,
-}
-
-*/
 pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
 
-/// The `Fetcher` trait abstracts the data fetching logic.
-/// Implement this trait for different data sources like S3, RemoteClient, etc.
+// /// The `Fetcher` trait abstracts the data fetching logic.
+// /// Implement this trait for different data sources like S3, RemoteClient, etc.
 #[async_trait::async_trait(?Send)]
 pub trait Fetcher: Send{
-    async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error>;
+    async fn fetch(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error>;
 }
 
 #[async_trait::async_trait(?Send)]
 impl Fetcher for S3Fetcher {
-    async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error> {
-        list_buckets(self.credentials.clone(), self.bucket.clone(), prefix).await
+    async fn fetch(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error> {
+        tx.try_send(
+            list_buckets(
+                self.credentials.clone(), 
+                self.bucket.clone(), 
+                prefix
+            ).await
+        )?;
+        Ok(())
     }
 }
 
-/// Fetcher implementation for S3.
+// /// Fetcher implementation for S3.
 #[derive(Debug, Clone)]
 pub struct S3Fetcher {
     bucket: Bucket,
@@ -66,22 +52,31 @@ pub struct S3Fetcher {
 
 impl S3Fetcher {
     /// Creates a new `S3Fetcher`.
-    pub fn new(access_key: &str, secret_key: &str, bucket_name: &str) -> Result<Box<dyn Fetcher>, Error> {
+    pub fn new(access_key: &str, secret_key: &str, bucket_name: &str) -> Self {
         let bucket = Bucket::new(
-            STORAGE_URL.parse::<reqwest::Url>()?,
+            STORAGE_URL.parse::<reqwest::Url>().unwrap(),
             rusty_s3::UrlStyle::Path,
             bucket_name.to_lowercase(),
             "us-west"
-        )?;
+        ).unwrap();
         
         let credentials = Credentials::new(access_key.to_string(), secret_key.to_string());
         
-        Ok( Box::new(S3Fetcher { bucket, credentials }) )
+        Self { bucket, credentials }
     }
+
+    // pub async fn fetch(&self, prefix: Option<&str>) -> anyhow::Result<Node, anyhow::Error> {
+    //     list_buckets(self.credentials.clone(), self.bucket.clone(), prefix).await
+    // }
 }
 
+type AsyncRequestFn = dyn Fn(&str) 
+    -> std::pin::Pin<Box<dyn Future<Output = Result<Node, Error>> + Send + 'static>> 
+    + Send 
+    + Sync 
+    + 'static;
 
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct FileSystem {
     /// Persistent Scroll ID so we dont have any 
     /// clashes of ID's between multiple websocket clients
@@ -114,7 +109,6 @@ pub struct FileSystem {
     pub current_prefix: String,
     /// Stack to track navigation history
     pub navigation_stack: Vec<String>,
-    pub fetcher: Option<Arc<Mutex<Box<dyn Fetcher>>>>,
 }
 
 #[derive(Debug)]
@@ -132,6 +126,7 @@ impl FileSystem {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
         let paths_channel = <Node>::create_unbounded_channel();
         let fs_actions_channel = <FileSystemAction>::create_unbounded_channel();
+        
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
             bytes_tx, bytes_rx,
@@ -147,11 +142,10 @@ impl FileSystem {
             user: User::default(),
             current_prefix: "/".to_string(),
             navigation_stack: Vec::new(),
-            fetcher: None,
         }
     }
 
-    pub fn receive(&mut self, ctx: &Context) {
+    pub fn receive(&mut self, ctx: &Context) { // , requester: &mut dyn FnMut(&str)
         if let Ok(new_node) = self.paths_channel.1.try_recv() {
             log::info!("Files: {new_node:?}");
             let insert_node = self.insert_node(new_node);
@@ -199,6 +193,12 @@ impl FileSystem {
             }
             ctx.request_repaint();
         }
+
+        if self.open_folder {
+            self.open_folder = false;
+            self.request_contents(&self.current_prefix);
+        }
+
     }
     
     pub fn set_user(&mut self, user: User) -> &mut Self {
@@ -206,13 +206,13 @@ impl FileSystem {
         self
     }
 
-    pub fn set_fetcher(&mut self, fetcher: Box<dyn Fetcher>){
-        self.fetcher = Some(
-            Arc::new(
-                Mutex::new(fetcher)
-            )
-        );
-    }
+    // pub fn set_fetcher(&mut self, fetcher: Box<dyn Fetcher>){
+    //     self.fetcher = Some(
+    //         Arc::new(
+    //             Mutex::new(fetcher)
+    //         )
+    //     );
+    // }
 
     /// This is to build an actual filesystem structure for when we are working with Mastertech from the website
     /// - Builds a 'virtual' filesystem since wasm doesnt know anything about PathBuf's. This is used in 
@@ -247,6 +247,8 @@ impl FileSystem {
     }
 
     pub fn display(&mut self, ui: &mut Ui){
+        // self.receive(ui.ctx(), |_|);
+
         let size = ui.available_size_before_wrap();
         let mut inner_margin_top = Margin::default();
         inner_margin_top.bottom = 5.0;
@@ -292,14 +294,6 @@ impl FileSystem {
                 if parent_res.clicked() {
                     let navigate_up = self.navigate_up();
                     info!("Navigating up: {navigate_up:?}");
-                }
-
-                // ui.add_space(10.);
-                // ui.label(format!("Navigation Stack: {:?}", self.navigation_stack));
-
-                if self.open_folder {
-                    self.open_folder = false;
-                    self.request_contents(&self.current_prefix);
                 }
             });
         });
@@ -494,7 +488,7 @@ impl FileSystem {
         });
     }
 
-    fn request_contents(&self, folder_prefix: &str) {
+    fn request_contents(&self, folder_prefix: &str) -> Result<(), Error> {
         // // Fetch the folder's contents
         // let access_key = self.user.minio_access_key.clone().unwrap_or_default();
         // let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
@@ -509,17 +503,32 @@ impl FileSystem {
         //         Err(err) => log::warn!("Error: {err:?}"),
         //     }
         // });
-        if let Some(fetcher) = self.fetcher.clone() {
-            let tx = self.paths_channel.0.clone();
-            let path = folder_prefix.to_string().clone();
-            PlatformSpawner::spawn(async move {
-                let fetch_guard = fetcher.lock().await;
-                match fetch_guard.fetch(Some(&path)).await {
-                    Ok(buckets) => {let _ = tx.try_send(buckets);},
-                    Err(err) => log::warn!("Error: {err:?}"),
-                }
-            });
-        }
+        
+        // if let Some(ref requester) = self.request_contents {
+        //     let tx = self.paths_channel.0.clone();
+        //     // Clone the folder_prefix to a String that can outlive this function.
+        //     let folder_prefix_owned = folder_prefix.to_owned();
+        //     let requester = requester.clone();
+        //     PlatformSpawner::spawn(async move {
+        //         match requester(&folder_prefix_owned).await {
+        //             Ok(node) => {let _ = tx.try_send(node);},
+        //             Err(e) => info!("Error requesting resource: {e:?}"),
+        //         }
+        //     });
+        // }
+        
+        // if let Some(fetcher) = self.fetcher.clone() {
+        //     let tx = self.paths_channel.0.clone();
+        //     let path = folder_prefix.to_string().clone();
+        //     PlatformSpawner::spawn(async move {
+        //         let fetch_guard = fetcher.lock().await;
+        //         match fetch_guard.fetch(Some(&path)).await {
+        //             Ok(buckets) => {let _ = tx.try_send(buckets);},
+        //             Err(err) => log::warn!("Error: {err:?}"),
+        //         }
+        //     });
+        // }
+        Ok(())
     }
 
     fn expand_folder(&self, folder_prefix: &str) {
