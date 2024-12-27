@@ -679,33 +679,8 @@ pub struct SystemInformation {
     pub network_interfaces: HashMap<String, String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Cmd {
-    LiveData,
-    Command,
-    Tuneup,
-    Cps,
-    Qc,
-    SfcScan,
-    DismScan,
-    ChkDsk,
-    Mbr2Gpt,
-    TaskManager,
-    ReadDir(String),
-    UninstallProgram(String),
-    PullKeys(String),
-    PullTicket(String),
-    DirContents(Node),
-    UpDirectory(String),
-    ChangeDirectory(String),
-    Execute(String),
-    InteractiveInput(String),
-    CopyTools(String),
-    QuitInteractive,
-    ReadEvents,
-    Quit,
-    None,
-}
+
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Node {
