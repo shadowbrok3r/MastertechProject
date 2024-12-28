@@ -17,43 +17,12 @@ impl SharedContext {
 
         if let Some(usr) = self.current_user.as_ref() {
             self.store_selection = std::convert::Into::<u64>::into(usr.store);
-
-            info!("Getting Initial data: {}", self.store_selection);
             let user = usr.clone();
-            let name = usr.name.clone();
-
+            let name = user.name.clone();
+            info!("Getting Initial data: {}", self.store_selection);
             if self.filesystem.paths.is_empty() {
-                if let (
-                    Some(_access_key), 
-                    Some(_secret_key)
-                ) = (
-                    user.minio_access_key.clone(),
-                    user.minio_secret_key.clone()
-                ) {
-                    // info!("Retrieving minio files: {access_key:?}");
-                    // let tx = self.filesystem.paths_channel.0.clone();
-                    // self.filesystem.set_user(user.clone());
-                    // let name = user.email.clone();
-                    // let parsed = name.split_once('@').unwrap().0.to_string().clone();
-
-                    // let fetcher = S3Fetcher::new(&access_key, &secret_key, &parsed);
-
-                    // // match fetcher {
-                    // //     Ok(fetcher) => self.filesystem.set_fetcher(fetcher),
-                    // //     Err(e) => info!("Error creating S3 Fetcher: {e:?}"),
-                    // // }
-
-                    // // if let Some(fetcher) = self.filesystem.fetcher.clone() {
-                    //     PlatformSpawner::spawn(async move {
-                            
-                    //         let get_bucket_contents = fetch_guard.fetch(None).await;
-                    //         match get_bucket_contents {
-                    //             Ok(buckets) => {let _ = tx.try_send(buckets);},
-                    //             Err(err) => warn!("Error: {err:?}"),
-                    //         }
-                    //     });
-                    // // }
-                }
+                self.filesystem.set_user(user.clone());
+                // let _ = self.filesystem.request_contents("");
             }
 
             if self.tasks.is_empty() || self.store_users.is_empty() {

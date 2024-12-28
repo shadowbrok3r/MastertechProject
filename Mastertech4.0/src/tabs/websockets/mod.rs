@@ -1,9 +1,9 @@
 use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
-use database::{schema::{utilities::{deserialize_command, query_id, serialize_system_info}, Cmd, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{utilities::query_id, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
-use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem};
+use displays::{channel_manager::ChannelManager, deserialize_command, virtual_filesystem::FileSystem, Cmd};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
