@@ -1,10 +1,10 @@
 
 use database::{live_data::listen_data,schema::{utilities::{get_notifications, get_store_users, get_tasks_for_store}, NOTIFICATION_TABLE, TASK_NOTE_TABLE, TASK_TABLE}};
-use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, virtual_filesystem::S3Fetcher, PlatformSpawner, Spawner};
+use crate::{app_state::SharedContext, tabs::ai_playground::ChatThread, PlatformSpawner, Spawner}; // virtual_filesystem::S3Fetcher, 
 use crate::ui_tools::{theme_config::ThemeConfig, toasts::{Toast, ToastKind, ToastOptions}};
 use std::collections::HashMap;
 use eframe::egui::Context;
-use log::{info, warn};
+use log::info;
 
 impl SharedContext {
     pub fn load_data(&mut self, ctx: &Context) -> bool {
@@ -24,13 +24,13 @@ impl SharedContext {
 
             if self.filesystem.paths.is_empty() {
                 if let (
-                    Some(access_key), 
-                    Some(secret_key)
+                    Some(_access_key), 
+                    Some(_secret_key)
                 ) = (
                     user.minio_access_key.clone(),
                     user.minio_secret_key.clone()
                 ) {
-                    info!("Retrieving minio files: {access_key:?}");
+                    // info!("Retrieving minio files: {access_key:?}");
                     // let tx = self.filesystem.paths_channel.0.clone();
                     // self.filesystem.set_user(user.clone());
                     // let name = user.email.clone();

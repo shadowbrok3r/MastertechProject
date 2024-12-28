@@ -679,9 +679,6 @@ pub struct SystemInformation {
     pub network_interfaces: HashMap<String, String>,
 }
 
-
-
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Node {
     Folder(String, HashMap<String, Node>),

@@ -1,7 +1,6 @@
-use eframe::egui::{Modifiers, Response, Ui};
 use database::schema::{ConnectedClient, Node, Priority, Status, Store, SystemInformation, TaskNotePayload, TaskPayload, TicketPayload, User};
+use eframe::egui::{Modifiers, Response, Ui};
 use modals::task_modal::ModalAction;
-// use crate::modals::{ModalResponse, ModalState};
 use serde::{Deserialize, Serialize};
 use crossbeam::channel::Sender;
 use async_trait::async_trait;
@@ -25,8 +24,7 @@ pub mod ui_data;
 pub mod first_run;
 pub mod ai;
 pub mod viewports;
-
-
+pub use platform::PlatformSpawner;
 
 #[cfg(target_arch="wasm32")]
 pub use {
@@ -39,7 +37,7 @@ pub use {
     async_openai::{self as openai}
 };
 
-pub use platform::PlatformSpawner;
+
 
 pub trait Spawner {
     #[cfg(not(target_arch = "wasm32"))]
@@ -103,24 +101,26 @@ pub enum TaskUiActions {
     None,
 }
 
-// // In your crate with `egui`
-// pub trait EguiRenderable {
-//     fn render(&self, ui: &mut egui::Ui) -> egui::Response;
-// }
+/* 
+// In your crate with `egui`
+pub trait EguiRenderable {
+    fn render(&self, ui: &mut egui::Ui) -> egui::Response;
+}
 
-// // In your `database::schema` crate
-// use crate::egui::EguiRenderable;
+// In your `database::schema` crate
+use crate::egui::EguiRenderable;
 
-// impl EguiRenderable for Notification {
-//     fn render(&self, ui: &mut egui::Ui) -> egui::Response {
-//         ui.label(self.notification_description)
-//     }
-// }
-// impl Widget for &mut Notification {
-//     fn ui(self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
-//         ui.label(self.notification_description)
-//     }
-// }
+impl EguiRenderable for Notification {
+    fn render(&self, ui: &mut egui::Ui) -> egui::Response {
+        ui.label(self.notification_description)
+    }
+}
+impl Widget for &mut Notification {
+    fn ui(self, ui: &mut eframe::egui::Ui) -> eframe::egui::Response {
+        ui.label(self.notification_description)
+    }
+} 
+*/
 
 
 pub trait Displayable {
@@ -182,7 +182,6 @@ pub trait FilterTasks {
         search_input: String,
     ) -> Vec<TaskPayload>;
 }
-
 pub trait FilterClients {
     fn filter_by_client<T: IntoIterator<Item = S>, S: AsRef<str> + std::fmt::Debug>(
         &self,
@@ -191,13 +190,6 @@ pub trait FilterClients {
     ) -> Vec<ConnectedClient>;
 }
 
-
-#[derive(Default, PartialEq, Clone, serde::Serialize)]
-pub enum SortDirection{
-    #[default]
-    Asc,
-    Desc
-}
 pub trait Sortable <T> {
     fn default_sort(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
     fn sort_by_date(&mut self, sort_direction: SortDirection) -> &mut Vec<T>;
@@ -247,6 +239,13 @@ pub trait Task {
 pub trait DisplayModal {
     fn display(&mut self, ui: &mut Ui, action_handler: &mut dyn FnMut(ModalAction)) -> Option<ModalAction>;
     // fn set_state(self, action: ModalAction);
+}
+
+#[derive(Default, PartialEq, Clone, serde::Serialize)]
+pub enum SortDirection{
+    #[default]
+    Asc,
+    Desc
 }
 
 
