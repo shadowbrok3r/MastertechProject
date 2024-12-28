@@ -1,10 +1,10 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Layout, Margin, Modifiers, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use crate::{channel_manager::ChannelManager, Spawner, FileSystemAction};
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{buckets::list_buckets, Node, User};
+use database::schema::{buckets::list_buckets, Node, User}; // buckets::list_buckets, 
 use futures::{StreamExt, Future};
 use anyhow::{Result, Error};
 use crate::PlatformSpawner;
@@ -19,33 +19,8 @@ use log::info;
 #[cfg(feature="tokio")]
 use std::path::PathBuf;
 
-
 pub const ONE_HOUR: web_time::Duration = web_time::Duration::from_secs(3600);
 
-// /// The `Fetcher` trait abstracts the data fetching logic.
-// /// Implement this trait for different data sources like S3, RemoteClient, etc.
-#[async_trait::async_trait(?Send)]
-pub trait Fetcher: Send{
-    async fn fetch(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error>;
-
-    async fn receive(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error> {
-        Ok(())
-    }
-}
-
-// #[async_trait::async_trait(?Send)]
-// impl Fetcher for S3Fetcher {
-//     async fn fetch(&self, prefix: Option<&str>, tx: Sender<Node>) -> anyhow::Result<(), anyhow::Error> {
-//         tx.try_send(
-//             list_buckets(
-//                 self.credentials.clone(), 
-//                 self.bucket.clone(), 
-//                 prefix
-//             ).await
-//         )?;
-//         Ok(())
-//     }
-// }
 
 // /// Fetcher implementation for S3.
 #[derive(Debug, Clone)]
@@ -69,10 +44,15 @@ impl S3Fetcher {
         Self { bucket, credentials }
     }
 
+    pub async fn request_bucket_contents(&mut self, prefix: &str) -> anyhow::Result<Node, anyhow::Error> {
+        let res = list_buckets(self.credentials.clone(), self.bucket.clone(), Some(&prefix)).await?;
+        Ok(res)
+    }
+
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FileSystem {
     /// Persistent Scroll ID so we dont have any 
     /// clashes of ID's between multiple websocket clients
@@ -85,6 +65,7 @@ pub struct FileSystem {
     pub bytes_rx: Receiver<(Vec<u8>, u64)>,
     /// Receive / Send FileSystemAction's from the UI
     pub fs_actions_channel: (Sender<FileSystemAction>, Receiver<FileSystemAction>),
+    pub paths_channel: (Sender<Node>, Receiver<Node>),
     /// Selected files/folders
     selected_items: RefCell<HashSet<String>>,
     /// All of our paths
@@ -95,8 +76,6 @@ pub struct FileSystem {
     progress: f32,
     /// File to execute on Mastertech
     pub execute_file: String,
-    /// Detection event for opening a new directory
-    pub open_folder: bool,
     /// Credentials for API calls to Minio
     pub user: User,
     /// Editable Current path used by a 
@@ -110,18 +89,19 @@ impl FileSystem {
     pub fn new() -> Self {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
         let fs_actions_channel = <FileSystemAction>::create_unbounded_channel();
-        
+        let paths_channel = <Node>::create_unbounded_channel();
+
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
             bytes_tx, bytes_rx,
             fs_actions_channel,
+            paths_channel,
             root: Node::Folder(String::new(), HashMap::new()),
             selected_items: RefCell::new(HashSet::new()),
             progress: 0.0,
             total_size: 0.0,
             paths: Vec::new(),
             execute_file: String::new(),
-            open_folder: false,
             user: User::default(),
             current_prefix: "/".to_string(),
             navigation_stack: Vec::new(),
@@ -130,13 +110,8 @@ impl FileSystem {
 
     pub fn receive(&mut self, ctx: &Context) { // , requester: &mut dyn FnMut(&str)
         if let Ok(action) = self.fs_actions_channel.1.try_recv() {
-            self.handle_filesystem_action(&action);
+            self.handle_filesystem_action(&action, None);
             ctx.request_repaint();
-        }
-
-        if self.open_folder {
-            self.open_folder = false;
-            self.request_contents(&self.current_prefix);
         }
     }
     
@@ -145,7 +120,11 @@ impl FileSystem {
         self
     }
 
-    pub fn handle_filesystem_action(&mut self, action: &FileSystemAction) {
+    pub fn handle_filesystem_action(
+        &mut self, 
+        action: &FileSystemAction, 
+        requester: Option<Box<dyn Fn(&str, Sender<Node>, FileSystemAction)>>
+    ) {
         log::info!("Action: {action:?}");
         match action {
             FileSystemAction::Execute(label) => { self.execute_file = label.clone(); },
@@ -154,7 +133,6 @@ impl FileSystem {
                     // If the item was already selected, deselect it
                     self.selected_items.borrow_mut().remove(label);
                 } 
-
                 if modifiers.ctrl { 
                     self.selected_items.borrow_mut().insert(label.clone());
                 } else { // If the control key is not down, clear previous selection and select the current item
@@ -168,7 +146,6 @@ impl FileSystem {
                 } else if cfg!(target_os="windows") && !self.current_prefix.ends_with('\\') {
                     self.current_prefix.push('\\');
                 }
-                self.open_folder = true;
                 info!("directory double clicked: {directory:?}");
                 self.double_click_folder(&directory);
             }
@@ -176,12 +153,18 @@ impl FileSystem {
             FileSystemAction::NavigateHome => {
                 self.navigation_stack.clear();
                 self.current_prefix.clear();
-                self.open_folder = true;
             },
             FileSystemAction::GetNode(new_node) => {
                 log::info!("Files: {new_node:?}");
                 let insert_node = self.insert_node(new_node.clone());
                 info!("InsertNode: {insert_node:?}");
+            },
+            FileSystemAction::RequestNewContents(folder_prefix) => {
+                if let Some(mut requester) = requester {
+                    requester(&folder_prefix, self.paths_channel.0.clone(), action.clone());
+                } else {
+                    let _ = self.request_contents(folder_prefix);
+                }
             },
         }
     }
@@ -461,41 +444,28 @@ impl FileSystem {
     }
 
     fn request_contents(&self, folder_prefix: &str) -> Result<(), Error> {
-        // // Fetch the folder's contents
-        // let access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        // let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        // let tx = self.paths_channel.0.clone();
-        // let name = self.user.email.clone();
-        // let parsed = name.split_once('@').unwrap().0.to_string().clone();
-        // let path = folder_prefix.to_string().clone();
-        // PlatformSpawner::spawn(async move {
-        //     let result = list_buckets(STORAGE_URL, &access_key, &secret_key, &parsed, Some(&path)).await;
-        //     match result {
-        //         Ok(buckets) => {let _ = tx.try_send(buckets);},
-        //         Err(err) => log::warn!("Error: {err:?}"),
-        //     }
-        // });
-        
-        // if let Some(fetcher) = self.fetcher.clone() {
-        //     let tx = self.paths_channel.0.clone();
-        //     let path = folder_prefix.to_string().clone();
-        //     PlatformSpawner::spawn(async move {
-        //         let fetch_guard = fetcher.lock().await;
-        //         match fetch_guard.fetch(Some(&path)).await {
-        //             Ok(buckets) => {let _ = tx.try_send(buckets);},
-        //             Err(err) => log::warn!("Error: {err:?}"),
-        //         }
-        //     });
-        // }
+        let folder_pref = folder_prefix.to_string();
+        let tx = self.paths_channel.0.clone();
+        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
+        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        let name = self.user.email.clone();
+        PlatformSpawner::spawn(async move {
+            let parsed = name.split_once('@').unwrap().0.to_string().clone();
+            let mut s3_fetcher = S3Fetcher::new(&access_key, &secret_key, &parsed);
+            match s3_fetcher.request_bucket_contents(&folder_pref).await {
+                Ok(node) => { let _ = tx.try_send(node); },
+                Err(e) => log::warn!("Error getting node: {e:?}"),
+            }
+        });
+
         Ok(())
     }
 
     fn expand_folder(&self, folder_prefix: &str) {
-        let _ = self.request_contents(folder_prefix);
+        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(folder_prefix.to_string()));
     }
 
     fn double_click_folder(&mut self, folder_prefix: &str) {
-
         // Navigate to the new prefix
         self.navigate_to(folder_prefix.to_string());
 
@@ -505,10 +475,10 @@ impl FileSystem {
             if !children.is_empty() {
                 info!("Folder '{}' already fetched. No need to re-fetch.", folder_prefix);
             } else {
-                let _ = self.request_contents(folder_prefix);
+                let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(folder_prefix.to_string()));
             }
         } else {
-            let _ = self.request_contents(folder_prefix);
+            let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(folder_prefix.to_string()));
         }
     }
 

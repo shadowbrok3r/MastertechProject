@@ -273,13 +273,14 @@ pub enum Cmd {
     None,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FileSystemAction{
     Execute(String),
     Select((Modifiers, String)),
     EnterDirectory(String),
     ExpandDirectory(String),
     GetNode(Node),
+    RequestNewContents(String),
     NavigateHome,
 }
 

@@ -116,7 +116,7 @@ impl WebConsoleLayout {
                                 ws_sender,
                                 ws_receiver,
                                 client.clone(),
-                                self.filesystem,
+                                self.filesystem.clone(),
                             );
                             
                             self.ws_clients

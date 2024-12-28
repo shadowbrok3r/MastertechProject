@@ -1,11 +1,11 @@
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::{schema::{ConnectedClient, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use regex::Regex;
 use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
-use displays::{channel_manager::ChannelManager, virtual_filesystem::FileSystem, Cmd, FileSystemAction};
+use displays::{channel_manager::ChannelManager, virtual_filesystem::{FileSystem, FileSystemActionHandler}, Cmd, FileSystemAction};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
 use egui_extras::{syntax_highlighting::{highlight, CodeTheme}, Size, StripBuilder};
@@ -195,7 +195,13 @@ impl WebSocketClient{
                 Cmd::QuitInteractive => todo!(),
                 Cmd::ReadEvents => todo!(),
                 Cmd::FileSystemAction(ref action) => {
-                    self.explorer.handle_filesystem_action(action);
+                    let handle_fs_action = |prefix: &str, tx: Sender<Node>, fs_action: FileSystemAction | {
+                        self.ws_sender.send(WsMessage::Binary(serialize(&command).unwrap()));
+                    }; // this needs to move into the 'receive cmd rx 
+                    // and maybe this should return something i can use out here..
+
+                    self.explorer.handle_filesystem_action(action, Some(Box::new(handle_fs_action)));
+
                     let execute = &self.explorer.execute_file;
                     if !execute.is_empty() {
                         match serialize(&Cmd::FileSystemAction(FileSystemAction::Execute(execute.clone()))){
