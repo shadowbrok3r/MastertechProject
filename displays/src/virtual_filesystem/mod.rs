@@ -185,13 +185,6 @@ impl FileSystem {
             },
         }
     }
-    // pub fn set_fetcher(&mut self, fetcher: Box<dyn Fetcher>){
-    //     self.fetcher = Some(
-    //         Arc::new(
-    //             Mutex::new(fetcher)
-    //         )
-    //     );
-    // }
 
     /// This is to build an actual filesystem structure for when we are working with Mastertech from the website
     /// - Builds a 'virtual' filesystem since wasm doesnt know anything about PathBuf's. This is used in 
@@ -498,7 +491,7 @@ impl FileSystem {
     }
 
     fn expand_folder(&self, folder_prefix: &str) {
-        self.request_contents(folder_prefix);
+        let _ = self.request_contents(folder_prefix);
     }
 
     fn double_click_folder(&mut self, folder_prefix: &str) {
@@ -512,10 +505,10 @@ impl FileSystem {
             if !children.is_empty() {
                 info!("Folder '{}' already fetched. No need to re-fetch.", folder_prefix);
             } else {
-                self.request_contents(folder_prefix);
+                let _ = self.request_contents(folder_prefix);
             }
         } else {
-            self.request_contents(folder_prefix);
+            let _ = self.request_contents(folder_prefix);
         }
     }
 
