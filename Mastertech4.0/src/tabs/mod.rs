@@ -71,7 +71,7 @@ impl TabViewer for MastertechContext {
             "Console" => self.output_console(ui),
             "Part Order" => self.special_part_order(ui),
             "Scripts" => self.scripts(ui),
-            "ToolBox" => self.shared_ctx.filesystem.display(ui),
+            "My Tools" => self.shared_ctx.filesystem.display(ui),
             "File Browser 📂" => self.file_browse(ui),
             "SysInfo" => self.system_information(ui),
             #[cfg(target_os = "windows")]

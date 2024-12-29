@@ -1,11 +1,11 @@
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::{schema::{ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{ConnectedClient, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use regex::Regex;
 use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
-use displays::{channel_manager::ChannelManager, virtual_filesystem::{FileSystem, FileSystemActionHandler}, Cmd, FileSystemAction};
+use displays::{channel_manager::ChannelManager, virtual_filesystem::{FileSysHelper, FileSystem}, Cmd, FileSystemAction};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
 use egui_extras::{syntax_highlighting::{highlight, CodeTheme}, Size, StripBuilder};
@@ -32,6 +32,13 @@ pub enum WsDisplayState {
     Explorer,
     Shell,
     ToolBox
+}
+
+impl FileSysHelper for WebSocketClient {
+    fn handle_filesystem_action(&mut self, action: &FileSystemAction) {
+        log::info!("Action from web console: {action:?}");
+        let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(action.clone()));
+    }
 }
 
 pub struct WebSocketClient {
@@ -76,6 +83,7 @@ pub struct WebSocketClient {
 impl WebSocketClient{
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client: ConnectedClient, toolbox: FileSystem) -> Self {
         let display_state_channel = <WsDisplayState>::create_unbounded_channel();
+        
         let (send_cmd_tx, send_cmd_rx) = crossbeam::channel::unbounded();
         let (receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
         
@@ -174,6 +182,11 @@ impl WebSocketClient{
             self.state = state;
         }
 
+        // this will keep sending actions... 
+        // if let Some(action) = &self.explorer.current_action {
+        //     let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(action.clone()));
+        // }
+
         // Here we will handle commands we are going to SEND to Mastertech
         if let Ok(command) = self.send_cmd_rx.try_recv() {
             match command {
@@ -195,22 +208,55 @@ impl WebSocketClient{
                 Cmd::QuitInteractive => todo!(),
                 Cmd::ReadEvents => todo!(),
                 Cmd::FileSystemAction(ref action) => {
-                    let handle_fs_action = |prefix: &str, tx: Sender<Node>, fs_action: FileSystemAction | {
-                        self.ws_sender.send(WsMessage::Binary(serialize(&command).unwrap()));
-                    }; // this needs to move into the 'receive cmd rx 
-                    // and maybe this should return something i can use out here..
-
-                    self.explorer.handle_filesystem_action(action, Some(Box::new(handle_fs_action)));
-
-                    let execute = &self.explorer.execute_file;
-                    if !execute.is_empty() {
-                        match serialize(&Cmd::FileSystemAction(FileSystemAction::Execute(execute.clone()))){
-                            Ok(bytes) => {
-
-                                self.ws_sender.send(WsMessage::Binary(bytes));
-                            },
-                            Err(e) => self.history.push(e.to_string()),
-                        } 
+                    match action {
+                        FileSystemAction::Execute(label) => { 
+                            self.explorer.execute_file = label.clone(); 
+                            let execute = &self.explorer.execute_file;
+                            if !execute.is_empty() {
+                                match serialize(&Cmd::FileSystemAction(FileSystemAction::Execute(execute.clone()))){
+                                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                                    Err(e) => self.history.push(e.to_string()),
+                                } 
+                            }
+                        },
+                        FileSystemAction::Select((modifiers, label)) => {
+                            if self.explorer.selected_items.borrow().contains(label) {
+                                // If the item was already selected, deselect it
+                                self.explorer.selected_items.borrow_mut().remove(label);
+                            } 
+                            if modifiers.ctrl { 
+                                self.explorer.selected_items.borrow_mut().insert(label.clone());
+                            } else { // If the control key is not down, clear previous selection and select the current item
+                                self.explorer.selected_items.borrow_mut().clear();
+                                self.explorer.selected_items.borrow_mut().insert(label.clone());
+                            }
+                        },
+                        FileSystemAction::EnterDirectory(directory) => {
+                            if cfg!(target_os="linux") && !self.explorer.current_prefix.ends_with('/'){
+                                self.explorer.current_prefix.push('/');
+                            } else if cfg!(target_os="windows") && !self.explorer.current_prefix.ends_with('\\') {
+                                self.explorer.current_prefix.push('\\');
+                            }
+                            info!("directory double clicked: {directory:?}");
+                            self.explorer.double_click_folder(&directory);
+                            match serialize(action){
+                                Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                                Err(e) => self.history.push(e.to_string()),
+                            }
+                        }
+                        FileSystemAction::ExpandDirectory(directory) => self.explorer.expand_folder(&directory),
+                        FileSystemAction::NavigateHome => {
+                            self.explorer.navigation_stack.clear();
+                            self.explorer.current_prefix.clear();
+                        },
+                        FileSystemAction::GetNode(new_node) => {
+                            log::info!("Files: {new_node:?}");
+                            let insert_node = self.explorer.insert_node(new_node.clone());
+                            info!("InsertNode: {insert_node:?}");
+                        },
+                        FileSystemAction::RequestNewContents(folder_prefix) => {
+                            let _ = self.explorer.request_contents(folder_prefix);
+                        },
                     }
                     match serialize(&command){
                         Ok(bytes) => {
@@ -231,35 +277,15 @@ impl WebSocketClient{
                     self.interactive = false;
                     self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
                 },
-                Cmd::None => todo!(),
-                
-                _ => {}
+                Cmd::None => todo!()
             }
         }
 
         // Here we will handle commands we receive from Mastertech
         if let Ok(command) = self.receive_cmd_rx.try_recv() {
             match command {
-                Cmd::LiveData => todo!(),
-                Cmd::Command => todo!(),
-                Cmd::Tuneup => todo!(),
-                Cmd::Cps => todo!(),
-                Cmd::Qc => todo!(),
-                Cmd::SfcScan => todo!(),
-                Cmd::DismScan => todo!(),
-                Cmd::ChkDsk => todo!(),
-                Cmd::Mbr2Gpt => todo!(),
-                Cmd::TaskManager => todo!(),
-                Cmd::FileSystemAction(file_system_action) => todo!(),
-                Cmd::UninstallProgram(_) => todo!(),
-                Cmd::PullKeys(_) => todo!(),
-                Cmd::PullTicket(_) => todo!(),
-                Cmd::InteractiveInput(_) => todo!(),
-                Cmd::CopyTools(_) => todo!(),
-                Cmd::QuitInteractive => todo!(),
-                Cmd::ReadEvents => todo!(),
-                Cmd::Quit => todo!(),
-                Cmd::None => todo!(),
+                Cmd::FileSystemAction(file_system_action) => self.explorer.handle_filesystem_action(&file_system_action),
+                _ => {}
             }
         }
 
@@ -283,7 +309,7 @@ impl WebSocketClient{
                     .horizontal(|mut s| 
                 {
                     s.cell(|ui|{
-                        if Button::new(RichText::new("ToolBox").color(Color32::LIGHT_RED)).ui(ui).clicked(){
+                        if Button::new(RichText::new("My Tools").color(Color32::LIGHT_RED)).ui(ui).clicked(){
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
                         }
                     });
@@ -381,7 +407,7 @@ impl WebSocketClient{
             {
                 match self.state {
                     WsDisplayState::LiveStats => self.show_live_stats(ui),
-                    WsDisplayState::Explorer => self.show_explorer(ui),
+                    WsDisplayState::Explorer => self.explorer.display(ui),
                     WsDisplayState::ToolBox => self.show_tool_box(ui),
                     WsDisplayState::Shell => self.show_shell(ui),
                 }
@@ -446,59 +472,57 @@ impl WebSocketClient{
         ui.add_space(10.0);
     }
 
-    fn show_explorer(&mut self, ui: &mut Ui) {
-        let id = Id::new(format!("file_browser_top-{:?}", self.client.client_hash));
-        TopBottomPanel::top(id).show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                let response = TextEdit::singleline(&mut self.explorer.current_prefix)
-                    .id(Id::new(format!("path_edit-{:?}", self.client.client_hash)))
-                    .cursor_at_end(true)
-                    .desired_width(ui.available_width() / 1.1)
-                    .ui(ui);
+    // fn show_explorer(&mut self, ui: &mut Ui) {
+    //     let id = Id::new(format!("file_browser_top-{:?}", self.client.client_hash));
+    //     TopBottomPanel::top(id).show_inside(ui, |ui| {
+    //         ui.horizontal(|ui| {
+    //             let response = TextEdit::singleline(&mut self.explorer.current_prefix)
+    //                 .id(Id::new(format!("path_edit-{:?}", self.client.client_hash)))
+    //                 .cursor_at_end(true)
+    //                 .desired_width(ui.available_width() / 1.1)
+    //                 .ui(ui);
 
-                if response.lost_focus() {
-                    info!("Lost focus on self.path_edit");
-                    let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory(self.explorer.current_prefix.clone())));
-                }
-                let home_res = ui.button("🏠").on_hover_text("Home");
-                if home_res.clicked(){
-                    let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory("current".to_string())));
-                }
+    //             if response.lost_focus() {
+    //                 info!("Lost focus on self.path_edit");
+    //                 let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory(self.explorer.current_prefix.clone())));
+    //             }
+    //             let home_res = ui.button("🏠").on_hover_text("Home");
+    //             if home_res.clicked(){
+    //                 let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory("current".to_string())));
+    //             }
 
-                let parent_res = ui.button("⬆").on_hover_text("Parent Folder");
-                if parent_res.clicked() {
-                    // if self.explorer.navigate_up() {
+    //             let parent_res = ui.button("⬆").on_hover_text("Parent Folder");
+    //             if parent_res.clicked() {
+    //                 // if self.explorer.navigate_up() {
 
-                    // }
-                    // let _ = self.send_cmd_tx.try_send(Cmd::EnterDirectory(self.explorer.current_prefix.clone()));
-                }
-            });
-        });
-        CentralPanel::default()
-            .show_inside(ui, |ui| 
-        {
-            self
-                .explorer
-                .display_directory_contents(
-                    ui, 
-                    self
-                        .explorer
-                        .get_current_folder()
-                        .unwrap_or(&self.explorer.root)
-                );
+    //                 // }
+    //                 // let _ = self.send_cmd_tx.try_send(Cmd::EnterDirectory(self.explorer.current_prefix.clone()));
+    //             }
+    //         });
+    //     });
+    //     CentralPanel::default()
+    //         .show_inside(ui, |ui| 
+    //     {
+    //         self
+    //             .explorer
+    //             .display_directory_contents(
+    //                 ui, 
+    //                 self
+    //                     .explorer
+    //                     .get_current_folder()
+    //                     .unwrap_or(&self.explorer.root)
+    //             );
 
-            if self.explorer.open_folder {
-                self.explorer.open_folder = false;
-                let new_dir = self.explorer.current_prefix.clone();
-                match serialize(&Cmd::FileSystemAction(FileSystemAction::EnterDirectory(new_dir.clone()))){
-                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                    Err(e) => self.history.push(e.to_string()),
-                }
-            }
-
-
-        });
-    }
+    //         // if self.explorer.open_folder {
+    //         //     self.explorer.open_folder = false;
+    //         //     let new_dir = self.explorer.current_prefix.clone();
+    //         //     match serialize(&Cmd::FileSystemAction(FileSystemAction::EnterDirectory(new_dir.clone()))){
+    //         //         Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+    //         //         Err(e) => self.history.push(e.to_string()),
+    //         //     }
+    //         // }
+    //     });
+    // }
 
     fn show_tool_box(&mut self, ui: &mut Ui) {
         ui.group(|ui| {

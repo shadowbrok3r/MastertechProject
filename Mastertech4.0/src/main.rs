@@ -66,7 +66,7 @@ impl eframe::App for MasterTechApp {
         }
         
         self.context.shared_ctx.receive_ui_action();
-        self.receive_prestashop();
+        self.context.shared_ctx.receive_prestashop();
         self.context.shared_ctx.receive_task();
         self.context.shared_ctx.receive_ticket();
         self.context.shared_ctx.receive_notes();

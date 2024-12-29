@@ -52,79 +52,12 @@ impl S3Fetcher {
 }
 
 
-#[derive(Debug, Clone)]
-pub struct FileSystem {
-    /// Persistent Scroll ID so we dont have any 
-    /// clashes of ID's between multiple websocket clients
-    pub scroll_id: Id,
-    /// The Entire Hierarchy of Folders/Files
-    pub root: Node,
-    /// Sending progress of downloads/uploads to progress bar
-    bytes_tx: Sender<(Vec<u8>, u64)>,
-    /// Receiving progress of downloads/uploads to progress bar
-    pub bytes_rx: Receiver<(Vec<u8>, u64)>,
-    /// Receive / Send FileSystemAction's from the UI
-    pub fs_actions_channel: (Sender<FileSystemAction>, Receiver<FileSystemAction>),
-    pub paths_channel: (Sender<Node>, Receiver<Node>),
-    /// Selected files/folders
-    selected_items: RefCell<HashSet<String>>,
-    /// All of our paths
-    pub paths: Vec<String>,
-    /// Total size of download/upload
-    total_size: f32,
-    /// Progress bar for file/folder download/upload
-    progress: f32,
-    /// File to execute on Mastertech
-    pub execute_file: String,
-    /// Credentials for API calls to Minio
-    pub user: User,
-    /// Editable Current path used by a 
-    /// TextEdit for manual navigation
-    pub current_prefix: String,
-    /// Stack to track navigation history
-    pub navigation_stack: Vec<String>,
+pub trait FileSysHelper {
+    fn handle_filesystem_action(&mut self, action: &FileSystemAction);
 }
 
-impl FileSystem {
-    pub fn new() -> Self {
-        let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
-        let fs_actions_channel = <FileSystemAction>::create_unbounded_channel();
-        let paths_channel = <Node>::create_unbounded_channel();
-
-        Self {
-            scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
-            bytes_tx, bytes_rx,
-            fs_actions_channel,
-            paths_channel,
-            root: Node::Folder(String::new(), HashMap::new()),
-            selected_items: RefCell::new(HashSet::new()),
-            progress: 0.0,
-            total_size: 0.0,
-            paths: Vec::new(),
-            execute_file: String::new(),
-            user: User::default(),
-            current_prefix: "/".to_string(),
-            navigation_stack: Vec::new(),
-        }
-    }
-
-    pub fn receive(&mut self, ctx: &Context) { // , requester: &mut dyn FnMut(&str)
-        if let Ok(action) = self.fs_actions_channel.1.try_recv() {
-            self.handle_filesystem_action(&action, None);
-            ctx.request_repaint();
-        }
-    }
-    
-    pub fn set_user(&mut self, user: User) -> &mut Self {
-        self.user = user;
-        self
-    }
-
-    pub fn handle_filesystem_action(
-        &mut self, 
-        action: &FileSystemAction, 
-        requester: Option<Box<dyn Fn(&str, Sender<Node>, FileSystemAction)>>
-    ) {
+impl FileSysHelper for FileSystem {
+    fn handle_filesystem_action(&mut self, action: &FileSystemAction) {
         log::info!("Action: {action:?}");
         match action {
             FileSystemAction::Execute(label) => { self.execute_file = label.clone(); },
@@ -160,14 +93,89 @@ impl FileSystem {
                 info!("InsertNode: {insert_node:?}");
             },
             FileSystemAction::RequestNewContents(folder_prefix) => {
-                if let Some(mut requester) = requester {
-                    requester(&folder_prefix, self.paths_channel.0.clone(), action.clone());
-                } else {
-                    let _ = self.request_contents(folder_prefix);
-                }
+                let _ = self.request_contents(folder_prefix);
             },
         }
     }
+}
+
+
+#[derive(Debug, Clone)]
+pub struct FileSystem {
+    /// Persistent Scroll ID so we dont have any 
+    /// clashes of ID's between multiple websocket clients
+    pub scroll_id: Id,
+    /// The Entire Hierarchy of Folders/Files
+    pub root: Node,
+    /// Sending progress of downloads/uploads to progress bar
+    bytes_tx: Sender<(Vec<u8>, u64)>,
+    /// Receiving progress of downloads/uploads to progress bar
+    pub bytes_rx: Receiver<(Vec<u8>, u64)>,
+    /// Receive / Send FileSystemAction's from the UI
+    pub fs_actions_channel: (Sender<FileSystemAction>, Receiver<FileSystemAction>),
+    pub paths_channel: (Sender<Node>, Receiver<Node>),
+    /// Selected files/folders
+    pub selected_items: RefCell<HashSet<String>>,
+    /// All of our paths
+    pub paths: Vec<String>,
+    /// Total size of download/upload
+    total_size: f32,
+    /// Progress bar for file/folder download/upload
+    progress: f32,
+    /// File to execute on Mastertech
+    pub execute_file: String,
+    /// Credentials for API calls to Minio
+    pub user: User,
+    /// Editable Current path used by a 
+    /// TextEdit for manual navigation
+    pub current_prefix: String,
+    /// Stack to track navigation history
+    pub navigation_stack: Vec<String>,
+    pub current_action: Option<FileSystemAction>,
+}
+
+impl FileSystem {
+    pub fn new() -> Self {
+        let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
+        let fs_actions_channel = <FileSystemAction>::create_unbounded_channel();
+        let paths_channel = <Node>::create_unbounded_channel();
+
+        Self {
+            scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
+            bytes_tx, bytes_rx,
+            fs_actions_channel,
+            paths_channel,
+            root: Node::Folder(String::new(), HashMap::new()),
+            selected_items: RefCell::new(HashSet::new()),
+            progress: 0.0,
+            total_size: 0.0,
+            paths: Vec::new(),
+            execute_file: String::new(),
+            user: User::default(),
+            current_prefix: "/".to_string(),
+            navigation_stack: Vec::new(),
+            current_action: None
+        }
+    }
+
+    pub fn receive(&mut self, ctx: &Context) {
+        if let Ok(new_node) = self.paths_channel.1.try_recv() {
+            let _ = self.insert_node(new_node);
+        }
+
+        if let Ok(action) = self.fs_actions_channel.1.try_recv() {
+            self.handle_filesystem_action(&action);
+            self.current_action = Some(action);
+            ctx.request_repaint();
+        }
+    }
+    
+    pub fn set_user(&mut self, user: User) -> &mut Self {
+        self.user = user;
+        self
+    }
+
+
 
     /// This is to build an actual filesystem structure for when we are working with Mastertech from the website
     /// - Builds a 'virtual' filesystem since wasm doesnt know anything about PathBuf's. This is used in 
@@ -202,7 +210,7 @@ impl FileSystem {
     }
 
     pub fn display(&mut self, ui: &mut Ui){
-        // self.receive(ui.ctx(), |_|);
+        // self.receive(ui.ctx());
 
         let size = ui.available_size_before_wrap();
         let mut inner_margin_top = Margin::default();
@@ -443,7 +451,7 @@ impl FileSystem {
         });
     }
 
-    fn request_contents(&self, folder_prefix: &str) -> Result<(), Error> {
+    pub fn request_contents(&self, folder_prefix: &str) -> Result<(), Error> {
         let folder_pref = folder_prefix.to_string();
         let tx = self.paths_channel.0.clone();
         let access_key = self.user.minio_access_key.clone().unwrap_or_default();
@@ -461,11 +469,11 @@ impl FileSystem {
         Ok(())
     }
 
-    fn expand_folder(&self, folder_prefix: &str) {
+    pub fn expand_folder(&self, folder_prefix: &str) {
         let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(folder_prefix.to_string()));
     }
 
-    fn double_click_folder(&mut self, folder_prefix: &str) {
+    pub fn double_click_folder(&mut self, folder_prefix: &str) {
         // Navigate to the new prefix
         self.navigate_to(folder_prefix.to_string());
 
