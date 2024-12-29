@@ -388,7 +388,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
     let [_, _] = tree.main_surface_mut().split_left(
         b,
         0.20,
-        vec!["Scripts".to_owned(), "ToolBox".to_owned()],
+        vec!["Scripts".to_owned(), "My Tools".to_owned()],
     );
 
     let mut open_tabs = HashSet::new();

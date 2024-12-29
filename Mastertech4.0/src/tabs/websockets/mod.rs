@@ -3,7 +3,7 @@ use database::{schema::{utilities::query_id, ConnectedClient, Record, SystemInfo
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::{Path, PathBuf}, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
-use displays::{channel_manager::ChannelManager, deserialize_command, virtual_filesystem::FileSystem, Cmd};
+use displays::{channel_manager::ChannelManager, deserialize_command, serialize_system_info, virtual_filesystem::FileSystem, Cmd, FileSystemAction};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crate::filesystem::system_info::get_sysinfo;
@@ -338,61 +338,59 @@ impl WebConsoleFrontend {
                 //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
                 // });
             },
-            Cmd::ReadDir(path) => {
-                info!("websockets -> READING DIR");
-                let current_path = env::current_dir().unwrap_or_default();
-                info!("websockets -> Current_path: {current_path:?}");
-                let contents = if path == "current" {
-                    let paths = read_folder(&current_path, 2, false);
-                    info!("websockets -> Current paths: {:?}", paths.clone());
-                    let node = self.explorer.build_virtual_file_system(current_path, paths);
-                    node // paths
-                } else {
-                    let p: PathBuf = Path::new(path.as_str()).to_path_buf();
-                    if p.is_dir() {
-                        let paths = read_folder(&p, 2, false);
-                        info!("websockets -> Paths: {:?}", paths.clone());
-                        let node = self.explorer.build_virtual_file_system(current_path, paths);
-                        node // paths
-                    } else {
-                        let paths = read_folder(&current_path, 2, false);
-                        info!("websockets -> Paths: {:?}", paths.clone());
-                        let node = self.explorer.build_virtual_file_system(current_path, paths);
-                        node // paths
-                    }
-                };
-                // let mut strings = Vec::new();
-                // for x in contents { strings.push(x.to_string_lossy().to_string()); }
-                let payload = serialize(
-                    &Cmd::DirContents(contents) // (current_path.to_string_lossy().to_string(), strings)
-                );
+            // Cmd::FileSystemAction(FileSystemAction::GetNode(path)) => {
+            //     info!("websockets -> READING DIR");
+            //     let current_path = env::current_dir().unwrap_or_default();
+            //     info!("websockets -> Current_path: {current_path:?}");
+            //     let contents = if path == "current" {
+            //         let paths = read_folder(&current_path, 2, false);
+            //         info!("websockets -> Current paths: {:?}", paths.clone());
+            //         let node = self.explorer.build_virtual_file_system(current_path, paths);
+            //         node // paths
+            //     } else {
+            //         let p: PathBuf = Path::new(path.as_str()).to_path_buf();
+            //         if p.is_dir() {
+            //             let paths = read_folder(&p, 2, false);
+            //             info!("websockets -> Paths: {:?}", paths.clone());
+            //             let node = self.explorer.build_virtual_file_system(current_path, paths);
+            //             node // paths
+            //         } else {
+            //             let paths = read_folder(&current_path, 2, false);
+            //             info!("websockets -> Paths: {:?}", paths.clone());
+            //             let node = self.explorer.build_virtual_file_system(current_path, paths);
+            //             node // paths
+            //         }
+            //     };
+            //     // let mut strings = Vec::new();
+            //     // for x in contents { strings.push(x.to_string_lossy().to_string()); }
+            //     let payload = serialize(
+            //         &Cmd::FileSystemAction(FileSystemAction::GetNode(contents)) // (current_path.to_string_lossy().to_string(), strings)
+            //     );
 
-                match payload {
-                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                    Err(e) => error!("Error serializing paths: {e:?}"),
-                }
-            },
-            Cmd::UpDirectory(new_path) => {
-                let mut p: PathBuf = Path::new(&new_path).to_path_buf();
-                if p.pop() {
-                    let paths = read_folder(&p, 2, false);
-                    info!("websockets -> Paths: {:?}", paths.clone());
-                    if paths.len() > 0 {
-                        let node = self.explorer.build_virtual_file_system(p, paths);
-                        info!("websockets -> Node: {:?}", node);
-    
-                        let payload = serialize(
-                            &Cmd::DirContents(node)
-                        );
-        
-                        match payload {
-                            Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                            Err(e) => error!("Error serializing paths: {e:?}"),
-                        }
-                    }
-                } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
-            },
-            Cmd::ChangeDirectory(new_path) => {
+            //     match payload {
+            //         Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+            //         Err(e) => error!("Error serializing paths: {e:?}"),
+            //     }
+            // },
+            // Cmd::FileSystemAction(FileSystemAction::EnterDirectory(new_path)) => {
+            //     let mut p: PathBuf = Path::new(&new_path).to_path_buf();
+            //     if p.pop() {
+            //         let paths = read_folder(&p, 2, false);
+            //         info!("websockets -> Paths: {:?}", paths.clone());
+            //         if paths.len() > 0 {
+            //             let node = self.explorer.build_virtual_file_system(p, paths);
+            //             info!("websockets -> Node: {:?}", node);
+            //             let payload = serialize(
+            //                 &Cmd::FileSystemAction(FileSystemAction::GetNode(node))
+            //             );
+            //             match payload {
+            //                 Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+            //                 Err(e) => error!("Error serializing paths: {e:?}"),
+            //             }
+            //         }
+            //     } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
+            // },
+            Cmd::FileSystemAction(FileSystemAction::EnterDirectory(new_path)) => {
                 let p: PathBuf = Path::new(&new_path).to_path_buf();
                 if p.is_dir() {
                     let paths = read_folder(&p, 2, false);
@@ -402,7 +400,7 @@ impl WebConsoleFrontend {
                         info!("websockets -> Node: {:?}", node);
     
                         let payload = serialize(
-                            &Cmd::DirContents(node)
+                            &Cmd::FileSystemAction(FileSystemAction::GetNode(node))
                         );
         
                         match payload {
@@ -412,7 +410,7 @@ impl WebConsoleFrontend {
                     }
                 } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
             },
-            Cmd::Execute(path) => {
+            Cmd::FileSystemAction(FileSystemAction::Execute(path)) => {
                 let tx = self.tx.clone();
                 let p = path.clone();
                 let interactive_rx = self.interactive_input.1.clone();

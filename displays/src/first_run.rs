@@ -22,7 +22,7 @@ impl SharedContext {
             info!("Getting Initial data: {}", self.store_selection);
             if self.filesystem.paths.is_empty() {
                 self.filesystem.set_user(user.clone());
-                // let _ = self.filesystem.request_contents("");
+                let _ = self.filesystem.request_contents("");
             }
 
             if self.tasks.is_empty() || self.store_users.is_empty() {
@@ -50,7 +50,6 @@ impl SharedContext {
                     .filter(|(page, _)| *page == "CompletedTasks" || *page == "StoreTasks")
                     .for_each(|(_, layout)| {
                         layout.loading = false;
-                        
                 });
             }
 
