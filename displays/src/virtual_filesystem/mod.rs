@@ -1,10 +1,10 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
 use crate::{channel_manager::ChannelManager, Spawner, FileSystemAction};
 use crossbeam::channel::{Receiver, Sender};
-use database::schema::{buckets::list_buckets, Node, User}; // buckets::list_buckets, 
+use database::schema::{buckets::{list_buckets, normalize_prefix}, Node, User}; // buckets::list_buckets, 
 use futures::{StreamExt, Future};
 use anyhow::{Result, Error};
 use crate::PlatformSpawner;
@@ -58,7 +58,7 @@ pub trait FileSysHelper {
 
 impl FileSysHelper for FileSystem {
     fn handle_filesystem_action(&mut self, action: &FileSystemAction) {
-        log::info!("Action: {action:?}");
+        log::warn!("FileSysHelper for FileSystem -> Action -> {action:?}");
         match action {
             FileSystemAction::Execute(label) => { self.execute_file = label.clone(); },
             FileSystemAction::Select((modifiers, label)) => {
@@ -88,7 +88,7 @@ impl FileSysHelper for FileSystem {
                 self.current_prefix.clear();
             },
             FileSystemAction::GetNode(new_node) => {
-                log::info!("Files: {new_node:?}");
+                log::info!("GetNode");
                 let insert_node = self.insert_node(new_node.clone());
                 info!("InsertNode: {insert_node:?}");
             },
@@ -99,8 +99,46 @@ impl FileSysHelper for FileSystem {
     }
 }
 
+pub trait ClonableFileSysHelper: FileSysHelper {
+    fn clone_box(&self) -> Box<dyn ClonableFileSysHelper>;
+}
 
-#[derive(Debug, Clone)]
+impl<T> ClonableFileSysHelper for T
+where
+    T: 'static + FileSysHelper + Clone,
+{
+    fn clone_box(&self) -> Box<dyn ClonableFileSysHelper> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for FileSystem {
+    fn clone(&self) -> Self {
+        FileSystem {
+            helper_delegate: self.helper_delegate.as_ref().map(|helper| helper.clone_box()),
+            scroll_id: self.scroll_id.clone(),
+            root: self.root.clone(),
+            bytes_tx: self.bytes_tx.clone(),
+            bytes_rx: self.bytes_rx.clone(),
+            fs_actions_channel: self.fs_actions_channel.clone(),
+            paths_channel: self.paths_channel.clone(),
+            selected_items: self.selected_items.clone(),
+            paths: self.paths.clone(),
+            total_size: self.total_size.clone(),
+            progress: self.progress.clone(),
+            execute_file: self.execute_file.clone(),
+            user: self.user.clone(),
+            current_prefix: self.current_prefix.clone(),
+            navigation_stack: self.navigation_stack.clone(),
+            current_action: self.current_action.clone(),
+        }
+    }
+    
+    fn clone_from(&mut self, source: &Self) {
+        *self = source.clone()
+    }
+}
+
 pub struct FileSystem {
     /// Persistent Scroll ID so we dont have any 
     /// clashes of ID's between multiple websocket clients
@@ -132,6 +170,7 @@ pub struct FileSystem {
     /// Stack to track navigation history
     pub navigation_stack: Vec<String>,
     pub current_action: Option<FileSystemAction>,
+    pub helper_delegate: Option<Box<dyn ClonableFileSysHelper>>,
 }
 
 impl FileSystem {
@@ -152,9 +191,10 @@ impl FileSystem {
             paths: Vec::new(),
             execute_file: String::new(),
             user: User::default(),
-            current_prefix: "/".to_string(),
+            current_prefix: String::new(),
             navigation_stack: Vec::new(),
-            current_action: None
+            current_action: None,
+            helper_delegate: None,
         }
     }
 
@@ -164,7 +204,14 @@ impl FileSystem {
         }
 
         if let Ok(action) = self.fs_actions_channel.1.try_recv() {
-            self.handle_filesystem_action(&action);
+            if let Some(helper) = self.helper_delegate.as_mut() {
+                info!("virtual_filesystem -> Using helper delegate to handle_filesystem_action");
+                helper.handle_filesystem_action(&action);
+            } else {
+                info!("virtual_filesystem -> Using Self to handle_filesystem_action");
+                self.handle_filesystem_action(&action);
+            }
+            
             self.current_action = Some(action);
             ctx.request_repaint();
         }
@@ -174,8 +221,6 @@ impl FileSystem {
         self.user = user;
         self
     }
-
-
 
     /// This is to build an actual filesystem structure for when we are working with Mastertech from the website
     /// - Builds a 'virtual' filesystem since wasm doesnt know anything about PathBuf's. This is used in 
@@ -210,18 +255,16 @@ impl FileSystem {
     }
 
     pub fn display(&mut self, ui: &mut Ui){
-        // self.receive(ui.ctx());
-
         let size = ui.available_size_before_wrap();
         let mut inner_margin_top = Margin::default();
         inner_margin_top.bottom = 5.0;
 
         let btm_panel_frame = Frame::default()
-            .inner_margin(inner_margin_top.clone())
+            .inner_margin(inner_margin_top)
             .rounding(Rounding::same(10.0));
 
         let top_panel_frame = Frame::default()
-            .outer_margin(Margin::symmetric(5., 7.));
+            .outer_margin(Margin::symmetric(5., 2.));
 
         let panel_frame = Frame::default()
             .fill(Color32::from_rgb(12, 12, 14))
@@ -234,22 +277,18 @@ impl FileSystem {
         TopBottomPanel::top("FileBrowserTop")
             .frame(top_panel_frame)
             .show_separator_line(false)
-            .exact_height(38.)
+            .exact_height(35.)
             .show_inside(ui, |ui| 
         {
-            ui.with_layout(Layout::left_to_right(eframe::egui::Align::Center), |ui| {
-                let pre_modified_path = self.current_prefix.clone();
-                let response = TextEdit::singleline(&mut self.current_prefix)
-                .desired_width(ui.available_width() / 2.)
-                .ui(ui);
-
-                if response.lost_focus() && self.current_prefix.ne(&pre_modified_path) {
-                    info!("Lost focus on self.current_prefix TextEdit");
-                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::EnterDirectory(self.current_prefix.clone()));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let force_refresh = ui.button("⟲").on_hover_text("Refresh Current Directory Contents");
+                if force_refresh.clicked() {
+                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
                 }
 
                 let home_res = ui.button("🏠").on_hover_text("Home");
                 if home_res.clicked(){
+                    info!("Home clicked. root: {:?}", self.root);
                     let _ = self.fs_actions_channel.0.try_send(FileSystemAction::NavigateHome);
                 }
 
@@ -259,15 +298,27 @@ impl FileSystem {
                     info!("Navigating up: {navigate_up:?}");
                 }
             });
+            ui.with_layout(Layout::left_to_right(eframe::egui::Align::Center), |ui| {
+                let pre_modified_path = self.current_prefix.clone();
+                let response = TextEdit::singleline(&mut self.current_prefix)
+                .desired_width(ui.available_width()/1.2)
+                .ui(ui);
+
+                if response.lost_focus() || ui.input(|i| i.key_pressed(Key::Enter)) {
+                    info!("Lost focus on self.current_prefix TextEdit: {pre_modified_path} // curr {}", self.current_prefix);
+                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::EnterDirectory(self.current_prefix.clone()));
+                }
+            });
         });
 
         TopBottomPanel::bottom("FileBrowserBottom")
             .frame(btm_panel_frame)
             .show_separator_line(false)
             .show_inside(ui, |ui| 
-        {
-            ui.vertical_centered(|ui | self.show_progress(ui));
-        });
+                ui.vertical_centered(|ui | 
+                    self.show_progress(ui)
+                )
+            );
 
         ui.add_space(10.0);
 
@@ -328,7 +379,7 @@ impl FileSystem {
                             let selectable_label = ui.selectable_label(is_selected, RichText::new(format!("🗀   {}", label)));
 
                             if selectable_label.clicked() { // If the item was already selected, deselect it
-                                let _ = tx.try_send(FileSystemAction::Select((modifiers, full_path.clone())));
+                                let _ = tx.try_send(FileSystemAction::Select((modifiers, normalize_prefix(full_path))));
                             }
 
                             if selectable_label.double_clicked(){
@@ -418,7 +469,7 @@ impl FileSystem {
                         let selectable_label = ui.selectable_label(file_selected, RichText::new(format!("🗋   {}", label)));
 
                         if selectable_label.clicked() {
-                            let _ = tx.try_send(FileSystemAction::Select((modifiers, full_path.clone())));
+                            let _ = tx.try_send(FileSystemAction::Select((modifiers, normalize_prefix(full_path))));
                         }
 
                         if selectable_label.secondary_clicked(){
@@ -452,7 +503,7 @@ impl FileSystem {
     }
 
     pub fn request_contents(&self, folder_prefix: &str) -> Result<(), Error> {
-        let folder_pref = folder_prefix.to_string();
+        let folder_pref = folder_prefix.trim_start_matches('/').to_string();
         let tx = self.paths_channel.0.clone();
         let access_key = self.user.minio_access_key.clone().unwrap_or_default();
         let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
@@ -470,25 +521,28 @@ impl FileSystem {
     }
 
     pub fn expand_folder(&self, folder_prefix: &str) {
-        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(folder_prefix.to_string()));
+        let normalized_prefix = normalize_prefix(folder_prefix);
+        let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(normalized_prefix));
     }
 
     pub fn double_click_folder(&mut self, folder_prefix: &str) {
+        let normalized_prefix = normalize_prefix(folder_prefix);
+    
         // Navigate to the new prefix
-        self.navigate_to(folder_prefix.to_string());
-
+        self.navigate_to(normalized_prefix.clone());
+    
         // Check if the folder's contents have already been fetched
-        if let Some(Node::Folder(_, ref children)) = self.root.find_folder(folder_prefix) {
-            // If children are already loaded (non-empty), no need to fetch
-            if !children.is_empty() {
-                info!("Folder '{}' already fetched. No need to re-fetch.", folder_prefix);
+        if let Some(Node::Folder(_, ref children)) = self.root.find_folder(&normalized_prefix) {
+            if !children.is_empty() && children.len() > 1 {
+                info!("Folder '{}' already fetched. No need to re-fetch.", normalized_prefix);
             } else {
-                let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(folder_prefix.to_string()));
+                let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(normalized_prefix.clone()));
             }
         } else {
-            let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(folder_prefix.to_string()));
+            let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(normalized_prefix));
         }
     }
+    
 
     /// Merges a new `Node` into the existing file system.
     ///
@@ -505,37 +559,73 @@ impl FileSystem {
     ///
     /// This method updates `current_prefix` and manages the navigation stack.
     pub fn navigate_to(&mut self, prefix: String) {
-        if prefix != self.current_prefix {
-            // Push the current prefix onto the navigation stack before navigating
-            if !self.current_prefix.is_empty() {
+        let normalized_prefix = normalize_prefix(&prefix);
+    
+        if normalized_prefix != self.current_prefix {
+            if !self.current_prefix.is_empty()
+                && self.current_prefix != "/"
+                && !self.current_prefix.ends_with(":/")
+            {
                 self.navigation_stack.push(self.current_prefix.clone());
             }
-            self.current_prefix = prefix;
+            self.current_prefix = normalized_prefix;
             info!("Navigated to prefix: '{}'", self.current_prefix);
         } else {
-            info!("Attempted to navigate to the same prefix: '{prefix}'. No action taken. self.current_prefix: '{}'", self.current_prefix);
+            info!("Attempted to navigate to the same prefix: '{}'. No action taken.", normalized_prefix);
         }
     }
+    
 
     /// Navigates back to the previous directory.
     ///
     /// Returns `Ok(true)` if navigation was successful, `Ok(false)` if already at root,
     /// or an error if something goes wrong.
     pub fn navigate_up(&mut self) -> Result<bool, Error> {
-        info!("self.navigation_stack: {:?}\nself.current_prefix: {}", self.navigation_stack, self.current_prefix);
-
+        info!(
+            "self.navigation_stack: {:?}\nself.current_prefix: {}",
+            self.navigation_stack, self.current_prefix
+        );
+    
         if let Some(previous_prefix) = self.navigation_stack.pop() {
-            // Set the dispayed
-            info!("previous_prefix: '{previous_prefix}' -- self.current_prefix: {}", self.current_prefix);
+            info!(
+                "previous_prefix: '{previous_prefix}' -- self.current_prefix: {}",
+                self.current_prefix
+            );
             self.current_prefix = previous_prefix;
             info!("Navigated up to prefix: '{}'", self.current_prefix);
             Ok(true)
+        } else if !self.current_prefix.is_empty() && self.current_prefix != "/" {
+            info!(
+                "Stack is empty, but navigating up to root from '{}'.",
+                self.current_prefix
+            );
+    
+            // Remove trailing slash first
+            if self.current_prefix.ends_with('/') {
+                self.current_prefix.pop();
+            }
+    
+            // Truncate to the last '/'
+            if let Some(pos) = self.current_prefix.rfind('/') {
+                self.current_prefix.truncate(pos);
+            } else {
+                // If no `/` is found, directly set to "/"
+                self.current_prefix = "/".to_string();
+            }
+    
+            info!("Navigated up to root: '{}'", self.current_prefix);
+            Ok(true)
         } else {
-            // Already at root
-            info!("Already at root directory. Cannot navigate up. {}", self.current_prefix);
+            info!(
+                "Already at root directory. Cannot navigate up. {}",
+                self.current_prefix
+            );
             Ok(false)
         }
     }
+    
+    
+    
 
     /// Retrieves the `Node::Folder` corresponding to `current_prefix`.
     ///
@@ -548,7 +638,9 @@ impl FileSystem {
     ///
     /// Returns a mutable reference to the folder node if found.
     pub fn get_current_folder_mut(&mut self) -> Option<&mut Node> {
-        self.root.find_folder_mut(&self.current_prefix)
+        let node = self.root.find_or_create_folder_mut(&self.current_prefix);
+        info!("Node? {node:?}");
+        Some(node)
     }
 
     pub fn show_progress(&mut self, ui: &mut Ui) {
@@ -822,5 +914,32 @@ mod tests {
         assert!(result.unwrap());
         assert_eq!(fs.current_prefix, "");
         assert!(fs.navigation_stack.is_empty());
+    }
+}
+
+
+#[test]
+fn test_merge_node_with_normalized_subfolders() {
+    let mut root = Node::Folder("/".to_string(), HashMap::new());
+
+    let subfolders = vec![
+        ("1-TUNEUP/".to_string(), Node::Folder("1-TUNEUP".to_string(), HashMap::new())),
+        ("2-DIAGNOSTIC/".to_string(), Node::Folder("2-DIAGNOSTIC".to_string(), HashMap::new())),
+    ];
+
+    let mut map = HashMap::new();
+    for (key, value) in subfolders {
+        map.insert(key, value);
+    }
+
+    let new_node = Node::Folder("/".to_string(), map);
+    root.merge_node(new_node).unwrap();
+
+    if let Some(Node::Folder(_, children)) = root.find_folder("/") {
+        assert!(children.contains_key("1-TUNEUP"));
+        assert!(children.contains_key("2-DIAGNOSTIC"));
+        assert!(!children.contains_key(""));
+    } else {
+        panic!("Root folder not found or invalid structure.");
     }
 }

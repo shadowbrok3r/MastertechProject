@@ -21,9 +21,9 @@ pub async fn list_buckets(
     const ONE_HOUR: Duration = Duration::from_secs(3600);
     
     // Decide which prefix string to use
-    let prefix_str = prefix.unwrap_or(""); // If None => ""
+    let prefix_str = prefix.unwrap_or("").trim_end_matches('/');
 
-    info!("Listing objects for prefix: '{}'", prefix_str);
+    info!("database/schema/buckets.rs -> Listing objects for prefix: '{}'", prefix_str);
 
     // We will accumulate everything in a single folder-map.
     let mut folder_map = HashMap::new();
@@ -37,7 +37,7 @@ pub async fn list_buckets(
 
         // If prefix isn't empty, set it
         if !prefix_str.is_empty() {
-            list_objects.with_prefix(prefix_str.to_string());
+            list_objects.with_prefix(format!("{}/", prefix_str));
         }
 
         // Delimiter => we only get immediate subfolders in CommonPrefixes
@@ -45,7 +45,7 @@ pub async fn list_buckets(
 
         // If we have a continuation token, use it
         if let Some(ref token) = continuation_token {
-            info!("Using continuation token: {token}");
+            info!("database/schema/buckets.rs -> Using continuation token: {token}");
             list_objects.with_continuation_token(token.clone());
         }
 
@@ -62,44 +62,55 @@ pub async fn list_buckets(
         // Parse response
         let parsed = ListObjectsV2::parse_response(&text)?;
 
-        // ---------- Files ----------
         for content in parsed.contents {
-            info!("Found file: '{}'", content.key);
+            info!(
+                "database/schema/buckets.rs -> Found file: '{}', Parent Prefix: '{}'",
+                content.key, prefix_str
+            );
+        
             let short_name = content
                 .key
-                .strip_prefix(prefix_str)
+                .strip_prefix(&(prefix_str.to_string() + "/"))
                 .unwrap_or(&content.key)
                 .to_string();
-
-            // Insert a File node with (full_path, file_name)
+        
+            info!(
+                "Processed file. Full Key: '{}', Short Name: '{}', Parent Prefix: '{}'",
+                content.key, short_name, prefix_str
+            );
+        
             folder_map.insert(
                 short_name.clone(),
                 Node::File((content.key.clone(), short_name)),
             );
         }
-
-        // ---------- Subfolders ----------
+        
         for common_prefix in parsed.common_prefixes {
-            // Example: "my_subfolder/"
-            info!("Found subfolder: '{}'", common_prefix.prefix);
-
+            info!("database/schema/buckets.rs -> Found subfolder: '{}'", common_prefix.prefix);
+        
             let short_subfolder_name = common_prefix
                 .prefix
-                .strip_prefix(prefix_str)
+                .strip_prefix(&(prefix_str.to_string() + "/"))
                 .unwrap_or(&common_prefix.prefix)
                 .trim_end_matches('/')
                 .to_string();
-
-            // We do NOT recursively fetch it here. We simply store it as an empty Folder node.
+        
+            info!(
+                "Processed subfolder. Full Prefix: '{}', Short Name: '{}', Parent Prefix: '{}'",
+                common_prefix.prefix, short_subfolder_name, prefix_str
+            );
+        
             folder_map.insert(
                 short_subfolder_name,
                 Node::Folder(common_prefix.prefix.clone(), HashMap::new()),
             );
         }
+        
+        
 
         // ---------- Continuation ----------
         if let Some(next_token) = parsed.next_continuation_token {
-            info!("Truncated result. NextContinuationToken: {}", next_token);
+            info!("database/schema/buckets.rs -> Truncated result. NextContinuationToken: {}", next_token);
             continuation_token = Some(next_token);
         } else {
             // Done listing this prefix
@@ -121,49 +132,59 @@ impl Node {
     pub fn merge_node(&mut self, new_node: Node) -> Result<(), Error> {
         match new_node {
             Node::Folder(new_prefix, new_map) => {
-                info!("Merging folder: '{}'", new_prefix);
-                
-                let default_node = &mut Node::Folder(String::new(), HashMap::new());
-                // Find the target folder in the existing tree
-                let target_folder = self.find_folder_mut(&new_prefix)
-                    .ok_or_else(|| 
-                        Err::<&mut Node, anyhow::Error>(
-                            anyhow::anyhow!("Folder with prefix '{new_prefix}' not found")
-                        )
-                    ).unwrap_or(default_node);
-                
+                let normalized_prefix = normalize_prefix(&new_prefix);
+                info!("Merging folder. Prefix: '{}', Normalized: '{}'", new_prefix, normalized_prefix);
+
+                // Use `find_or_create_folder_mut` to ensure the hierarchy exists.
+                let target_folder = self.find_or_create_folder_mut(&normalized_prefix);
+
                 match target_folder {
                     Node::Folder(_, ref mut children) => {
-                        for (_, node) in new_map {
-                            match node {
-                                Node::File((full_path, file_name)) => {
-                                    if children.contains_key(&file_name) {
-                                        info!("File '{}' already exists. Skipping.", full_path);
-                                    } else {
-                                        info!("Inserting file: '{}'", full_path);
-                                        children.insert(file_name.clone(), Node::File((full_path, file_name.clone())));
-                                    }
-                                }
-                                Node::Folder(sub_prefix, sub_map) => {
-                                    let subfolder_name = sub_prefix.trim_end_matches('/').rsplit('/').next().unwrap_or(&sub_prefix).to_string();
-                                    if children.contains_key(&subfolder_name) {
-                                        info!("Folder '{}' already exists. Skipping.", sub_prefix);
-                                    } else {
-                                        info!("Inserting folder: '{}'", sub_prefix);
-                                        children.insert(subfolder_name.clone(), Node::Folder(sub_prefix, sub_map));
-                                    }
-                                }
-                            }
+                        for (key, node) in new_map {
+                            let clean_key = key.trim_end_matches('/').to_string(); // Trim trailing slashes
+                            children.insert(clean_key.clone(), node);
+                            info!(
+                                "Inserted '{}'. Current children of '{}': {:?}",
+                                clean_key, normalized_prefix, children.keys().collect::<Vec<_>>()
+                            );
                         }
                         Ok(())
                     }
-                    _ => Err(anyhow::anyhow!("Target node is not a folder.")).into(),
+                    _ => Err(anyhow::anyhow!("Target node is not a folder.")),
                 }
             }
-            Node::File(_) => {
-                Err(anyhow::anyhow!("Expected a Folder node, got File.")).into()
-            }
+            Node::File(_) => Err(anyhow::anyhow!("Expected a Folder node, got File.")),
         }
+    }
+    
+    /// Helper function to find or create a mutable reference to a folder node with the given prefix.
+    ///
+    /// - **prefix**: The full prefix path to the folder (e.g., "folder/subfolder/").
+    ///
+    /// Returns a mutable reference to the `Node::Folder`.
+    pub fn find_or_create_folder_mut(&mut self, prefix: &str) -> &mut Node {
+        let normalized_prefix = normalize_prefix(prefix);
+
+        if normalized_prefix == "/" || normalized_prefix.ends_with(":/") {
+            return self; // Root directory or drive root (e.g., "C:/")
+        }
+
+        let parts: Vec<&str> = normalized_prefix.split('/').filter(|p| !p.is_empty()).collect();
+        let mut current = self;
+
+        for part in parts {
+            current = match current {
+                Node::Folder(_, ref mut children) => {
+                    children.entry(part.to_string()).or_insert_with(|| {
+                        let new_folder_prefix = format!("{}/", part);
+                        Node::Folder(new_folder_prefix, HashMap::new())
+                    })
+                }
+                _ => panic!("Tried to navigate into a non-folder node."),
+            };
+        }
+
+        current
     }
 
     /// Helper function to find a mutable reference to a folder node with the given prefix.
@@ -171,34 +192,43 @@ impl Node {
     /// - **prefix**: The full prefix path to the folder (e.g., "folder/subfolder/").
     ///
     /// Returns a mutable reference to the `Node::Folder` if found, otherwise `None`.
-    pub fn find_folder_mut<'a>(&'a mut self, prefix: &str) -> Option<&'a mut Node> {
-        if prefix.is_empty() || prefix == "" {
-            return Some(self);
+    pub fn find_folder_mut(&mut self, prefix: &str) -> Option<&mut Node> {
+        let normalized_prefix = normalize_prefix(prefix);
+        info!("find_folder_mut -> Looking for prefix: '{}', Normalized: '{}'", prefix, normalized_prefix);
+    
+        if normalized_prefix == "/" || normalized_prefix.ends_with(":/") {
+            info!("find_folder_mut -> Resolved to root for prefix: '{}'", normalized_prefix);
+            return Some(self); // Root directory or drive root (e.g., "C:/")
         }
-
-        // Split the prefix into parts, e.g., "folder/subfolder/" -> ["folder", "subfolder"]
-        let parts: Vec<&str> = prefix.trim_end_matches('/').split('/').collect();
-
+    
+        let parts: Vec<&str> = normalized_prefix.split('/').filter(|p| !p.is_empty()).collect();
+        info!("find_folder_mut -> Parts after splitting: {:?}", parts);
+    
         let mut current = self;
-
-        for part in &parts {
+    
+        for part in parts {
             match current {
                 Node::Folder(_, ref mut children) => {
-                    if let Some(node) = children.get_mut(*part) {
+                    if let Some(node) = children.get_mut(part) {
+                        info!("find_folder_mut -> Found part: '{}', Node: {:?}", part, node);
                         current = node;
                     } else {
-                        // Folder does not exist
+                        info!("find_folder_mut -> Part not found: '{}'", part);
                         return None;
                     }
                 }
                 _ => {
+                    info!("find_folder_mut -> Current node is not a folder: {:?}", current);
                     return None;
                 }
             }
         }
-
+    
+        info!("find_folder_mut -> Resolved folder for prefix: '{}'", normalized_prefix);
         Some(current)
     }
+    
+    
 
     /// Finds an immutable reference to a folder node with the given prefix.
     ///
@@ -206,31 +236,58 @@ impl Node {
     ///
     /// Returns an immutable reference to the `Node::Folder` if found, otherwise `None`.
     pub fn find_folder(&self, prefix: &str) -> Option<&Node> {
-        if prefix.is_empty() || prefix == "" {
-            return Some(self);
+        let normalized_prefix = normalize_prefix(prefix);
+    
+        if normalized_prefix == "/" || normalized_prefix.ends_with(":/") {
+            return Some(self); // Root directory or drive root (e.g., "C:/")
         }
-
-        // Split the prefix into parts, e.g., "folder/subfolder/" -> ["folder", "subfolder"]
-        let parts: Vec<&str> = prefix.trim_end_matches('/').split('/').collect();
-
+    
+        let parts: Vec<&str> = normalized_prefix.split('/').filter(|p| !p.is_empty()).collect();
         let mut current = self;
-
-        for part in &parts {
+    
+        for part in parts {
             match current {
                 Node::Folder(_, ref children) => {
-                    if let Some(node) = children.get(*part) {
+                    if let Some(node) = children.get(part) {
                         current = node;
                     } else {
-                        // Folder does not exist
                         return None;
                     }
                 }
-                _ => {
-                    return None;
-                }
+                _ => return None,
             }
         }
-
+    
         Some(current)
     }
+    
+    
+    
 }
+
+pub fn normalize_prefix(path: &str) -> String {
+    let mut normalized = path.replace('\\', "/"); // Convert backslashes to forward slashes
+
+    if normalized.len() >= 2 && normalized.chars().nth(1) == Some(':') {
+        // Handle drive letters (e.g., "C:/path/to/file")
+        if !normalized.ends_with('/') {
+            normalized.push('/');
+        }
+        normalized
+    } else {
+        // Non-Windows paths
+        if normalized.starts_with('/') {
+            // Absolute paths
+            if normalized == "/" {
+                "/".to_string()
+            } else {
+                normalized.trim_end_matches('/').to_string()
+            }
+        } else {
+            // Relative paths
+            normalized.trim_matches('/').to_string()
+        }
+    }
+}
+
+

@@ -99,10 +99,7 @@ impl ChatView {
             }
         }
 
-        let mut b_panel_marg = Margin::default();
-        let mut c_panel_marg = Margin::default();
-        c_panel_marg.top = 10.0;
-        b_panel_marg.bottom = 10.0;
+        let b_panel_marg = Margin::symmetric(5., 10.);
 
         let markdown_editor = &mut self.markdown_editor;
         markdown_editor.inputs = self.users.clone();
