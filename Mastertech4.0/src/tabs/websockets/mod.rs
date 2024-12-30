@@ -1,6 +1,6 @@
 use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use database::{schema::{utilities::query_id, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
-use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
+use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, pin, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::Path, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
 use displays::{channel_manager::ChannelManager, deserialize_command, serialize_system_info, virtual_filesystem::FileSystem, Cmd, FileSystemAction};
@@ -769,7 +769,7 @@ async fn handle_windows_cmd_interactive(
 async fn handle_linux_cmd(
     command_payload: String, 
     tx: Sender<Vec<u8>>
-) -> Result<ChildStdin, Error> {
+) -> Result<tokio::sync::mpsc::Sender<String>, Error> {
     let mut process: Child = Command::new("sh")
         .arg("-c")
         .arg(&command_payload)
@@ -784,27 +784,64 @@ async fn handle_linux_cmd(
 
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
+    // Use a channel to allow sending input to the stdin of the process
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<String>(32);
 
     let tx_clone = tx.clone();
+    // let mut idle_timeout = sleep(Duration::from_secs(10));
+    // pin!(idle_timeout);
+    let t = input_tx.clone();
     tokio::spawn(async move {
         // Process both stdout and stderr
         loop {
+            let in_tx = input_tx.clone();
             tokio::select! {
                 stdout_line = stdout_reader.next_line() => {
                     if let Ok(Some(line)) = stdout_line {
-                        tx_clone.send(line.into_bytes())?;
+                        if line.contains("Enter") || line.contains("Password:") {
+                            // Command is asking for input; handle interactively
+                            info!("Detected interactive prompt: {}", line);
+                            in_tx.send("YourInputHere\n".to_string()).await?;
+                        } else {
+                            tx_clone.send(line.into_bytes())?;
+                        }
                     }
                 }
                 stderr_line = stderr_reader.next_line() => {
                     if let Ok(Some(line)) = stderr_line {
-                        tx_clone.send(line.into_bytes())?;
+                        if line.contains("Enter") || line.contains("Password:") {
+                            info!("Detected interactive prompt: {}", line);
+                            input_tx.send("YourInputHere\n".to_string()).await?;
+                        } else {
+                            tx_clone.send(line.into_bytes())?;
+                        }
                     }
                 }
+                // _ = &mut idle_timeout => {
+                //     // No output within the timeout duration
+                //     input_tx.send("DefaultInput\n".to_string()).await?;
+                // }
             }
         }
         Ok::<(), Error>(())
     });
 
+    // Spawn a task to handle stdin input using `input_rx`
+    tokio::spawn(async move {
+        let mut stdin = stdin; // Move `stdin` into this task
+        while let Some(input) = input_rx.recv().await {
+            if let Err(e) = stdin.write_all(input.as_bytes()).await {
+                error!("Failed to write to stdin: {:?}", e);
+                break;
+            }
+            // Ensure each input is flushed after writing
+            if let Err(e) = stdin.flush().await {
+                error!("Failed to flush stdin: {:?}", e);
+                break;
+            }
+        }
+    });
+    
     let tx_clone = tx.clone();
     tokio::spawn(async move {
         // Wait for the child process to complete
@@ -815,6 +852,6 @@ async fn handle_linux_cmd(
         Ok::<(), Error>(())
     });
 
-    Ok(stdin)
+    Ok(t)
 }
 
