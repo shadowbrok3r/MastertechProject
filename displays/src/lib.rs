@@ -266,6 +266,7 @@ pub enum Cmd {
     PullKeys(String),
     PullTicket(String),
     InteractiveInput(String),
+    CheckSeb,
     CopyTools(String),
     QuitInteractive,
     ReadEvents,

@@ -2,7 +2,7 @@ use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Fr
 use database::{schema::{utilities::query_id, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
-use std::{env, path::{Path, PathBuf}, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
+use std::{env, path::Path, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
 use displays::{channel_manager::ChannelManager, deserialize_command, serialize_system_info, virtual_filesystem::FileSystem, Cmd, FileSystemAction};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
@@ -179,7 +179,7 @@ pub struct WebConsoleFrontend {
     pub connected: bool,
     pub timeout_counter: Instant,
     pub process: Arc<Mutex<Option<ChildStdin>>>,
-    pub explorer: FileSystem
+    pub explorer: FileSystem, 
 }
 
 impl WebConsoleFrontend {
@@ -202,7 +202,7 @@ impl WebConsoleFrontend {
             timeout_counter: Instant::now(),
             process: Arc::new(Mutex::new(None)),
             explorer: FileSystem::new(),
-            interactive_input
+            interactive_input,
         }
     }
 
@@ -215,7 +215,7 @@ impl WebConsoleFrontend {
             self.ws_sender.send(WsMessage::Binary(std::mem::take(sysinfo)));
         }
         
-        if let Ok(cmd_output) = &mut self.command_rx.try_recv(){
+        while let Ok(cmd_output) = &mut self.command_rx.try_recv(){
             self.ws_sender.send(WsMessage::Binary(std::mem::take(cmd_output)));
         }
 
@@ -228,8 +228,8 @@ impl WebConsoleFrontend {
                     match msg{
                         WsMessage::Binary(bin) => {
                             self.history.push(format!("{:?}", deserialize_command(&bin.clone())));
-                            let cmd = deserialize_command(&bin.clone());
-                            info!("websockets -> Binary Message: {bin:?}");
+                            let cmd: Cmd = deserialize_command(&bin.clone());
+                            info!("websockets -> Binary Message: {cmd:?}");
                             self.handle_command(cmd);
                         },
                         WsMessage::Text(txt) => {
@@ -338,65 +338,19 @@ impl WebConsoleFrontend {
                 //     handle_command_payload("chkdsk ".to_string(), tx.clone()).await.unwrap();
                 // });
             },
-            // Cmd::FileSystemAction(FileSystemAction::GetNode(path)) => {
-            //     info!("websockets -> READING DIR");
-            //     let current_path = env::current_dir().unwrap_or_default();
-            //     info!("websockets -> Current_path: {current_path:?}");
-            //     let contents = if path == "current" {
-            //         let paths = read_folder(&current_path, 2, false);
-            //         info!("websockets -> Current paths: {:?}", paths.clone());
-            //         let node = self.explorer.build_virtual_file_system(current_path, paths);
-            //         node // paths
-            //     } else {
-            //         let p: PathBuf = Path::new(path.as_str()).to_path_buf();
-            //         if p.is_dir() {
-            //             let paths = read_folder(&p, 2, false);
-            //             info!("websockets -> Paths: {:?}", paths.clone());
-            //             let node = self.explorer.build_virtual_file_system(current_path, paths);
-            //             node // paths
-            //         } else {
-            //             let paths = read_folder(&current_path, 2, false);
-            //             info!("websockets -> Paths: {:?}", paths.clone());
-            //             let node = self.explorer.build_virtual_file_system(current_path, paths);
-            //             node // paths
-            //         }
-            //     };
-            //     // let mut strings = Vec::new();
-            //     // for x in contents { strings.push(x.to_string_lossy().to_string()); }
-            //     let payload = serialize(
-            //         &Cmd::FileSystemAction(FileSystemAction::GetNode(contents)) // (current_path.to_string_lossy().to_string(), strings)
-            //     );
-
-            //     match payload {
-            //         Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-            //         Err(e) => error!("Error serializing paths: {e:?}"),
-            //     }
-            // },
-            // Cmd::FileSystemAction(FileSystemAction::EnterDirectory(new_path)) => {
-            //     let mut p: PathBuf = Path::new(&new_path).to_path_buf();
-            //     if p.pop() {
-            //         let paths = read_folder(&p, 2, false);
-            //         info!("websockets -> Paths: {:?}", paths.clone());
-            //         if paths.len() > 0 {
-            //             let node = self.explorer.build_virtual_file_system(p, paths);
-            //             info!("websockets -> Node: {:?}", node);
-            //             let payload = serialize(
-            //                 &Cmd::FileSystemAction(FileSystemAction::GetNode(node))
-            //             );
-            //             match payload {
-            //                 Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-            //                 Err(e) => error!("Error serializing paths: {e:?}"),
-            //             }
-            //         }
-            //     } else { self.ws_sender.send(WsMessage::Text(format!("{new_path} is not a directory"))); }
-            // },
-            Cmd::FileSystemAction(FileSystemAction::EnterDirectory(new_path)) => {
-                let p: PathBuf = Path::new(&new_path).to_path_buf();
-                if p.is_dir() {
-                    let paths = read_folder(&p, 2, false);
-                    info!("websockets -> Paths: {:?}", paths.clone());
+            Cmd::FileSystemAction(FileSystemAction::RequestNewContents(new_path)) => {
+                let path = if new_path == "current" {
+                    let current_path = env::current_dir().unwrap_or_default();
+                    info!("websockets -> Current_path: {current_path:?}");
+                    current_path
+                } else {
+                    Path::new(&new_path).to_path_buf()
+                };
+                if path.is_dir() {
+                    let paths = read_folder(&path, 1, false);
+                    // info!("websockets -> Paths: {:?}", paths.clone());
                     if paths.len() > 0 {
-                        let node = self.explorer.build_virtual_file_system(p, paths);
+                        let node = self.explorer.build_virtual_file_system(path, paths);
                         info!("websockets -> Node: {:?}", node);
     
                         let payload = serialize(
@@ -815,8 +769,7 @@ async fn handle_windows_cmd_interactive(
 async fn handle_linux_cmd(
     command_payload: String, 
     tx: Sender<Vec<u8>>
-) ->  Result<ChildStdin, Error> {
-
+) -> Result<ChildStdin, Error> {
     let mut process: Child = Command::new("sh")
         .arg("-c")
         .arg(&command_payload)
@@ -825,7 +778,6 @@ async fn handle_linux_cmd(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    // Create a Tokio stream for stdout / stderr
     let stdout = process.stdout.take().expect("Failed to get stdout");
     let stderr = process.stderr.take().expect("Failed to get stderr");
     let stdin: ChildStdin = process.stdin.take().expect("Failed to open stdin");
@@ -833,25 +785,32 @@ async fn handle_linux_cmd(
     let mut stdout_reader = BufReader::new(stdout).lines();
     let mut stderr_reader = BufReader::new(stderr).lines();
 
-    // Ensure the child process is spawned in the runtime so it can
-    // make progress on its own while we await for any output.
-    tokio::spawn(async move {
-        let status = process.wait().await.expect("child process encountered an error");
-        info!("websockets -> child status was: {}", status);
-    });
-
     let tx_clone = tx.clone();
     tokio::spawn(async move {
-        while let Some(line) = stderr_reader.next_line().await? {
-            tx_clone.send(line.into_bytes()).ok();
+        // Process both stdout and stderr
+        loop {
+            tokio::select! {
+                stdout_line = stdout_reader.next_line() => {
+                    if let Ok(Some(line)) = stdout_line {
+                        tx_clone.send(line.into_bytes())?;
+                    }
+                }
+                stderr_line = stderr_reader.next_line() => {
+                    if let Ok(Some(line)) = stderr_line {
+                        tx_clone.send(line.into_bytes())?;
+                    }
+                }
+            }
         }
         Ok::<(), Error>(())
     });
 
     let tx_clone = tx.clone();
     tokio::spawn(async move {
-        while let Some(line) = stdout_reader.next_line().await? {
-            tx_clone.try_send(line.into_bytes()).ok();
+        // Wait for the child process to complete
+        if let Ok(status) = process.wait().await {
+            info!("Process exited with status: {status}");
+            tx_clone.send("DONE".to_string().into_bytes())?;
         }
         Ok::<(), Error>(())
     });

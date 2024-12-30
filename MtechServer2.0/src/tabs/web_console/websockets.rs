@@ -1,6 +1,6 @@
 use crossbeam::channel::{Receiver, Sender};
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::{schema::{ConnectedClient, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use database::{schema::{ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
 use regex::Regex;
 use core::f32;
 use std::{collections::{HashMap, VecDeque}, fmt::Display};
@@ -12,13 +12,13 @@ use egui_extras::{syntax_highlighting::{highlight, CodeTheme}, Size, StripBuilde
 use surrealdb::Response;
 use bincode::serialize;
 use web_time::Instant;
-use log::{error, info};
+use log::info;
 
 use super::charts::LinePlot;
 
 pub trait ClientHandler { 
     fn connect(&mut self);
-    fn export_logs(&mut self, history: Vec<String>);
+    fn export_logs(&mut self, history: Vec<History>);
     fn delete_client(&mut self);
 }
 
@@ -34,12 +34,24 @@ pub enum WsDisplayState {
     ToolBox
 }
 
-impl FileSysHelper for WebSocketClient {
-    fn handle_filesystem_action(&mut self, action: &FileSystemAction) {
-        log::info!("Action from web console: {action:?}");
-        let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(action.clone()));
+#[derive(Clone)]
+struct WebSocketHelperDelegate {
+    tx: Sender<Cmd>
+}
+
+impl WebSocketHelperDelegate {
+    fn new(tx: Sender<Cmd>) -> Self {
+        Self { tx }
     }
 }
+
+impl FileSysHelper for WebSocketHelperDelegate {
+    fn handle_filesystem_action(&mut self, action: &FileSystemAction) {
+        log::warn!("FileSysHelper for WebSocketHelperDelegate -> Action -> {action:?}");
+        let _ = self.tx.try_send(Cmd::FileSystemAction(action.clone()));
+    }
+}
+
 
 pub struct WebSocketClient {
     pub client: ConnectedClient,
@@ -57,7 +69,6 @@ pub struct WebSocketClient {
     /// Sending / Receiving of UI state
     display_state_channel: (Sender<WsDisplayState>, Receiver<WsDisplayState>),
 
-    pub events: Vec<WsEvent>,
     pub input: String,
     pub messages: Vec<String>,
 
@@ -67,27 +78,42 @@ pub struct WebSocketClient {
     pub ram_usage: VecDeque<f32>,
 
     pub sysinfo: Option<SystemInformation>,
-    pub history: Vec<String>,
+    pub history: Vec<History>,
     pub loading: bool,
     pub timeout_counter: Instant,
     pub toolbox: FileSystem,
     pub state: WsDisplayState,
     pub explorer: FileSystem,
-    pub path_edit: String,
-    pub current_path: String,
     pub interactive: bool,
     pub history_idx: usize,
-    pub my_history: Vec<String>
+    helper_delegate: WebSocketHelperDelegate,
+    /// Accumulates fragments of messages
+    buffer: String,     
+    my_history: Vec<History>       
 }
+
+#[derive(Default, Clone, Serialize, Deserialize, Debug)]
+pub struct History {
+    from: String,
+    message: String,
+    timestamp: String
+}
+
+lazy_static::lazy_static! {
+    static ref TRON_COMPLETE_REGEX: Regex = Regex::new("Tron.*complete").unwrap();
+}
+
 
 impl WebSocketClient{
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client: ConnectedClient, toolbox: FileSystem) -> Self {
         let display_state_channel = <WsDisplayState>::create_unbounded_channel();
-        
         let (send_cmd_tx, send_cmd_rx) = crossbeam::channel::unbounded();
         let (receive_cmd_tx, receive_cmd_rx) = crossbeam::channel::unbounded();
+        let helper_delegate = WebSocketHelperDelegate::new(send_cmd_tx.clone());
+        let mut explorer = FileSystem::new();
+        explorer.helper_delegate = Some(Box::new(helper_delegate.clone()));
         
-        Self{
+        Self {
             client,
             ws_sender,
             ws_receiver,
@@ -95,36 +121,35 @@ impl WebSocketClient{
             send_cmd_rx,
             receive_cmd_tx, 
             receive_cmd_rx,
-            
-            events: Default::default(),
-            input: String::new(),
-            messages: Vec::new(),
             display_state_channel,
-            sysinfo: None,
-            cpu_clock: VecDeque::new(),
-            cpu_percentage: VecDeque::new(),
-            ram_usage: VecDeque::new(),
-            history: Vec::new(),
-            temps: VecDeque::new(),
-            loading: false, 
             timeout_counter: Instant::now(),
             toolbox,
             state: WsDisplayState::Shell,
-            explorer: FileSystem::new(),
-            path_edit: String::new(),
-            current_path: String::new(),
+            explorer,
             interactive: false,
-            history_idx: 0,
+            helper_delegate,
+            input: Default::default(),
+            messages: Default::default(),
+            cpu_clock: Default::default(),
+            temps: Default::default(),
+            cpu_percentage: Default::default(),
+            ram_usage: Default::default(),
+            sysinfo: Default::default(),
+            history: Default::default(),
+            loading: Default::default(),
+            history_idx: Default::default(),
+            buffer: Default::default(),
             my_history: Vec::new()
         }
     }
     
-    pub fn receive(&mut self) {
-        while let Some(event) = self.ws_receiver.try_recv() { self.events.push(event); }
+    pub fn receive(&mut self, ctx: &Context) {
+        self.explorer.receive(ctx);
         // if self.timeout_counter.elapsed().as_secs() > 10 { info!("Its been over 10 seconds since last ping"); }
         // info!("Timer: {:?}", self.timeout_counter.elapsed().as_secs());
 
-        for event in &self.events {
+        if let Some(event) = &self.ws_receiver.try_recv() {
+            ctx.request_repaint();
             match event{
                 WsEvent::Message(msg) => {
                     match msg{
@@ -145,78 +170,124 @@ impl WebSocketClient{
                                 let _ = self.receive_cmd_tx.try_send(cmd);
                             } else{ 
                                 if self.interactive {
-                                    let msg = String::from_utf8_lossy(&bin.clone()).to_string();
-                                    let regex = Regex::new("Tron.*complete");
-                                    match regex {
-                                        Ok(r) => {
-                                            if r.is_match(&msg) {
-                                                self.interactive = false;
-
-                                            }
-                                        },
-                                        Err(e) => error!("Error with regex: {e:?}"),
+                                    let msg = String::from_utf8_lossy(&bin).to_string();
+                                    if TRON_COMPLETE_REGEX.is_match(&msg) {
+                                        self.interactive = false;
                                     }
                                 }
 
                                 if bin.len() > 0 {
                                     self.loading = false;
-                                    self.history.push(String::from_utf8_lossy(&bin).to_string());
+                                    let msg = String::from_utf8_lossy(&bin).to_string();
+                                    info!("Binary Msg: {msg}");
+
+                                    // Check if the incoming message is "DONE"
+                                    if msg.eq("DONE") {
+                                        // Push the buffered content as a new history entry
+                                        if !self.buffer.is_empty() {
+                                            self.history.push(History {
+                                                from: "Client".to_string(),
+                                                message: self.buffer.clone(),
+                                                timestamp: chrono::Local::now().to_rfc3339(),
+                                            });
+                                            self.buffer.clear(); // Clear the buffer after processing
+                                        }
+                                    } else {
+                                        // Append the incoming message to the buffer with a newline
+                                        self.buffer.push_str(&msg);
+                                        self.buffer.push('\n');
+                                    }
                                 }
                             }
                         },
                         WsMessage::Text(txt) => {
                             self.loading = false;
                             info!("Text data: {txt:#?}");
-                            self.history.push(txt.clone());
+                        
+                            // Append the incoming text to the buffer
+                            self.buffer.push_str(&txt);
+                        
+                            // Process the buffer for complete lines
+                            while let Some(pos) = self.buffer.find('\n') {
+                                // Extract the complete line up to the newline character
+                                let line = self.buffer.drain(..=pos).collect::<String>().trim_end().to_string();
+                        
+                                // Create a new history entry for the extracted line
+                                let history = History {
+                                    from: "Client".to_string(),
+                                    message: line,
+                                    timestamp: chrono::Local::now().to_rfc3339(),
+                                };
+                        
+                                // Add to history
+                                self.history.push(history);
+                            }
                         },
                         _ => {}
                     }
                 },
-                WsEvent::Opened => self.history.push("Connection Opened".to_string()),
-                WsEvent::Closed => self.history.push("Connection Closed".to_string()),
-                WsEvent::Error(e) => self.history.push(e.clone()),
+                WsEvent::Opened => self.history.push(History { 
+                    from: "Client".to_string(), 
+                    message: "Connection Opened".to_string(), 
+                    timestamp:  chrono::Local::now().to_rfc3339()
+                }),
+                WsEvent::Closed => self.history.push(History { 
+                    from: "Client".to_string(), 
+                    message: "Connection Closed".to_string(), 
+                    timestamp:  chrono::Local::now().to_rfc3339()
+                }),
+                WsEvent::Error(e) => self.history.push(History { 
+                    from: "Client".to_string(), 
+                    message: e.to_string(), 
+                    timestamp:  chrono::Local::now().to_rfc3339()
+                }),
             }
         }
         
         if let Ok(state) = self.display_state_channel.1.try_recv() {
+            ctx.request_repaint();
             self.state = state;
         }
 
-        // this will keep sending actions... 
-        // if let Some(action) = &self.explorer.current_action {
-        //     let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(action.clone()));
-        // }
-
         // Here we will handle commands we are going to SEND to Mastertech
         if let Ok(command) = self.send_cmd_rx.try_recv() {
+            ctx.request_repaint();
             match command {
-                Cmd::LiveData => todo!(),
-                Cmd::Command => todo!(),
-                Cmd::Tuneup => todo!(),
-                Cmd::Cps => todo!(),
-                Cmd::Qc => todo!(),
-                Cmd::SfcScan => todo!(),
-                Cmd::DismScan => todo!(),
-                Cmd::ChkDsk => todo!(),
-                Cmd::Mbr2Gpt => todo!(),
-                Cmd::TaskManager => todo!(),
-                Cmd::UninstallProgram(_) => todo!(),
-                Cmd::PullKeys(_) => todo!(),
-                Cmd::PullTicket(_) => todo!(),
-                Cmd::InteractiveInput(_) => todo!(),
-                Cmd::CopyTools(_) => todo!(),
-                Cmd::QuitInteractive => todo!(),
-                Cmd::ReadEvents => todo!(),
                 Cmd::FileSystemAction(ref action) => {
                     match action {
+                        FileSystemAction::EnterDirectory(directory) => {
+                            info!("web_console/websockets.rs -> EnterDirectory -> {directory:?}\nweb_console/websockets.rs -> EnterDirectory -> Root: {:?}", self.explorer.root);
+                            info!("Prefix before double clicking folder: {}", self.explorer.current_prefix);
+                            self.explorer.double_click_folder(&directory);
+                            info!("After: {}", self.explorer.current_prefix);
+                        },
+                        FileSystemAction::GetNode(new_node) => {
+                            log::info!("web_console/websockets.rs -> GetNode -> Root: {:?}", self.explorer.root); // {new_node:?}
+                            if let Node::Folder(prefix, _) = new_node {
+                                if &self.explorer.current_prefix == "current" {
+                                    self.explorer.current_prefix = prefix.clone();
+                                }
+                                info!("web_console/websockets.rs -> Current prefix: {}\nNew prefix: {}", self.explorer.current_prefix, prefix);
+                            }
+                            let insert_node = self.explorer.insert_node(new_node.clone());
+                            info!("web_console/websockets.rs -> InsertNode -> {insert_node:?}");
+                        },
+                        FileSystemAction::RequestNewContents(directory) => {
+                            log::info!("web_console/websockets.rs -> RequestNewContents -> {directory}");
+                            info!("ACTION TO SEND: {command:?}");
+                            self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
+                        }
                         FileSystemAction::Execute(label) => { 
                             self.explorer.execute_file = label.clone(); 
-                            let execute = &self.explorer.execute_file;
-                            if !execute.is_empty() {
-                                match serialize(&Cmd::FileSystemAction(FileSystemAction::Execute(execute.clone()))){
-                                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                                    Err(e) => self.history.push(e.to_string()),
-                                } 
+                            if !label.is_empty() {
+                                self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
+                                self.interactive = true;
+                                self.history.push(History { 
+                                    from: "Client".to_string(), 
+                                    message: "Switching to interactive mode".to_string(), 
+                                    timestamp:  chrono::Local::now().to_rfc3339()
+                                });
+                                let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                             }
                         },
                         FileSystemAction::Select((modifiers, label)) => {
@@ -231,75 +302,40 @@ impl WebSocketClient{
                                 self.explorer.selected_items.borrow_mut().insert(label.clone());
                             }
                         },
-                        FileSystemAction::EnterDirectory(directory) => {
-                            if cfg!(target_os="linux") && !self.explorer.current_prefix.ends_with('/'){
-                                self.explorer.current_prefix.push('/');
-                            } else if cfg!(target_os="windows") && !self.explorer.current_prefix.ends_with('\\') {
-                                self.explorer.current_prefix.push('\\');
-                            }
-                            info!("directory double clicked: {directory:?}");
-                            self.explorer.double_click_folder(&directory);
-                            match serialize(action){
-                                Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                                Err(e) => self.history.push(e.to_string()),
-                            }
-                        }
                         FileSystemAction::ExpandDirectory(directory) => self.explorer.expand_folder(&directory),
                         FileSystemAction::NavigateHome => {
-                            self.explorer.navigation_stack.clear();
-                            self.explorer.current_prefix.clear();
-                        },
-                        FileSystemAction::GetNode(new_node) => {
-                            log::info!("Files: {new_node:?}");
-                            let insert_node = self.explorer.insert_node(new_node.clone());
-                            info!("InsertNode: {insert_node:?}");
-                        },
-                        FileSystemAction::RequestNewContents(folder_prefix) => {
-                            let _ = self.explorer.request_contents(folder_prefix);
-                        },
+                            info!("web_console/websockets.rs -> NavigateHome");
+                            // self.explorer.navigation_stack.clear();
+                            // self.explorer.current_prefix.clear();
+                        }
                     }
-                    match serialize(&command){
-                        Ok(bytes) => {
-                            if let Cmd::FileSystemAction(FileSystemAction::Execute(ref file)) = command {
-                                if !file.is_empty() {
-                                    self.explorer.execute_file.clear();
-                                    self.history.push("Switching to interactive mode".to_string());
-                                    self.interactive = true;
-                                    let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
-                                }
-                            }
-                            self.ws_sender.send(WsMessage::Binary(bytes));
-                        },
-                        Err(e) => self.history.push(e.to_string()),
-                    };   
                 }
                 Cmd::Quit => {
                     self.interactive = false;
                     self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
                 },
-                Cmd::None => todo!()
+                _ => {}
             }
         }
 
         // Here we will handle commands we receive from Mastertech
         if let Ok(command) = self.receive_cmd_rx.try_recv() {
+            ctx.request_repaint();
             match command {
-                Cmd::FileSystemAction(file_system_action) => self.explorer.handle_filesystem_action(&file_system_action),
+                Cmd::FileSystemAction(file_system_action) => self.helper_delegate.handle_filesystem_action(&file_system_action),
                 _ => {}
             }
         }
-
-        self.events.clear();
     }
     
     pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)
-        self.receive();
+        self.receive(ui.ctx());
         ui.set_min_height(400.0);
 
         StripBuilder::new(ui)
             .size(Size::exact(25.0)) // .sizes(size, strip_count)
             .size(Size::exact(25.0))
-            .size(Size::remainder().at_most(400.))
+            .size(Size::remainder().at_most(600.))
             .vertical(|mut strip| 
         {
             strip.strip(|strip| 
@@ -318,7 +354,7 @@ impl WebSocketClient{
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
                             // if we are already in an interactive mode, then we dont want to quit that session,
                             if !self.interactive {
-                                if self.current_path.is_empty() {
+                                if self.explorer.current_prefix.is_empty() {
                                     let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory("current".to_string())));
                                 } else {
                                     let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory(self.explorer.current_prefix.clone())));
@@ -354,6 +390,7 @@ impl WebSocketClient{
                     {
                         s.cell(|ui|{
                             if Button::new("Tuneup").ui(ui).clicked(){
+                                info!("web_console -> websockets.rs -> Tuneup clicked");
                                 let _ = self.send_cmd_tx.try_send(Cmd::Tuneup);
                                 // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
                                 // self.history.push(format!("You\nCommand::Tuneup"));
@@ -361,6 +398,7 @@ impl WebSocketClient{
                         });
                         s.cell(|ui|{
                             if Button::new("CPS").ui(ui).clicked(){
+                                info!("web_console -> websockets.rs -> CPS clicked");
                                 let _ = self.send_cmd_tx.try_send(Cmd::Cps);
                                 // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
                                 // self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
@@ -369,6 +407,7 @@ impl WebSocketClient{
                         });
                         s.cell(|ui|{
                             if Button::new("SFC").ui(ui).clicked(){
+                                info!("web_console -> websockets.rs -> SFC clicked");
                                 let _ = self.send_cmd_tx.try_send(Cmd::SfcScan);
                                 // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
                                 // self.history.push(format!("You\nCommand::SfcScan"));
@@ -377,6 +416,7 @@ impl WebSocketClient{
                         });
                         s.cell(|ui|{
                             if Button::new("Dism").ui(ui).clicked(){
+                                info!("web_console -> websockets.rs -> Dism clicked");
                                 let _ = self.send_cmd_tx.try_send(Cmd::DismScan);
                                 // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
                                 // self.history.push(format!("You\nCommand::DismScan"));
@@ -385,6 +425,7 @@ impl WebSocketClient{
                         });
                         s.cell(|ui|{
                             if Button::new("Chkdsk").ui(ui).clicked(){
+                                info!("web_console -> websockets.rs -> Chkdsk clicked");
                                 let _ = self.send_cmd_tx.try_send(Cmd::ChkDsk);
                                 // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
                                 // self.history.push(format!("You\nCommand::ChkDsk"));
@@ -394,6 +435,7 @@ impl WebSocketClient{
                         });
                         s.cell(|ui|{
                             if Button::new("Mbr2Gpt").ui(ui).clicked(){
+                                info!("web_console -> websockets.rs -> Mbr2Gpt clicked");
                                 let _ = self.send_cmd_tx.try_send(Cmd::Mbr2Gpt);
                                 // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
                                 // self.history.push(format!("You\nCommand::Mbr2Gpt"));
@@ -407,10 +449,10 @@ impl WebSocketClient{
             {
                 match self.state {
                     WsDisplayState::LiveStats => self.show_live_stats(ui),
-                    WsDisplayState::Explorer => self.explorer.display(ui),
-                    WsDisplayState::ToolBox => self.show_tool_box(ui),
+                    WsDisplayState::Explorer => ui.group(|ui| self.explorer.display(ui)).inner,
+                    WsDisplayState::ToolBox => ui.group(|ui| self.toolbox.display(ui)).inner,
                     WsDisplayState::Shell => self.show_shell(ui),
-                }
+                };
             });
         });
     }
@@ -472,68 +514,119 @@ impl WebSocketClient{
         ui.add_space(10.0);
     }
 
-    // fn show_explorer(&mut self, ui: &mut Ui) {
-    //     let id = Id::new(format!("file_browser_top-{:?}", self.client.client_hash));
-    //     TopBottomPanel::top(id).show_inside(ui, |ui| {
-    //         ui.horizontal(|ui| {
-    //             let response = TextEdit::singleline(&mut self.explorer.current_prefix)
-    //                 .id(Id::new(format!("path_edit-{:?}", self.client.client_hash)))
-    //                 .cursor_at_end(true)
-    //                 .desired_width(ui.available_width() / 1.1)
-    //                 .ui(ui);
-
-    //             if response.lost_focus() {
-    //                 info!("Lost focus on self.path_edit");
-    //                 let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory(self.explorer.current_prefix.clone())));
-    //             }
-    //             let home_res = ui.button("🏠").on_hover_text("Home");
-    //             if home_res.clicked(){
-    //                 let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory("current".to_string())));
-    //             }
-
-    //             let parent_res = ui.button("⬆").on_hover_text("Parent Folder");
-    //             if parent_res.clicked() {
-    //                 // if self.explorer.navigate_up() {
-
-    //                 // }
-    //                 // let _ = self.send_cmd_tx.try_send(Cmd::EnterDirectory(self.explorer.current_prefix.clone()));
-    //             }
-    //         });
-    //     });
-    //     CentralPanel::default()
-    //         .show_inside(ui, |ui| 
-    //     {
-    //         self
-    //             .explorer
-    //             .display_directory_contents(
-    //                 ui, 
-    //                 self
-    //                     .explorer
-    //                     .get_current_folder()
-    //                     .unwrap_or(&self.explorer.root)
-    //             );
-
-    //         // if self.explorer.open_folder {
-    //         //     self.explorer.open_folder = false;
-    //         //     let new_dir = self.explorer.current_prefix.clone();
-    //         //     match serialize(&Cmd::FileSystemAction(FileSystemAction::EnterDirectory(new_dir.clone()))){
-    //         //         Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-    //         //         Err(e) => self.history.push(e.to_string()),
-    //         //     }
-    //         // }
-    //     });
-    // }
-
-    fn show_tool_box(&mut self, ui: &mut Ui) {
-        ui.group(|ui| {
-            self.toolbox.display(ui);
-        });
-    }
-
     fn show_shell(&mut self, ui: &mut Ui) {
-        let avail_size = ui.available_size();
+        let b_panel_marg = Margin::symmetric(5., 10.);
+
+        let id = ui.auto_id_with(format!("Chat {:?}", self.client.client_hash));
+
+        TopBottomPanel::bottom(id)
+            .default_height(ui.available_height()/1.2)
+            .resizable(true)
+            .show_inside(ui, |ui| 
+        {
+            ui.visuals_mut().extreme_bg_color= Color32::BLACK;
+            ui.visuals_mut().code_bg_color = Color32::BLACK;
+            ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
+            
+            let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
+            let style = ui.style_mut();
+            style.visuals.widgets.inactive.rounding = Rounding::same(2.0);
+            let mut layouter = |ui: &Ui, string: &str, _: f32| {
+                let mut layout_job =
+                    highlight(ui.ctx(), &ui.style(), &theme, string, "bash".into()); // || "zsh".into()
+                layout_job.wrap.max_width = ui.available_width()/1.1;
+                ui.fonts(|f| f.layout_job(layout_job))
+            };
+
+            let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY")
+                .margin(Margin::symmetric(10., 4.))
+                .desired_width(ui.available_width())
+                .desired_rows(3)
+                .layouter(&mut layouter)
+                .ui(ui);
+            
+
+            
+            let key_press = ui.input(|i| i.key_pressed(Key::Enter));
+            let up_press = ui.input(|i| i.key_pressed(Key::ArrowUp));
+            let down_press = ui.input(|i| i.key_pressed(Key::ArrowDown));
+            let copy_key = ui.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::C)));
+
+            if copy_key && text_edit.has_focus() {
+                self.input.clear();
+            }
+
+            if down_press {
+                if self.history_idx <= self.my_history.len() {
+                    self.history_idx += 1;
+                }
+                if let Some(history) = self.my_history.get(self.history_idx){
+                    self.input = history.message.clone();
+                }
+            } 
+            if up_press {
+                if self.history_idx > 0 {
+                    self.history_idx -= 1;
+                }
+                if let Some(history) = self.my_history.get(self.history_idx){
+                    self.input = history.message.clone();
+                }
+            }
+
+            if text_edit.lost_focus() && key_press && !self.interactive{
+                self.loading = true;
+                text_edit.request_focus();
+
+                self.history.push(History { 
+                    from: "You".to_string(), 
+                    message: self.input.clone(), 
+                    timestamp:  chrono::Local::now().to_rfc3339()
+                });
+
+                self.my_history.push(History { 
+                    from: "You".to_string(), 
+                    message: self.input.clone(), 
+                    timestamp:  chrono::Local::now().to_rfc3339()
+                });
+
+                self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
+
+            } else if text_edit.lost_focus() && key_press && self.interactive { 
+                text_edit.request_focus();
+                self.history.push(History { 
+                    from: "You".to_string(), 
+                    message: self.input.clone(), 
+                    timestamp:  chrono::Local::now().to_rfc3339()
+                });
+
+                self.my_history.push(History { 
+                    from: "You".to_string(), 
+                    message: self.input.clone(), 
+                    timestamp:  chrono::Local::now().to_rfc3339()
+                });
+
+                match serialize(&Cmd::InteractiveInput(std::mem::take(&mut self.input))){
+                    Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                    Err(e) => self.history.push(History { 
+                        from: "Client".to_string(), 
+                        message: e.to_string(), 
+                        timestamp:  chrono::Local::now().to_rfc3339()
+                    }),
+                } 
+            }
+        
+        });
+
+        let central_panel_frame = Frame::none().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
+            .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
+            .inner_margin(Margin::same(6.0));
+
         // info!("avail_size: {:?}", avail_size);
-        ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
+        CentralPanel::default()
+            .frame(central_panel_frame)
+            .show_inside(ui, |ui| 
+        {
+        // ui.allocate_ui(Vec2::new(avail_size.x, avail_size.y), |ui| {
             let id = Id::new(format!("scroll_area-{:?}", self.client.client_hash));
             ScrollArea::vertical()
                 .id_salt(id)
@@ -545,17 +638,47 @@ impl WebSocketClient{
                 .show(ui, |ui| 
             {
                 ui.set_width(ui.available_width());
-                let max_msg_width = ui.available_width() / 1.5;
+                let max_msg_width = ui.available_width() / 1.2;
                 let fixed_height = 50.0;
                 let mut count = 0;
-                for item in self.history.iter(){
+
+                // Start with the history as the base for combined messages
+                let mut combined_messages = self.history.clone(); // Clone history only once
+
+                // If there's a buffer, add it as a temporary entry
+                if !self.buffer.is_empty() {
+                    if let Some(last) = combined_messages.last_mut() {
+                        // Temporarily append the buffer to the last client message if applicable
+                        if last.from == "Client" {
+                            last.message.push_str(&self.buffer);
+                        } else {
+                            combined_messages.push(History {
+                                from: "Client".to_string(),
+                                message: self.buffer.clone(),
+                                timestamp: chrono::Local::now().to_rfc3339(),
+                            });
+                        }
+                    } else {
+                        // If no messages exist, the buffer is the first entry
+                        combined_messages.push(History {
+                            from: "Client".to_string(),
+                            message: self.buffer.clone(),
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
+                    }
+                }
+
+                // Render combined messages
+                for item in &combined_messages {
                     count += 1;
-                    let is_message_from_myself = if item.contains("You"){ true } else { false };
+                    let is_message_from_myself = if item.from.eq("You"){ true } else { false };
     
                     // Messages from the user are right-aligned.
-                    let layout = 
-                        if is_message_from_myself { Layout::top_down(Align::Max)} 
-                        else { Layout::top_down(Align::Min)};
+                    let layout = if is_message_from_myself { 
+                        Layout::top_down(Align::Max)
+                    } else { 
+                        Layout::top_down(Align::Min)
+                    };
     
                     let msg_color = if is_message_from_myself {
                         ui.style().visuals.widgets.inactive.bg_fill
@@ -584,7 +707,7 @@ impl WebSocketClient{
                             .fill(msg_color)
                             .show(ui, |ui| {
                                 ui.set_min_height(fixed_height);  // Set the fixed height for the message box
-                                ui.set_min_width(ui.available_size_before_wrap().x - 15.0);
+                                ui.set_max_width(max_msg_width);
                                 // Use a vertical layout to stack the name and message content
                                 ui.with_layout(Layout::top_down(Align::Min), |ui| 
                                 {
@@ -603,17 +726,15 @@ impl WebSocketClient{
                                         .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
                                         .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
     
-                                    let (from, txt) = if item.contains("You"){
-                                        let text: (&str, &str) = item.split_once("\n").unwrap_or(("", ""));
-                                        let cmd = text.1;
+                                    let (from, txt) = if item.from.eq("You"){
                                         (
                                             RichText::new("Command Sent:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                            RichText::new(cmd).strong().monospace()
+                                            RichText::new(item.message.clone()).strong().monospace()
                                         )
                                     }else {
                                         (
                                             RichText::new("Client Response:").strong().monospace().color(Color32::LIGHT_BLUE),
-                                            RichText::new(item).strong().monospace()
+                                            RichText::new(item.message.clone()).strong().monospace()
                                         )
                                     };
                                     
@@ -626,16 +747,18 @@ impl WebSocketClient{
                                             Button::new(from)
                                                 .fill(Color32::TRANSPARENT)
                                                 .min_size(Vec2::new(30.0, 20.0))
+                                                .frame(false)
                                                 .sense(Sense::hover())
                                                 .ui(ui);
 
                                             ui.add_space(max_msg_width / 1.1);
 
-                                            let btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
-                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                            let copy_btn = Button::new(RichText::new("🗐").weak().color(Color32::LIGHT_RED))
+                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
+                                                .on_hover_text(RichText::new("Copy Command"));
 
-                                            if btn.clicked(){
-                                                ui.ctx().copy_text(item.clone());
+                                            if copy_btn.clicked(){
+                                                ui.ctx().copy_text(item.message.to_string());
                                             }
                                         });
                                     } else {
@@ -646,35 +769,36 @@ impl WebSocketClient{
                                             Button::new(from)
                                                 .fill(Color32::TRANSPARENT)
                                                 .min_size(Vec2::new(30.0, 20.0))
+                                                .frame(false)
                                                 .sense(Sense::hover())
                                                 .ui(ui);
+
                                             ui.add_space(max_msg_width / 1.1);
                                             let btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
                                                 .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
 
                                             if btn.clicked(){
-                                                ui.ctx().copy_text(item.clone());
+                                                ui.ctx().copy_text(item.message.clone());
                                             }
                                         });
                                     }
                                     note_frame.show(ui, |ui| {
-                                        ui.with_layout(Layout::from_main_dir_and_cross_align(
-                                            Direction::TopDown,
-                                            Align::Center,
-                                        ), |ui| {
                                             ui.set_width(ui.available_width());
-                                            let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
+                                            let style = ui.style_mut();
+                                            style.visuals.widgets.inactive.rounding = Rounding::same(2.0);
+                                            let mut layouter = |ui: &Ui, string: &str, _: f32| {
                                                 let mut layout_job: eframe::egui::text::LayoutJob =
                                                     highlight(ui.ctx(), ui.style(), &CodeTheme::dark(12.), string, "bash".into()); // || "zsh".into()
-                                                layout_job.wrap.max_width = wrap_width;
+                                                layout_job.wrap.max_width = ui.available_width()/1.1;
                                                 ui.fonts(|f| f.layout_job(layout_job))
                                             };
+
                                             TextEdit::singleline(&mut txt.text())
-                                                .id_salt(format!("TextEdit-{:?}-{:?}-{:?}", self.client.client_hash, count, item.clone()))
+                                                .id_salt(format!("TextEdit-{:?}-{:?}-{:?}", self.client.client_hash, count, item.message.clone()))
+                                                .frame(false)
                                                 .layouter(&mut layouter)
-                                                .min_size(Vec2::new(ui.available_size_before_wrap().x / 1.1, 30.))
+                                                .min_size(Vec2::new(ui.available_width(), 30.))
                                                 .ui(ui);
-                                        });
                                     });
                             });
                         })
@@ -684,7 +808,7 @@ impl WebSocketClient{
                             let top = response.rect.left_top() + Vec2::splat(margin);
                             let arrow_rect =
                                 Rect::from_two_pos(top, top + Vec2::new(-rounding, rounding));
-    
+
                             vec![
                                 arrow_rect.left_top(),
                                 arrow_rect.right_top(),
@@ -694,88 +818,52 @@ impl WebSocketClient{
                             let top = response.rect.right_top() + Vec2::new(-margin, margin);
                             let arrow_rect =
                                 Rect::from_two_pos(top, top + Vec2::new(rounding, rounding));
-    
+
                             vec![
                                 arrow_rect.left_top(),
                                 arrow_rect.right_top(),
                                 arrow_rect.left_bottom(),
                             ]
                         };
-    
+
                         ui.painter()
                             .add(Shape::convex_polygon(points, msg_color, Stroke::NONE));
-    
                     });
                 };
-            });
-            // ui.add_space(avail_size.y);
-            ui.vertical_centered_justified(|ui: &mut eframe::egui::Ui| {
-                let mut theme = CodeTheme::from_memory(ui.ctx(), ui.style());
-                ui.collapsing(format!("Theme-{:?}", self.client.client_hash), |ui| {
-                    ui.group(|ui| {
-                        theme.ui(ui);
-                        theme.clone().store_in_memory(ui.ctx());
-                    });
-                });
-                
-                let mut layouter = |ui: &Ui, string: &str, wrap_width: f32| {
-                    let mut layout_job =
-                        highlight(ui.ctx(), ui.style(), &theme, string, "bash".into()); // || "zsh".into()
-                    layout_job.wrap.max_width = wrap_width;
-                    ui.fonts(|f| f.layout_job(layout_job))
-                };
-                let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY").layouter(&mut layouter).ui(ui);
-                let key_press = ui.input(|i| i.key_pressed(Key::Enter));
-                let up_press = ui.input(|i| i.key_pressed(Key::ArrowUp));
-                let down_press = ui.input(|i| i.key_pressed(Key::ArrowDown));
-                let copy_key = ui.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::CTRL, Key::C)));
 
-                if copy_key && text_edit.has_focus() {
-                    self.input.clear();
-                }
-
-                if down_press {
-                    if self.history_idx <= self.my_history.len() {
-                        self.history_idx += 1;
+                // After rendering, process the buffer
+                if self.buffer.ends_with("DONE") {
+                    if let Some(last) = self.history.last_mut() {
+                        if last.from == "Client" {
+                            last.message.push_str(&self.buffer);
+                        } else {
+                            self.history.push(History {
+                                from: "Client".to_string(),
+                                message: self.buffer.clone(),
+                                timestamp: chrono::Local::now().to_rfc3339(),
+                            });
+                        }
+                    } else {
+                        self.history.push(History {
+                            from: "Client".to_string(),
+                            message: self.buffer.clone(),
+                            timestamp: chrono::Local::now().to_rfc3339(),
+                        });
                     }
-                    if let Some(history) = self.my_history.get(self.history_idx){
-                        self.input = history.clone();
-                    }
-                } 
-                if up_press {
-                    if self.history_idx > 0 {
-                        self.history_idx -= 1;
-                    }
-                    if let Some(history) = self.my_history.get(self.history_idx){
-                        self.input = history.clone();
-                    }
-                }
-
-                if text_edit.lost_focus() && key_press && !self.interactive{
-                    self.loading = true;
-                    text_edit.request_focus();
-                    self.history.push(format!("You\n{}", self.input.clone()));
-                    self.my_history.push(self.input.clone());
-                    self.ws_sender.send(WsMessage::Text(std::mem::take(&mut self.input)));
-                } else if text_edit.lost_focus() && key_press && self.interactive { 
-                    text_edit.request_focus();
-                    self.history.push(format!("You\n{}", self.input.clone()));
-                    self.my_history.push(self.input.clone());
-                    match serialize(&Cmd::InteractiveInput(std::mem::take(&mut self.input))){
-                        Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
-                        Err(e) => self.history.push(e.to_string()),
-                    } 
+                    self.buffer.clear();
                 }
             });
         });
 
     }
+
 }
+
 
 impl ClientHandler for ConnectedClient {
     fn connect(&mut self) { }
 
-    fn export_logs(&mut self, history: Vec<String>) {
+    fn export_logs(&mut self, history: Vec<History>) {
         let id = self.id.clone();
         spawn_local(async move {
             DATABASE.set("id", id).await.unwrap();

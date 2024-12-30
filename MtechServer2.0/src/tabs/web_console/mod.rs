@@ -1,5 +1,5 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, Color32, ComboBox, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
-use displays::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastKind, ToastOptions, Toasts}, virtual_filesystem::FileSystem, FilterClients, SortDirection};
+use displays::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, SortDirection};
 use database::schema::{ConnectedClient, utilities::get_connected_clients};
 use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
@@ -44,30 +44,28 @@ pub struct WebConsoleLayout {
     /// The undock button was clicked for a ConnectedClient
     pub wants_to_undock: bool,
     #[serde(skip)]
-    pub toasts: Toasts,
-    #[serde(skip)]
     pub filesystem: FileSystem,
     #[serde(skip)]
-    pub ws_clients: HashMap<String, WebSocketClient>
+    pub ws_clients: HashMap<String, WebSocketClient>,
+    pub error: String,
 }
 
 impl WebConsoleLayout {
-    pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>, filesystem: FileSystem) -> Self 
-    {
+    pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>, filesystem: FileSystem) -> Self {
         let ui_actions_channel = ClientUiAction::create_unbounded_channel();
         Self {  
             client_map,
-            search_inputs: HashMap::new(), 
+            search_inputs: Default::default(), 
             open_menu: false,
-            sort_by: HashMap::new(),
-            last_sort_field: None,
+            sort_by: Default::default(),
+            last_sort_field: Default::default(),
             loading: false,
-            undock_client: HashMap::new(),
+            undock_client: Default::default(),
             wants_to_undock: false,
-            toasts: Toasts::new(),
             filesystem,
-            ws_clients: HashMap::new(),
-            ui_actions_channel
+            ws_clients: Default::default(),
+            ui_actions_channel,
+            error: Default::default()
         }
     }
 
@@ -98,6 +96,7 @@ impl WebConsoleLayout {
                     {
                         ws_client.ws_sender.close();
                     }
+                    self.error = format!("WebConsole -> Client {} Deleted", client.connection_string.clone());
                 },
                 ClientUiAction::ConnectClient(mut client) => {
                     let url = format!(
@@ -105,12 +104,8 @@ impl WebConsoleLayout {
                         client.connection_string.clone()
                     );
                     match ewebsock::connect(&url, Default::default()) {
-                        Ok((mut ws_sender, ws_receiver)) => {
+                        Ok((ws_sender, ws_receiver)) => {
                             client.connected = true;
-
-                            ws_sender.send(ewebsock::WsMessage::Text(
-                                "Server Connected".to_string(),
-                            ));
 
                             let ws_client = WebSocketClient::new(
                                 ws_sender,
@@ -122,20 +117,13 @@ impl WebConsoleLayout {
                             self.ws_clients
                                 .entry(client.connection_string.clone())
                                 .or_insert(ws_client);
+
+                            self.error = format!("WebConsole -> Connected to server");
                         }
                         Err(error) => {
                             client.connected = false;
-                            info!("Failed to connect to {:?}: {}", &url, error);
-                            let toast = &mut self.toasts;
-
-                            let error_toast = Toast {
-                                kind: ToastKind::Error,
-                                text: format!("{error:?}").into(),
-                                options: ToastOptions::default()
-                                    .show_progress(true)
-                                    .duration_in_seconds(6.0),
-                            };
-                            toast.add(error_toast);
+                            info!("Failed to connect to {:?}: {}", &url, error.clone());
+                            self.error = format!("WebConsole Error -> {error}");
                         }
                     };
                 },
@@ -544,30 +532,35 @@ impl MtechServerContext {
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 4.0);
 
         TopBottomPanel::top("Client_Top_panel").frame(side_panel_frame)
-        .show_separator_line(false)
-        .show_animated_inside(ui, true, |ui |{
+            .show_separator_line(false)
+            .show_animated_inside(ui, true, |ui |
+        {
             ui.vertical_centered(|ui |{
                 if Button::new("Refresh").min_size(Vec2::new(50.0, 15.0)).ui(ui).clicked()
                 {
                     let tx = self.shared_ctx.connected_clients_tx.clone();
                     spawn_local(async move {
-                        get_connected_clients(tx).await.unwrap();
+                        match get_connected_clients(tx).await {
+                            Ok(_) => info!("web_console/mod.rs -> get_connected_clients ran ok"),
+                            Err(e) => log::warn!("web_console/mod.rs -> get_connected_clients error: {e:?}"),
+                        }
                     });
-                    
                 }
             });
         });
 
-        if !self.error.is_empty() {
-            TopBottomPanel::bottom("error").show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Error:");
-                    ui.colored_label(Color32::RED, &self.error);
-                });
+        if !self.web_console_layout.error.is_empty() {
+            let options = ToastOptions::default();
+            options.duration(Some(web_time::Duration::from_secs(3)));
+
+            self.shared_ctx.toasts.add(Toast {
+                kind: displays::ui_tools::toasts::ToastKind::Error,
+                text: self.web_console_layout.error.clone().into(),
+                options,
             });
+            self.web_console_layout.error.clear();
         }
         
- 
         self.web_console_layout.layout_cols(ui);
     }
 }

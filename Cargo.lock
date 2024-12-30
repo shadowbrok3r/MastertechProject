@@ -5314,6 +5314,7 @@ dependencies = [
  "gloo-worker",
  "image 0.25.5",
  "js-sys",
+ "lazy_static",
  "log",
  "regex",
  "reqwest",
