@@ -239,7 +239,13 @@ impl WebConsoleFrontend {
                             let text = txt.clone();
                             // let process = Arc::clone(&self.process);
                             spawn(async move {
-                                let _ = handle_command_payload(text.clone(), tx.clone()).await;
+                                let input_tx: std::result::Result<tokio::sync::mpsc::Sender<String>, Error>  = handle_command_payload(text.clone(), tx.clone()).await;
+                                match input_tx {
+                                    Ok(tx) => {
+
+                                    },
+                                    Err(e) => log::warn!("Error with command payload: {e:?}"),
+                                }
                                 // process_command(text.clone(), tx.clone(), process).await;
                             });
                         },
@@ -626,10 +632,12 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) -> Result<()
     Ok(())
 }
 
-async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) -> Result<ChildStdin, Error>  { 
+async fn handle_command_payload(string_payload: String, tx: Sender<Vec<u8>>) -> Result<tokio::sync::mpsc::Sender<String>, Error>  { 
     // #[cfg(target_os="windows")]{ return handle_windows_cmd(string_payload, tx.clone()).await?; }
-    if cfg!(target_os="windows") { Ok(handle_windows_cmd(string_payload, tx.clone()).await?) }
-    else { Ok(handle_linux_cmd(string_payload, tx.clone()).await?) }
+    if cfg!(target_os="windows") { 
+        let _ = handle_windows_cmd(string_payload.clone(), tx.clone()).await?;
+    }
+    Ok(handle_linux_cmd(string_payload, tx.clone()).await?)
 }
 
 async fn handle_windows_cmd(command_payload: String, tx: Sender<Vec<u8>>) -> Result<ChildStdin, Error> {
