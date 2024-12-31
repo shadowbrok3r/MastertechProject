@@ -8,6 +8,7 @@ use surrealdb::RecordId;
 use egui_extras::Strip;
 use std::fmt::Debug;
 
+pub mod code_editor;
 pub mod channel_manager;
 pub mod egui_data_table;
 pub mod markdown_editor;

@@ -531,6 +531,7 @@ impl WebSocketClient{
             let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
             let style = ui.style_mut();
             style.visuals.widgets.inactive.rounding = Rounding::same(2.0);
+            style.visuals.widgets.active.rounding = Rounding::same(2.0);
             let mut layouter = |ui: &Ui, string: &str, _: f32| {
                 let mut layout_job =
                     highlight(ui.ctx(), &ui.style(), &theme, string, "bash".into()); // || "zsh".into()
@@ -632,7 +633,7 @@ impl WebSocketClient{
                 .id_salt(id)
                 .animated(true)
                 .max_width(f32::INFINITY)
-                .max_height(400.)
+                // .max_height(400.)
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| 

@@ -276,11 +276,20 @@ impl FileSystem {
 
         TopBottomPanel::top("FileBrowserTop")
             .frame(top_panel_frame)
-            .show_separator_line(false)
+            // .show_separator_line(false)
             .exact_height(35.)
             .show_inside(ui, |ui| 
         {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.with_layout(Layout::left_to_right(eframe::egui::Align::Center), |ui| {
+                let pre_modified_path = self.current_prefix.clone();
+                let response = TextEdit::singleline(&mut self.current_prefix)
+                .desired_width(ui.available_width()/1.2)
+                .ui(ui);
+
+                if response.lost_focus() || ui.input(|i| i.key_pressed(Key::Enter)) {
+                    info!("Lost focus on self.current_prefix TextEdit: {pre_modified_path} // curr {}", self.current_prefix);
+                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::EnterDirectory(self.current_prefix.clone()));
+                }
                 let force_refresh = ui.button("⟲").on_hover_text("Refresh Current Directory Contents");
                 if force_refresh.clicked() {
                     let _ = self.fs_actions_channel.0.try_send(FileSystemAction::RequestNewContents(self.current_prefix.clone()));
@@ -296,17 +305,6 @@ impl FileSystem {
                 if parent_res.clicked() {
                     let navigate_up = self.navigate_up();
                     info!("Navigating up: {navigate_up:?}");
-                }
-            });
-            ui.with_layout(Layout::left_to_right(eframe::egui::Align::Center), |ui| {
-                let pre_modified_path = self.current_prefix.clone();
-                let response = TextEdit::singleline(&mut self.current_prefix)
-                .desired_width(ui.available_width()/1.2)
-                .ui(ui);
-
-                if response.lost_focus() || ui.input(|i| i.key_pressed(Key::Enter)) {
-                    info!("Lost focus on self.current_prefix TextEdit: {pre_modified_path} // curr {}", self.current_prefix);
-                    let _ = self.fs_actions_channel.0.try_send(FileSystemAction::EnterDirectory(self.current_prefix.clone()));
                 }
             });
         });
