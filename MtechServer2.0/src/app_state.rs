@@ -153,14 +153,19 @@ impl MtechServer {
         let data_update = std::rc::Rc::new(std::cell::Cell::new(None));
         let sender = data_update.clone();
         let ctx = cc.egui_ctx.clone();
+
         let bridge = <crate::webworker::WebWorker as gloo_worker::Spawnable>::spawner()
             .callback(move |response| {
                 sender.set(Some(response.tasks));
                 ctx.request_repaint();
             })
             .spawn("./webworker.js");
+
         let shared_ctx = SharedContext::new(cc);
         let file_system = shared_ctx.filesystem.clone();
+        let mut web_console_layout = WebConsoleLayout::new(BTreeMap::new());
+        web_console_layout.set_filesystem(file_system.clone());
+        
         let context = MtechServerContext {
             shared_ctx,
             first_run: true,
@@ -201,8 +206,7 @@ impl MtechServer {
             get_settings: true,
 
             refresh: false,
-            web_console_layout: WebConsoleLayout::new(BTreeMap::new(), file_system),
-            
+            web_console_layout,
         };
 
         Self {
