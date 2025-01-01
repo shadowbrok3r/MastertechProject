@@ -60,7 +60,9 @@ pub struct WebConsoleLayout {
     #[serde(skip)]
     pub ws_clients: HashMap<String, WebSocketClient>,
     pub error: String,
-    pub code: String
+    pub code: String,
+    pub script_name: String,
+    pub open_save_modal: bool,
 }
 
 impl WebConsoleLayout {
@@ -95,7 +97,9 @@ impl WebConsoleLayout {
             ui_actions_channel,
             error: Default::default(),
             state: Default::default(),
-            code: String::new(),
+            code: Default::default(),
+            script_name: Default::default(),
+            open_save_modal: false,
         }
     }
 
@@ -181,8 +185,8 @@ impl WebConsoleLayout {
 
         match self.state {
             WebConsolePageState::ConnectedClients => {
-                let column_width = Size::exact(ui.available_width()/2.0);
-                let x: f32 = ui.available_height() / 1.1;
+                // let column_width = Size::exact(ui.available_width()/2.0);
+                // let x: f32 = ui.available_height() / 1.1;
             },
             WebConsolePageState::DisconnectedClients => {
 
@@ -196,8 +200,9 @@ impl WebConsoleLayout {
                         if Button::new("Save Script")
                             .min_size(button_size)
                             .ui(ui)
-                            .clicked() {
-
+                            .clicked() 
+                        {
+                            self.open_save_modal = true;
                         }
                         ui.add_space(5.);
                         if Button::new("New +")
@@ -205,6 +210,24 @@ impl WebConsoleLayout {
                             .ui(ui)
                             .clicked() {
                             
+                        }
+
+                        if self.open_save_modal {
+                            eframe::egui::Modal::new(Id::new("Upload Script"))
+                            .show(ui.ctx(), |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label("Script Name");
+                                    
+                                    let res = TextEdit::singleline(&mut self.script_name).ui(ui);
+                                    if res.lost_focus() && self.script_name.len() > 0 {
+                                        self.filesystem.upload_script(
+                                            self.script_name.clone(), 
+                                            self.code.clone()
+                                        );
+                                        self.open_save_modal = false;
+                                    }
+                                });
+                            });
                         }
                     });
                 });
@@ -333,7 +356,6 @@ impl WebConsoleLayout {
                             {
 
                             });
-
                         });
                         
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| 
@@ -445,7 +467,7 @@ impl WebConsoleLayout {
                         // } else {
                         //     400.
                         // };
-                        let row_height = 50.;
+                        let row_height = 35.;
                         let total_rows = clients.len(); 
                         let scroll_area = ScrollArea::vertical().auto_shrink(false);
                         ui.ctx().options_mut(|o| o.line_scroll_speed = 30.0);

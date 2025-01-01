@@ -89,7 +89,8 @@ pub struct WebSocketClient {
     helper_delegate: WebSocketHelperDelegate,
     /// Accumulates fragments of messages
     buffer: String,     
-    my_history: Vec<History>       
+    my_history: Vec<History>,
+    notifications: i32,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
@@ -139,7 +140,8 @@ impl WebSocketClient{
             loading: Default::default(),
             history_idx: Default::default(),
             buffer: Default::default(),
-            my_history: Vec::new()
+            my_history: Default::default(),
+            notifications: Default::default(),
         }
     }
     
@@ -221,26 +223,36 @@ impl WebSocketClient{
                         
                                 // Add to history
                                 self.history.push(history);
+                                self.notifications += 1;
                             }
                         },
                         _ => {}
                     }
                 },
-                WsEvent::Opened => self.history.push(History { 
-                    from: "Client".to_string(), 
-                    message: "Connection Opened".to_string(), 
-                    timestamp:  chrono::Local::now().to_rfc3339()
-                }),
-                WsEvent::Closed => self.history.push(History { 
-                    from: "Client".to_string(), 
-                    message: "Connection Closed".to_string(), 
-                    timestamp:  chrono::Local::now().to_rfc3339()
-                }),
-                WsEvent::Error(e) => self.history.push(History { 
-                    from: "Client".to_string(), 
-                    message: e.to_string(), 
-                    timestamp:  chrono::Local::now().to_rfc3339()
-                }),
+                WsEvent::Opened => {
+                    self.history.push(History { 
+                        from: "Client".to_string(), 
+                        message: "Connection Opened".to_string(), 
+                        timestamp:  chrono::Local::now().to_rfc3339()
+                    });
+                    self.notifications += 1;
+                },
+                WsEvent::Closed => {
+                    self.history.push(History { 
+                        from: "Client".to_string(), 
+                        message: "Connection Closed".to_string(), 
+                        timestamp:  chrono::Local::now().to_rfc3339()
+                    });
+                    self.notifications += 1;
+                },
+                WsEvent::Error(e) => {
+                    self.history.push(History { 
+                        from: "Client".to_string(), 
+                        message: e.to_string(), 
+                        timestamp:  chrono::Local::now().to_rfc3339()
+                    });
+                    self.notifications += 1;
+                },
             }
         }
         
@@ -287,6 +299,7 @@ impl WebSocketClient{
                                     message: "Switching to interactive mode".to_string(), 
                                     timestamp:  chrono::Local::now().to_rfc3339()
                                 });
+                                self.notifications += 1;
                                 let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                             }
                         },
@@ -301,12 +314,16 @@ impl WebSocketClient{
                                 self.explorer.selected_items.borrow_mut().clear();
                                 self.explorer.selected_items.borrow_mut().insert(label.clone());
                             }
+                            self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
                         },
                         FileSystemAction::ExpandDirectory(directory) => self.explorer.expand_folder(&directory),
                         FileSystemAction::NavigateHome => {
                             info!("web_console/websockets.rs -> NavigateHome");
                             // self.explorer.navigation_stack.clear();
                             // self.explorer.current_prefix.clear();
+                        }
+                        _ => {
+                            self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
                         }
                     }
                 }
@@ -332,6 +349,21 @@ impl WebSocketClient{
         self.receive(ui.ctx());
         ui.set_min_height(400.0);
 
+        
+        // TopBottomPanel::top(id)
+        // .exact_height(25.)
+        // .show_inside(ui, |ui| 
+        // {
+        //     ui.vertical(|ui| {
+        //         ui.with_layout(Layout::left_to_right(Align::Center), |ui| { });
+        //         ui.with_layout(Layout::left_to_right(Align::Center), |ui| { });
+        //     });
+        // });
+        // CentralPanel::default()        
+        //     .exact_height(25.)
+        //     .show_inside(ui, |ui| 
+        // { });
+
         StripBuilder::new(ui)
             .size(Size::exact(25.0)) // .sizes(size, strip_count)
             .size(Size::exact(25.0))
@@ -352,6 +384,7 @@ impl WebSocketClient{
                     s.cell(|ui|{
                         if Button::new(RichText::new("Explorer").color(Color32::LIGHT_RED)).ui(ui).clicked(){
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
+                            self.notifications = 0;
                             // if we are already in an interactive mode, then we dont want to quit that session,
                             if !self.interactive {
                                 if self.explorer.current_prefix.is_empty() {
@@ -369,7 +402,16 @@ impl WebSocketClient{
                         }
                     });
                     s.cell(|ui|{
-                        if Button::new(RichText::new("Shell").color(Color32::LIGHT_RED)).ui(ui).clicked(){
+                        let notifs = if let WsDisplayState::Shell = self.state {
+                            format!("Shell")
+                        } else {
+                            if self.notifications > 0 {
+                                format!("Shell   {}", self.notifications)
+                            } else {
+                                format!("Shell")
+                            }
+                        };
+                        if Button::new(RichText::new(notifs).color(Color32::LIGHT_RED)).ui(ui).clicked(){
                             let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                         }
                     });
@@ -584,6 +626,8 @@ impl WebSocketClient{
                     timestamp:  chrono::Local::now().to_rfc3339()
                 });
 
+                self.notifications += 1;
+
                 self.my_history.push(History { 
                     from: "You".to_string(), 
                     message: self.input.clone(), 
@@ -599,6 +643,7 @@ impl WebSocketClient{
                     message: self.input.clone(), 
                     timestamp:  chrono::Local::now().to_rfc3339()
                 });
+                self.notifications += 1;
 
                 self.my_history.push(History { 
                     from: "You".to_string(), 

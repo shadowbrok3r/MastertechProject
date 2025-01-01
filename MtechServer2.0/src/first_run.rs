@@ -15,7 +15,7 @@ use {
 impl MtechServer {
     pub fn first_run(&mut self, frame: &mut Frame) {
         self.context.first_run = false;
-
+        
         if let Some(storage) = frame.storage_mut() {
             // Get existing chats a user has with ChatGPT
             if let Some(chat_history) = storage.get_string("chat_history") {
@@ -99,6 +99,7 @@ impl MtechServer {
                     if let Some(ref usr) = d.1 {
                         self.context.shared_ctx.current_user = Some(usr.clone());
                         self.context.shared_ctx.filesystem.set_user(usr.clone());
+                        self.context.web_console_layout.filesystem.set_user(usr.clone());
                         spawn_local(async move {
                             match DATABASE.health().await {
                                 Ok(_) => info!("Healthy connection"),
