@@ -268,7 +268,6 @@ pub enum Cmd {
     PullTicket(String),
     InteractiveInput(String),
     CheckSeb,
-    CopyTools(String),
     QuitInteractive,
     ReadEvents,
     Quit,
@@ -278,6 +277,9 @@ pub enum Cmd {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FileSystemAction{
     Execute(String),
+    CopyToClient(String),
+    CopyFromClient(String),
+    Delete(String),
     Select((Modifiers, String)),
     EnterDirectory(String),
     ExpandDirectory(String),

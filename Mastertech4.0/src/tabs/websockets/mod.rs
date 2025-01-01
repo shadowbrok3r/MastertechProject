@@ -380,6 +380,24 @@ impl WebConsoleFrontend {
                     info!("websockets -> x: {x:?}");
                 });
             },
+            Cmd::FileSystemAction(FileSystemAction::CopyFromClient(path)) => {
+
+            }
+            Cmd::FileSystemAction(FileSystemAction::CopyToClient(path)) => {
+                
+            }
+            Cmd::FileSystemAction(FileSystemAction::Delete(path)) => {
+                let tx = self.tx.clone();
+                info!("websockets -> deleting: {path:?}");
+                spawn(async move {
+                    let path = Path::new(&path).clone();
+                    let remove_file = tokio::fs::remove_file(path);
+                    match remove_file.await {
+                        Ok(_) => tx.try_send("Removed Path".as_bytes().to_vec()),
+                        Err(e) => tx.try_send(format!("Error removing path: {e:?}").as_bytes().to_vec()),
+                    }
+                });
+            }
             Cmd::InteractiveInput(cmd) => {
                 if cmd.ends_with("tron.bat") {
                     let path = Path::new(&cmd);
@@ -399,9 +417,6 @@ impl WebConsoleFrontend {
                 std::thread::spawn(move || {
                     tx.send(cmd).unwrap();
                 });
-            },
-            Cmd::CopyTools(_tool) => {
-                
             },
             Cmd::ReadEvents => {
                 

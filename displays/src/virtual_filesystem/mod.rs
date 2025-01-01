@@ -1,8 +1,8 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
-use reqwest::{header::{CONTENT_TYPE, ETAG}, Client, Url};
-use crate::{channel_manager::ChannelManager, Spawner, FileSystemAction};
+use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
+use crate::{channel_manager::ChannelManager, code_editor::{CodeEditor, ColorTheme, Syntax}, FileSystemAction, Spawner};
 use crossbeam::channel::{Receiver, Sender};
 use database::schema::{buckets::{list_buckets, normalize_prefix}, Node, User}; // buckets::list_buckets, 
 use futures::{StreamExt, Future};
@@ -72,6 +72,7 @@ impl FileSysHelper for FileSystem {
                     self.selected_items.borrow_mut().clear();
                     self.selected_items.borrow_mut().insert(label.clone());
                 }
+                self.preview_selection(label.clone());
             },
             FileSystemAction::EnterDirectory(directory) => {
                 if cfg!(target_os="linux") && !self.current_prefix.ends_with('/'){
@@ -95,6 +96,10 @@ impl FileSysHelper for FileSystem {
             FileSystemAction::RequestNewContents(folder_prefix) => {
                 let _ = self.request_contents(folder_prefix);
             },
+            FileSystemAction::Delete(file_path) => {
+                self.delete_selection(file_path.clone());
+            },
+            _ => {}
         }
     }
 }
@@ -131,6 +136,8 @@ impl Clone for FileSystem {
             current_prefix: self.current_prefix.clone(),
             navigation_stack: self.navigation_stack.clone(),
             current_action: self.current_action.clone(),
+            file_preview_channel: self.file_preview_channel.clone(),
+            previewed_file: self.previewed_file.clone(),
         }
     }
     
@@ -152,6 +159,7 @@ pub struct FileSystem {
     /// Receive / Send FileSystemAction's from the UI
     pub fs_actions_channel: (Sender<FileSystemAction>, Receiver<FileSystemAction>),
     pub paths_channel: (Sender<Node>, Receiver<Node>),
+    pub file_preview_channel: (Sender<String>, Receiver<String>),
     /// Selected files/folders
     pub selected_items: RefCell<HashSet<String>>,
     /// All of our paths
@@ -171,6 +179,7 @@ pub struct FileSystem {
     pub navigation_stack: Vec<String>,
     pub current_action: Option<FileSystemAction>,
     pub helper_delegate: Option<Box<dyn ClonableFileSysHelper>>,
+    pub previewed_file: Option<String>,
 }
 
 impl FileSystem {
@@ -178,11 +187,13 @@ impl FileSystem {
         let (bytes_tx, bytes_rx) = crossbeam::channel::unbounded();
         let fs_actions_channel = <FileSystemAction>::create_unbounded_channel();
         let paths_channel = <Node>::create_unbounded_channel();
+        let file_preview_channel = <String>::create_unbounded_channel();
 
         Self {
             scroll_id: Id::new(format!("virtual_fs_scrollarea-{}", Uuid::new_v4())),
             bytes_tx, bytes_rx,
             fs_actions_channel,
+            file_preview_channel,
             paths_channel,
             root: Node::Folder(String::new(), HashMap::new()),
             selected_items: RefCell::new(HashSet::new()),
@@ -195,6 +206,7 @@ impl FileSystem {
             navigation_stack: Vec::new(),
             current_action: None,
             helper_delegate: None,
+            previewed_file: Default::default(),
         }
     }
 
@@ -214,6 +226,10 @@ impl FileSystem {
             
             self.current_action = Some(action);
             ctx.request_repaint();
+        }
+
+        if let Ok(file_contents) = self.file_preview_channel.1.try_recv() {
+            self.previewed_file = Some(file_contents);
         }
     }
     
@@ -274,6 +290,7 @@ impl FileSystem {
         
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);
 
+
         TopBottomPanel::top("FileBrowserTop")
             .frame(top_panel_frame)
             // .show_separator_line(false)
@@ -318,6 +335,22 @@ impl FileSystem {
                 )
             );
 
+        if let Some(file) = self.previewed_file.as_mut(){
+            SidePanel::right(Id::new("FileBrowserSidePanel"))
+                .default_width(ui.available_width()/2.0)
+                .show_inside(ui, |ui| {
+                    CodeEditor::default()
+                        .id_source("Script Editor")
+                        .with_rows(48)
+                        .vscroll(true)
+                        .auto_shrink(false)
+                        .with_fontsize(14.0)
+                        .with_theme(ColorTheme::TOKYO_DARK)
+                        .with_syntax(Syntax::powershell())
+                        .with_numlines(true)
+                        .show(ui, file);
+            });
+        }
         ui.add_space(10.0);
 
         CentralPanel::default().frame(panel_frame)
@@ -467,7 +500,8 @@ impl FileSystem {
                         let selectable_label = ui.selectable_label(file_selected, RichText::new(format!("🗋   {}", label)));
 
                         if selectable_label.clicked() {
-                            let _ = tx.try_send(FileSystemAction::Select((modifiers, normalize_prefix(full_path))));
+                            let path = normalize_prefix(full_path);
+                            let _ = tx.try_send(FileSystemAction::Select((modifiers, path.clone())));
                         }
 
                         if selectable_label.secondary_clicked(){
@@ -477,7 +511,7 @@ impl FileSystem {
                         }
 
                         if selectable_label.double_clicked(){
-                            let _ = tx.try_send(FileSystemAction::EnterDirectory(full_path.clone()));
+                            let _ = tx.try_send(FileSystemAction::Execute(full_path.clone()));
                         }
 
                         popup_below_widget(
@@ -491,6 +525,25 @@ impl FileSystem {
                                 ui.set_width(200.0);
                                 if ui.button("Download").clicked(){
                                     self.download_selection(full_path.clone(), label.clone());
+                                }
+
+                                ui.add_space(5.0);
+
+                                if ui.button("Copy To Client").clicked(){
+                                    let _ = tx.try_send(FileSystemAction::CopyToClient(full_path.clone()));
+                                }
+
+                                ui.add_space(5.0);
+
+                                if ui.button("Copy From Client").clicked(){
+                                    let _ = tx.try_send(FileSystemAction::CopyFromClient(full_path.clone()));
+                                }
+
+                                ui.add_space(5.0);
+
+                                if ui.button("Delete File").clicked(){
+                                    info!("Deleting file: {full_path}-{label}");
+                                    let _ = tx.try_send(FileSystemAction::Delete(full_path.clone()));
                                 }
                             }).inner
                         });
@@ -507,7 +560,7 @@ impl FileSystem {
         let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
         let name = self.user.email.clone();
         PlatformSpawner::spawn(async move {
-            let parsed = name.split_once('@').unwrap().0.to_string().clone();
+            let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
             let mut s3_fetcher = S3Fetcher::new(&access_key, &secret_key, &parsed);
             match s3_fetcher.request_bucket_contents(&folder_pref).await {
                 Ok(node) => { let _ = tx.try_send(node); },
@@ -541,7 +594,6 @@ impl FileSystem {
         }
     }
     
-
     /// Merges a new `Node` into the existing file system.
     ///
     /// - **new_node**: The `Node` fetched from `list_directory` to merge.
@@ -573,7 +625,6 @@ impl FileSystem {
         }
     }
     
-
     /// Navigates back to the previous directory.
     ///
     /// Returns `Ok(true)` if navigation was successful, `Ok(false)` if already at root,
@@ -622,9 +673,6 @@ impl FileSystem {
         }
     }
     
-    
-    
-
     /// Retrieves the `Node::Folder` corresponding to `current_prefix`.
     ///
     /// Returns a reference to the folder node if found.
@@ -660,14 +708,14 @@ impl FileSystem {
         let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
         let access_key = self.user.minio_access_key.clone().unwrap_or_default();
         let name = self.user.email.clone();
-        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
 
         PlatformSpawner::spawn(async move {
             let result = Self::perform_upload(
                 &parsed.clone(),
                 &access_key.clone(),
                 &secret_key.clone(),
-                &path.clone(),
+                path.clone(),
                 task
             ).await;
 
@@ -681,7 +729,7 @@ impl FileSystem {
         let _secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
         let _access_key = self.user.minio_access_key.clone().unwrap_or_default();
         let name = self.user.email.clone();
-        let _parsed = name.split_once('@').unwrap().0.to_string().clone();
+        let _parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         // tokio::spawn(async move {
         //     let result = Self::perform_upload(
         //         &name.clone(),
@@ -700,7 +748,7 @@ impl FileSystem {
         let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
         let access_key = self.user.minio_access_key.clone().unwrap_or_default();
         let name = self.user.email.to_lowercase().clone();
-        let parsed = name.split_once('@').unwrap().0.to_string().clone();
+        let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
         PlatformSpawner::spawn(async move {
             let result = Self::perform_download(
                 &parsed.clone(),
@@ -716,33 +764,78 @@ impl FileSystem {
         });
     }
 
-    // fn delete_selection(&self, path: String, filename: String) {
-        // let tx = self.bytes_tx.clone();
-        // let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
-        // let access_key = self.user.minio_access_key.clone().unwrap_or_default();
-        // PlatformSpawner::spawn(async move {
-        //     let name = self.user.email;
-        //     let region = "us-west";
-        //     let bucket = Bucket::new(
-        //         STORAGE_URL.to_string().parse::<Url>().unwrap(), 
-        //         rusty_s3::UrlStyle::Path, name, region
-        //     )
-        //     .expect("Url has a valid scheme and host");
-        //     let credentials = Credentials::new(access_key, secret_key);  
-        //     let mut action = GetObject::new(&bucket, Some(&credentials), &path);
-        //     action
-        //         .query_mut()
-        //         .insert("response-cache-control", "no-cache, no-store");
-        //     let signed_url = action.sign(ONE_HOUR);
-        //     let client = Client::new();
-        // });
-    // }
+    fn preview_selection(&self, path: String) {
+        let tx = self.bytes_tx.clone();
+        let preview_tx = self.file_preview_channel.0.clone();
+        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
+        let name = self.user.email.to_lowercase().clone();
+        let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
+
+        PlatformSpawner::spawn(async move {
+            let result = Self::preview_file(
+                tx.clone(),
+                &parsed.clone(),
+                &access_key,
+                &secret_key,
+                &path
+            ).await;
+
+            match result {
+                Ok(file) => { let _ = preview_tx.try_send(file); },
+                Err(e) => log::warn!("Error getting file to preview: {e:?}"),
+            }
+        });
+    }
+
+    fn delete_selection(&self, path: String) {
+        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
+        let name = self.user.email.clone();
+        let parsed = name.split_once('@').unwrap_or_default().0.to_string();
+    
+        PlatformSpawner::spawn(async move {
+            let region = "us-west";
+            let bucket = Bucket::new(
+                STORAGE_URL.to_string().parse::<Url>().unwrap(), 
+                rusty_s3::UrlStyle::Path, 
+                parsed, 
+                region,
+            )
+            .expect("Url has a valid scheme and host");
+    
+            let credentials = Credentials::new(access_key, secret_key);
+    
+            // Create the DeleteObject action
+            let action = rusty_s3::actions::DeleteObject::new(
+                &bucket, 
+                Some(&credentials), 
+                &path
+            );
+            let signed_url = action.sign(ONE_HOUR);
+    
+            let client = Client::new();
+            match client.delete(signed_url).send().await {
+                Ok(response) if response.status().is_success() => {
+                    info!("File '{path}' successfully deleted.");
+                }
+                Ok(response) => {
+                    log::warn!(
+                        "Failed to delete file '{}': {}",
+                        path,
+                        response.status()
+                    );
+                }
+                Err(err) => {log::warn!("Error deleting '{path}': {}", err);}
+            }
+        });
+    }
 
     async fn perform_upload(
         name: &String, 
         access_key: &String, 
         secret_key: &String, 
-        path: &String,
+        mut path: String,
         task: impl Future<Output = Option<Vec<FileHandle>>>
     ) -> Result<(), Error> {
 
@@ -758,9 +851,12 @@ impl FileSystem {
             STORAGE_URL.to_string().parse::<Url>()?, 
             rusty_s3::UrlStyle::Path, name, region
         )?;
-
+        if !path.ends_with('/') {
+            path.push_str("/");
+        }
         for file_handle in files {
-            file_name = format!("{path}/{}", file_handle.file_name());
+
+            file_name = format!("{path}{}", file_handle.file_name());
             bytes = Bytes::copy_from_slice(file_handle.read().await.as_slice());
         }
 
@@ -821,7 +917,184 @@ impl FileSystem {
         info!("it worked! {body}");
         Ok(())
     }
+
+    pub fn upload_script(&self, file_name: String, script_contents: String) {
+        let secret_key = self.user.minio_secret_key.clone().unwrap_or_default();
+        let access_key = self.user.minio_access_key.clone().unwrap_or_default();
+        let name = self.user.email.clone();
+        let parsed = name.split_once('@').unwrap_or_default().0.to_string().clone();
+        let bytes = Bytes::copy_from_slice(script_contents.as_bytes());
+
+        PlatformSpawner::spawn(async move {
+            let result = Self::perform_upload_script(
+                &parsed.clone(),
+                &access_key.clone(),
+                &secret_key.clone(),
+                bytes,
+                &file_name.clone(),
+            ).await;
+
+            info!("Result: {result:?}");
+        });
+    }
+
+    pub async fn perform_upload_script(
+        name: &String, 
+        access_key: &String, 
+        secret_key: &String,
+        bytes: Bytes,
+        file_name: &String
+    ) -> Result<(), Error> {
+        let path = format!("Scripts/{file_name}.ps1");
+        let name = name.clone();
+        let region = "us-west";
+        let client = Client::new();
+        let credentials = Credentials::new(access_key, secret_key);
+
+        let bucket = Bucket::new(
+            STORAGE_URL.to_string().parse::<Url>()?, 
+            rusty_s3::UrlStyle::Path, name, region
+        )?;
+
+        // Step 1: Create the "folder" if it doesn't exist
+        let folder_path = "Scripts/"; // The "folder" key in S3
+        let create_folder_action = rusty_s3::actions::PutObject::new(&bucket, Some(&credentials), folder_path);
+        let create_folder_url = create_folder_action.sign(ONE_HOUR);
+
+        let folder_response = client
+            .put(create_folder_url)
+            .header(CONTENT_LENGTH, 0) // Empty object for the folder
+            .send()
+            .await?;
+
+        if !folder_response.status().is_success() {
+            return Err(anyhow::anyhow!(format!(
+                "Failed to create folder '{}': {}",
+                folder_path,
+                folder_response.status()
+            )));
+        }
+
+        info!("Folder '{}' ensured in the bucket.", folder_path);
+
+        let action = CreateMultipartUpload::new(&bucket, Some(&credentials), &path);
+        let url = action.sign(ONE_HOUR);
+        let resp = client.post(url).send().await?.error_for_status()?;
+        let body = resp.text().await?;
+        let multipart = CreateMultipartUpload::parse_response(&body)?;
     
+        info!(
+            "multipart upload created - upload id: {}",
+            multipart.upload_id()
+        );
+    
+        let part_upload = UploadPart::new(
+            &bucket,
+            Some(&credentials),
+            &path,
+            1,
+            multipart.upload_id(),
+        );
+
+        let url = part_upload.sign(ONE_HOUR);
+
+        let resp = client
+            .put(url)
+            .body(bytes)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let etag = resp
+            .headers()
+            .get(ETAG)
+            .expect("every UploadPart request returns an Etag");
+    
+        info!("etag: {}", etag.to_str()?);
+    
+        let action = CompleteMultipartUpload::new(
+            &bucket,
+            Some(&credentials),
+            &path,
+            multipart.upload_id(),
+            iter::once(etag.to_str()?),
+        );
+        let url = action.sign(ONE_HOUR);
+    
+        let resp = client
+            .post(url)
+            .body(action.body())
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let body = resp.text().await?;
+
+        info!("it worked! {body}");
+        Ok(())
+    }
+    
+    async fn preview_file(
+        tx: Sender<(Vec<u8>, u64)>, // Sender for progress reporting
+        name: &String, 
+        access_key: &String, 
+        secret_key: &String, 
+        path: &String,
+    ) -> Result<String, Error> { // Return the downloaded content as a String
+        let name = name.clone();
+        let region = "us-west";
+        let bucket = Bucket::new(
+            STORAGE_URL.to_string().parse::<Url>()?, 
+            rusty_s3::UrlStyle::Path, 
+            name, 
+            region,
+        )?;
+    
+        let credentials = Credentials::new(access_key, secret_key);
+    
+        // Create the GET request action
+        let mut action = GetObject::new(&bucket, Some(&credentials), &path);
+        action.query_mut().insert("response-cache-control", "no-cache, no-store");
+        let signed_url = action.sign(ONE_HOUR);
+    
+        let client = Client::new();
+        let mime = from_path(path).first_or_octet_stream();
+        let resp = client.get(signed_url).header(CONTENT_TYPE, mime.essence_str()).send().await?;
+        let content_length = resp.content_length().unwrap_or(0);
+    
+        let mut downloaded_bytes: u64 = 0;
+        let mut byte_stream = resp.bytes_stream();
+        let mut byte_vec = Vec::new(); // Collect all bytes here
+    
+        info!("Content length: {content_length}");
+    
+        // Process the byte stream
+        while let Some(item) = byte_stream.next().await {
+            let chunk = item?;
+            downloaded_bytes += chunk.len() as u64;
+    
+            // Push the chunk into the vector
+            byte_vec.extend_from_slice(&chunk);
+    
+            // Report progress via the Sender
+            let _ = tx.try_send((chunk.to_vec(), content_length));
+        }
+    
+        if downloaded_bytes == content_length {
+            info!("Downloaded: {downloaded_bytes}");
+    
+            // Attempt to convert the bytes into a UTF-8 string
+            let content = String::from_utf8(byte_vec.clone()).map_err(|e| {
+                anyhow::anyhow!(format!("Failed to decode bytes as UTF-8: {}", e))
+            })?;
+    
+            // Return the content as a String
+            return Ok(content);
+        }
+    
+        Err(anyhow::anyhow!("Downloaded bytes do not match content length"))
+    }
+
     // #[cfg(target_arch="wasm32")]
     async fn perform_download(
         name: &String, 
