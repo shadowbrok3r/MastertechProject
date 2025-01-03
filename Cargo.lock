@@ -36,6 +36,7 @@ dependencies = [
  "egui_extras",
  "egui_file",
  "egui_json_tree",
+ "egui_plot",
  "embed-resource",
  "evtx",
  "ewebsock",
@@ -2345,7 +2346,7 @@ dependencies = [
  "once_cell",
  "regex",
  "reqwest",
- "rusty-s3",
+ "rusty-s3 0.5.0",
  "serde",
  "serde_json",
  "structdiff",
@@ -2550,7 +2551,7 @@ dependencies = [
  "reqwest",
  "rfd",
  "rpc-router",
- "rusty-s3",
+ "rusty-s3 0.5.0",
  "schemars",
  "serde",
  "serde_json",
@@ -5319,7 +5320,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rfd",
- "rusty-s3",
+ "rusty-s3 0.7.0",
  "serde",
  "serde_json",
  "structdiff",
@@ -7603,6 +7604,25 @@ dependencies = [
  "md-5",
  "percent-encoding",
  "quick-xml 0.30.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "time",
+ "url",
+ "zeroize",
+]
+
+[[package]]
+name = "rusty-s3"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f51a5a6b15f25d3e10c068039ee13befb6110fcb36c2b26317bcbdc23484d96"
+dependencies = [
+ "base64 0.22.1",
+ "hmac",
+ "md-5",
+ "percent-encoding",
+ "quick-xml 0.37.2",
  "serde",
  "serde_json",
  "sha2",

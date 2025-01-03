@@ -15,33 +15,6 @@ inline = []
 # compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"] cpu_fix = []
 
 [dependencies]
-database = { workspace=true }
-surrealdb = { workspace=true }
-tokio = { workspace=true }
-serde_json = { workspace=true }
-serde = { workspace=true }
-log  = { workspace=true }
-bytes = { workspace=true }
-egui_extras = { workspace=true }
-egui_dock = { workspace=true }
-anyhow = { workspace=true }
-ratframe = { workspace=true }
-crossbeam = { workspace=true }
-futures = { workspace=true }
-structdiff = { workspace=true }
-fuzzy-matcher = { workspace=true }
-uuid = { workspace=true }
-bincode = { workspace=true }
-rfd = { workspace=true }
-regex = { workspace=true }
-chrono = { workspace=true }
-simplelog = { workspace=true }
-async-trait = { workspace=true }
-once_cell = { workspace=true }
-egui_json_tree = { workspace = true }
-brotli = { workspace=true }
-base64 = { workspace=true }
-
 eframe = { version="0.30", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false, optional = true}
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
@@ -76,6 +49,35 @@ hex = "0.4.3"
 ring = "0.17.8"
 rust-s3 = "0.35"
 semver = "1.0.23"
+
+database = { workspace=true }
+surrealdb = { workspace=true }
+tokio = { workspace=true }
+serde_json = { workspace=true }
+serde = { workspace=true }
+log  = { workspace=true }
+bytes = { workspace=true }
+egui_extras = { workspace=true }
+egui_dock = { workspace=true }
+anyhow = { workspace=true }
+ratframe = { workspace=true }
+crossbeam = { workspace=true }
+futures = { workspace=true }
+structdiff = { workspace=true }
+fuzzy-matcher = { workspace=true }
+uuid = { workspace=true }
+bincode = { workspace=true }
+rfd = { workspace=true }
+regex = { workspace=true }
+chrono = { workspace=true }
+simplelog = { workspace=true }
+async-trait = { workspace=true }
+once_cell = { workspace=true }
+egui_json_tree = { workspace = true }
+brotli = { workspace=true }
+base64 = { workspace=true }
+egui_plot = { workspace = true }
+
 # egui_tracing = "0.2.2"
 
 
