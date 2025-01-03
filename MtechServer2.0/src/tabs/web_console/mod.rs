@@ -30,10 +30,10 @@ pub enum ClientUiAction {
 
 #[derive(Serialize, Default)]
 pub enum WebConsolePageState {
+    #[default]
     ConnectedClients,
     DisconnectedClients,
     ScriptEditor,
-    #[default]
     AllClients
 }
 
@@ -193,9 +193,7 @@ impl WebConsoleLayout {
                 {
                     // let mut connected_clients = Vec::new();
                     // let mut disconnected_clients = Vec::new();
-                    self.client_map.iter().filter(|(name, _)| {
-                        *name == "Connected"
-                    });
+                    self.client_map.retain(|name, _| name == "Connected");
 
                     StripBuilder::new(ui)
                         .cell_layout(Layout::top_down_justified(Align::Center))
@@ -232,9 +230,7 @@ impl WebConsoleLayout {
                 {
                     // let mut connected_clients = Vec::new();
                     // let mut disconnected_clients = Vec::new();
-                    self.client_map.iter().filter(|(name, _)| {
-                        *name == "Disconnected"
-                    });
+                    self.client_map.retain(|name, _| name == "Disconnected");
 
                     StripBuilder::new(ui)
                         .cell_layout(Layout::top_down_justified(Align::Center))
@@ -744,28 +740,35 @@ impl MtechServerContext {
                 if Button::new("All Clients")
                     .min_size(button_size)
                     .ui(ui)
-                    .clicked() {
+                    .clicked() 
+                {
+                    self.refresh_client_list();
                     self.web_console_layout.state = WebConsolePageState::AllClients;
                 }
                 ui.add_space(5.);
                 if Button::new("Connected Clients")
                     .min_size(button_size)
                     .ui(ui)
-                    .clicked() {
+                    .clicked()
+                {
+                    self.refresh_client_list();
                     self.web_console_layout.state = WebConsolePageState::ConnectedClients;
                 }
                 ui.add_space(5.);
                 if Button::new("Disconnected Clients")
                     .min_size(button_size)
                     .ui(ui)
-                    .clicked() {
+                    .clicked() 
+                {
+                    self.refresh_client_list();
                     self.web_console_layout.state = WebConsolePageState::DisconnectedClients;
                 }
                 ui.add_space(5.);
                 if Button::new("Script Editor")
                     .min_size(button_size)
                     .ui(ui)
-                    .clicked() {
+                    .clicked() 
+                {
                     self.web_console_layout.state = WebConsolePageState::ScriptEditor;
                 }
                 ui.add_space(ui.available_width()/1.1);
@@ -773,13 +776,7 @@ impl MtechServerContext {
                     .min_size(button_size)
                     .ui(ui)
                     .clicked() {
-                    let tx = self.shared_ctx.connected_clients_tx.clone();
-                    spawn_local(async move {
-                        match get_connected_clients(tx).await {
-                            Ok(_) => info!("web_console/mod.rs -> get_connected_clients ran ok"),
-                            Err(e) => log::warn!("web_console/mod.rs -> get_connected_clients error: {e:?}"),
-                        }
-                    });
+                    self.refresh_client_list();
                 }
             });
         });
@@ -797,6 +794,16 @@ impl MtechServerContext {
                 self.web_console_layout.error.clear();
             }
             self.web_console_layout.layout_cols(ui);
+        });
+    }
+
+    fn refresh_client_list(&mut self) {
+        let tx = self.shared_ctx.connected_clients_tx.clone();
+        spawn_local(async move {
+            match get_connected_clients(tx).await {
+                Ok(_) => info!("web_console/mod.rs -> get_connected_clients ran ok"),
+                Err(e) => log::warn!("web_console/mod.rs -> get_connected_clients error: {e:?}"),
+            }
         });
     }
 }

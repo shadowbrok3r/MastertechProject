@@ -28,3 +28,4 @@ output.log
 .VSCodeCounter/*
 .VSCodeCounter
 # Mastertech4.0\.cargo\config.toml
+Cargo.lock
