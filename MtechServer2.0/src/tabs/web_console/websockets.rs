@@ -1,9 +1,9 @@
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::{schema::{ConnectedClient, Node, Record, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{ConnectedClient, Node, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use regex::Regex;
 use core::f32;
-use std::{collections::{HashMap, VecDeque}, fmt::Display};
+use std::collections::{HashMap, VecDeque};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use displays::{channel_manager::ChannelManager, virtual_filesystem::{FileSysHelper, FileSystem}, Cmd, FileSystemAction};
 use wasm_bindgen_futures::spawn_local;
@@ -157,7 +157,7 @@ impl WebSocketClient{
                     match msg{
                         WsMessage::Binary(bin) => {
                             if let Some(sysinfo) = deserializer::<SystemInformation>(bin){
-                                // info!("Got sysinfo");
+                                info!("Got sysinfo");
                                 self.loading = false;
                                 let normalized_cpu_clock = normalize(sysinfo.cpu_clock, 0.0, 100.0); // Example range for CPU clock
                                 // let normalized_cpu_percentage = normalize(sysinfo.cpu_percentage, 0.0, 100.0);
@@ -229,26 +229,10 @@ impl WebSocketClient{
                         _ => {}
                     }
                 },
-                WsEvent::Opened => {
+                _ => {
                     self.history.push(History { 
                         from: "Client".to_string(), 
-                        message: "Connection Opened".to_string(), 
-                        timestamp:  chrono::Local::now().to_rfc3339()
-                    });
-                    self.notifications += 1;
-                },
-                WsEvent::Closed => {
-                    self.history.push(History { 
-                        from: "Client".to_string(), 
-                        message: "Connection Closed".to_string(), 
-                        timestamp:  chrono::Local::now().to_rfc3339()
-                    });
-                    self.notifications += 1;
-                },
-                WsEvent::Error(e) => {
-                    self.history.push(History { 
-                        from: "Client".to_string(), 
-                        message: e.to_string(), 
+                        message: format!("{event:?}"), 
                         timestamp:  chrono::Local::now().to_rfc3339()
                     });
                     self.notifications += 1;
@@ -339,7 +323,7 @@ impl WebSocketClient{
                     self.interactive = false;
                     self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Quit)));
                 },
-                _ => {}
+                _ => self.ws_sender.send(WsMessage::Binary(serialize_command(&command)))
             }
         }
 
@@ -355,7 +339,7 @@ impl WebSocketClient{
     
     pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)
         self.receive(ui.ctx());
-        ui.set_min_height(ui.available_height()/1.2);
+        ui.set_min_height(600.);
 
         // let exact_height = match self.state {
         //     WsDisplayState::Shell => .,
@@ -485,24 +469,24 @@ impl WebSocketClient{
     fn show_live_stats(&mut self, ui: &mut Ui) {
         ui.vertical_centered(|ui| {
             if let Some(sysinfo) = &self.sysinfo {
-                let _normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
+                // let normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
 
-                // if self.cpu_percentage.len() < 30
+                if self.cpu_percentage.len() < 30
                     // || self.component_temps.len() < 30
-                    // || self.cpu_clock.len() < 30
-                    // || self.ram_usage.len() < 30 {
+                    || self.cpu_clock.len() < 30
+                    || self.ram_usage.len() < 30 {
 
                     // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                // } else {
-                //     self.cpu_percentage.pop_front();
-                //     self.cpu_percentage.push_back(normalized_cpu_percentage);
-                //     self.cpu_clock.pop_front();
-                //     self.cpu_clock.push_back(sysinfo.cpu_clock);
-                //     self.ram_usage.pop_front();
-                //     self.ram_usage.push_back(normalized_ram_usage);
-                //     // self.component_temps.pop_front();
-                //     // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                // }
+                } else {
+                    self.cpu_percentage.pop_front();
+                    self.cpu_percentage.push_back(sysinfo.cpu_percentage);
+                    self.cpu_clock.pop_front();
+                    self.cpu_clock.push_back(sysinfo.cpu_clock);
+                    self.ram_usage.pop_front();
+                    self.ram_usage.push_back(sysinfo.used_memory);
+                    // self.component_temps.pop_front();
+                    // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
+                }
 
                 if self.cpu_percentage.len() > 50
                     || self.cpu_clock.len() > 50
@@ -954,50 +938,4 @@ pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
 
 pub fn serialize_command(bytes: &Cmd) -> Vec<u8> {
     bincode::serialize(bytes).expect("Failed to deserialize Cmd")
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct SystemInformation {
-    /// Live CPU usage as a percentaget
-    pub cpu_percentage: f32,
-    /// Live CPU clock speed
-    pub cpu_clock: f32,
-    /// Live system temps
-    pub component_temps: HashMap<String, f32>,
-    /// Live RAM usage in Mb
-    pub used_memory: f32,
-    /// Total RAM
-    pub total_memory: f32,
-    /// Disk usage
-    pub disks: String,
-    /// Name of machine
-    pub name: String,
-    /// Kernel version
-    pub kernel_version: String,
-    /// OS version
-    pub os_version: String,
-    /// Hostname based on DNS
-    pub hostname: String,
-    /// Number of Physical CPU's
-    pub number_of_cpus: String,
-
-    pub network_interfaces: HashMap<String, String>,
-}
-
-impl Display for SystemInformation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "==> cpu_percentage: {} \n==> comps: {:?} \n==> used_memory: {} \n==> total_memory: {} \n==> disks: {} \n==> name: {} \n==> kernel_version: {} \n==> os_version: {} \n==> hostname: {} \n==> number_of_cpus: {} \n==> network_interfaces: {:#?} \n", 
-            self.cpu_percentage,
-            self.component_temps,
-            self.used_memory,
-            self.total_memory,
-            self.disks,
-            self.name,
-            self.kernel_version,
-            self.os_version,
-            self.hostname,
-            self.number_of_cpus,
-            self.network_interfaces,
-        )
-    }
 }
