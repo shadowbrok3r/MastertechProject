@@ -99,6 +99,7 @@ impl eframe::App for MtechServer {
                         .frame(column_frame)
                         .min_size(Vec2::new(700., 400.))
                         .max_size(Vec2::new(1500., 900.))
+                        .default_size(Vec2::new(1000., 900.))
                         .show(ctx, |ui| {
                             ui.vertical_centered_justified(|ui| {
                                 

@@ -281,6 +281,7 @@ pub enum FileSystemAction{
     CopyFromClient(String),
     Delete(String),
     Select((Modifiers, String)),
+    PreviewedFile(String),
     EnterDirectory(String),
     ExpandDirectory(String),
     GetNode(Node),

@@ -159,7 +159,6 @@ impl MastertechContext{
         };
     }
 }
-
 pub struct WebConsoleFrontend {
     pub ws_sender: WsSender,
     pub ws_receiver: WsReceiver,
@@ -383,18 +382,41 @@ impl WebConsoleFrontend {
             Cmd::FileSystemAction(FileSystemAction::CopyFromClient(path)) => {
 
             }
-            Cmd::FileSystemAction(FileSystemAction::CopyToClient(path)) => {
-                
+            Cmd::FileSystemAction(FileSystemAction::CopyToClient(minio_path)) => {
+                // self.explorer
+            } // self.explorer.previewed_file = Some(String::from_utf8(byte_vec.clone()));
+            Cmd::FileSystemAction(FileSystemAction::Select((_, path))) => {
+                match std::fs::read_to_string(path) {
+                    Ok(file) => {
+                        let payload = serialize(
+                            &Cmd::FileSystemAction(FileSystemAction::PreviewedFile(file))
+                        );
+        
+                        match payload {
+                            Ok(bytes) => self.ws_sender.send(WsMessage::Binary(bytes)),
+                            Err(e) => error!("Error serializing paths: {e:?}"),
+                        };
+                    },
+                    Err(e) => {let _ = self.tx.try_send(format!("Error with file preview: {e:?}").as_bytes().to_vec());},
+                };
             }
             Cmd::FileSystemAction(FileSystemAction::Delete(path)) => {
                 let tx = self.tx.clone();
                 info!("websockets -> deleting: {path:?}");
                 spawn(async move {
-                    let path = Path::new(&path).clone();
-                    let remove_file = tokio::fs::remove_file(path);
-                    match remove_file.await {
-                        Ok(_) => tx.try_send("Removed Path".as_bytes().to_vec()),
-                        Err(e) => tx.try_send(format!("Error removing path: {e:?}").as_bytes().to_vec()),
+                    let path = Path::new(&path);
+                    if !path.is_dir() {
+                        let remove_dir = tokio::fs::remove_dir_all(path).await;
+                        match remove_dir {
+                            Ok(_) => tx.try_send("Removed Directory".as_bytes().to_vec()),
+                            Err(e) => tx.try_send(format!("Error removing path: {e:?}").as_bytes().to_vec()),
+                        }
+                    } else {
+                        let remove_file = tokio::fs::remove_file(path).await;
+                        match remove_file {
+                            Ok(_) => tx.try_send("Removed Path".as_bytes().to_vec()),
+                            Err(e) => tx.try_send(format!("Error removing path: {e:?}").as_bytes().to_vec()),
+                        }
                     }
                 });
             }
