@@ -8,7 +8,7 @@ use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use displays::{channel_manager::ChannelManager, virtual_filesystem::{FileSysHelper, FileSystem}, Cmd, FileSystemAction};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
-use egui_extras::{syntax_highlighting::{highlight, CodeTheme}, Size, StripBuilder};
+use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use surrealdb::Response;
 use bincode::serialize;
 use web_time::Instant;
@@ -314,6 +314,8 @@ impl WebSocketClient{
                                 self.explorer.selected_items.borrow_mut().clear();
                                 self.explorer.selected_items.borrow_mut().insert(label.clone());
                             }
+                            
+                            
                             self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
                         },
                         FileSystemAction::ExpandDirectory(directory) => self.explorer.expand_folder(&directory),
@@ -322,6 +324,12 @@ impl WebSocketClient{
                             // self.explorer.navigation_stack.clear();
                             // self.explorer.current_prefix.clear();
                         }
+                        // FileSystemAction::CopyToClient(_) => todo!(),
+                        // FileSystemAction::CopyFromClient(_) => todo!(),
+                        // FileSystemAction::Delete(_) => todo!(),
+                        FileSystemAction::PreviewedFile(file) => {
+                            self.explorer.previewed_file = Some(file.to_string());
+                        },
                         _ => {
                             self.ws_sender.send(WsMessage::Binary(serialize_command(&command)));
                         }
@@ -338,165 +346,140 @@ impl WebSocketClient{
         // Here we will handle commands we receive from Mastertech
         if let Ok(command) = self.receive_cmd_rx.try_recv() {
             ctx.request_repaint();
-            match command {
-                Cmd::FileSystemAction(file_system_action) => self.helper_delegate.handle_filesystem_action(&file_system_action),
-                _ => {}
+            if let Cmd::FileSystemAction(file_system_action) = command {
+                self.helper_delegate.handle_filesystem_action(&file_system_action);
             }
+            
         }
     }
     
     pub fn show(&mut self, ui: &mut Ui) { // , add_contents: impl FnOnce(&mut Ui)
         self.receive(ui.ctx());
-        ui.set_min_height(400.0);
+        ui.set_min_height(ui.available_height()/1.2);
 
-        
-        // TopBottomPanel::top(id)
-        // .exact_height(25.)
-        // .show_inside(ui, |ui| 
-        // {
-        //     ui.vertical(|ui| {
-        //         ui.with_layout(Layout::left_to_right(Align::Center), |ui| { });
-        //         ui.with_layout(Layout::left_to_right(Align::Center), |ui| { });
-        //     });
-        // });
-        // CentralPanel::default()        
-        //     .exact_height(25.)
-        //     .show_inside(ui, |ui| 
-        // { });
+        // let exact_height = match self.state {
+        //     WsDisplayState::Shell => .,
+        //     _ => 
+        // };
 
-        StripBuilder::new(ui)
-            .size(Size::exact(25.0)) // .sizes(size, strip_count)
-            .size(Size::exact(25.0))
-            .size(Size::remainder().at_most(600.))
-            .vertical(|mut strip| 
+        TopBottomPanel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
+        .exact_height(26.)
+        // .frame(top_frame)
+        .show_inside(ui, |ui| 
         {
-            strip.strip(|strip| 
-            {
-                let count = if self.interactive { 5 } else { 4 };
-                strip.sizes(Size::remainder(), count)
-                    .horizontal(|mut s| 
-                {
-                    s.cell(|ui|{
-                        if Button::new(RichText::new("My Tools").color(Color32::LIGHT_RED)).ui(ui).clicked(){
-                            let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
-                        }
-                    });
-                    s.cell(|ui|{
-                        if Button::new(RichText::new("Explorer").color(Color32::LIGHT_RED)).ui(ui).clicked(){
-                            let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
-                            self.notifications = 0;
-                            // if we are already in an interactive mode, then we dont want to quit that session,
-                            if !self.interactive {
-                                if self.explorer.current_prefix.is_empty() {
-                                    let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory("current".to_string())));
-                                } else {
-                                    let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory(self.explorer.current_prefix.clone())));
-                                }
-                            }
-                        }
-                    });
-                    s.cell(|ui|{
-                        if Button::new(RichText::new("Charts").color(Color32::LIGHT_RED)).ui(ui).clicked(){
-                            let _ = self.display_state_channel.0.try_send(WsDisplayState::LiveStats);
-                            let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
-                        }
-                    });
-                    s.cell(|ui|{
-                        let notifs = if let WsDisplayState::Shell = self.state {
-                            format!("Shell")
-                        } else {
-                            if self.notifications > 0 {
-                                format!("Shell   {}", self.notifications)
+            ui.add_space(2.);
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| { 
+                    let btn_color = ui.style().visuals.error_fg_color;
+                    if Button::new(RichText::new("My Tools").color(btn_color)).ui(ui).clicked(){
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::ToolBox);
+                    }
+
+                    if Button::new(RichText::new("Explorer").color(btn_color)).ui(ui).clicked(){
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Explorer);
+                        self.notifications = 0;
+                        // if we are already in an interactive mode, then we dont want to quit that session,
+                        if !self.interactive {
+                            if self.explorer.current_prefix.is_empty() {
+                                let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory("current".to_string())));
                             } else {
-                                format!("Shell")
+                                let _ = self.send_cmd_tx.try_send(Cmd::FileSystemAction(FileSystemAction::EnterDirectory(self.explorer.current_prefix.clone())));
                             }
-                        };
-                        if Button::new(RichText::new(notifs).color(Color32::LIGHT_RED)).ui(ui).clicked(){
-                            let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
                         }
-                    });
-                    if self.interactive && count == 5 {
-                        s.cell(|ui|{
-                            if Button::new(RichText::new("Quit").color(Color32::RED)).ui(ui).clicked(){
-                                self.send_cmd_tx.try_send(Cmd::Quit);
-                            }
-                        });
+                    }
+
+                    if Button::new(RichText::new("Charts").color(btn_color)).ui(ui).clicked(){
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::LiveStats);
+                        let _ = self.send_cmd_tx.try_send(Cmd::LiveData);
+                    }
+
+                    let notifs = if let WsDisplayState::Shell = self.state {
+                        format!("Shell")
+                    } else {
+                        if self.notifications > 0 {
+                            format!("Shell   {}", self.notifications)
+                        } else {
+                            format!("Shell")
+                        }
+                    };
+
+                    if Button::new(RichText::new(notifs).color(btn_color)).ui(ui).clicked(){
+                        let _ = self.display_state_channel.0.try_send(WsDisplayState::Shell);
+                    }
+
+                    if self.interactive {
+                        if Button::new(RichText::new("Quit").color(Color32::RED)).ui(ui).clicked(){
+                            self.send_cmd_tx.try_send(Cmd::Quit);
+                        }
                     }
                 });
-            });
-            strip.strip(|strip| 
-            {
+
                 if let WsDisplayState::Shell = self.state {
-                    strip.sizes(Size::remainder(), 6)
-                        .horizontal(|mut s| 
-                    {
-                        s.cell(|ui|{
-                            if Button::new("Tuneup").ui(ui).clicked(){
-                                info!("web_console -> websockets.rs -> Tuneup clicked");
-                                let _ = self.send_cmd_tx.try_send(Cmd::Tuneup);
-                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
-                                // self.history.push(format!("You\nCommand::Tuneup"));
-                            }
-                        });
-                        s.cell(|ui|{
-                            if Button::new("CPS").ui(ui).clicked(){
-                                info!("web_console -> websockets.rs -> CPS clicked");
-                                let _ = self.send_cmd_tx.try_send(Cmd::Cps);
-                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
-                                // self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
-                                self.input = "SELECT * FROM Win32_OperatingSystem".to_string();
-                            }
-                        });
-                        s.cell(|ui|{
-                            if Button::new("SFC").ui(ui).clicked(){
-                                info!("web_console -> websockets.rs -> SFC clicked");
-                                let _ = self.send_cmd_tx.try_send(Cmd::SfcScan);
-                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
-                                // self.history.push(format!("You\nCommand::SfcScan"));
-                                self.input = "sfc /scannow".to_string();
-                            }
-                        });
-                        s.cell(|ui|{
-                            if Button::new("Dism").ui(ui).clicked(){
-                                info!("web_console -> websockets.rs -> Dism clicked");
-                                let _ = self.send_cmd_tx.try_send(Cmd::DismScan);
-                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
-                                // self.history.push(format!("You\nCommand::DismScan"));
-                                self.input = "dism /online /cleanup-image /scanhealth\ndism /online /cleanup-image /checkhealth\ndism /online /cleanup-image /restorehealth".to_string();
-                            }
-                        });
-                        s.cell(|ui|{
-                            if Button::new("Chkdsk").ui(ui).clicked(){
-                                info!("web_console -> websockets.rs -> Chkdsk clicked");
-                                let _ = self.send_cmd_tx.try_send(Cmd::ChkDsk);
-                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
-                                // self.history.push(format!("You\nCommand::ChkDsk"));
-                                self.input = "chkdsk /f /x /r".to_string();
-                                
-                            }
-                        });
-                        s.cell(|ui|{
-                            if Button::new("Mbr2Gpt").ui(ui).clicked(){
-                                info!("web_console -> websockets.rs -> Mbr2Gpt clicked");
-                                let _ = self.send_cmd_tx.try_send(Cmd::Mbr2Gpt);
-                                // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
-                                // self.history.push(format!("You\nCommand::Mbr2Gpt"));
-                                self.input = "mbr2gpt /Convert /AllowFullOS /disk:0".to_string();
-                            }
-                        });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| { 
+                        self.command_shell_menu(ui);
                     });
                 }
             });
-            strip.cell(|ui | 
-            {
-                match self.state {
-                    WsDisplayState::LiveStats => self.show_live_stats(ui),
-                    WsDisplayState::Explorer => ui.group(|ui| self.explorer.display(ui)).inner,
-                    WsDisplayState::ToolBox => ui.group(|ui| self.toolbox.display(ui)).inner,
-                    WsDisplayState::Shell => self.show_shell(ui),
-                };
-            });
+            ui.add_space(2.);
         });
+
+
+        match self.state {
+            WsDisplayState::LiveStats => self.show_live_stats(ui),
+            WsDisplayState::Explorer => ui.group(|ui| self.explorer.display(ui)).inner,
+            WsDisplayState::ToolBox => ui.group(|ui| self.toolbox.display(ui)).inner,
+            WsDisplayState::Shell => self.show_shell(ui),
+        };
+    }
+
+    fn command_shell_menu(&mut self, ui: &mut Ui) {
+        if Button::new("Tuneup").ui(ui).clicked(){
+            info!("web_console -> websockets.rs -> Tuneup clicked");
+            let _ = self.send_cmd_tx.try_send(Cmd::Tuneup);
+            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Tuneup)));
+            // self.history.push(format!("You\nCommand::Tuneup"));
+        }
+        
+        if Button::new("CPS").ui(ui).clicked(){
+            info!("web_console -> websockets.rs -> CPS clicked");
+            let _ = self.send_cmd_tx.try_send(Cmd::Cps);
+            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Cps)));
+            // self.history.push(format!("You\nCommand::Cps\nChecking current antivirus"));
+            self.input = "SELECT * FROM Win32_OperatingSystem".to_string();
+        }
+
+        if Button::new("SFC").ui(ui).clicked(){
+            info!("web_console -> websockets.rs -> SFC clicked");
+            let _ = self.send_cmd_tx.try_send(Cmd::SfcScan);
+            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::SfcScan)));
+            // self.history.push(format!("You\nCommand::SfcScan"));
+            self.input = "sfc /scannow".to_string();
+        }
+
+        if Button::new("Dism").ui(ui).clicked(){
+            info!("web_console -> websockets.rs -> Dism clicked");
+            let _ = self.send_cmd_tx.try_send(Cmd::DismScan);
+            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::DismScan)));
+            // self.history.push(format!("You\nCommand::DismScan"));
+            self.input = "dism /online /cleanup-image /scanhealth\ndism /online /cleanup-image /checkhealth\ndism /online /cleanup-image /restorehealth".to_string();
+        }
+
+        if Button::new("Chkdsk").ui(ui).clicked(){
+            info!("web_console -> websockets.rs -> Chkdsk clicked");
+            let _ = self.send_cmd_tx.try_send(Cmd::ChkDsk);
+            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::ChkDsk)));
+            // self.history.push(format!("You\nCommand::ChkDsk"));
+            self.input = "chkdsk /f /x /r".to_string();
+            
+        }
+
+        if Button::new("Mbr2Gpt").ui(ui).clicked(){
+            info!("web_console -> websockets.rs -> Mbr2Gpt clicked");
+            let _ = self.send_cmd_tx.try_send(Cmd::Mbr2Gpt);
+            // self.ws_sender.send(WsMessage::Binary(serialize_command(&Cmd::Mbr2Gpt)));
+            // self.history.push(format!("You\nCommand::Mbr2Gpt"));
+            self.input = "mbr2gpt /Convert /AllowFullOS /disk:0".to_string();
+        }
     }
 
     fn show_live_stats(&mut self, ui: &mut Ui) {
@@ -563,7 +546,7 @@ impl WebSocketClient{
 
         TopBottomPanel::bottom(id)
             .default_height(ui.available_height()/1.2)
-            .resizable(true)
+            // .resizable(false)
             .show_inside(ui, |ui| 
         {
             ui.visuals_mut().extreme_bg_color= Color32::BLACK;
@@ -572,8 +555,11 @@ impl WebSocketClient{
             
             let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
             let style = ui.style_mut();
-            style.visuals.widgets.inactive.rounding = Rounding::same(2.0);
-            style.visuals.widgets.active.rounding = Rounding::same(2.0);
+            let default_rounding = Rounding::same(2.0);
+            style.visuals.widgets.inactive.rounding = default_rounding;
+            style.visuals.widgets.active.rounding = default_rounding;
+            style.visuals.widgets.hovered.rounding = default_rounding;
+            
             let mut layouter = |ui: &Ui, string: &str, _: f32| {
                 let mut layout_job =
                     highlight(ui.ctx(), &ui.style(), &theme, string, "bash".into()); // || "zsh".into()
@@ -581,10 +567,13 @@ impl WebSocketClient{
                 ui.fonts(|f| f.layout_job(layout_job))
             };
 
-            let text_edit = TextEdit::singleline(&mut self.input).hint_text("USE WISELY")
+            ui.add_space(3.);
+
+            let text_edit = TextEdit::singleline(&mut self.input)
+                .hint_text("Use Wisely..")
                 .margin(Margin::symmetric(10., 4.))
                 .desired_width(ui.available_width())
-                .desired_rows(3)
+                .desired_rows(4)
                 .layouter(&mut layouter)
                 .ui(ui);
             
@@ -904,7 +893,6 @@ impl WebSocketClient{
     }
 
 }
-
 
 impl ClientHandler for ConnectedClient {
     fn connect(&mut self) { }

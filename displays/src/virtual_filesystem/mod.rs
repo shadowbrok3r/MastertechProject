@@ -231,6 +231,10 @@ impl FileSystem {
         if let Ok(file_contents) = self.file_preview_channel.1.try_recv() {
             self.previewed_file = Some(file_contents);
         }
+    
+        if self.selected_items.borrow().is_empty() {
+            self.previewed_file = None;
+        }
     }
     
     pub fn set_user(&mut self, user: User) -> &mut Self {
@@ -700,7 +704,14 @@ impl FileSystem {
             self.progress = 0.0;
             self.total_size = 0.0;
         }
-        ProgressBar::new(self.progress / self.total_size).show_percentage().fill(Color32::from_rgba_premultiplied(50, 10, 50, 65)).ui(ui);
+        if self.progress > 0. {
+            ProgressBar::new(self.progress / self.total_size)
+                .show_percentage()
+                .fill(
+                    Color32::from_rgba_premultiplied(50, 10, 50, 65)
+                )
+                .ui(ui);
+        }
     }
 
     pub fn upload(&self, path: String) {
@@ -1094,7 +1105,7 @@ impl FileSystem {
     
         Err(anyhow::anyhow!("Downloaded bytes do not match content length"))
     }
-
+    
     // #[cfg(target_arch="wasm32")]
     async fn perform_download(
         name: &String, 

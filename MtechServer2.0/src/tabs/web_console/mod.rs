@@ -1,7 +1,7 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, FontFamily, FontId, Frame, Id, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
 use displays::{channel_manager::ChannelManager, code_editor::{CodeEditor, ColorTheme, Syntax}, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, SortDirection};
 use database::schema::{ConnectedClient, utilities::get_connected_clients};
-use egui_extras::{syntax_highlighting::CodeTheme, Size, Strip, StripBuilder};
+use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
 use crate::app_state::MtechServerContext;
@@ -185,11 +185,82 @@ impl WebConsoleLayout {
 
         match self.state {
             WebConsolePageState::ConnectedClients => {
-                // let column_width = Size::exact(ui.available_width()/2.0);
-                // let x: f32 = ui.available_height() / 1.1;
+                let column_width = Size::exact(ui.available_width());
+                let x: f32 = ui.available_height() / 1.1;
+
+                ScrollArea::horizontal()
+                    .show_viewport(ui, |ui, _|
+                {
+                    // let mut connected_clients = Vec::new();
+                    // let mut disconnected_clients = Vec::new();
+                    self.client_map.iter().filter(|(name, _)| {
+                        *name == "Connected"
+                    });
+
+                    StripBuilder::new(ui)
+                        .cell_layout(Layout::top_down_justified(Align::Center))
+                        .size(Size::exact(30.0))
+                        .size(Size::exact(5.0))
+                        .size(Size::exact(x))
+                        .vertical(|mut strip| 
+                    {
+        
+                        strip.strip(|strip| 
+                        {
+                            strip
+                                .sizes(column_width, self.client_map.keys().len())
+                                .horizontal(|strip| self.headers(strip, style.clone()));
+                        });
+        
+                        strip.empty();
+        
+                        strip.strip(|strip| 
+                        {
+                            strip
+                                .sizes(column_width, self.client_map.keys().len())
+                                .horizontal( |mut strip| self.columns(strip.borrow_mut(), style.clone()));
+                        });
+                    });
+                });
             },
             WebConsolePageState::DisconnectedClients => {
+                let column_width = Size::exact(ui.available_width());
+                let x: f32 = ui.available_height() / 1.1;
 
+                ScrollArea::horizontal()
+                    .show_viewport(ui, |ui, _|
+                {
+                    // let mut connected_clients = Vec::new();
+                    // let mut disconnected_clients = Vec::new();
+                    self.client_map.iter().filter(|(name, _)| {
+                        *name == "Disconnected"
+                    });
+
+                    StripBuilder::new(ui)
+                        .cell_layout(Layout::top_down_justified(Align::Center))
+                        .size(Size::exact(30.0))
+                        .size(Size::exact(5.0))
+                        .size(Size::exact(x))
+                        .vertical(|mut strip| 
+                    {
+        
+                        strip.strip(|strip| 
+                        {
+                            strip
+                                .sizes(column_width, self.client_map.keys().len())
+                                .horizontal(|strip| self.headers(strip, style.clone()));
+                        });
+        
+                        strip.empty();
+        
+                        strip.strip(|strip| 
+                        {
+                            strip
+                                .sizes(column_width, self.client_map.keys().len())
+                                .horizontal( |mut strip| self.columns(strip.borrow_mut(), style.clone()));
+                        });
+                    });
+                });
             },
             WebConsolePageState::ScriptEditor => {
                 SidePanel::right(Id::new("Script editor sidebar"))
@@ -271,34 +342,33 @@ impl WebConsoleLayout {
                 let column_width = Size::exact(ui.available_width()/2.0);
                 let x: f32 = ui.available_height() / 1.1;
                 ScrollArea::horizontal()
-                .show_viewport(ui, |ui, _|
-            {
-                
-                StripBuilder::new(ui)
-                    .cell_layout(Layout::top_down_justified(Align::Center))
-                    .size(Size::exact(30.0))
-                    .size(Size::exact(5.0))
-                    .size(Size::exact(x))
-                    .vertical(|mut strip| 
+                    .show_viewport(ui, |ui, _|
                 {
-    
-                    strip.strip(|strip| 
+                    StripBuilder::new(ui)
+                        .cell_layout(Layout::top_down_justified(Align::Center))
+                        .size(Size::exact(30.0))
+                        .size(Size::exact(5.0))
+                        .size(Size::exact(x))
+                        .vertical(|mut strip| 
                     {
-                        strip
-                            .sizes(column_width, self.client_map.keys().len())
-                            .horizontal(|strip| self.headers(strip, style.clone()));
-                    });
-    
-                    strip.empty();
-    
-                    strip.strip(|strip| 
-                    {
-                        strip
-                            .sizes(column_width, self.client_map.keys().len())
-                            .horizontal( |mut strip| self.columns(strip.borrow_mut(), style.clone()));
+        
+                        strip.strip(|strip| 
+                        {
+                            strip
+                                .sizes(column_width, self.client_map.keys().len())
+                                .horizontal(|strip| self.headers(strip, style.clone()));
+                        });
+        
+                        strip.empty();
+        
+                        strip.strip(|strip| 
+                        {
+                            strip
+                                .sizes(column_width, self.client_map.keys().len())
+                                .horizontal( |mut strip| self.columns(strip.borrow_mut(), style.clone()));
+                        });
                     });
                 });
-            });
             }
         };
         
