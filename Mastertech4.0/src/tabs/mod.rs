@@ -87,6 +87,7 @@ impl TabViewer for MastertechContext {
             "SEB Lookup" => self.seb_lookup(ui),
             "Store Stock" => self.shared_ctx.stock_viewer(ui),
             "Logs" => logger_ui().show(ui),
+            "Resource Monitor" => self.resource_mon.display(ui),
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
             _ => {}
         }

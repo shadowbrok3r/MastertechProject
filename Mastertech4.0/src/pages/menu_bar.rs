@@ -25,6 +25,7 @@ impl MasterTechApp {
                             &"SysInfo".to_string(),
                             &"Minidump Analysis".to_string(),
                             &"Ai".to_string(),
+                            &"Resource Monitor".to_string(),
                             // &"QC ☑️".to_string(),
                             &"My Tasks".to_string(),
                             &"Store Tasks".to_string(),

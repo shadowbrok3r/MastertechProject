@@ -319,7 +319,6 @@ impl ComputerInfo for ComputerData {
 
 pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let mut sys = System::new_all();
-    let sysinf: SystemInformation;
 
     // First we update all information of our `System` struct.
     sys.refresh_all();
@@ -328,7 +327,6 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let mut cpu_clock = u64::default();
     let mut disks = String::new();
     let disk_list = Disks::new_with_refreshed_list();
-    // let component_temp = String::new();
     let mut network_interfaces: HashMap<String, String> = HashMap::new();
     let mut component_temps: HashMap<String, f32> = HashMap::new();
     // Components temperature:
@@ -349,7 +347,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
 
     // Display processes ID, name na disk usage:
-    // for (pid, process) in sys.processes() {println!("[{pid}] {} {:?}", process.name(), process.disk_usage());}
+    for (pid, process) in sys.processes() {println!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
 
     for disk in &disk_list {
         disks += format!("{disk:?}").as_str();
@@ -363,7 +361,6 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     }
 
     for component in &components {
-        // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
         component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
         // comps += format!("{component:#?} \n", component.).as_str();
     }
@@ -379,7 +376,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         cpu_clock = cpu.frequency();
     }
 
-    sysinf = SystemInformation {
+    Ok(SystemInformation {
         cpu_percentage,
         cpu_clock: cpu_clock as f32,
         component_temps,
@@ -392,9 +389,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         hostname,
         number_of_cpus,
         network_interfaces,
-    };
-
-    Ok(sysinf)
+    })
 }
 
 // Function to generate client ID

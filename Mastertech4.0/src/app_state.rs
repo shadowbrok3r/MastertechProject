@@ -29,15 +29,10 @@ use crate::tabs::minidump::MiniDumpApp;
 use crate::{
     pages::login_page::Login,
     tabs::{
-        file_browser::FileBrowser,
-        github::self_updater::GithubRelease,
-        scripts::Scripts,
-        seb_lookup::JsonEditor,
-        tur_sheet::{
+        file_browser::FileBrowser, github::self_updater::GithubRelease, resource_mon::ResourceMonitor, scripts::Scripts, seb_lookup::JsonEditor, tur_sheet::{
             get_ticket::SendRequest,
             scaffold::{self, HardwareTest},
-        },
-        websockets::WebConsoleFrontend,
+        }, websockets::WebConsoleFrontend
     }
 };
 use displays::{
@@ -182,14 +177,14 @@ pub struct MastertechContext {
     pub github_releases: Vec<GithubRelease>,
     pub bytes_channel: (Sender<(Vec<u8>, u64)>, Receiver<(Vec<u8>, u64)>),
     pub github_releases_channel: (Sender<Vec<GithubRelease>>, Receiver<Vec<GithubRelease>>),
-    
     pub seb_channel: (Sender<Vec<Value>>, Receiver<Vec<Value>>),
     pub json_editor: JsonEditor,
     pub update_settings: bool,
     pub get_settings: bool,
     pub seb_email: String,
     pub client_friendly_name: String,
-    pub client_title: String
+    pub client_title: String,
+    pub resource_mon: ResourceMonitor
 }
 
 impl MasterTechApp {
@@ -218,6 +213,7 @@ impl MasterTechApp {
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
             client_friendly_name: String::new(),
+            resource_mon: ResourceMonitor::default(),
             url: None,
             error: Default::default(),
             frontend: None,
@@ -383,7 +379,7 @@ pub fn default_tree() -> (DockState<String>, HashSet<String>) {
     let [_, _] = tree.main_surface_mut().split_left(
         b,
         0.45,
-        vec!["SysInfo".to_owned(), "Bug Tracker".to_owned()],
+        vec!["SysInfo".to_owned(), "Bug Tracker".to_owned(), "Resource Monitor".to_owned()],
     );
     let [_, _] = tree.main_surface_mut().split_left(
         b,

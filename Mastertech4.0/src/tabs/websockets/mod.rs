@@ -22,6 +22,7 @@ impl MastertechContext{
                         self.connect(ui.ctx().clone());
                     }
 
+                    ui.add_space(5.);
                     if ui.add_enabled(
                         !self.client_friendly_name.is_empty(), 
                         Button::new("Update Name")
@@ -41,10 +42,11 @@ impl MastertechContext{
                         });
                     }
 
+                    ui.add_space(5.);
                     TextEdit::singleline(&mut self.client_friendly_name)
+                        .hint_text("Client Name")
                         .margin(Margin::symmetric(10., 6.))
                         .ui(ui);
-
                 });
             });
 
@@ -453,8 +455,6 @@ impl WebConsoleFrontend {
     }
 
     pub fn initialize_websocket(&mut self, ui: &mut Ui) -> bool {
-        ui.vertical_centered(|ui | ui.heading("Received events:"));
-        ui.separator();
         self.connected = self.receive();
         let theme = CodeTheme::dark(12.);
         ScrollArea::vertical()
@@ -519,15 +519,11 @@ impl WebConsoleFrontend {
                                 shadow.blur = 3.0;
                                 shadow.spread = 3.0;
                                 shadow.color = Color32::from_rgb(40,36,40);
-                                
-                                let mut b_panel_marg = Margin::default();
-                                b_panel_marg.top = 3.0;
-
                                 let color = Color32::from_rgb(10,10,12);
 
                                 let note_frame = Frame::none().fill(color)
-                                    .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-                                    .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
+                                    .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke)
+                                    .inner_margin(Margin::same(0.)).rounding(rnding);
 
                                 let (from, txt) = if item.contains("Cmd"){
                                     let text: (&str, &str) = item.split_once(":").unwrap_or(("Command", ""));
@@ -590,6 +586,7 @@ impl WebConsoleFrontend {
                                         };
                                         TextEdit::singleline(&mut txt.text())
                                             .id_salt(Id::new(format!("{item:?}-{count:?}")))
+                                            .frame(false)
                                             .layouter(&mut layouter)
                                             .min_size(Vec2::new(ui.available_size_before_wrap().x / 1.1, 30.))
                                             .ui(ui);
