@@ -1,4 +1,4 @@
-use eframe::egui::{Align, CentralPanel, Color32, FontId, Layout, Response, RichText, ScrollArea, Separator, TextStyle, TopBottomPanel, Ui, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, FontId, Layout, Response, RichText, ScrollArea, Separator, TextStyle, TopBottomPanel, Ui, Vec2, Widget};
 use egui_plot::{Bar, BarChart, Corner, Legend, Line, LineStyle, Plot, PlotPoints};
 use displays::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
@@ -9,6 +9,17 @@ use log::info;
 
 use crate::filesystem::system_info::get_sysinfo;
 
+#[derive(Default)]
+pub enum ResourceMonitorState {
+    #[default]
+    Cpu,
+    Ram,
+    Gpu,
+    Processes,
+    Network,
+    Temperatures,
+}
+
 pub struct ResourceMonitor {
     sysinfo_channel: (Sender<SystemInformation>, Receiver<SystemInformation>),
     cpu_usage_chart: MetricPlot,
@@ -18,6 +29,7 @@ pub struct ResourceMonitor {
     disk_usage_plot: LinePlot,
     network_interface_plot: LinePlot,
     start_time: Instant,
+    state: ResourceMonitorState
 }
 
 impl Default for ResourceMonitor {
@@ -32,6 +44,7 @@ impl Default for ResourceMonitor {
             disk_usage_plot: LinePlot::new(50),
             network_interface_plot: LinePlot::new(50),
             start_time: Instant::now(), // Initialize the timer
+            state: ResourceMonitorState::default()
         }
     }
 }
@@ -39,31 +52,6 @@ impl Default for ResourceMonitor {
 impl ResourceMonitor {
     fn receive(&mut self) {
         if let Ok(sysinfo) = self.sysinfo_channel.1.try_recv() {
-            // self.line_plot.update_metric("CPU Usage", self.cpu_percentage.len() as f32, sysinfo.cpu_percentage);
-            // self.line_plot.update_metric("CPU Clock", self.cpu_clock.len() as f32, normalize(sysinfo.cpu_clock, 0.0, 100.0));
-            // self.line_plot.update_metric("RAM Usage", self.ram_usage.len() as f32,
-            //     if sysinfo.total_memory > 0.0 {
-            //         (sysinfo.used_memory / sysinfo.total_memory) * 100.0
-            //     } else {
-            //         0.0
-            //     },
-            // );
-            // self.cpu_clock_plot.update_data(x_value, y_value);
-            // self.ram_usage_plot.update_data(x_value, y_value);
-            // info!("\nsysinfo: CPU %: {percentages:?}, \nCPU Clock: {clocks:?}, \nRAM usage: {ram:?}");
-            // let temps_plot = LinePlot::new(&[0.0], &temps.as_slice());
-            // let x_value = self.cpu_usage_chart.data.len() as f32;
-            // self.cpu_usage_chart.update(x_value, sysinfo.cpu_percentage);
-            // self.cpu_clock_chart
-            //     .update(x_value, normalize(sysinfo.cpu_clock, 0.0, 100.0));
-            // self.ram_usage_chart.update(
-            //     x_value,
-            //     if sysinfo.total_memory > 0.0 {
-            //         (sysinfo.used_memory / sysinfo.total_memory) * 100.0
-            //     } else {
-            //         0.0
-            //     },
-            // );
             info!("got sysinfo: {sysinfo:?}");
 
             let elapsed_time = self.start_time.elapsed().as_secs_f32();
@@ -87,17 +75,13 @@ impl ResourceMonitor {
 
             // Update network interfaces
             for (interface, data) in &sysinfo.network_interfaces {
+                info!("Interface: {interface:?}\nData: {data:?}");
                 if let Some((rx_bytes, tx_bytes)) = parse_network_data(data) {
                     let rx_gb = rx_bytes as f32 / 1e9;
                     let tx_gb = tx_bytes as f32 / 1e9;
-                    self.network_interface_plot
-                        .update_line(interface, elapsed_time, rx_gb + tx_gb);
+                    self.network_interface_plot.update_line(interface, elapsed_time, rx_gb + tx_gb);
                 }
             }
-            // let x_value = self.cpu_usage_chart.data.values().next().map_or(0.0, |v| v.len() as f32 * 4.0);
-            // self.cpu_usage_chart.update_metric("CPU Usage (%)", x_value, sysinfo.cpu_percentage);
-            // self.cpu_clock_chart.update_metric("CPU Clock (MHz)", x_value, normalize(sysinfo.cpu_clock, 0.0, 4000.0)); // Normalize MHz
-            // self.ram_usage_chart.update_metric("Ram Usage (Gb)",x_value,sysinfo.used_memory / 1024.0); // Convert MB to GB
         }
     }
 
@@ -106,82 +90,149 @@ impl ResourceMonitor {
 
         ui.ctx().request_repaint_after_secs(2.);
         TopBottomPanel::top("Resource Monitor Top Panel").exact_height(25.).show_inside(ui, |ui| {
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                ui.heading(
-                    RichText::new("Resource monitor")
-                        .color(Color32::LIGHT_RED)
-                );
-                ui.add_space(5.);
-                if ui.button("Refresh").clicked() {
-                    let tx = self.sysinfo_channel.0.clone();
-                    spawn(async move {
-                        let res = live_computer_stats(tx).await; 
-                        log::info!("Getting live sys stats: {res:?}");
-                    });
-                }
+            eframe::egui::menu::bar(ui, |ui| {
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
+                    let button_stroke = ui.style().visuals.window_stroke;
+                    let button_size = Vec2::new(100.0, 15.0);
+
+                    if Button::new("Cpu").min_size(button_size).frame(true).stroke(button_stroke).ui(ui).clicked() {
+                        self.state = ResourceMonitorState::Cpu
+                    }
+
+                    ui.add_space(5.);
+
+                    if Button::new("Graphics").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                        self.state = ResourceMonitorState::Gpu
+                    }
+
+                    ui.add_space(5.);
+
+                    if Button::new("Ram").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                        self.state =ResourceMonitorState::Ram
+                    }
+
+                    ui.add_space(5.);
+
+                    if Button::new("Processes").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                        self.state = ResourceMonitorState::Processes
+                    }
+
+                    ui.add_space(5.);
+
+                    if Button::new("Temperatures").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                        self.state = ResourceMonitorState::Temperatures
+                    }
+
+                    ui.add_space(5.);
+
+                    if Button::new("Network").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                        self.state = ResourceMonitorState::Network
+                    }
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui | {
+                    ui.add_space(2.);
+                    let button_stroke = ui.style().visuals.window_stroke;
+                    let button_size = Vec2::new(60.0, 15.0);
+                    if Button::new("Refresh").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                        let tx = self.sysinfo_channel.0.clone();
+                        spawn(async move {
+                            let res = live_computer_stats(tx).await; 
+                            log::info!("Getting live sys stats: {res:?}");
+                        });
+                    }
+
+                    ui.add_space(ui.available_width()/1.5);
+
+                    ui.label(
+                        RichText::new("Resource monitor")
+                            .color(Color32::LIGHT_RED)
+                            .heading()
+                            .font(FontId::proportional(20.))
+                    );
+
+                });
             });
         });
 
         CentralPanel::default().show_inside(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-                ui.add_space(10.);
-                ui.vertical_centered(|ui| ui
-                    .label(
-                        RichText::new(format!("CPU ()"))
-                        .color(
-                            ui.style().visuals.error_fg_color
-                        )
-                        .heading()
-                        .font(
-                            FontId::proportional(15.)
-                        )
-                    )
-                );
 
-                ui.add_space(10.);
-                ui.horizontal_top(|ui| {
-                    ui.group(|ui| {
-                        self.cpu_clock_chart.ui(ui, "CPU Clock Chart", Color32::from_rgb(7, 242, 176));
-                        self.cpu_usage_chart.ui(ui, "CPU Usage Chart", Color32::from_rgb(62, 7, 242));
-                    });
-                });
+                // New line charts
+                let mut colors = HashMap::new();
+                colors.insert("Component Temps".to_string(), Color32::from_rgb(235, 12, 38));
+                colors.insert("Disk Usage".to_string(), Color32::from_rgb(12, 235, 97));
+                colors.insert("Network Usage".to_string(), Color32::from_rgb(240, 141, 55));
 
-                ui.add_space(10.);
-                ui.vertical_centered(|ui| ui
-                    .label(
-                        RichText::new("RAM")
-                        .color(
-                            ui.style().visuals.error_fg_color
-                        )
-                        .heading()
-                        .font(
-                            FontId::proportional(15.)
-                        )
-                    )
-                );
+                match self.state {
+                    ResourceMonitorState::Cpu => {
+                        ui.group(|ui| {
+                            ui.vertical_centered(|ui| ui
+                                .label(
+                                    RichText::new(format!("CPU ()"))
+                                    .underline()
+                                    .color(
+                                        ui.style().visuals.error_fg_color
+                                    )
+                                    .heading()
+                                    .font(
+                                        FontId::proportional(20.)
+                                    )
+                                )
+                            );
+        
+                            ui.add_space(50.);
+                            ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
+                                ui.add_space(50.);
+                                ui.scope(|ui| {
+                                    ui.set_width(ui.available_width()/2.);
+                                    self.cpu_clock_chart.ui(ui, "CPU Clock Chart", Color32::from_rgb(7, 242, 176));
+                                });
+                                self.cpu_usage_chart.ui(ui, "CPU Usage Chart", Color32::from_rgb(62, 7, 242));
+                            });
+                        });
+                    },
+                    ResourceMonitorState::Ram => {
+                        ui.group(|ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new("RAM")
+                                    .color(
+                                        ui.style().visuals.error_fg_color
+                                    )
+                                    .heading()
+                                    .underline()
+                                    .font(
+                                        FontId::proportional(20.)
+                                    )
+                                );
+                                ui.add_space(50.);
+                                self.ram_usage_chart.ui(ui, "RAM Usage Chart", Color32::from_rgb(242, 7, 179));
+                            });
+        
+                            // ui.add_space(50.);
+                            // ui.horizontal_top(|ui| {
+                                
+                            // });
+                        });
+                    },
+                    ResourceMonitorState::Gpu => {
 
-                ui.add_space(10.);
-                ui.horizontal_top(|ui| {
-                    ui.group(|ui| {
-                        self.ram_usage_chart.ui(ui, "RAM Usage Chart", Color32::from_rgb(242, 7, 179));
-                    });
-                });
+                    },
+                    ResourceMonitorState::Processes => {
 
-                ui.add_space(10.);
-                ui.horizontal_top(|ui| {
-                    ui.group(|ui| {
-                                    // New line charts
-                        let mut colors = HashMap::new();
-                        colors.insert("Component Temps".to_string(), Color32::from_rgb(235, 12, 38));
-                        colors.insert("Disk Usage".to_string(), Color32::from_rgb(12, 235, 97));
-                        colors.insert("Network Usage".to_string(), Color32::from_rgb(240, 141, 55));
-                        self.component_temp_plot.ui(ui, "Temps", &colors);
-                        self.disk_usage_plot.ui(ui, "Disk I/O", &colors);
-                        self.network_interface_plot.ui(ui, "Network Usage", &colors);
-                    });
-                });
-
-
+                    },
+                    ResourceMonitorState::Network => {
+                        ui.group(|ui| {
+                            // self.disk_usage_plot.ui(ui, "Disk I/O", &colors);
+                            self.network_interface_plot.ui(ui, "Network Usage", &colors);
+                        });
+                    },
+                    ResourceMonitorState::Temperatures => {
+                        ui.group(|ui| {
+                            self.component_temp_plot.ui(ui, "Temps", &colors);
+                        });
+                    },
+                }
 
                 // let processes = sys.processes();
                 // ui.horizontal(|ui| {
@@ -273,11 +324,20 @@ impl LinePlot {
 
     pub fn ui(&self, ui: &mut Ui, plot_name: &str, colors: &HashMap<String, Color32>) -> Response {
         let plot = Plot::new(plot_name)
-            .legend(Legend::default())
-            .width(400.)
-            .height(200.0)
-            .show_axes(true)
-            .show_grid(true);
+        .legend(
+            Legend::default()
+            .position(
+                Corner::LeftTop
+            )
+            .text_style(
+                TextStyle::Body
+            )
+            .background_alpha(0.90)
+        )
+        .width(ui.available_size_before_wrap().x/1.5)
+        .height(ui.available_size_before_wrap().y/1.5)
+        .allow_drag(false)
+        .show_background(false);
 
         plot.show(ui, |plot_ui| {
             for line in self.lines(colors) {
@@ -326,8 +386,20 @@ impl MetricBarChart {
 
     pub fn ui(&self, ui: &mut Ui, plot_name: &str) -> Response {
         Plot::new(plot_name)
-            .width(300.)
-            .legend(Legend::default())
+            .legend(
+                Legend::default()
+                .position(
+                    Corner::LeftTop
+                )
+                .text_style(
+                    TextStyle::Body
+                )
+                .background_alpha(0.90)
+            )
+            .width(ui.available_size_before_wrap().x/1.5)
+            .height(ui.available_size_before_wrap().y/1.5)
+            .allow_drag(false)
+            .show_background(false)
             .show(ui, |plot_ui| {
                 plot_ui.bar_chart(self.to_bar_chart());
             })
@@ -397,8 +469,8 @@ impl MetricPlot {
                 )
                 .background_alpha(0.90)
             )
-            .width(500.)
-            .height(250.)
+            .width(ui.available_size_before_wrap().x/1.5)
+            .height(ui.available_size_before_wrap().y/1.5)
             .allow_drag(false)
             .show_background(false)
             .x_axis_label(x_label)

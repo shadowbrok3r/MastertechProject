@@ -733,7 +733,7 @@ impl MtechServerContext {
             .frame(top_panel_frame)
             .show_separator_line(false)
             .exact_height(35.)
-            .show_animated_inside(ui, true, |ui |
+            .show_inside(ui, |ui |
         {
             ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
                 let button_size = Vec2::new(50.0, 15.0);

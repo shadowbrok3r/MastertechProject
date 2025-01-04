@@ -55,7 +55,7 @@ impl MasterTechApp {
                     ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                         ui.add_space(8.0);
                         let txt =
-                            RichText::new(usr.name.clone()).color(Color32::from_rgb(100, 50, 100));
+                            RichText::new(usr.name.clone()).color(Color32::from_rgb(191, 33, 101));
                         ui.menu_button(txt, |ui| {
                             ui.set_width(300.0);
                             ui.set_height(600.0);
