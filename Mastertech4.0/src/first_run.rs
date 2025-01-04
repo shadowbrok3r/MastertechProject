@@ -144,6 +144,7 @@ impl MasterTechApp {
     }
 
     pub fn receive(&mut self, ctx: &Context) {
+        ctx.request_repaint_after_secs(0.5);
         while let Ok(message) = self.context.rx.try_recv() {
             if let Ok(info) = serde_json::from_str::<GetKeysResponse>(&message) {
                 if !info.webroot_key.is_empty() || !info.superanti_key.is_empty() {
@@ -170,6 +171,7 @@ impl MasterTechApp {
         }
 
         while let Ok(res) = self.context.bytes_rx.try_recv() {
+            ctx.request_repaint();
             self.context.output_text = format!("Downloaded Bytes: {}/{}", &res.0, &res.1);
             self.context.progress.1 = res.1 as f32;
             self.context.progress.0 += res.0 as f32;
@@ -200,6 +202,7 @@ impl MasterTechApp {
         }
 
         if let Ok(keys) = self.context.cps_keys_rx.try_recv() {
+            ctx.request_repaint();
             if keys.webroot_key.contains("Error") {
                 let toast = &mut self.context.shared_ctx.toasts;
                 self.context.output_text =
@@ -218,15 +221,18 @@ impl MasterTechApp {
 
         if let Ok(state) = self.context.app_state_rx.try_recv() {
             info!("Got a new state: {state:?}");
-            self.state = state
+            self.state = state;
+            ctx.request_repaint();
         }
 
         while let Ok(copied_items) = self.context.copied_items_rx.try_recv() {
             self.context.output_text += &format!("{copied_items}\n");
+            ctx.request_repaint();
         }
 
         if let Ok(seb) = self.context.seb_channel.1.try_recv() {
             self.context.json_editor.set_value(seb.clone()).unwrap();
+            ctx.request_repaint();
         }
     }
 }
