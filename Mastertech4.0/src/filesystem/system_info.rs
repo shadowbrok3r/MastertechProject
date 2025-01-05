@@ -345,9 +345,23 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
     // Number of CPUs:
     let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
-
+    
     // Display processes ID, name na disk usage:
-    for (pid, process) in sys.processes() {println!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
+    // for (pid, process) in sys.processes() {println!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
+    for (pid, process) in sys.processes().iter() {
+        let x = pid.as_u32();
+        // process.name()
+        if let Some(process) = sys.process(*pid) {
+            if let Some(tasks) = process.tasks() {
+                info!("process.pid(): {:?}", process.pid());
+                for task_pid in tasks {
+                    // if let Some(task) = s.process(*task_pid) {
+                    //     info!("Task {:?}: {:?}", task.pid(), task.name());
+                    // }
+                }
+            }
+        }
+    }
 
     for disk in &disk_list {
         disks += format!("{disk:?}").as_str();
@@ -376,7 +390,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         cpu_clock = cpu.frequency();
     }
 
-    Ok(SystemInformation {
+    let sysinfo = SystemInformation {
         cpu_percentage,
         cpu_clock: cpu_clock as f32,
         component_temps,
@@ -389,7 +403,38 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         hostname,
         number_of_cpus,
         network_interfaces,
-    })
+    };
+
+    use brotli::CompressorReader;
+    use base64::{engine::general_purpose, Engine as _};
+
+    let processes = sys.processes();
+    // processes.iter().map(|(pid, process)| (pid.to_string(), process.))
+    // let ps = format!("{:?}", processes);
+    let jso: Value = serde_json::json!({
+        "sysinfo": sysinfo.clone(),
+        "processes": ps
+    });
+    
+
+    fn compress_string(input: &str) -> Vec<u8> {
+        let mut compressed = Vec::new();
+        {
+            let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
+            std::io::copy(&mut compressor, &mut compressed).unwrap();
+        }
+        compressed
+    }
+
+    let sysinfo_string = &serde_json::to_string(&jso).unwrap();
+
+    let compressed: Vec<u8> = compress_string(sysinfo_string);
+
+    let encoded: String = general_purpose::STANDARD.encode(&compressed);
+
+    info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), sysinfo_string.len());
+
+    Ok(sysinfo)
 }
 
 // Function to generate client ID

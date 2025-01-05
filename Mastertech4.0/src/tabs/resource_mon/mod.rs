@@ -53,8 +53,8 @@ impl ResourceMonitor {
     fn receive(&mut self) {
         if let Ok(sysinfo) = self.sysinfo_channel.1.try_recv() {
             info!("got sysinfo: {sysinfo:?}");
-
             let elapsed_time = self.start_time.elapsed().as_secs_f32();
+
 
             // if elapsed_time > 2. { }
             self.cpu_usage_chart.update(elapsed_time, sysinfo.cpu_percentage);
@@ -209,10 +209,6 @@ impl ResourceMonitor {
                                 self.ram_usage_chart.ui(ui, "RAM Usage Chart", Color32::from_rgb(242, 7, 179));
                             });
         
-                            // ui.add_space(50.);
-                            // ui.horizontal_top(|ui| {
-                                
-                            // });
                         });
                     },
                     ResourceMonitorState::Gpu => {
@@ -233,47 +229,6 @@ impl ResourceMonitor {
                         });
                     },
                 }
-
-                // let processes = sys.processes();
-                // ui.horizontal(|ui| {
-                //     for (pid, process) in processes.iter() {
-                //         ui.label(
-                //             RichText::new(format!("{}", pid)).font(
-                //                 FontId {
-                //                     size: 18.1,
-                //                     family: FontFamily::Monospace,
-                //                 },
-                //             ),
-                //         );
-                //         ui.label(
-                //             RichText::new(format!("{:?}", process)).font(
-                //                 FontId {
-                //                     size: 18.1,
-                //                     family: FontFamily::Monospace,
-                //                 },
-                //             ),
-                //         );
-                //         ui.vertical(|ui| {
-                //             if let Some(process) = sys.process(*pid) {
-                //                 if let Some(tasks) = process.tasks() {
-                //                     ui.label(
-                //                         RichText::new(format!("Listing tasks for process {:?}", process.pid())).font(
-                //                             FontId {
-                //                                 size: 16.1,
-                //                                 family: FontFamily::Monospace,
-                //                             },
-                //                         ),
-                //                     );
-                //                     for task_pid in tasks {
-                //                         if let Some(task) = s.process(*task_pid) {
-                //                             println!("Task {:?}: {:?}", task.pid(), task.name());
-                //                         }
-                //                     }
-                //                 }
-                //             }
-                //         });
-                //     }
-                // });
             });
         });
     }
