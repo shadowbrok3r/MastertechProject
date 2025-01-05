@@ -676,7 +676,23 @@ pub struct SystemInformation {
     /// Number of Physical CPU's
     pub number_of_cpus: String,
 
-    pub network_interfaces: HashMap<String, String>,
+    pub network_interfaces: HashMap<String, NetworkInterface>,
+
+    pub processes: HashMap<String, Process>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Difference)]
+pub struct Process {
+    /// Process ID
+    pub id: String,
+
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Difference)]
+pub struct NetworkInterface {
+    /// Process ID
+    pub id: String,
+    
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

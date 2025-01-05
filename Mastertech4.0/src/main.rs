@@ -129,15 +129,15 @@ async fn main() -> eframe::Result<()> {
     // console_subscriber::init();
     // Init the logger
     // Configure log level and log file
-    displays::tabs::logger::logging::builder().init().unwrap();
+    // displays::tabs::logger::logging::builder().init().unwrap();
 
-    // let log_level = log::LevelFilter::Info;
-    // let log_file = std::fs::File::create("output.log").unwrap();
-    // simplelog::WriteLogger::init(
-    //     log_level,
-    //     simplelog::Config::default(),
-    //     log_file
-    // ).unwrap();
+    let log_level = log::LevelFilter::Info;
+    let log_file = std::fs::File::create("output.log").unwrap();
+    simplelog::WriteLogger::init(
+        log_level,
+        simplelog::Config::default(),
+        log_file
+    ).unwrap();
 
     #[cfg(feature = "gui")]
     let eframe_app = eframe::run_native(
