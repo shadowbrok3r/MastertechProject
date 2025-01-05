@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use database::schema::{
-    ComputerData, DriveData, LocalSebData, SystemInformation, COMPUTER_TABLE,
+    ComputerData, DriveData, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE
 };
 use dotenv::dotenv;
 use futures_util::FutureExt;
@@ -160,84 +160,85 @@ impl ComputerInfo for ComputerData {
     }
 
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
-        let mut sys = System::new_all();
-        let sysinf: SystemInformation;
+        Ok(get_sysinfo().await?)
+        // let mut sys = System::new_all();
+        // let sysinf: SystemInformation;
 
-        // First we update all information of our `System` struct.
-        sys.refresh_all();
+        // // First we update all information of our `System` struct.
+        // sys.refresh_all();
 
-        let mut cpu_percentage = f32::default();
-        let mut cpu_clock = u64::default();
-        let mut disks = String::new();
-        let disk_list = Disks::new_with_refreshed_list();
-        // let component_temp = String::new();
-        let mut network_interfaces: HashMap<String, String> = HashMap::new();
-        let mut component_temps: HashMap<String, f32> = HashMap::new();
-        // Components temperature:
-        let components = Components::new_with_refreshed_list();
-        // Network interfaces name, total data received and total data transmitted:
-        let networks = Networks::new_with_refreshed_list();
-        // RAM and swap information:
-        let total_memory = sys.total_memory();
-        let used_memory = sys.used_memory();
+        // let mut cpu_percentage = f32::default();
+        // let mut cpu_clock = u64::default();
+        // let mut disks = String::new();
+        // let disk_list = Disks::new_with_refreshed_list();
+        // // let component_temp = String::new();
+        // let mut network_interfaces: HashMap<String, String> = HashMap::new();
+        // let mut component_temps: HashMap<String, f32> = HashMap::new();
+        // // Components temperature:
+        // let components = Components::new_with_refreshed_list();
+        // // Network interfaces name, total data received and total data transmitted:
+        // let networks = Networks::new_with_refreshed_list();
+        // // RAM and swap information:
+        // let total_memory = sys.total_memory();
+        // let used_memory = sys.used_memory();
 
-        // Display system information:
-        let name = System::name().context("Could not retrieve system name")?;
-        let kernel_version =
-            System::kernel_version().context("Could not retrieve kernel_version")?;
-        let os_version = System::os_version().context("Could not retrieve os_version")?;
-        let hostname = System::host_name().context("Could not retrieve hostname")?;
+        // // Display system information:
+        // let name = System::name().context("Could not retrieve system name")?;
+        // let kernel_version =
+        //     System::kernel_version().context("Could not retrieve kernel_version")?;
+        // let os_version = System::os_version().context("Could not retrieve os_version")?;
+        // let hostname = System::host_name().context("Could not retrieve hostname")?;
 
-        // Number of CPUs:
-        let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
+        // // Number of CPUs:
+        // let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
 
-        // Display processes ID, name na disk usage:
-        // for (pid, process) in sys.processes() {println!("[{pid}] {} {:?}", process.name(), process.disk_usage());}
+        // // Display processes ID, name na disk usage:
+        // // for (pid, process) in sys.processes() {println!("[{pid}] {} {:?}", process.name(), process.disk_usage());}
 
-        for disk in &disk_list {
-            disks += format!("{disk:?}").as_str();
-        }
+        // for disk in &disk_list {
+        //     disks += format!("{disk:?}").as_str();
+        // }
 
-        for (interface_name, data) in &networks {
-            if data.total_received() > 1 {
-                let up_down = format!("{}/{}", data.total_received(), data.total_transmitted());
-                network_interfaces.insert(interface_name.clone(), up_down);
-            }
-        }
+        // for (interface_name, data) in &networks {
+        //     if data.total_received() > 1 {
+        //         let up_down = format!("{}/{}", data.total_received(), data.total_transmitted());
+        //         network_interfaces.insert(interface_name.clone(), up_down);
+        //     }
+        // }
 
-        for component in &components {
-            // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
-            component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
-            // comps += format!("{component:#?} \n", component.).as_str();
-        }
+        // for component in &components {
+        //     // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
+        //     component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
+        //     // comps += format!("{component:#?} \n", component.).as_str();
+        // }
 
-        let mut s =
-            System::new_with_specifics(RefreshKind::everything());
+        // let mut s =
+        //     System::new_with_specifics(RefreshKind::everything());
 
-        std::thread::sleep(Duration::from_millis(200));
+        // std::thread::sleep(Duration::from_millis(200));
 
-        s.refresh_cpu_all(); // Refreshing CPU information.
-        for cpu in s.cpus() {
-            cpu_percentage = cpu.cpu_usage();
-            cpu_clock = cpu.frequency();
-        }
+        // s.refresh_cpu_all(); // Refreshing CPU information.
+        // for cpu in s.cpus() {
+        //     cpu_percentage = cpu.cpu_usage();
+        //     cpu_clock = cpu.frequency();
+        // }
 
-        sysinf = SystemInformation {
-            cpu_percentage,
-            cpu_clock: cpu_clock as f32,
-            component_temps,
-            disks,
-            total_memory: total_memory as f32,
-            used_memory: used_memory as f32,
-            name,
-            kernel_version,
-            os_version,
-            hostname,
-            number_of_cpus,
-            network_interfaces,
-        };
+        // sysinf = SystemInformation {
+        //     cpu_percentage,
+        //     cpu_clock: cpu_clock as f32,
+        //     component_temps,
+        //     disks,
+        //     total_memory: total_memory as f32,
+        //     used_memory: used_memory as f32,
+        //     name,
+        //     kernel_version,
+        //     os_version,
+        //     hostname,
+        //     number_of_cpus,
+        //     network_interfaces,
+        // };
 
-        Ok(sysinf)
+        // Ok(sysinf)
     }
 
     #[cfg(target_os = "windows")]
@@ -327,8 +328,9 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let mut cpu_clock = u64::default();
     let mut disks = String::new();
     let disk_list = Disks::new_with_refreshed_list();
-    let mut network_interfaces: HashMap<String, String> = HashMap::new();
+    let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
     let mut component_temps: HashMap<String, f32> = HashMap::new();
+    let mut processes: Vec<SysProcess> = Vec::new();
     // Components temperature:
     let components = Components::new_with_refreshed_list();
     // Network interfaces name, total data received and total data transmitted:
@@ -349,18 +351,47 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     // Display processes ID, name na disk usage:
     // for (pid, process) in sys.processes() {println!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
     for (pid, process) in sys.processes().iter() {
-        let x = pid.as_u32();
-        // process.name()
-        if let Some(process) = sys.process(*pid) {
-            if let Some(tasks) = process.tasks() {
-                info!("process.pid(): {:?}", process.pid());
-                for task_pid in tasks {
-                    // if let Some(task) = s.process(*task_pid) {
-                    //     info!("Task {:?}: {:?}", task.pid(), task.name());
-                    // }
-                }
-            }
-        }
+        let id = pid.as_u32();
+        let name = process.name();
+        let cmd = process.cmd();
+        let user_id = process.user_id().map(|id| id.to_string());
+        
+        let memory = process.memory();
+        let tasks = process.tasks();
+        let cpu_usage = process.cpu_usage();
+        let user_id = process.user_id();
+        let read_bytes = process.disk_usage().read_bytes;
+        let total_read_bytes = process.disk_usage().total_read_bytes;
+        let total_written_bytes = process.disk_usage().total_written_bytes;
+        let written_bytes = process.disk_usage().written_bytes;
+
+        processes.push(SysProcess {
+            id,
+            name,
+            cmd,
+            user_id,
+            memory,
+            tasks,
+            cpu_usage,
+            user_id,
+            process_disk_usage: ProcessDiskUsage {
+                read_bytes,
+                total_read_bytes,
+                total_written_bytes,
+                written_bytes,
+            },
+        });
+
+        // if let Some(process) = sys.process(*pid) {
+        //     if let Some(tasks) = process.tasks() {
+        //         info!("process.pid(): {:?}", process.pid());
+        //         for task_pid in tasks {
+        //             // if let Some(task) = s.process(*task_pid) {
+        //             //     info!("Task {:?}: {:?}", task.pid(), task.name());
+        //             // }
+        //         }
+        //     }
+        // }
     }
 
     for disk in &disk_list {
@@ -369,8 +400,13 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
     for (interface_name, data) in &networks {
         if data.total_received() > 1 {
-            let up_down = format!("{}/{}", data.total_received(), data.total_transmitted());
-            network_interfaces.insert(interface_name.clone(), up_down);
+            network_interfaces.push(
+                NetworkInterface { 
+                    interface_name,
+                    total_received: data.total_received(),
+                    total_transmitted: data.total_transmitted()
+                }
+            );
         }
     }
 
@@ -379,8 +415,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         // comps += format!("{component:#?} \n", component.).as_str();
     }
 
-    let mut s =
-        System::new_with_specifics(RefreshKind::everything());
+    let mut s = System::new_with_specifics(RefreshKind::everything());
 
     std::thread::sleep(Duration::from_millis(200));
 
@@ -403,20 +438,20 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         hostname,
         number_of_cpus,
         network_interfaces,
+        processes: todo!(),
     };
 
-    use brotli::CompressorReader;
-    use base64::{engine::general_purpose, Engine as _};
-
+    
     let processes = sys.processes();
     // processes.iter().map(|(pid, process)| (pid.to_string(), process.))
     // let ps = format!("{:?}", processes);
-    let jso: Value = serde_json::json!({
-        "sysinfo": sysinfo.clone(),
-        "processes": ps
-    });
-    
-
+    // let jso: Value = serde_json::json!({
+        //     "sysinfo": sysinfo.clone(),
+        //     "processes": ps
+        // });
+        
+    use brotli::CompressorReader;
+    use base64::{engine::general_purpose, Engine as _};
     fn compress_string(input: &str) -> Vec<u8> {
         let mut compressed = Vec::new();
         {

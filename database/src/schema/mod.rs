@@ -675,24 +675,39 @@ pub struct SystemInformation {
     pub hostname: String,
     /// Number of Physical CPU's
     pub number_of_cpus: String,
-
-    pub network_interfaces: HashMap<String, NetworkInterface>,
-
+    /// list of network interfaces and 
+    pub network_interfaces: Vec<NetworkInterface>,
+    /// List of active processes on host
     pub processes: HashMap<String, Process>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference)]
+#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq)]
 pub struct Process {
     /// Process ID
-    pub id: String,
-
+    pub id: u32,
+    pub name: String,
+    pub cmd: String,
+    pub user_id: Option<String>,
+    pub memory: String,
+    pub tasks: String,
+    pub cpu_usage: String,
+    pub process_disk_usage: ProcessDiskUsage
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference)]
+#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq)]
+pub struct ProcessDiskUsage {
+    pub read_bytes: u64,
+    pub total_read_bytes: u64,
+    pub total_written_bytes: u64,
+    pub written_bytes: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq)]
 pub struct NetworkInterface {
     /// Process ID
-    pub id: String,
-    
+    pub interface_name: String,
+    pub total_received: u64,
+    pub total_transmitted: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
