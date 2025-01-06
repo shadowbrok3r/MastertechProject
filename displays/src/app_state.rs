@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, resource_monitor::process_table::ProcessTableViewer, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -162,6 +162,9 @@ pub struct SharedContext {
     #[serde(skip)]
     pub task_audit_table: TaskAuditViewer,
 
+    #[serde(skip)]
+    pub process_table_viewer: ProcessTableViewer,
+
     /// Just some testing for Ai capabilities
     #[serde(skip)]
     pub ai_playground: AiPlayground,
@@ -276,6 +279,7 @@ impl SharedContext {
             stock_quantity_table: DataTable::<StockQuantityData>::default(),
             ai_playground: AiPlayground::default(),
             task_audit_table: TaskAuditViewer::new(),
+            process_table_viewer: ProcessTableViewer::new(),
             tur: Tur::default(),
             close_modal: None,
             theme_config,
