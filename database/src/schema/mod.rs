@@ -681,7 +681,7 @@ pub struct SystemInformation {
     pub processes: Vec<Process>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq, Default)]
 pub struct Process {
     /// Process ID
     pub id: u32,
@@ -689,12 +689,11 @@ pub struct Process {
     pub cmd: String,
     pub user_id: Option<String>,
     pub memory: String,
-    // pub tasks: String,
     pub cpu_usage: f32,
     pub process_disk_usage: ProcessDiskUsage
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq, Default)]
 pub struct ProcessDiskUsage {
     pub read_bytes: u64,
     pub total_read_bytes: u64,
@@ -702,7 +701,7 @@ pub struct ProcessDiskUsage {
     pub written_bytes: u64,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq, Default)]
 pub struct NetworkInterface {
     /// Process ID
     pub interface_name: String,
