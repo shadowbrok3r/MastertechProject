@@ -1,15 +1,15 @@
-use crate::{app_state::SharedContext, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}};
-use eframe::egui::{Button, CentralPanel, Id, KeyboardShortcut, RichText, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use crate::egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction};
+use eframe::egui::{Button, CentralPanel, Id, KeyboardShortcut, RichText, ScrollArea, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::Process;
 use egui_extras::Column;
 use serde::Serialize;
 
 
-impl SharedContext {
-    pub fn process_table_viewer(&mut self, ui: &mut Ui) {
-        self.process_table_viewer.show(ui);
-    }
-}
+// impl SharedContext {
+//     pub fn process_table_viewer(&mut self, ui: &mut Ui) {
+//         self.process_table_viewer.show(ui);
+//     }
+// }
 
 /// Every logic is defined in `Viewer`
 #[derive(Serialize)]
@@ -53,7 +53,7 @@ impl ProcessTableViewer {
         self.process_table.replace(data);
     }
 
-    fn show(&mut self, ui: &mut Ui) {
+    pub fn show(&mut self, ui: &mut Ui) {
         // SidePanel::right(Id::new("Process Viewer Side Panel"))
         //     .default_width(280.)
         //     .max_width(900.)
@@ -127,8 +127,12 @@ impl ProcessTableViewer {
 
             });
             ui.add_space(5.);
+            ScrollArea::horizontal()
+                .auto_shrink(false)
+                .show(ui, |ui| 
+                    Renderer::new(&mut self.process_table, &mut self.process_viewer).ui(ui)
+                );
             
-            Renderer::new(&mut self.process_table, &mut self.process_viewer).ui(ui);
         });  
     }
 }
@@ -154,7 +158,7 @@ impl RowViewer<Process> for ProcessRowViewer {
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true, true][column]
+        [true, true, true, true, true, true, true][column]
     }
 
     fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
@@ -177,9 +181,9 @@ impl RowViewer<Process> for ProcessRowViewer {
         let _ = match column {
             0 => ui.horizontal_centered(|ui| ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.id.clone()))).inner,
             1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.name.clone()))).inner,
-            2 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.cpu_usage.clone()))).inner,
-            3 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.memory.clone()))).inner,
-            4 => ui.horizontal_centered(|ui| ui.label(format!(" {} / {}", row.process_disk_usage.read_bytes.clone(), row.process_disk_usage.written_bytes.clone()))).inner,
+            2 => ui.horizontal_centered(|ui| ui.label(format!(" {}%", row.cpu_usage.clone()))).inner,
+            3 => ui.horizontal_centered(|ui| ui.label(format!(" {}Mb", row.memory.clone()))).inner,
+            4 => ui.horizontal_centered(|ui| ui.label(format!(" {}Mb / {}Mb", row.process_disk_usage.total_read_bytes.clone(), row.process_disk_usage.total_written_bytes.clone()))).inner,
             5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.user_id.clone().unwrap_or_default()))).inner,
             6 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.cmd.clone()))).inner,
             _ => unreachable!(),
@@ -191,19 +195,19 @@ impl RowViewer<Process> for ProcessRowViewer {
         match column {
             0 => col_config.resizable(true).at_least(60.).at_most(60.),
             1 => col_config.resizable(true).at_least(180.).at_most(225.),
-            2 => col_config.resizable(true).at_least(90.).at_most(100.),
-            3 => col_config.resizable(true).at_least(130.).at_most(130.),
-            4 => col_config.resizable(true).at_least(130.).at_most(150.),
-            5 => col_config.resizable(true).at_least(130.).at_most(150.),
-            6 => col_config.resizable(true).at_least(80.).at_most(80.),
+            2 => col_config.resizable(true).at_least(90.).at_most(90.),
+            3 => col_config.resizable(true).at_least(100.).at_most(100.),
+            4 => col_config.resizable(true).at_least(85.).at_most(85.),
+            5 => col_config.resizable(true).at_least(60.).at_most(60.),
+            6 => col_config.resizable(true).clip(false),
             _ => col_config,
         }
     }
     
     fn show_cell_editor(
         &mut self,
-        ui: &mut eframe::egui::Ui,
-        row: &mut Process,
+        _ui: &mut eframe::egui::Ui,
+        _row: &mut Process,
         column: usize,
     ) -> Option<eframe::egui::Response> {
         match column {
@@ -221,7 +225,7 @@ impl RowViewer<Process> for ProcessRowViewer {
 
     fn on_cell_view_response(
         &mut self,
-        row: &Process,
+        _row: &Process,
         column: usize,
         resp: &eframe::egui::Response,
     ) -> Option<Box<Process>> {
@@ -270,9 +274,9 @@ impl RowViewer<Process> for ProcessRowViewer {
             1 => row_l.name.cmp(&row_r.name),
             2 => row_l.cmd.cmp(&row_r.cmd),
             3 => row_l.user_id.cmp(&row_r.user_id),
-            4 => row_l.memory.cmp(&row_r.memory),
+            4 => row_l.memory.to_string().cmp(&row_r.memory.to_string()),
             5 => row_l.cpu_usage.to_string().cmp(&row_r.cpu_usage.to_string()),
-            6 => row_l.process_disk_usage.read_bytes.cmp(&row_r.process_disk_usage.read_bytes),
+            6 => row_l.process_disk_usage.total_read_bytes.to_string().cmp(&row_r.process_disk_usage.total_read_bytes.to_string()),
             _ => row_l.id.cmp(&row_r.id)
         }
     }
@@ -298,7 +302,7 @@ impl RowCodec<Process> for Codec {
             1 => dst.push_str(&src_row.name),
             2 => dst.push_str(&src_row.cmd),
             3 => dst.push_str(&src_row.user_id.clone().unwrap_or_default()),
-            4 => dst.push_str(&src_row.memory),
+            4 => dst.push_str(&src_row.memory.to_string()),
             5 => dst.push_str(&src_row.cpu_usage.to_string()),
             6 => dst.push_str(&format!("{}/{}", src_row.process_disk_usage.read_bytes, src_row.process_disk_usage.written_bytes)),
             _ => unreachable!(),
