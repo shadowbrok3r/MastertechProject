@@ -25,12 +25,6 @@ pub enum ResourceMonitorState {
     Temperatures,
 }
 
-// fn normalize(value: f32, min: f32, max: f32) -> f32 {
-//     (value - min) / (max - min)
-// }
-
-
-
 pub struct ResourceMonitor {
     sysinfo_channel: (Sender<SystemInformation>, Receiver<SystemInformation>),
     cpu_usage_chart: MetricPlot,
