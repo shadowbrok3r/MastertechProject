@@ -197,7 +197,7 @@ impl RowViewer<Process> for ProcessRowViewer {
             1 => col_config.resizable(true).at_least(180.).at_most(225.),
             2 => col_config.resizable(true).at_least(90.).at_most(90.),
             3 => col_config.resizable(true).at_least(100.).at_most(100.),
-            4 => col_config.resizable(true).at_least(85.).at_most(85.),
+            4 => col_config.resizable(true).at_least(100.).at_most(100.),
             5 => col_config.resizable(true).at_least(60.).at_most(60.),
             6 => col_config.resizable(true).clip(false),
             _ => col_config,
