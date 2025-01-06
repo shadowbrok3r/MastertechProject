@@ -1,11 +1,11 @@
 use eframe::egui::{Align, Button, CentralPanel, Color32, FontId, Layout, RichText, ScrollArea, TopBottomPanel, Ui, Vec2, Widget};
+use process_table::ProcessTableViewer;
 use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use line_plot::LinePlot;
 use metric_plot::MetricPlot;
 use std::{collections::HashMap, time::Instant};
 use database::schema::SystemInformation;
-use tokio::spawn;
 use log::info;
 // use crate::filesystem::system_info::get_sysinfo;
 
@@ -23,19 +23,20 @@ pub enum ResourceMonitorState {
     Processes,
     Network,
     Temperatures,
+    RequestingData
 }
 
 pub struct ResourceMonitor {
-    sysinfo_channel: (Sender<SystemInformation>, Receiver<SystemInformation>),
+    pub state: ResourceMonitorState,
+    pub sysinfo_channel: (Sender<SystemInformation>, Receiver<SystemInformation>),
     cpu_usage_chart: MetricPlot,
     cpu_clock_chart: MetricPlot,
     ram_usage_chart: MetricPlot,
     component_temp_plot: LinePlot,
     disk_usage_plot: LinePlot,
     network_interface_plot: LinePlot,
-    processes: Vec<database::schema::Process>,
     start_time: Instant,
-    state: ResourceMonitorState
+    process_table_viewer: ProcessTableViewer,
 }
 
 impl Default for ResourceMonitor {
@@ -51,7 +52,7 @@ impl Default for ResourceMonitor {
             network_interface_plot: LinePlot::new(50),
             start_time: Instant::now(), // Initialize the timer
             state: ResourceMonitorState::default(),
-            processes: Default::default(),
+            process_table_viewer: ProcessTableViewer::new(),
         }
     }
 }
@@ -86,7 +87,7 @@ impl ResourceMonitor {
                 let tx_gb = interface.total_transmitted as f32 / 1e9;
                 self.network_interface_plot.update_line(&interface.interface_name, elapsed_time, rx_gb + tx_gb);
             }
-            self.processes = sysinfo.processes;
+            self.process_table_viewer.set_data(sysinfo.processes);
         }
     }
 
@@ -139,11 +140,7 @@ impl ResourceMonitor {
                     let button_stroke = ui.style().visuals.window_stroke;
                     let button_size = Vec2::new(60.0, 15.0);
                     if Button::new("Refresh").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
-                        let tx = self.sysinfo_channel.0.clone();
-                        spawn(async move {
-                            let res = live_computer_stats(tx).await; 
-                            log::info!("Getting live sys stats: {res:?}");
-                        });
+                        self.state = ResourceMonitorState::RequestingData;
                     }
 
                     ui.add_space(ui.available_width()/1.5);
@@ -154,7 +151,6 @@ impl ResourceMonitor {
                             .heading()
                             .font(FontId::proportional(20.))
                     );
-
                 });
             });
         });
@@ -220,36 +216,7 @@ impl ResourceMonitor {
 
                     },
                     ResourceMonitorState::Processes => {
-                        ui.group(|ui| {
-                            ui.horizontal_top(|ui| {
-                                ui.label("PID");
-                                ui.label("Process");
-                                ui.label("CMD");
-                                ui.label("Process CPU Usage");
-                                ui.label("Process Memory Usage");
-                                ui.label("Process Disk Usage");
-                                ui.label("Process UID");
-                            });
-
-                            for process in self.processes.iter() {
-                                ui.horizontal_top(|ui| {
-
-                                    ui.label(process.id.to_string());
-                                    
-                                    ui.label(process.name.clone());
-                                    
-                                    ui.label(process.cmd.clone());
-                                    ui.label(process.cpu_usage.to_string());
-                                    
-                                    ui.label(process.memory.clone());
-                                    ui.label(process.process_disk_usage.total_written_bytes.to_string());
-
-                                    if let Some(uid) = process.user_id.as_ref() {
-                                        ui.label(uid);
-                                    }
-                                });
-                            }
-                        });
+                        self.process_table_viewer.show(ui);
                     },
                     ResourceMonitorState::Network => {
                         ui.group(|ui| {
@@ -262,6 +229,7 @@ impl ResourceMonitor {
                             self.component_temp_plot.ui(ui, "Temps", &colors);
                         });
                     },
+                    _ => {},
                 }
             });
         });
@@ -281,13 +249,4 @@ fn parse_disk_info(disk_info: &str) -> Option<(String, u64, u64)> {
         return Some((name, used, total));
     }
     None
-}
-
-async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{
-    loop {
-        tx.send(get_sysinfo().await?)?;
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    }
-    #[allow(unreachable_code)]
-    Ok(())
 }

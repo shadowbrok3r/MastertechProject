@@ -29,7 +29,7 @@ use crate::tabs::minidump::MiniDumpApp;
 use crate::{
     pages::login_page::Login,
     tabs::{
-        file_browser::FileBrowser, github::self_updater::GithubRelease, resource_mon::ResourceMonitor, scripts::Scripts, seb_lookup::JsonEditor, tur_sheet::{
+        file_browser::FileBrowser, github::self_updater::GithubRelease, scripts::Scripts, seb_lookup::JsonEditor, tur_sheet::{
             get_ticket::SendRequest,
             scaffold::{self, HardwareTest},
         }, websockets::WebConsoleFrontend
@@ -184,7 +184,7 @@ pub struct MastertechContext {
     pub seb_email: String,
     pub client_friendly_name: String,
     pub client_title: String,
-    pub resource_mon: ResourceMonitor
+
 }
 
 impl MasterTechApp {
@@ -213,7 +213,6 @@ impl MasterTechApp {
             // terminal: Terminal::new(backend).unwrap(),
             // terminal_frontend: None,
             client_friendly_name: String::new(),
-            resource_mon: ResourceMonitor::default(),
             url: None,
             error: Default::default(),
             frontend: None,

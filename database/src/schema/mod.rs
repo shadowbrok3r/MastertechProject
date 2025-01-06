@@ -688,25 +688,25 @@ pub struct Process {
     pub name: String,
     pub cmd: String,
     pub user_id: Option<String>,
-    pub memory: String,
+    pub memory: f32,
     pub cpu_usage: f32,
     pub process_disk_usage: ProcessDiskUsage
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq, Default)]
 pub struct ProcessDiskUsage {
-    pub read_bytes: u64,
-    pub total_read_bytes: u64,
-    pub total_written_bytes: u64,
-    pub written_bytes: u64,
+    pub read_bytes: f32,
+    pub total_read_bytes: f32,
+    pub total_written_bytes: f32,
+    pub written_bytes: f32,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq, Default)]
 pub struct NetworkInterface {
     /// Process ID
     pub interface_name: String,
-    pub total_received: u64,
-    pub total_transmitted: u64,
+    pub total_received: f32,
+    pub total_transmitted: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

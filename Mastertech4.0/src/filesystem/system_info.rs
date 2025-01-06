@@ -336,8 +336,8 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     // Network interfaces name, total data received and total data transmitted:
     let networks = Networks::new_with_refreshed_list();
     // RAM and swap information:
-    let total_memory = sys.total_memory() as f32;
-    let used_memory = sys.used_memory() as f32;
+    let total_memory = sys.total_memory() as f32 / (1024.0 * 1024.0);
+    let used_memory = sys.used_memory() as f32 / (1024.0 * 1024.0);
 
     // Display system information:
     let name = System::name().context("Could not retrieve system name")?;
@@ -356,12 +356,13 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         let cmd = format!("{:?}", process.cmd());
         let user_id = process.user_id().map(|id| id.to_string());
         
-        let memory = process.memory().to_string();
+        let memory = (process.memory() as f32 / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+
         let cpu_usage = process.cpu_usage();
-        let read_bytes = process.disk_usage().read_bytes;
-        let total_read_bytes = process.disk_usage().total_read_bytes;
-        let total_written_bytes = process.disk_usage().total_written_bytes;
-        let written_bytes = process.disk_usage().written_bytes;
+        let read_bytes = (process.disk_usage().read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+        let total_read_bytes = (process.disk_usage().total_read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+        let total_written_bytes = (process.disk_usage().total_written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+        let written_bytes = (process.disk_usage().written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
 
         processes.push(SysProcess {
             id,
@@ -389,8 +390,8 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
             network_interfaces.push(
                 NetworkInterface { 
                     interface_name,
-                    total_received: data.total_received(),
-                    total_transmitted: data.total_transmitted()
+                    total_received: data.total_received() as f32  / (1024.0 * 1024.0),
+                    total_transmitted: data.total_transmitted() as f32  / (1024.0 * 1024.0)
                 }
             );
         }
