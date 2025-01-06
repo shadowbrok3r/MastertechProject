@@ -1,4 +1,4 @@
-use eframe::egui::{Align, Button, CentralPanel, Color32, FontId, Layout, Response, RichText, ScrollArea, Separator, TextStyle, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Align, Button, CentralPanel, Color32, FontId, Layout, Response, RichText, ScrollArea, TextStyle, TopBottomPanel, Ui, Vec2, Widget};
 use egui_plot::{Bar, BarChart, Corner, Legend, Line, LineStyle, Plot, PlotPoints};
 use displays::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
@@ -6,8 +6,10 @@ use std::{collections::{HashMap, VecDeque}, time::Instant};
 use database::schema::SystemInformation;
 use tokio::spawn;
 use log::info;
-
 use crate::filesystem::system_info::get_sysinfo;
+
+mod process_table;
+
 
 #[derive(Default)]
 pub enum ResourceMonitorState {
@@ -28,6 +30,7 @@ pub struct ResourceMonitor {
     component_temp_plot: LinePlot,
     disk_usage_plot: LinePlot,
     network_interface_plot: LinePlot,
+    processes: Vec<database::schema::Process>,
     start_time: Instant,
     state: ResourceMonitorState
 }
@@ -44,7 +47,8 @@ impl Default for ResourceMonitor {
             disk_usage_plot: LinePlot::new(50),
             network_interface_plot: LinePlot::new(50),
             start_time: Instant::now(), // Initialize the timer
-            state: ResourceMonitorState::default()
+            state: ResourceMonitorState::default(),
+            processes: Default::default(),
         }
     }
 }
@@ -74,14 +78,12 @@ impl ResourceMonitor {
             }
 
             // Update network interfaces
-            for (interface, data) in &sysinfo.network_interfaces {
-                info!("Interface: {interface:?}\nData: {data:?}");
-                if let Some((rx_bytes, tx_bytes)) = parse_network_data(data) {
-                    let rx_gb = rx_bytes as f32 / 1e9;
-                    let tx_gb = tx_bytes as f32 / 1e9;
-                    self.network_interface_plot.update_line(interface, elapsed_time, rx_gb + tx_gb);
-                }
+            for interface in &sysinfo.network_interfaces {
+                let rx_gb = interface.total_received as f32 / 1e9;
+                let tx_gb = interface.total_transmitted as f32 / 1e9;
+                self.network_interface_plot.update_line(&interface.interface_name, elapsed_time, rx_gb + tx_gb);
             }
+            self.processes = sysinfo.processes;
         }
     }
 
@@ -215,7 +217,36 @@ impl ResourceMonitor {
 
                     },
                     ResourceMonitorState::Processes => {
+                        ui.group(|ui| {
+                            ui.horizontal_top(|ui| {
+                                ui.label("PID");
+                                ui.label("Process");
+                                ui.label("CMD");
+                                ui.label("Process CPU Usage");
+                                ui.label("Process Memory Usage");
+                                ui.label("Process Disk Usage");
+                                ui.label("Process UID");
+                            });
 
+                            for process in self.processes.iter() {
+                                ui.horizontal_top(|ui| {
+
+                                    ui.label(process.id.to_string());
+                                    
+                                    ui.label(process.name.clone());
+                                    
+                                    ui.label(process.cmd.clone());
+                                    ui.label(process.cpu_usage.to_string());
+                                    
+                                    ui.label(process.memory.clone());
+                                    ui.label(process.process_disk_usage.total_written_bytes.to_string());
+
+                                    if let Some(uid) = process.user_id.as_ref() {
+                                        ui.label(uid);
+                                    }
+                                });
+                            }
+                        });
                     },
                     ResourceMonitorState::Network => {
                         ui.group(|ui| {
@@ -452,21 +483,10 @@ fn parse_disk_info(disk_info: &str) -> Option<(String, u64, u64)> {
     None
 }
 
-fn parse_network_data(data: &str) -> Option<(u64, u64)> {
-    let parts: Vec<&str> = data.split('/').collect();
-    if parts.len() == 2 {
-        let rx = parts[0].parse::<u64>().ok()?;
-        let tx = parts[1].parse::<u64>().ok()?;
-        return Some((rx, tx));
-    }
-    None
-}
-
-
 async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         tx.send(get_sysinfo().await?)?;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     #[allow(unreachable_code)]
     Ok(())

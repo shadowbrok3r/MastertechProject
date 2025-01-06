@@ -1,6 +1,6 @@
 use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::{schema::{ConnectedClient, Node, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{utilities::decompress_data, ConnectedClient, Node, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use regex::Regex;
 use core::f32;
 use std::collections::{HashMap, VecDeque};
@@ -156,7 +156,7 @@ impl WebSocketClient{
                 WsEvent::Message(msg) => {
                     match msg{
                         WsMessage::Binary(bin) => {
-                            if let Some(sysinfo) = deserializer::<SystemInformation>(bin){
+                            if let Some(sysinfo) = deserializer::<SystemInformation>(&decompress_data(bin.as_slice())){
                                 info!("Got sysinfo");
                                 self.loading = false;
                                 let normalized_cpu_clock = normalize(sysinfo.cpu_clock, 0.0, 100.0); // Example range for CPU clock

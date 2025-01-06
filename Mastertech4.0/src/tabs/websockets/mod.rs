@@ -1,5 +1,5 @@
 use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
-use database::{schema::{utilities::query_id, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{utilities::{compress_data, query_id}, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, pin, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::Path, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
@@ -213,7 +213,10 @@ impl WebConsoleFrontend {
         while let Some(event) = self.ws_receiver.try_recv() { self.events.push(event); }
         
         if let Ok(sysinfo) = &mut self.rx.try_recv(){
-            self.ws_sender.send(WsMessage::Binary(std::mem::take(sysinfo)));
+            let mut compressed: Vec<u8> = compress_data(sysinfo.as_slice());
+
+            info!("Compressed data: {}\nOriginal: {}", compressed.len(), sysinfo.len());
+            self.ws_sender.send(WsMessage::Binary(std::mem::take(&mut compressed)));
         }
         
         while let Ok(cmd_output) = &mut self.command_rx.try_recv(){

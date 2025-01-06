@@ -528,8 +528,6 @@ impl LiveTaskPayload {
 
 }
 
-
-
 pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<PrestashopPayload, anyhow::Error> {
     let api_call = Prestashop::default();
     let mut query = HashMap::new();
@@ -634,7 +632,6 @@ pub async fn get_prestashop_payload(order_number: &str) -> anyhow::Result<Presta
     )
 }
 
-
 #[derive(Serialize)]
 #[allow(dead_code)]
 pub struct PhoneNumberFormatter {
@@ -676,4 +673,22 @@ impl PhoneNumberFormatter {
 
         formatted
     }
+}
+
+
+pub fn compress_data(input: &[u8]) -> Vec<u8> {
+    let mut compressed = Vec::new();
+    {
+        let mut compressor = brotli::CompressorReader::new(input, 4096, 11, 22);
+        std::io::copy(&mut compressor, &mut compressed).unwrap();
+    }
+    compressed
+}
+
+
+pub fn decompress_data(input: &[u8]) -> Vec<u8> {
+    let mut decompressed = Vec::new();
+    let mut decompressor = brotli::Decompressor::new(input, 4096);
+    std::io::copy(&mut decompressor, &mut decompressed).unwrap();
+    decompressed
 }
