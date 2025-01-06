@@ -678,7 +678,7 @@ pub struct SystemInformation {
     /// list of network interfaces and 
     pub network_interfaces: Vec<NetworkInterface>,
     /// List of active processes on host
-    pub processes: HashMap<String, Process>,
+    pub processes: Vec<Process>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq)]
@@ -689,8 +689,8 @@ pub struct Process {
     pub cmd: String,
     pub user_id: Option<String>,
     pub memory: String,
-    pub tasks: String,
-    pub cpu_usage: String,
+    // pub tasks: String,
+    pub cpu_usage: f32,
     pub process_disk_usage: ProcessDiskUsage
 }
 

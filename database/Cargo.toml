@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-reqwest = { version = "0.12.0", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 lazy_static = "1"
-rusty-s3 = "0.5"
+rusty-s3 = { workspace=true }
 regex = { workspace=true }
 web-time = { workspace=true }
 surrealdb = { workspace=true }
@@ -24,4 +24,5 @@ futures = { workspace=true }
 structdiff = { workspace=true }
 chrono = {workspace=true}
 bytes = {workspace = true}
+brotli = { workspace=true }
 # gloo-console = { workspace=true }

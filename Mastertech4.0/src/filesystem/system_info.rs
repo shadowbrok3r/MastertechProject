@@ -325,7 +325,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     sys.refresh_all();
 
     let mut cpu_percentage = f32::default();
-    let mut cpu_clock = u64::default();
+    let mut cpu_clock = f32::default();
     let mut disks = String::new();
     let disk_list = Disks::new_with_refreshed_list();
     let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
@@ -336,8 +336,8 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     // Network interfaces name, total data received and total data transmitted:
     let networks = Networks::new_with_refreshed_list();
     // RAM and swap information:
-    let total_memory = sys.total_memory();
-    let used_memory = sys.used_memory();
+    let total_memory = sys.total_memory() as f32;
+    let used_memory = sys.used_memory() as f32;
 
     // Display system information:
     let name = System::name().context("Could not retrieve system name")?;
@@ -352,14 +352,12 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     // for (pid, process) in sys.processes() {println!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
     for (pid, process) in sys.processes().iter() {
         let id = pid.as_u32();
-        let name = process.name();
-        let cmd = process.cmd();
+        let name = process.name().to_string_lossy().to_string();
+        let cmd = format!("{:?}", process.cmd());
         let user_id = process.user_id().map(|id| id.to_string());
         
-        let memory = process.memory();
-        let tasks = process.tasks();
+        let memory = process.memory().to_string();
         let cpu_usage = process.cpu_usage();
-        let user_id = process.user_id();
         let read_bytes = process.disk_usage().read_bytes;
         let total_read_bytes = process.disk_usage().total_read_bytes;
         let total_written_bytes = process.disk_usage().total_written_bytes;
@@ -371,9 +369,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
             cmd,
             user_id,
             memory,
-            tasks,
             cpu_usage,
-            user_id,
             process_disk_usage: ProcessDiskUsage {
                 read_bytes,
                 total_read_bytes,
@@ -381,17 +377,6 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
                 written_bytes,
             },
         });
-
-        // if let Some(process) = sys.process(*pid) {
-        //     if let Some(tasks) = process.tasks() {
-        //         info!("process.pid(): {:?}", process.pid());
-        //         for task_pid in tasks {
-        //             // if let Some(task) = s.process(*task_pid) {
-        //             //     info!("Task {:?}: {:?}", task.pid(), task.name());
-        //             // }
-        //         }
-        //     }
-        // }
     }
 
     for disk in &disk_list {
@@ -400,6 +385,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
     for (interface_name, data) in &networks {
         if data.total_received() > 1 {
+            let interface_name = interface_name.to_string();
             network_interfaces.push(
                 NetworkInterface { 
                     interface_name,
@@ -417,59 +403,29 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
 
     let mut s = System::new_with_specifics(RefreshKind::everything());
 
-    std::thread::sleep(Duration::from_millis(200));
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     s.refresh_cpu_all(); // Refreshing CPU information.
     for cpu in s.cpus() {
         cpu_percentage = cpu.cpu_usage();
-        cpu_clock = cpu.frequency();
+        cpu_clock = cpu.frequency() as f32;
     }
 
-    let sysinfo = SystemInformation {
+    Ok(SystemInformation {
         cpu_percentage,
-        cpu_clock: cpu_clock as f32,
+        cpu_clock,
         component_temps,
         disks,
-        total_memory: total_memory as f32,
-        used_memory: used_memory as f32,
+        total_memory,
+        used_memory,
         name,
         kernel_version,
         os_version,
         hostname,
         number_of_cpus,
         network_interfaces,
-        processes: todo!(),
-    };
-
-    
-    let processes = sys.processes();
-    // processes.iter().map(|(pid, process)| (pid.to_string(), process.))
-    // let ps = format!("{:?}", processes);
-    // let jso: Value = serde_json::json!({
-        //     "sysinfo": sysinfo.clone(),
-        //     "processes": ps
-        // });
-        
-    use brotli::CompressorReader;
-    use base64::{engine::general_purpose, Engine as _};
-    fn compress_string(input: &str) -> Vec<u8> {
-        let mut compressed = Vec::new();
-        {
-            let mut compressor = CompressorReader::new(input.as_bytes(), 4096, 11, 22);
-            std::io::copy(&mut compressor, &mut compressed).unwrap();
-        }
-        compressed
-    }
-
-    let sysinfo_string = &serde_json::to_string(&jso).unwrap();
-
-    let compressed: Vec<u8> = compress_string(sysinfo_string);
-
-    let encoded: String = general_purpose::STANDARD.encode(&compressed);
-
-    info!("Compressed data: {}\nEncoded: {}\nOriginal: {}", compressed.len(), encoded.len(), sysinfo_string.len());
-
-    Ok(sysinfo)
+        processes,
+    })
 }
 
 // Function to generate client ID
