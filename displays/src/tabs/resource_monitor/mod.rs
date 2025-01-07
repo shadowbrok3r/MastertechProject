@@ -4,7 +4,7 @@ use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use line_plot::LinePlot;
 use metric_plot::MetricPlot;
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, time::{Duration, Instant}};
 use database::schema::SystemInformation;
 pub mod process_table;
 pub mod line_plot;
@@ -21,6 +21,7 @@ pub enum ResourceMonitorState {
     Network,
     Temperatures,
     RequestingData,
+    Drives,
     Stop
 }
 
@@ -31,6 +32,7 @@ pub struct ResourceMonitor {
     cpu_clock_chart: MetricPlot,
     ram_usage_chart: MetricPlot,
     component_temp_plot: LinePlot,
+    gpu_plot: LinePlot,
     disk_usage_plot: LinePlot,
     network_interface_plot: LinePlot,
     start_time: Instant,
@@ -51,6 +53,7 @@ impl Default for ResourceMonitor {
             start_time: Instant::now(), // Initialize the timer
             state: ResourceMonitorState::default(),
             process_table_viewer: ProcessTableViewer::new(),
+            gpu_plot: LinePlot::new(50),
         }
     }
 }
@@ -59,6 +62,15 @@ impl ResourceMonitor {
     fn receive(&mut self) {
         if let Ok(sysinfo) = self.sysinfo_channel.1.try_recv() {
             self.set_sysinfo(sysinfo);
+        }
+
+        if self.start_time.elapsed() >= Duration::from_secs(20) {
+            self.start_time = Instant::now();
+            // self.cpu_usage_chart.data.clear();
+            // self.cpu_clock_chart.data.clear();
+            // self.ram_usage_chart.data.clear();
+            // self.disk_usage_plot.data.clear();
+            // self.network_interface_plot.data.clear();
         }
     }
 
@@ -77,6 +89,16 @@ impl ResourceMonitor {
                 for (component, &temp) in &sysinfo.component_temps {
                     // log::info!("components: {component:?}/{temp:?}");
                     self.component_temp_plot.update_line(component, elapsed_time, temp);
+                }
+
+                for gpu in &sysinfo.gpu_info.card {
+                    // log::info!("components: {component:?}/{temp:?}");
+                    self.gpu_plot.update_line(&gpu.name, elapsed_time, gpu.temperature as f32);
+                }
+
+                for gpu_usage in &sysinfo.gpu_info.usage {
+                    // log::info!("components: {component:?}/{temp:?}");
+                    self.gpu_plot.update_line(&gpu_usage.id, elapsed_time, gpu_usage.temperature as f32);
                 }
 
                 // Update disk usage
@@ -125,6 +147,11 @@ impl ResourceMonitor {
                         self.state =ResourceMonitorState::Ram
                     }
 
+                    ui.add_space(5.);
+
+                    if Button::new("Drives").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                        self.state = ResourceMonitorState::Drives
+                    }
                     ui.add_space(5.);
 
                     if Button::new("Processes").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
@@ -228,7 +255,9 @@ impl ResourceMonitor {
                         });
                     },
                     ResourceMonitorState::Gpu => {
-
+                        ui.group(|ui| {
+                            self.gpu_plot.ui(ui, "GPU", &mut colors);
+                        });
                     },
                     ResourceMonitorState::Processes => {
                         self.process_table_viewer.show(ui);
@@ -244,6 +273,11 @@ impl ResourceMonitor {
                             self.component_temp_plot.ui(ui, "Temps", &mut colors);
                         });
                     },
+                    ResourceMonitorState::Drives => {
+                        ui.group(|ui| {
+                            self.disk_usage_plot.ui(ui, "Drives", &mut colors);
+                        });
+                    }
                     _ => {},
                 }
             });

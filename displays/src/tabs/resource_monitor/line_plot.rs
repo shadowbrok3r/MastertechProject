@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 
 #[derive(Clone, PartialEq, Default)]
 pub struct LinePlot {
-    data: HashMap<String, VecDeque<(f32, f32)>>, // Map line names to VecDeque of (x, y) points
+    pub data: HashMap<String, VecDeque<(f32, f32)>>, // Map line names to VecDeque of (x, y) points
     max_points: usize,                          // Maximum number of points per line
 }
 
@@ -97,7 +97,7 @@ impl LinePlot {
 }
 
 
-fn interpolate_points(points: &VecDeque<(f32, f32)>) -> Vec<[f64; 2]> {
+pub fn interpolate_points(points: &VecDeque<(f32, f32)>) -> Vec<[f64; 2]> {
     if points.len() < 2 {
         // Not enough points to interpolate
         return points.iter().map(|&(x, y)| [x as f64, y as f64]).collect();

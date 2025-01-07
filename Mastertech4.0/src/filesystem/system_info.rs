@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use database::schema::{
-    ComputerData, DriveData, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE
+    ComputerData, DriveData, Gpu, LocalSebData, NetworkInterface, Process as SysProcess, ProcessDiskUsage, SystemInformation, COMPUTER_TABLE
 };
 use dotenv::dotenv;
 use futures_util::FutureExt;
@@ -47,6 +47,8 @@ use tokio::{
 };
 use uuid::Uuid;
 
+use super::machine::Machine;
+
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[async_trait]
 pub trait ComputerInfo {
@@ -60,7 +62,19 @@ pub trait ComputerInfo {
 impl ComputerInfo for ComputerData {
     async fn get_computer_data(&mut self) -> anyhow::Result<Self, anyhow::Error> {
         info!("Filesystem -> get_computer_data -> Getting sysinfo");
-        let sys = System::new_all();
+        let mut machine = Machine::new().await;
+        let card = machine.gpu_info()?;
+        let usage = machine.graphics_status();
+    
+        let gpu_info = Gpu {
+            card,
+            usage
+        };
+        
+        let mut sys = machine.sysinfo;
+        info!("GPU: {gpu_info:?}");
+        sys.refresh_all();
+        
         info!("Filesystem -> get_computer_data -> Pulling Drive information");
         let mut disks = Disks::new_with_refreshed_list();
         let client = Client::new();
@@ -160,85 +174,115 @@ impl ComputerInfo for ComputerData {
     }
 
     async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
-        Ok(get_sysinfo().await?)
-        // let mut sys = System::new_all();
-        // let sysinf: SystemInformation;
+        // Ok(get_sysinfo().await?)
+        let mut sys = System::new_all();
 
-        // // First we update all information of our `System` struct.
-        // sys.refresh_all();
-
-        // let mut cpu_percentage = f32::default();
-        // let mut cpu_clock = u64::default();
-        // let mut disks = String::new();
-        // let disk_list = Disks::new_with_refreshed_list();
-        // // let component_temp = String::new();
-        // let mut network_interfaces: HashMap<String, String> = HashMap::new();
-        // let mut component_temps: HashMap<String, f32> = HashMap::new();
-        // // Components temperature:
-        // let components = Components::new_with_refreshed_list();
-        // // Network interfaces name, total data received and total data transmitted:
-        // let networks = Networks::new_with_refreshed_list();
-        // // RAM and swap information:
-        // let total_memory = sys.total_memory();
-        // let used_memory = sys.used_memory();
-
-        // // Display system information:
-        // let name = System::name().context("Could not retrieve system name")?;
-        // let kernel_version =
-        //     System::kernel_version().context("Could not retrieve kernel_version")?;
-        // let os_version = System::os_version().context("Could not retrieve os_version")?;
-        // let hostname = System::host_name().context("Could not retrieve hostname")?;
-
-        // // Number of CPUs:
-        // let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
-
-        // // Display processes ID, name na disk usage:
-        // // for (pid, process) in sys.processes() {println!("[{pid}] {} {:?}", process.name(), process.disk_usage());}
-
-        // for disk in &disk_list {
-        //     disks += format!("{disk:?}").as_str();
-        // }
-
-        // for (interface_name, data) in &networks {
-        //     if data.total_received() > 1 {
-        //         let up_down = format!("{}/{}", data.total_received(), data.total_transmitted());
-        //         network_interfaces.insert(interface_name.clone(), up_down);
-        //     }
-        // }
-
-        // for component in &components {
-        //     // component_temp += format!("{}/{}", component.temperature(), component.max()).as_str();
-        //     component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
-        //     // comps += format!("{component:#?} \n", component.).as_str();
-        // }
-
-        // let mut s =
-        //     System::new_with_specifics(RefreshKind::everything());
-
-        // std::thread::sleep(Duration::from_millis(200));
-
-        // s.refresh_cpu_all(); // Refreshing CPU information.
-        // for cpu in s.cpus() {
-        //     cpu_percentage = cpu.cpu_usage();
-        //     cpu_clock = cpu.frequency();
-        // }
-
-        // sysinf = SystemInformation {
-        //     cpu_percentage,
-        //     cpu_clock: cpu_clock as f32,
-        //     component_temps,
-        //     disks,
-        //     total_memory: total_memory as f32,
-        //     used_memory: used_memory as f32,
-        //     name,
-        //     kernel_version,
-        //     os_version,
-        //     hostname,
-        //     number_of_cpus,
-        //     network_interfaces,
-        // };
-
-        // Ok(sysinf)
+        // First we update all information of our `System` struct.
+        sys.refresh_all();
+        let mut cpu_percentage = f32::default();
+        let mut cpu_clock = f32::default();
+        let mut disks = String::new();
+        let disk_list = Disks::new_with_refreshed_list();
+        let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
+        let mut component_temps: HashMap<String, f32> = HashMap::new();
+        let mut processes: Vec<SysProcess> = Vec::new();
+        // Components temperature:
+        let components = Components::new_with_refreshed_list();
+        // Network interfaces name, total data received and total data transmitted:
+        let networks = Networks::new_with_refreshed_list();
+        // RAM and swap information:
+        let total_memory = sys.total_memory() as f32 / (1024.0 * 1024.0);
+        let used_memory = sys.used_memory() as f32 / (1024.0 * 1024.0);
+    
+        // Display system information:
+        let name = System::name().context("Could not retrieve system name")?;
+        let kernel_version = System::kernel_version().context("Could not retrieve kernel_version")?;
+        let os_version = System::os_version().context("Could not retrieve os_version")?;
+        let hostname = System::host_name().context("Could not retrieve hostname")?;
+    
+        // Number of CPUs:
+        let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
+        
+        // Display processes ID, name na disk usage:
+        // for (pid, process) in sys.processes() {println!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
+        for (pid, process) in sys.processes().iter() {
+            let id = pid.as_u32();
+            let name = process.name().to_string_lossy().to_string();
+            let cmd = format!("{:?}", process.cmd());
+            let user_id = process.user_id().map(|id| id.to_string());
+            
+            let memory = (process.memory() as f32 / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+    
+            let cpu_usage = process.cpu_usage();
+            let read_bytes = (process.disk_usage().read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+            let total_read_bytes = (process.disk_usage().total_read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+            let total_written_bytes = (process.disk_usage().total_written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+            let written_bytes = (process.disk_usage().written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
+    
+            processes.push(SysProcess {
+                id,
+                name,
+                cmd,
+                user_id,
+                memory,
+                cpu_usage,
+                process_disk_usage: ProcessDiskUsage {
+                    read_bytes,
+                    total_read_bytes,
+                    total_written_bytes,
+                    written_bytes,
+                },
+            });
+        }
+    
+        for disk in &disk_list {
+            disks += format!("{disk:?}").as_str();
+        }
+    
+        for (interface_name, data) in &networks {
+            if data.total_received() > 1 {
+                let interface_name = interface_name.to_string();
+                network_interfaces.push(
+                    NetworkInterface { 
+                        interface_name,
+                        total_received: (data.total_received() as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0,
+                        total_transmitted: (data.total_transmitted() as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0
+                    }
+                );
+            }
+        }
+    
+        for component in &components {
+            component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
+            // comps += format!("{component:#?} \n", component.).as_str();
+        }
+    
+        let mut s = System::new_with_specifics(RefreshKind::everything());
+    
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    
+        s.refresh_cpu_all(); // Refreshing CPU information.
+        for cpu in s.cpus() {
+            cpu_percentage = cpu.cpu_usage();
+            cpu_clock = cpu.frequency() as f32;
+        }
+    
+        Ok(SystemInformation {
+            cpu_percentage,
+            cpu_clock,
+            component_temps,
+            disks,
+            total_memory,
+            used_memory,
+            name,
+            kernel_version,
+            os_version,
+            hostname,
+            number_of_cpus,
+            network_interfaces,
+            processes,
+            gpu_info: Gpu::default()
+        })
     }
 
     #[cfg(target_os = "windows")]
@@ -319,11 +363,23 @@ impl ComputerInfo for ComputerData {
 }
 
 pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
-    let mut sys = System::new_all();
+    // let mut sys = System::new_all();
 
-    // First we update all information of our `System` struct.
+    // // First we update all information of our `System` struct.
+    // sys.refresh_all();
+
+    let mut machine = Machine::new().await;
+    let card = machine.gpu_info()?;
+    let usage = machine.graphics_status();
+
+    let gpu_info = Gpu {
+        card,
+        usage
+    };
+    
+    let mut sys = machine.sysinfo;
+    info!("GPU: {gpu_info:?}");
     sys.refresh_all();
-
     let mut cpu_percentage = f32::default();
     let mut cpu_clock = f32::default();
     let mut disks = String::new();
@@ -426,6 +482,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         number_of_cpus,
         network_interfaces,
         processes,
+        gpu_info,
     })
 }
 
@@ -441,3 +498,4 @@ pub fn generate_client_id(hostname: String, cpu: String) -> String {
     info!("Filesystem -> generate_client_id -> hex_string: {}", hex_string.clone());
     hex_string
 }
+

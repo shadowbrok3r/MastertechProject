@@ -2,9 +2,11 @@ use egui_plot::{Corner, Legend, Line, LineStyle, Plot, PlotPoints};
 use eframe::egui::{Color32, Response, RichText, TextStyle, Ui};
 use std::collections::VecDeque;
 
+use super::line_plot::interpolate_points;
+
 #[derive(Clone, PartialEq, Default)]
 pub struct MetricPlot {
-    data: VecDeque<(f32, f32)>, // (x, y) pairs for the chart
+    pub data: VecDeque<(f32, f32)>, // (x, y) pairs for the chart
     x_label: String,            // Label for x-axis
     y_label: String,            // Label for y-axis
 }
@@ -27,14 +29,17 @@ impl MetricPlot {
     }
 
     pub fn line(&self, name: &str, color: Color32) -> Line {
-        let update_interval = 2.0; // Time between updates in seconds
+        // let update_interval = 2.0; // Time between updates in seconds
 
-        let points: Vec<[f64; 2]> = self.data
-            .iter()
-            // .zip(&self.y_values)
-            .map(|(x, y)| [*x as f64 * update_interval, *y as f64])
-            .collect();
-        Line::new(PlotPoints::new(points))
+        // let points: Vec<[f64; 2]> = self.data
+        //     .iter()
+        //     // .zip(&self.y_values)
+        //     .map(|(x, y)| [*x as f64 * update_interval, *y as f64])
+        //     .collect();
+        
+        let interpolated_points = interpolate_points(&self.data);
+
+        Line::new(PlotPoints::new(interpolated_points))
             .color(color)
             .style(LineStyle::Solid)
             .name(name)
