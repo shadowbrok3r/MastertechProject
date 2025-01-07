@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 #[derive(Clone, PartialEq, Default)]
 pub struct LinePlot {
     pub data: HashMap<String, VecDeque<(f32, f32)>>, // Map line names to VecDeque of (x, y) points
-    max_points: usize,                          // Maximum number of points per line
+    pub max_points: usize,                          // Maximum number of points per line
 }
 
 impl LinePlot {
@@ -24,8 +24,12 @@ impl LinePlot {
                     points.pop_front();
                 }
                 points.push_back((x_value, y_value));
-        })
-        .or_insert_with(VecDeque::new);
+            })
+            .or_insert_with(|| {
+                let mut deque = VecDeque::new();
+                deque.push_back((x_value, y_value));
+                deque
+            });
     }
 
     pub fn lines(&self, colors: &mut HashMap<String, Color32>) -> Vec<Line> {

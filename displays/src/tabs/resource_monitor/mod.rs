@@ -64,13 +64,20 @@ impl ResourceMonitor {
             self.set_sysinfo(sysinfo);
         }
 
-        if self.start_time.elapsed() >= Duration::from_secs(20) {
-            self.start_time = Instant::now();
-            // self.cpu_usage_chart.data.clear();
-            // self.cpu_clock_chart.data.clear();
-            // self.ram_usage_chart.data.clear();
-            // self.disk_usage_plot.data.clear();
-            // self.network_interface_plot.data.clear();
+        // Clean up old data for MetricPlots
+        self.cpu_usage_chart.clean_old_data(50);
+        self.cpu_clock_chart.clean_old_data(50);
+        self.ram_usage_chart.clean_old_data(50);
+            // Clean up old data for LinePlots
+        for points in self.disk_usage_plot.data.values_mut() {
+            while points.len() > self.disk_usage_plot.max_points {
+                points.pop_front();
+            }
+        }
+        for points in self.network_interface_plot.data.values_mut() {
+            while points.len() > self.network_interface_plot.max_points {
+                points.pop_front();
+            }
         }
     }
 
@@ -79,33 +86,48 @@ impl ResourceMonitor {
             ResourceMonitorState::Stop => {},
             _ => {
                 // info!("got sysinfo: {sysinfo:?}");
-                let elapsed_time = self.start_time.elapsed().as_secs_f32();
+                let wrapped_time = self.start_time.elapsed().as_secs_f32();
+
+                // if elapsed_time >= 60.0 {
+                //     let reset_offset = self.cpu_usage_chart.data.front().map(|&(x, _)| x).unwrap_or(0.0);
+        
+                //     // Reset time for MetricPlots
+                //     self.cpu_usage_chart.reset_time(reset_offset);
+                //     self.cpu_clock_chart.reset_time(reset_offset);
+                //     self.ram_usage_chart.reset_time(reset_offset);
+        
+                //     // Restart the timer
+                //     self.start_time = Instant::now();
+                // }
+        
+                // // Update charts with wrapped time
+                // let wrapped_time = elapsed_time % 60.0;
 
                 // if elapsed_time > 2. { }
-                self.cpu_usage_chart.update(elapsed_time, sysinfo.cpu_percentage);
-                self.cpu_clock_chart.update(elapsed_time, normalize(sysinfo.cpu_clock, 0.0, 100.0)); // Normalize MHz
-                self.ram_usage_chart.update(elapsed_time, if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); // Convert MB to GB
+                self.cpu_usage_chart.update(wrapped_time, sysinfo.cpu_percentage);
+                self.cpu_clock_chart.update(wrapped_time, normalize(sysinfo.cpu_clock, 0.0, 100.0)); // Normalize MHz
+                self.ram_usage_chart.update(wrapped_time, if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); // Convert MB to GB
                 // Update component temperatures
                 for (component, &temp) in &sysinfo.component_temps {
                     // log::info!("components: {component:?}/{temp:?}");
-                    self.component_temp_plot.update_line(component, elapsed_time, temp);
+                    self.component_temp_plot.update_line(component, wrapped_time, temp);
                 }
 
                 for gpu in &sysinfo.gpu_info.card {
                     // log::info!("components: {component:?}/{temp:?}");
-                    self.gpu_plot.update_line(&gpu.name, elapsed_time, gpu.temperature as f32);
+                    self.gpu_plot.update_line(&gpu.name, wrapped_time, gpu.temperature as f32);
                 }
 
                 for gpu_usage in &sysinfo.gpu_info.usage {
                     // log::info!("components: {component:?}/{temp:?}");
-                    self.gpu_plot.update_line(&gpu_usage.id, elapsed_time, gpu_usage.temperature as f32);
+                    self.gpu_plot.update_line(&gpu_usage.id, wrapped_time, gpu_usage.temperature as f32);
                 }
 
                 // Update disk usage
                 for disk_info in sysinfo.disks.split("Disk").skip(1) {
                     if let Some((disk_name, used, _total)) = parse_disk_info(disk_info) {
                         let used_gb = used as f32 / 1e9;
-                        self.disk_usage_plot.update_line(&disk_name, elapsed_time, used_gb);
+                        self.disk_usage_plot.update_line(&disk_name, wrapped_time, used_gb);
                     }
                 }
 
@@ -114,7 +136,7 @@ impl ResourceMonitor {
                     log::info!("interface: {interface:?}");
                     let rx_gb = interface.total_received as f32;
                     let tx_gb = interface.total_transmitted as f32;
-                    self.network_interface_plot.update_line(&interface.interface_name, elapsed_time, rx_gb + tx_gb);
+                    self.network_interface_plot.update_line(&interface.interface_name, wrapped_time, rx_gb + tx_gb);
                 }
             }
         }
@@ -176,6 +198,7 @@ impl ResourceMonitor {
                     let button_size = Vec2::new(60.0, 15.0);
                     if Button::new("Refresh").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
                         self.state = ResourceMonitorState::RequestingData;
+                        self.start_time = Instant::now();
                     }
 
                     ui.add_space(5.);
