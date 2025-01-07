@@ -651,7 +651,7 @@ pub struct GetKeysResponse {
     pub superanti_key: String,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SystemInformation {
     /// Live CPU usage as a percentaget
     pub cpu_percentage: f32,
@@ -679,9 +679,84 @@ pub struct SystemInformation {
     pub network_interfaces: Vec<NetworkInterface>,
     /// List of active processes on host
     pub processes: Vec<Process>,
+    pub gpu_info: Gpu
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+pub struct Gpu {
+    pub usage: Vec<GraphicsUsage>,
+    pub card: Vec<GraphicsCard>
+}
+
+/// Graphic card usage by process
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphicsProcessUtilization {
+    /// Process identificator
+    pub pid: u32,
+    /// Gpu identificator
+    pub gpu: u32,
+    /// Memory usage
+    pub memory: u32,
+    /// Gpu encoder utilization as percentage
+    pub encoder: u32,
+    /// Gpu decoder utilization as percentage
+    pub decoder: u32    
+}
+
+/// Graphic card usage summary
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphicsUsage {
+    /// Graphic card id
+    pub id: String,
+    /// Memory utilization as percentage
+    pub memory_usage: u32,
+    /// Memroy usage as bytes
+    pub memory_used: u64,
+    /// Gpu encoder utilization as percentage
+    pub encoder: u32,
+    /// Gpu decoder utilization as percentage
+    pub decoder: u32,
+    /// Gpu utilization as percentage
+    pub gpu: u32,
+    /// Gpu temperature
+    pub temperature: u32,
+    /// Processes using this GPU
+    pub processes: Vec<GraphicsProcessUtilization>
+}
+
+/// Information about a graphic card
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphicsCard {
+    /// Device id
+    pub id: String,
+    /// Device id
+    pub name: String,
+    /// Device brand
+    pub brand: String,
+    /// Total memory
+    pub memory: u64,
+    /// Device temperature
+    pub temperature: u32,
+    pub nvidia_info: NvidiaInfo
+}
+
+
+/// Nvidia drivers configuration
+#[derive(Clone, Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NvidiaInfo {
+     /// Nvidia drivers
+     pub driver_version: String,
+     /// NVML version
+     pub nvml_version: String,
+     /// Cuda version
+     pub cuda_version: i32,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct Process {
     /// Process ID
     pub id: u32,
@@ -693,7 +768,7 @@ pub struct Process {
     pub process_disk_usage: ProcessDiskUsage
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct ProcessDiskUsage {
     pub read_bytes: f32,
     pub total_read_bytes: f32,
@@ -701,7 +776,7 @@ pub struct ProcessDiskUsage {
     pub written_bytes: f32,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Difference, PartialEq, Default)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct NetworkInterface {
     /// Process ID
     pub interface_name: String,

@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 pub struct MetricBarChart {
     name: String,
     color: Color32,
-    data: VecDeque<(f32, f32)>, // (x, y) pairs
+    pub data: VecDeque<(f32, f32)>, // (x, y) pairs
     max_points: usize,          // Maximum number of bars
 }
 
