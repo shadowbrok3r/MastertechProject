@@ -6,15 +6,12 @@ use line_plot::LinePlot;
 use metric_plot::MetricPlot;
 use std::{collections::HashMap, time::Instant};
 use database::schema::SystemInformation;
-use log::info;
-// use crate::filesystem::system_info::get_sysinfo;
-
 pub mod process_table;
 pub mod line_plot;
 pub mod metric_plot;
 pub mod bar_chart;
 
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq)]
 pub enum ResourceMonitorState {
     #[default]
     Cpu,
@@ -23,7 +20,8 @@ pub enum ResourceMonitorState {
     Processes,
     Network,
     Temperatures,
-    RequestingData
+    RequestingData,
+    Stop
 }
 
 pub struct ResourceMonitor {
@@ -60,35 +58,45 @@ impl Default for ResourceMonitor {
 impl ResourceMonitor {
     fn receive(&mut self) {
         if let Ok(sysinfo) = self.sysinfo_channel.1.try_recv() {
-            info!("got sysinfo: {sysinfo:?}");
-            let elapsed_time = self.start_time.elapsed().as_secs_f32();
+            self.set_sysinfo(sysinfo);
+        }
+    }
 
+    pub fn set_sysinfo(&mut self, sysinfo: SystemInformation) {
+        match self.state {
+            ResourceMonitorState::Stop => {},
+            _ => {
+                // info!("got sysinfo: {sysinfo:?}");
+                let elapsed_time = self.start_time.elapsed().as_secs_f32();
 
-            // if elapsed_time > 2. { }
-            self.cpu_usage_chart.update(elapsed_time, sysinfo.cpu_percentage);
-            self.cpu_clock_chart.update(elapsed_time, normalize(sysinfo.cpu_clock, 0.0, 100.0)); // Normalize MHz
-            self.ram_usage_chart.update(elapsed_time, if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); // Convert MB to GB
-            // Update component temperatures
-            for (component, &temp) in &sysinfo.component_temps {
-                self.component_temp_plot.update_line(component, elapsed_time, temp);
-            }
+                // if elapsed_time > 2. { }
+                self.cpu_usage_chart.update(elapsed_time, sysinfo.cpu_percentage);
+                self.cpu_clock_chart.update(elapsed_time, normalize(sysinfo.cpu_clock, 0.0, 100.0)); // Normalize MHz
+                self.ram_usage_chart.update(elapsed_time, if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); // Convert MB to GB
+                // Update component temperatures
+                for (component, &temp) in &sysinfo.component_temps {
+                    // log::info!("components: {component:?}/{temp:?}");
+                    self.component_temp_plot.update_line(component, elapsed_time, temp);
+                }
 
-            // Update disk usage
-            for disk_info in sysinfo.disks.split("Disk").skip(1) {
-                if let Some((disk_name, used, _total)) = parse_disk_info(disk_info) {
-                    let used_gb = used as f32 / 1e9;
-                    self.disk_usage_plot.update_line(&disk_name, elapsed_time, used_gb);
+                // Update disk usage
+                for disk_info in sysinfo.disks.split("Disk").skip(1) {
+                    if let Some((disk_name, used, _total)) = parse_disk_info(disk_info) {
+                        let used_gb = used as f32 / 1e9;
+                        self.disk_usage_plot.update_line(&disk_name, elapsed_time, used_gb);
+                    }
+                }
+
+                // Update network interfaces
+                for interface in &sysinfo.network_interfaces {
+                    log::info!("interface: {interface:?}");
+                    let rx_gb = interface.total_received as f32;
+                    let tx_gb = interface.total_transmitted as f32;
+                    self.network_interface_plot.update_line(&interface.interface_name, elapsed_time, rx_gb + tx_gb);
                 }
             }
-
-            // Update network interfaces
-            for interface in &sysinfo.network_interfaces {
-                let rx_gb = interface.total_received as f32 / 1e9;
-                let tx_gb = interface.total_transmitted as f32 / 1e9;
-                self.network_interface_plot.update_line(&interface.interface_name, elapsed_time, rx_gb + tx_gb);
-            }
-            self.process_table_viewer.set_data(sysinfo.processes);
         }
+            self.process_table_viewer.set_data(sysinfo.processes);
     }
 
     pub fn display(&mut self, ui: &mut Ui) {
@@ -143,6 +151,14 @@ impl ResourceMonitor {
                         self.state = ResourceMonitorState::RequestingData;
                     }
 
+                    ui.add_space(5.);
+                    if let ResourceMonitorState::Stop = self.state {
+                    } else {
+                        if Button::new("Stop").min_size(button_size).stroke(button_stroke).ui(ui).clicked() {
+                            self.state = ResourceMonitorState::Stop;
+                        }
+                    }
+
                     ui.add_space(ui.available_width()/1.5);
 
                     ui.label(
@@ -157,7 +173,6 @@ impl ResourceMonitor {
 
         CentralPanel::default().show_inside(ui, |ui| {
             ScrollArea::vertical().show(ui, |ui| {
-
                 // New line charts
                 let mut colors = HashMap::new();
                 colors.insert("Component Temps".to_string(), Color32::from_rgb(235, 12, 38));
@@ -221,12 +236,12 @@ impl ResourceMonitor {
                     ResourceMonitorState::Network => {
                         ui.group(|ui| {
                             // self.disk_usage_plot.ui(ui, "Disk I/O", &colors);
-                            self.network_interface_plot.ui(ui, "Network Usage", &colors);
+                            self.network_interface_plot.ui(ui, "Network Usage", &mut colors);
                         });
                     },
                     ResourceMonitorState::Temperatures => {
                         ui.group(|ui| {
-                            self.component_temp_plot.ui(ui, "Temps", &colors);
+                            self.component_temp_plot.ui(ui, "Temps", &mut colors);
                         });
                     },
                     _ => {},

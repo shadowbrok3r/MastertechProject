@@ -1,6 +1,6 @@
 use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use database::{schema::{utilities::{compress_data, query_id}, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
-use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, pin, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
+use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
 use std::{env, path::Path, process::Stdio, sync::{atomic::Ordering, Arc}, time::{Duration, Instant}};
 use displays::{channel_manager::ChannelManager, deserialize_command, serialize_system_info, virtual_filesystem::FileSystem, Cmd, FileSystemAction};
@@ -245,9 +245,7 @@ impl WebConsoleFrontend {
                             spawn(async move {
                                 let input_tx: std::result::Result<tokio::sync::mpsc::Sender<String>, Error>  = handle_command_payload(text.clone(), tx.clone()).await;
                                 match input_tx {
-                                    Ok(tx) => {
-
-                                    },
+                                    Ok(_tx) => { },
                                     Err(e) => log::warn!("Error with command payload: {e:?}"),
                                 }
                                 // process_command(text.clone(), tx.clone(), process).await;
@@ -384,10 +382,10 @@ impl WebConsoleFrontend {
                     info!("websockets -> x: {x:?}");
                 });
             },
-            Cmd::FileSystemAction(FileSystemAction::CopyFromClient(path)) => {
+            Cmd::FileSystemAction(FileSystemAction::CopyFromClient(_path)) => {
 
             }
-            Cmd::FileSystemAction(FileSystemAction::CopyToClient(minio_path)) => {
+            Cmd::FileSystemAction(FileSystemAction::CopyToClient(_minio_path)) => {
                 // self.explorer
             } // self.explorer.previewed_file = Some(String::from_utf8(byte_vec.clone()));
             Cmd::FileSystemAction(FileSystemAction::Select((_, path))) => {

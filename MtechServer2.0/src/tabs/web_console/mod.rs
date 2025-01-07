@@ -367,7 +367,6 @@ impl WebConsoleLayout {
                 });
             }
         };
-        
     }
 
     fn headers(&mut self, mut s: Strip, style: Arc<Style>){
