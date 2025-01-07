@@ -390,8 +390,8 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
             network_interfaces.push(
                 NetworkInterface { 
                     interface_name,
-                    total_received: data.total_received() as f32  / (1024.0 * 1024.0),
-                    total_transmitted: data.total_transmitted() as f32  / (1024.0 * 1024.0)
+                    total_received: (data.total_received() as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0,
+                    total_transmitted: (data.total_transmitted() as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0
                 }
             );
         }

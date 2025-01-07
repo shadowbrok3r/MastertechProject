@@ -1,20 +1,17 @@
-use crossbeam::channel::{Receiver, Sender};
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use displays::{channel_manager::ChannelManager, tabs::resource_monitor::ResourceMonitor, virtual_filesystem::{FileSysHelper, FileSystem}, Cmd, FileSystemAction};
 use database::{schema::{utilities::decompress_data, ConnectedClient, Node, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
-use regex::Regex;
-use core::f32;
-use std::collections::{HashMap, VecDeque};
+use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
-use displays::{channel_manager::ChannelManager, virtual_filesystem::{FileSysHelper, FileSystem}, Cmd, FileSystemAction};
+use crossbeam::channel::{Receiver, Sender};
 use wasm_bindgen_futures::spawn_local;
 use serde::{Deserialize, Serialize};
-use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use surrealdb::Response;
 use bincode::serialize;
 use web_time::Instant;
+use regex::Regex;
+use core::f32;
 use log::info;
-
-use super::charts::LinePlot;
 
 pub trait ClientHandler { 
     fn connect(&mut self);
@@ -52,7 +49,6 @@ impl FileSysHelper for WebSocketHelperDelegate {
     }
 }
 
-
 pub struct WebSocketClient {
     pub client: ConnectedClient,
 
@@ -72,12 +68,12 @@ pub struct WebSocketClient {
     pub input: String,
     pub messages: Vec<String>,
 
-    pub cpu_clock: VecDeque<f32>,
-    pub temps: VecDeque<HashMap<String, f32>>,
-    pub cpu_percentage: VecDeque<f32>,
-    pub ram_usage: VecDeque<f32>,
+    // pub cpu_clock: VecDeque<f32>,
+    // pub temps: VecDeque<HashMap<String, f32>>,
+    // pub cpu_percentage: VecDeque<f32>,
+    // pub ram_usage: VecDeque<f32>,
 
-    pub sysinfo: Option<SystemInformation>,
+    // pub sysinfo: Option<SystemInformation>,
     pub history: Vec<History>,
     pub loading: bool,
     pub timeout_counter: Instant,
@@ -91,6 +87,7 @@ pub struct WebSocketClient {
     buffer: String,     
     my_history: Vec<History>,
     notifications: i32,
+    resource_monitor: ResourceMonitor
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
@@ -131,17 +128,18 @@ impl WebSocketClient{
             helper_delegate,
             input: Default::default(),
             messages: Default::default(),
-            cpu_clock: Default::default(),
-            temps: Default::default(),
-            cpu_percentage: Default::default(),
-            ram_usage: Default::default(),
-            sysinfo: Default::default(),
+            // cpu_clock: Default::default(),
+            // temps: Default::default(),
+            // cpu_percentage: Default::default(),
+            // ram_usage: Default::default(),
+            // sysinfo: Default::default(),
             history: Default::default(),
             loading: Default::default(),
             history_idx: Default::default(),
             buffer: Default::default(),
             my_history: Default::default(),
             notifications: Default::default(),
+            resource_monitor: ResourceMonitor::default()
         }
     }
     
@@ -159,18 +157,10 @@ impl WebSocketClient{
                             if let Some(sysinfo) = deserializer::<SystemInformation>(&decompress_data(bin.as_slice())){
                                 info!("Got sysinfo");
                                 self.loading = false;
-                                let normalized_cpu_clock = normalize(sysinfo.cpu_clock, 0.0, 100.0); // Example range for CPU clock
-                                // let normalized_cpu_percentage = normalize(sysinfo.cpu_percentage, 0.0, 100.0);
-                                let total_ram = if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory)*100.0 } else { 0.0 };
-                                // let normalized_ram_usage = normalize(total_ram, 0.0, 100.0); // Example range for RAM usage
-                                self.cpu_percentage.push_back(sysinfo.cpu_percentage);
-                                self.cpu_clock.push_back(normalized_cpu_clock);
-                                self.ram_usage.push_back(total_ram);
-                                self.sysinfo = Some(sysinfo);
-                                // info!("normalized_ram_usage: {normalized_ram_usage:?}\nLen: {:?}", self.cpu_percentage.len());
+                                self.resource_monitor.set_sysinfo(sysinfo);
                             } else if let Some(cmd) = deserializer::<Cmd>(bin){
                                 let _ = self.receive_cmd_tx.try_send(cmd);
-                            } else{ 
+                            } else { 
                                 if self.interactive {
                                     let msg = String::from_utf8_lossy(&bin).to_string();
                                     if TRON_COMPLETE_REGEX.is_match(&msg) {
@@ -341,14 +331,8 @@ impl WebSocketClient{
         self.receive(ui.ctx());
         ui.set_min_height(600.);
 
-        // let exact_height = match self.state {
-        //     WsDisplayState::Shell => .,
-        //     _ => 
-        // };
-
         TopBottomPanel::top(Id::new(format!("ClientTopPanel-{}", self.client.client_hash)))
-        .exact_height(26.)
-        // .frame(top_frame)
+        .exact_height(26.)// .frame(top_frame)
         .show_inside(ui, |ui| 
         {
             ui.add_space(2.);
@@ -406,7 +390,6 @@ impl WebSocketClient{
             });
             ui.add_space(2.);
         });
-
 
         match self.state {
             WsDisplayState::LiveStats => self.show_live_stats(ui),
@@ -468,57 +451,9 @@ impl WebSocketClient{
 
     fn show_live_stats(&mut self, ui: &mut Ui) {
         ui.vertical_centered(|ui| {
-            if let Some(sysinfo) = &self.sysinfo {
-                // let normalized_temps: Vec<f32> = sysinfo.component_temps.values().map(|&temp| normalize(temp, 0.0, 100.0)).collect();
-
-                if self.cpu_percentage.len() < 30
-                    // || self.component_temps.len() < 30
-                    || self.cpu_clock.len() < 30
-                    || self.ram_usage.len() < 30 {
-
-                    // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                } else {
-                    self.cpu_percentage.pop_front();
-                    self.cpu_percentage.push_back(sysinfo.cpu_percentage);
-                    self.cpu_clock.pop_front();
-                    self.cpu_clock.push_back(sysinfo.cpu_clock);
-                    self.ram_usage.pop_front();
-                    self.ram_usage.push_back(sysinfo.used_memory);
-                    // self.component_temps.pop_front();
-                    // self.component_temps.push_back(normalized_temps.iter().sum::<f32>() / normalized_temps.len() as f32); // Average temperature
-                }
-
-                if self.cpu_percentage.len() > 50
-                    || self.cpu_clock.len() > 50
-                    || self.ram_usage.len() > 50 {
-                    // || self.component_temps.len() < 30 
-                    self.cpu_percentage.clear();
-                    self.cpu_clock.clear();
-                    self.ram_usage.clear();
-                }
-
-
-                let percentages = self.cpu_percentage.make_contiguous().to_owned();
-                let clocks = self.cpu_clock.make_contiguous().to_owned();
-                // let temps = self.component_temps.make_contiguous().to_owned();
-                let ram = self.ram_usage.make_contiguous().to_owned();
-        
-                // info!("\nsysinfo: CPU %: {percentages:?}, \nCPU Clock: {clocks:?}, \nRAM usage: {ram:?}");
-                // let temps_plot = LinePlot::new(&[0.0], &temps.as_slice());
-                let width = ui.available_width() - 50.0;
-                // self.timeout_counter.elapsed().as_secs()
-                let mut cpu_usage_plot = LinePlot::new(&[0.0], &percentages.as_slice(), width);
-                let mut cpu_clock_plot = LinePlot::new(&[0.0], &clocks.as_slice(), width);
-                let mut ram_usage_plot = LinePlot::new(&[0.0], &ram.as_slice(), width);
-        
-                ui.vertical_centered_justified(|ui| {
-
-                    // temps_plot.ui(ui, "System Temps", temps_plot.line("System Temps (°C)", Color32::from_rgb(255, 69, 0)));
-                    cpu_usage_plot.ui(ui, "CPU Usage", cpu_usage_plot.line("CPU(%)", Color32::from_rgb(170, 10, 150)));
-                    cpu_clock_plot.ui(ui, "CPU Clock", cpu_clock_plot.line("CPU (MHz)", Color32::from_rgb(21, 232, 165)));
-                    ram_usage_plot.ui(ui, "RAM Usage", ram_usage_plot.line("RAM (MB)", Color32::from_rgb(0, 191, 255)));
-                });
-            }
+            ui.vertical_centered_justified(|ui| {
+                self.resource_monitor.display(ui);
+            });
         });
         ui.add_space(10.0);
     }
@@ -529,8 +464,7 @@ impl WebSocketClient{
         let id = ui.auto_id_with(format!("Chat {:?}", self.client.client_hash));
 
         TopBottomPanel::bottom(id)
-            .default_height(ui.available_height()/1.2)
-            // .resizable(false)
+            .default_height(ui.available_height()/1.2) // .resizable(false)
             .show_inside(ui, |ui| 
         {
             ui.visuals_mut().extreme_bg_color= Color32::BLACK;
