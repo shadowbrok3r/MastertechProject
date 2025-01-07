@@ -28,6 +28,18 @@ impl MetricPlot {
         self.data.push_back((x_value, y_value));
     }
 
+    pub fn clean_old_data(&mut self, max_points: usize) {
+        while self.data.len() > max_points {
+            self.data.pop_front();
+        }
+    }
+
+    pub fn reset_time(&mut self, reset_offset: f32) {
+        for (x, _) in &mut self.data {
+            *x -= reset_offset;
+        }
+    }
+
     pub fn line(&self, name: &str, color: Color32) -> Line {
         // let update_interval = 2.0; // Time between updates in seconds
 
