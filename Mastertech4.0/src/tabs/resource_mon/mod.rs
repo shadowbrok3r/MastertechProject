@@ -23,7 +23,7 @@ impl MastertechContext {
 async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{
     loop {
         tx.send(get_sysinfo().await?)?;
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(std::time::Duration::from_secs_f32(0.1)).await;
     }
     #[allow(unreachable_code)]
     Ok(())
