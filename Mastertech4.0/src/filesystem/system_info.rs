@@ -1,5 +1,5 @@
 #![cfg_attr(debug_assertions, allow(dead_code, unused_imports))]
-use crate::tabs::tur_sheet::get_ticket::request_seb_info;
+use crate::{filesystem::get_machine_instance, tabs::tur_sheet::get_ticket::request_seb_info};
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
@@ -62,7 +62,7 @@ pub trait ComputerInfo {
 impl ComputerInfo for ComputerData {
     async fn get_computer_data(&mut self) -> anyhow::Result<Self, anyhow::Error> {
         info!("Filesystem -> get_computer_data -> Getting sysinfo");
-        let mut machine = Machine::new().await;
+        let machine = get_machine_instance().await.clone();
         let card = machine.gpu_info()?;
         let usage = machine.graphics_status();
     
@@ -71,7 +71,7 @@ impl ComputerInfo for ComputerData {
             usage
         };
         
-        let mut sys = machine.sysinfo;
+        let sys = &mut machine.sysinfo.lock().await;
         info!("GPU: {gpu_info:?}");
         sys.refresh_all();
         
@@ -268,12 +268,7 @@ pub trait SysInf {
 }
 
 pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
-    // let mut sys = System::new_all();
-
-    // // First we update all information of our `System` struct.
-    // sys.refresh_all();
-
-    let mut machine = Machine::new().await;
+    let machine = get_machine_instance().await.clone();
     let card = machine.gpu_info()?;
     let usage = machine.graphics_status();
 
@@ -282,7 +277,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         usage
     };
     
-    let mut sys = machine.sysinfo;
+    let sys = &mut machine.sysinfo.lock().await;
     info!("GPU: {gpu_info:?}");
     sys.refresh_all();
     let mut cpu_percentage = f32::default();
@@ -363,31 +358,31 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
         // comps += format!("{component:#?} \n", component.).as_str();
     }
 
-    let mut s = System::new_with_specifics(RefreshKind::everything());
+    // let mut s = System::new_with_specifics(RefreshKind::everything());
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    s.refresh_cpu_all(); // Refreshing CPU information.
-    for cpu in s.cpus() {
+    // s.refresh_cpu_all(); // Refreshing CPU information.
+    for cpu in sys.cpus() {
         cpu_percentage = cpu.cpu_usage();
         cpu_clock = cpu.frequency() as f32;
     }
 
     Ok(SystemInformation {
+        name,
+        gpu_info,
+        os_version,
+        kernel_version,
+        disks,
+        total_memory,
+        hostname,
         cpu_percentage,
         cpu_clock,
         component_temps,
-        disks,
-        total_memory,
         used_memory,
-        name,
-        kernel_version,
-        os_version,
-        hostname,
         number_of_cpus,
         network_interfaces,
         processes,
-        gpu_info,
     })
 }
 

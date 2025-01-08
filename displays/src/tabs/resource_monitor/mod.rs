@@ -31,8 +31,9 @@ pub struct ResourceMonitor {
     cpu_usage_chart: MetricPlot,
     cpu_clock_chart: MetricPlot,
     ram_usage_chart: MetricPlot,
+    gpu_temp_chart: MetricPlot,
+    gpu_mem_chart: MetricPlot,
     component_temp_plot: LinePlot,
-    gpu_plot: LinePlot,
     disk_usage_plot: LinePlot,
     network_interface_plot: LinePlot,
     start_time: Instant,
@@ -47,13 +48,14 @@ impl Default for ResourceMonitor {
             cpu_usage_chart: MetricPlot::new("Time (s)", "CPU Usage (%)"),
             cpu_clock_chart: MetricPlot::new("Time (s)", "CPU Clock (MHz)"),
             ram_usage_chart: MetricPlot::new("Time (s)", "RAM Usage (GB)"),
+            gpu_temp_chart: MetricPlot::new("Time (s)", "GPU Temp (C)"),
+            gpu_mem_chart: MetricPlot::new("Time (s)", "GPU Memory"),
             component_temp_plot: LinePlot::new(50),
             disk_usage_plot: LinePlot::new(50),
             network_interface_plot: LinePlot::new(50),
             start_time: Instant::now(), // Initialize the timer
             state: ResourceMonitorState::default(),
             process_table_viewer: ProcessTableViewer::new(),
-            gpu_plot: LinePlot::new(50),
         }
     }
 }
@@ -68,6 +70,8 @@ impl ResourceMonitor {
         self.cpu_usage_chart.clean_old_data(50);
         self.cpu_clock_chart.clean_old_data(50);
         self.ram_usage_chart.clean_old_data(50);
+        self.gpu_temp_chart.clean_old_data(50);
+        self.gpu_mem_chart.clean_old_data(50);
             // Clean up old data for LinePlots
         for points in self.disk_usage_plot.data.values_mut() {
             while points.len() > self.disk_usage_plot.max_points {
@@ -85,42 +89,26 @@ impl ResourceMonitor {
         match self.state {
             ResourceMonitorState::Stop => {},
             _ => {
-                // info!("got sysinfo: {sysinfo:?}");
                 let wrapped_time = self.start_time.elapsed().as_secs_f32();
-
-                // if elapsed_time >= 60.0 {
-                //     let reset_offset = self.cpu_usage_chart.data.front().map(|&(x, _)| x).unwrap_or(0.0);
-        
-                //     // Reset time for MetricPlots
-                //     self.cpu_usage_chart.reset_time(reset_offset);
-                //     self.cpu_clock_chart.reset_time(reset_offset);
-                //     self.ram_usage_chart.reset_time(reset_offset);
-        
-                //     // Restart the timer
-                //     self.start_time = Instant::now();
-                // }
-        
-                // // Update charts with wrapped time
-                // let wrapped_time = elapsed_time % 60.0;
-
-                // if elapsed_time > 2. { }
                 self.cpu_usage_chart.update(wrapped_time, sysinfo.cpu_percentage);
-                self.cpu_clock_chart.update(wrapped_time, normalize(sysinfo.cpu_clock, 0.0, 100.0)); // Normalize MHz
-                self.ram_usage_chart.update(wrapped_time, if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); // Convert MB to GB
+                // Normalize MHz
+                self.cpu_clock_chart.update(wrapped_time, normalize(sysinfo.cpu_clock, 0.0, 100.0));
+                // Convert MB to GB
+                self.ram_usage_chart.update(wrapped_time, if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); 
+
                 // Update component temperatures
                 for (component, &temp) in &sysinfo.component_temps {
-                    // log::info!("components: {component:?}/{temp:?}");
                     self.component_temp_plot.update_line(component, wrapped_time, temp);
                 }
 
-                for gpu in &sysinfo.gpu_info.card {
-                    // log::info!("components: {component:?}/{temp:?}");
-                    self.gpu_plot.update_line(&gpu.name, wrapped_time, gpu.temperature as f32);
-                }
-
-                for gpu_usage in &sysinfo.gpu_info.usage {
-                    // log::info!("components: {component:?}/{temp:?}");
-                    self.gpu_plot.update_line(&gpu_usage.id, wrapped_time, gpu_usage.temperature as f32);
+                for (gpu, gpu_usage) in sysinfo.gpu_info.card.iter().zip(sysinfo.gpu_info.usage.iter()) {
+                    self.gpu_temp_chart.update(wrapped_time, gpu.temperature as f32);
+                    self.gpu_mem_chart.update(wrapped_time, gpu_usage.memory_usage as f32);
+                    // self.gpu_mem_chart.update(wrapped_time, normalize(sysinfo.cpu_clock, 0.0, 100.0)); 
+                    // self.gpu_plot.update_line(&gpu.name, wrapped_time, gpu.temperature as f32);
+                    // for x in &gpu_usage.processes {
+                    //     self.gpu_plot.update_line(&gpu.name, wrapped_time, x.memory as f32);
+                    // }
                 }
 
                 // Update disk usage
@@ -279,7 +267,29 @@ impl ResourceMonitor {
                     },
                     ResourceMonitorState::Gpu => {
                         ui.group(|ui| {
-                            self.gpu_plot.ui(ui, "GPU", &mut colors);
+                            ui.vertical_centered(|ui| ui
+                                .label(
+                                    RichText::new(format!("GPU"))
+                                    .underline()
+                                    .color(
+                                        ui.style().visuals.error_fg_color
+                                    )
+                                    .heading()
+                                    .font(
+                                        FontId::proportional(20.)
+                                    )
+                                )
+                            );
+        
+                            ui.add_space(50.);
+                            ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
+                                ui.add_space(50.);
+                                ui.scope(|ui| {
+                                    ui.set_width(ui.available_width()/2.);
+                                    self.gpu_temp_chart.ui(ui, "GPU Temps", Color32::from_rgb(7, 242, 176));
+                                });
+                                self.gpu_mem_chart.ui(ui, "GPU Memory Usage", Color32::from_rgb(62, 7, 242));
+                            });
                         });
                     },
                     ResourceMonitorState::Processes => {
