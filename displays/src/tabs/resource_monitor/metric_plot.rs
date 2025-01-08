@@ -9,6 +9,7 @@ pub struct MetricPlot {
     pub data: VecDeque<(f32, f32)>, // (x, y) pairs for the chart
     x_label: String,            // Label for x-axis
     y_label: String,            // Label for y-axis
+    x_offset: f32,              // Offset to reset time dynamically
 }
 
 impl MetricPlot {
@@ -17,6 +18,7 @@ impl MetricPlot {
             data: VecDeque::new(),
             x_label: x_label.to_string(),
             y_label: y_label.to_string(),
+            x_offset: 0.0,
         }
     }
 
@@ -40,16 +42,15 @@ impl MetricPlot {
         }
     }
 
-    pub fn line(&self, name: &str, color: Color32) -> Line {
-        // let update_interval = 2.0; // Time between updates in seconds
+    pub fn line(&self, name: &str, color: Color32, current_time: f32) -> Line {
+        // Adjust x-values for smooth grid movement
+        let adjusted_data: VecDeque<(f32, f32)> = self
+            .data
+            .iter()
+            .map(|&(x, y)| (x - self.x_offset - current_time, y))
+            .collect();
 
-        // let points: Vec<[f64; 2]> = self.data
-        //     .iter()
-        //     // .zip(&self.y_values)
-        //     .map(|(x, y)| [*x as f64 * update_interval, *y as f64])
-        //     .collect();
-        
-        let interpolated_points = interpolate_points(&self.data);
+        let interpolated_points = interpolate_points(&adjusted_data);
 
         Line::new(PlotPoints::new(interpolated_points))
             .color(color)
@@ -57,18 +58,12 @@ impl MetricPlot {
             .name(name)
     }
 
-    pub fn ui(&self, ui: &mut Ui, plot_name: &str, color: Color32) -> Response {
+    pub fn ui(&mut self, ui: &mut Ui, plot_name: &str, color: Color32, current_time: f32) -> Response {
         let x_label = RichText::new(&self.x_label).size(14.0).strong();
         let y_label = RichText::new(&self.y_label).size(14.0).strong();
-
-        // let bars: Vec<Bar> = self
-        //     .data
-        //     .iter()
-        //     .map(|&(x, y)| Bar::new(x as f64, y as f64))
-        //     .collect();
-
+        
         // let bar_chart = BarChart::new(bars).name(plot_name).color(color);
-        let line_chart = self.line(plot_name, color);
+        let line_chart = self.line(plot_name, color, current_time);
 
         Plot::new(plot_name)
             .legend(
@@ -86,6 +81,8 @@ impl MetricPlot {
             .allow_drag(false)
             .show_background(false)
             .x_axis_label(x_label)
+            .include_x(current_time)
+            .include_x(current_time-60.)
             .y_axis_label(y_label)
             .show(ui, |plot_ui| {
                 plot_ui.line(line_chart);
