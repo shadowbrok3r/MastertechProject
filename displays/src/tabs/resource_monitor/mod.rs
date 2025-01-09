@@ -4,7 +4,8 @@ use crate::channel_manager::ChannelManager;
 use crossbeam::channel::{Receiver, Sender};
 use line_plot::LinePlot;
 use metric_plot::MetricPlot;
-use std::{collections::HashMap, time::{Duration, Instant}};
+use std::collections::HashMap;
+use web_time::Instant;
 use database::schema::SystemInformation;
 pub mod process_table;
 pub mod line_plot;
@@ -67,11 +68,11 @@ impl ResourceMonitor {
         }
 
         // Clean up old data for MetricPlots
-        self.cpu_usage_chart.clean_old_data(50);
-        self.cpu_clock_chart.clean_old_data(50);
-        self.ram_usage_chart.clean_old_data(50);
-        self.gpu_temp_chart.clean_old_data(50);
-        self.gpu_mem_chart.clean_old_data(50);
+        // self.cpu_usage_chart.clean_old_data(50);
+        // self.cpu_clock_chart.clean_old_data(50);
+        // self.ram_usage_chart.clean_old_data(50);
+        // self.gpu_temp_chart.clean_old_data(50);
+        // self.gpu_mem_chart.clean_old_data(50);
             // Clean up old data for LinePlots
         for points in self.disk_usage_plot.data.values_mut() {
             while points.len() > self.disk_usage_plot.max_points {
@@ -94,11 +95,11 @@ impl ResourceMonitor {
                 // Update charts with continuous time
                 let continuous_time = wrapped_time;
 
-                self.cpu_usage_chart.update(continuous_time, sysinfo.cpu_percentage);
+                self.cpu_usage_chart.update(sysinfo.cpu_percentage);
                 // Normalize MHz
-                self.cpu_clock_chart.update(continuous_time, normalize(sysinfo.cpu_clock, 0.0, 100.0));
+                self.cpu_clock_chart.update(normalize(sysinfo.cpu_clock, 0.0, 100.0));
                 // Convert MB to GB
-                self.ram_usage_chart.update(continuous_time, if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); 
+                self.ram_usage_chart.update(if sysinfo.total_memory > 0.0 { (sysinfo.used_memory / sysinfo.total_memory) * 100.0 } else { 0.0 }); 
 
                 // Update component temperatures
                 for (component, &temp) in &sysinfo.component_temps {
@@ -106,8 +107,8 @@ impl ResourceMonitor {
                 }
 
                 for (gpu, gpu_usage) in sysinfo.gpu_info.card.iter().zip(sysinfo.gpu_info.usage.iter()) {
-                    self.gpu_temp_chart.update(continuous_time, gpu.temperature as f32);
-                    self.gpu_mem_chart.update(continuous_time, gpu_usage.memory_usage as f32);
+                    self.gpu_temp_chart.update(gpu.temperature as f32);
+                    self.gpu_mem_chart.update(gpu_usage.memory_usage as f32);
                     // self.gpu_mem_chart.update(continuous_time, normalize(sysinfo.cpu_clock, 0.0, 100.0)); 
                     // self.gpu_plot.update_line(&gpu.name, continuous_time, gpu.temperature as f32);
                     // for x in &gpu_usage.processes { self.gpu_plot.update_line(&gpu.name, continuous_time, x.memory as f32); }
@@ -242,9 +243,9 @@ impl ResourceMonitor {
                                 ui.add_space(50.);
                                 ui.scope(|ui| {
                                     ui.set_width(ui.available_width()/2.);
-                                    self.cpu_clock_chart.ui(ui, "CPU Clock Chart", Color32::from_rgb(7, 242, 176), self.start_time.elapsed().as_secs_f32());
+                                    self.cpu_clock_chart.ui(ui, "CPU Clock", Color32::from_rgb(7, 242, 176));
                                 });
-                                self.cpu_usage_chart.ui(ui, "CPU Usage Chart", Color32::from_rgb(62, 7, 242), self.start_time.elapsed().as_secs_f32());
+                                self.cpu_usage_chart.ui(ui, "CPU Usage", Color32::from_rgb(62, 7, 242));
                             });
                         });
                     },
@@ -263,7 +264,7 @@ impl ResourceMonitor {
                                     )
                                 );
                                 ui.add_space(50.);
-                                self.ram_usage_chart.ui(ui, "RAM Usage Chart", Color32::from_rgb(242, 7, 179), self.start_time.elapsed().as_secs_f32());
+                                self.ram_usage_chart.ui(ui, "RAM Usage", Color32::from_rgb(242, 7, 179));
                             });
         
                         });
@@ -289,9 +290,9 @@ impl ResourceMonitor {
                                 ui.add_space(50.);
                                 ui.scope(|ui| {
                                     ui.set_width(ui.available_width()/2.);
-                                    self.gpu_temp_chart.ui(ui, "GPU Temps", Color32::from_rgb(7, 242, 176), self.start_time.elapsed().as_secs_f32());
+                                    self.gpu_temp_chart.ui(ui, "GPU Temps", Color32::from_rgb(7, 242, 176));
                                 });
-                                self.gpu_mem_chart.ui(ui, "GPU Memory Usage", Color32::from_rgb(62, 7, 242), self.start_time.elapsed().as_secs_f32());
+                                self.gpu_mem_chart.ui(ui, "GPU Memory Usage", Color32::from_rgb(62, 7, 242));
                             });
                         });
                     },

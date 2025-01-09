@@ -1,6 +1,6 @@
 use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use displays::{channel_manager::ChannelManager, tabs::resource_monitor::ResourceMonitor, virtual_filesystem::{FileSysHelper, FileSystem}, Cmd, FileSystemAction};
-use database::{schema::{utilities::decompress_data, ConnectedClient, Node, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
+use database::{schema::{ConnectedClient, Node, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use crossbeam::channel::{Receiver, Sender};
@@ -12,6 +12,8 @@ use web_time::Instant;
 use regex::Regex;
 use core::f32;
 use log::info;
+
+use crate::deser_worker;
 
 pub trait ClientHandler { 
     fn connect(&mut self);
@@ -87,7 +89,11 @@ pub struct WebSocketClient {
     buffer: String,     
     my_history: Vec<History>,
     notifications: i32,
-    resource_monitor: ResourceMonitor
+    resource_monitor: ResourceMonitor,
+    deser_data_update: std::rc::Rc<std::cell::Cell<Option<Vec<u8>>>>,
+    /// The actual communication bridge to / from our dummy worker
+    deser_bridge: gloo_worker::WorkerBridge<crate::deser_worker::DeserWorker>,
+    try_cmd: bool
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
@@ -110,7 +116,14 @@ impl WebSocketClient{
         let helper_delegate = WebSocketHelperDelegate::new(send_cmd_tx.clone());
         let mut explorer = FileSystem::new();
         explorer.helper_delegate = Some(Box::new(helper_delegate.clone()));
-        
+        let deser_data_update = std::rc::Rc::new(std::cell::Cell::new(None));
+        let deser_sender = deser_data_update.clone();
+        let deser_bridge = <crate::deser_worker::DeserWorker as gloo_worker::Spawnable>::spawner()
+        .callback(move |response| {
+            deser_sender.set(Some(response.0));
+        })
+        .spawn("./deser_worker.js");
+
         Self {
             client,
             ws_sender,
@@ -128,18 +141,16 @@ impl WebSocketClient{
             helper_delegate,
             input: Default::default(),
             messages: Default::default(),
-            // cpu_clock: Default::default(),
-            // temps: Default::default(),
-            // cpu_percentage: Default::default(),
-            // ram_usage: Default::default(),
-            // sysinfo: Default::default(),
             history: Default::default(),
             loading: Default::default(),
             history_idx: Default::default(),
             buffer: Default::default(),
             my_history: Default::default(),
             notifications: Default::default(),
-            resource_monitor: ResourceMonitor::default()
+            resource_monitor: ResourceMonitor::default(),
+            deser_data_update,
+            deser_bridge,
+            try_cmd: false,
         }
     }
     
@@ -148,19 +159,25 @@ impl WebSocketClient{
         // if self.timeout_counter.elapsed().as_secs() > 10 { info!("Its been over 10 seconds since last ping"); }
         // info!("Timer: {:?}", self.timeout_counter.elapsed().as_secs());
 
+        if let Some(decompressed_data) = self.deser_data_update.take() {
+            if let Some(sysinfo) = deserializer::<SystemInformation>(&decompressed_data){
+                info!("Got sysinfo");
+                self.loading = false;
+                self.resource_monitor.set_sysinfo(sysinfo);
+            }
+        }
+
         if let Some(event) = &self.ws_receiver.try_recv() {
-            ctx.request_repaint();
+            
             match event{
                 WsEvent::Message(msg) => {
                     match msg{
                         WsMessage::Binary(bin) => {
-                            if let Some(sysinfo) = deserializer::<SystemInformation>(&decompress_data(bin.as_slice())){
-                                info!("Got sysinfo");
-                                self.loading = false;
-                                self.resource_monitor.set_sysinfo(sysinfo);
-                            } else if let Some(cmd) = deserializer::<Cmd>(bin){
+                            self.deser_bridge.send(deser_worker::Input(bin.clone()));
+                            if let Some(cmd) = deserializer::<Cmd>(bin){
                                 let _ = self.receive_cmd_tx.try_send(cmd);
                             } else { 
+
                                 if self.interactive {
                                     let msg = String::from_utf8_lossy(&bin).to_string();
                                     if TRON_COMPLETE_REGEX.is_match(&msg) {
@@ -171,7 +188,7 @@ impl WebSocketClient{
                                 if bin.len() > 0 {
                                     self.loading = false;
                                     let msg = String::from_utf8_lossy(&bin).to_string();
-                                    info!("Binary Msg: {msg}");
+                                    // info!("Binary Msg: {msg}");
 
                                     // Check if the incoming message is "DONE"
                                     if msg.eq("DONE") {
@@ -184,12 +201,13 @@ impl WebSocketClient{
                                             });
                                             self.buffer.clear(); // Clear the buffer after processing
                                         }
-                                    } else {
+                                    } else if msg.is_ascii() {
                                         // Append the incoming message to the buffer with a newline
                                         self.buffer.push_str(&msg);
                                         self.buffer.push('\n');
                                     }
                                 }
+
                             }
                         },
                         WsMessage::Text(txt) => {
@@ -231,13 +249,11 @@ impl WebSocketClient{
         }
         
         if let Ok(state) = self.display_state_channel.1.try_recv() {
-            ctx.request_repaint();
             self.state = state;
         }
 
         // Here we will handle commands we are going to SEND to Mastertech
         if let Ok(command) = self.send_cmd_rx.try_recv() {
-            ctx.request_repaint();
             match command {
                 Cmd::FileSystemAction(ref action) => {
                     match action {
@@ -860,10 +876,6 @@ pub fn deserializer<T: Serialize + for<'a> Deserialize<'a> + 'static >(bytes: &[
     } else { None }
 }
 
-fn normalize(value: f32, min: f32, max: f32) -> f32 {
-    (value - min) / (max - min)
-}
-
 pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
     if let Ok(cmd) = bincode::deserialize(bytes){
         Some(cmd)
@@ -872,4 +884,8 @@ pub fn deserialize_command(bytes: &[u8]) -> Option<Cmd> {
 
 pub fn serialize_command(bytes: &Cmd) -> Vec<u8> {
     bincode::serialize(bytes).expect("Failed to deserialize Cmd")
+}
+
+fn normalize(value: f32, min: f32, max: f32) -> f32 {
+    (value - min) / (max - min)
 }

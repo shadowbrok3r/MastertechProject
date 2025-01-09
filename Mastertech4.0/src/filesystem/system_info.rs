@@ -64,7 +64,7 @@ impl ComputerInfo for ComputerData {
         info!("Filesystem -> get_computer_data -> Getting sysinfo");
         let machine = get_machine_instance().await.clone();
         let card = machine.gpu_info()?;
-        let usage = machine.graphics_status();
+        let usage = machine.graphics_status()?;
     
         let gpu_info = Gpu {
             card,
@@ -270,7 +270,7 @@ pub trait SysInf {
 pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let machine = get_machine_instance().await.clone();
     let card = machine.gpu_info()?;
-    let usage = machine.graphics_status();
+    let usage = machine.graphics_status()?;
 
     let gpu_info = Gpu {
         card,
@@ -399,3 +399,11 @@ pub fn generate_client_id(hostname: String, cpu: String) -> String {
     hex_string
 }
 
+pub async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{
+    loop {
+        tx.send(get_sysinfo().await?)?;
+        tokio::time::sleep(std::time::Duration::from_secs_f32(0.1)).await;
+    }
+    #[allow(unreachable_code)]
+    Ok(())
+}

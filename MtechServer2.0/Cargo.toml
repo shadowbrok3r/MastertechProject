@@ -14,6 +14,10 @@ crate-type = ["cdylib"]
 name = "webworker"
 path = "src/webworker.rs"
 
+[[bin]]
+name = "deser_worker"
+path = "src/deser_worker.rs"
+
 [dependencies]
 console_error_panic_hook = "0.1"
 gloo-worker = "0.5"
