@@ -1,7 +1,5 @@
-use crate::{app_state::MastertechContext, filesystem::system_info::get_sysinfo};
+use crate::{app_state::MastertechContext, filesystem::system_info::live_computer_stats};
 use displays::tabs::resource_monitor::ResourceMonitorState;
-use database::schema::SystemInformation;
-use crossbeam::channel::Sender;
 use eframe::egui::Ui;
 use tokio::spawn;
 
@@ -18,13 +16,4 @@ impl MastertechContext {
             });
         }
     }
-}
-
-async fn live_computer_stats(tx: Sender<SystemInformation>) -> anyhow::Result<(), anyhow::Error>{
-    loop {
-        tx.send(get_sysinfo().await?)?;
-        tokio::time::sleep(std::time::Duration::from_secs_f32(0.1)).await;
-    }
-    #[allow(unreachable_code)]
-    Ok(())
 }

@@ -85,15 +85,15 @@ impl Machine {
     /// let m = Machine::new();
     /// println!("{:?}", m.graphics_status())
     /// ```
-    pub fn graphics_status(&self) -> Vec<GraphicsUsage> {
+    pub fn graphics_status(&self) -> anyhow::Result<Vec<GraphicsUsage>, anyhow::Error> {
         let mut cards = Vec::new();
         let nvml = &self.nvml;
-        for n in 0..nvml.device_count().unwrap() {
-            let device = nvml.device_by_index(n).unwrap();
+        for n in 0..nvml.device_count()? {
+            let device = nvml.device_by_index(n)?;
             let mut processes = Vec::new();
             let stats = device.process_utilization_stats(None);
             if stats.is_ok() {
-                for p in stats.unwrap() {
+                for p in stats? {
                     processes.push(GraphicsProcessUtilization{
                         pid: p.pid,
                         gpu: p.sm_util,
@@ -105,17 +105,17 @@ impl Machine {
             }
 
             cards.push(GraphicsUsage {
-                id: device.uuid().unwrap(),
-                memory_used: device.memory_info().unwrap().used,
-                encoder: device.encoder_utilization().unwrap().utilization,
-                decoder: device.decoder_utilization().unwrap().utilization,
-                gpu: device.utilization_rates().unwrap().gpu,
-                memory_usage: device.utilization_rates().unwrap().memory,
-                temperature: device.temperature(TemperatureSensor::Gpu).unwrap(),
+                id: device.uuid()?,
+                memory_used: device.memory_info()?.used,
+                encoder: device.encoder_utilization()?.utilization,
+                decoder: device.decoder_utilization()?.utilization,
+                gpu: device.utilization_rates()?.gpu,
+                memory_usage: device.utilization_rates()?.memory,
+                temperature: device.temperature(TemperatureSensor::Gpu)?,
                 processes
             });
         }
-        cards
+        Ok(cards)
     }
 }
 

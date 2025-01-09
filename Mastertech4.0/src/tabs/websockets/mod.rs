@@ -63,7 +63,7 @@ impl MastertechContext{
                     let connected = frontend.initialize_websocket(ui);
                     if !connected{ 
                         if let Some(url) = &self.url{
-                            std::thread::sleep(Duration::from_secs(10));
+                            // std::thread::sleep(Duration::from_secs(10));
                             info!("websockets -> Trying to reconnect");
                             self.make_ws_connection(&url.to_string(), ui.ctx().clone(), self.client_uuid.clone());
                         }
@@ -181,6 +181,7 @@ pub struct WebConsoleFrontend {
     pub timeout_counter: Instant,
     pub process: Arc<Mutex<Option<ChildStdin>>>,
     pub explorer: FileSystem, 
+    live_stats: bool
 }
 
 impl WebConsoleFrontend {
@@ -204,6 +205,7 @@ impl WebConsoleFrontend {
             process: Arc::new(Mutex::new(None)),
             explorer: FileSystem::new(),
             interactive_input,
+            live_stats: false
         }
     }
 
@@ -213,10 +215,13 @@ impl WebConsoleFrontend {
         while let Some(event) = self.ws_receiver.try_recv() { self.events.push(event); }
         
         if let Ok(sysinfo) = &mut self.rx.try_recv(){
-            let mut compressed: Vec<u8> = compress_data(sysinfo.as_slice());
-
-            info!("Compressed data: {}\nOriginal: {}", compressed.len(), sysinfo.len());
-            self.ws_sender.send(WsMessage::Binary(std::mem::take(&mut compressed)));
+            match compress_data(sysinfo.as_slice()) {
+                Ok(mut compressed) => {
+                    info!("Compressed data: {}\nOriginal: {}", compressed.len(), sysinfo.len());
+                    self.ws_sender.send(WsMessage::Binary(std::mem::take(&mut compressed)));
+                },
+                Err(e) => info!("Error compressing data: {e:?}"),
+            }
         }
         
         while let Ok(cmd_output) = &mut self.command_rx.try_recv(){
@@ -276,15 +281,20 @@ impl WebConsoleFrontend {
     fn handle_command(&mut self, cmd: Cmd) {
         match cmd{
             Cmd::LiveData => {
-                let tx = self.tx.clone();
-                self.history.push(format!("Cmd: {:?}", cmd));
-                let connected = self.connected.clone();
-                spawn(async move { 
-                    match live_computer_stats(tx.clone(), connected).await{
-                        Ok(_) => drop(tx),
-                        Err(e) => error!("Error with live data {e:?}"),
-                    }
-                });
+                if self.live_stats == true {
+                    
+                } else {
+                    self.live_stats = true;
+                    let tx = self.tx.clone();
+                    self.history.push(format!("Cmd: {:?}", cmd));
+                    let connected = self.connected.clone();
+                    spawn(async move { 
+                        match live_computer_stats(tx.clone(), connected).await{
+                            Ok(_) => drop(tx),
+                            Err(e) => error!("Error with live data {e:?}"),
+                        }
+                    });
+                }
             },
             Cmd::Tuneup => {
                 self.history.push(format!("Cmd: {:?}", cmd));
@@ -655,13 +665,12 @@ impl WebConsoleFrontend {
     }
 }
 
-async fn live_computer_stats(tx: Sender<Vec<u8>>, _connected: bool) -> Result<(), Error>{
-    loop {
-        sleep(Duration::from_secs(4)).await;
+async fn live_computer_stats(tx: Sender<Vec<u8>>, connected: bool) -> Result<(), Error>{
+    while connected {
         let systeminfo: SystemInformation = get_sysinfo().await?;
+        sleep(Duration::from_secs_f32(0.4)).await;
         info!("websockets -> {systeminfo:?}");
         tx.send(serialize_system_info(&systeminfo))?;
-        // if app.lock().await.finish { break; }
     }
     #[allow(unreachable_code)]
     Ok(())
@@ -866,6 +875,7 @@ async fn handle_linux_cmd(
                 // }
             }
         }
+        #[allow(unreachable_code)]
         Ok::<(), Error>(())
     });
 

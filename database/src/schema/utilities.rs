@@ -676,19 +676,19 @@ impl PhoneNumberFormatter {
 }
 
 
-pub fn compress_data(input: &[u8]) -> Vec<u8> {
+pub fn compress_data(input: &[u8]) -> Result<Vec<u8>, Error> {
     let mut compressed = Vec::new();
     {
         let mut compressor = brotli::CompressorReader::new(input, 4096, 11, 22);
-        std::io::copy(&mut compressor, &mut compressed).unwrap();
+        std::io::copy(&mut compressor, &mut compressed)?;
     }
-    compressed
+    Ok(compressed)
 }
 
 
-pub fn decompress_data(input: &[u8]) -> Vec<u8> {
+pub fn decompress_data(input: &[u8]) -> Result<Vec<u8>, Error> {
     let mut decompressed = Vec::new();
     let mut decompressor = brotli::Decompressor::new(input, 4096);
-    std::io::copy(&mut decompressor, &mut decompressed).unwrap();
-    decompressed
+    std::io::copy(&mut decompressor, &mut decompressed)?;
+    Ok(decompressed)
 }
