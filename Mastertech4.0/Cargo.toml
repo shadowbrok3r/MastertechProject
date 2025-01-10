@@ -49,6 +49,9 @@ hex = "0.4.3"
 ring = "0.17.8"
 rust-s3 = "0.35"
 semver = "1.0.23"
+nvml-wrapper = { version = "0.10.0", features = ["serde"] }
+lazy_static = "1.5.0"
+planif = "1"
 
 database = { workspace=true }
 surrealdb = { workspace=true }
@@ -77,8 +80,7 @@ egui_json_tree = { workspace = true }
 brotli = { workspace=true }
 base64 = { workspace=true }
 egui_plot = { workspace = true }
-nvml-wrapper = { version = "0.10.0", features = ["serde"] }
-lazy_static = "1.5.0"
+
 # gfx-hal = { version = "0.9.0", features = ["serde"] }
 
 # egui_tracing = "0.2.2"
@@ -95,7 +97,7 @@ lazy_static = "1.5.0"
 # windows_x86_64_msvc
 # known-folders 
 # robocopyrs 
-# planif = "0.2"
+
 # tui-term = "0.1.11"
 
 

@@ -1,4 +1,4 @@
-use egui_plot::{Corner, Legend, Line, Plot, PlotPoints};
+use egui_plot::{Corner, Legend, Line, Plot, PlotBounds, PlotPoints};
 use eframe::egui::{Color32, Response, TextStyle, Ui};
 use std::collections::{HashMap, VecDeque};
 
@@ -86,12 +86,13 @@ impl LinePlot {
             )
             .background_alpha(0.90)
         )
-        .width(ui.available_size_before_wrap().x/1.5)
-        .height(ui.available_size_before_wrap().y/1.5)
+        .width(ui.available_width()/1.1)
+        .height(ui.available_height()/1.1)
         .allow_drag(false)
         .show_background(false);
 
         plot.show(ui, |plot_ui| {
+            plot_ui.set_plot_bounds(PlotBounds::NOTHING.make_x_symmetrical());
             for line in self.lines(colors) {
                 plot_ui.line(line);
             }
