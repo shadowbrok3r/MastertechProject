@@ -15,14 +15,9 @@ pub struct MetricPlot {
     y_label: String,
     /// Track the start time for resetting x-axis
     start_time: Option<Instant>,
-    /// Track the current 60-second cycle
-    current_cycle: u64,
     /// Interval in seconds to reset the x-axis
     reset_interval: f32,
-    /// Data rate in seconds per update
-    data_rate: f32,
-    /// Current graph x-axis time
-    current_time: f32,
+
 }
 
 impl MetricPlot {
@@ -32,10 +27,7 @@ impl MetricPlot {
             x_label: x_label.to_string(),
             y_label: y_label.to_string(),
             start_time: None,
-            current_cycle: 0,
-            reset_interval: 15.0,
-            data_rate: 0.1,
-            current_time: 0.0
+            reset_interval: 30.0,
         }
     }
 

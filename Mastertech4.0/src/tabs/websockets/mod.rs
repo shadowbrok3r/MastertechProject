@@ -670,7 +670,7 @@ async fn live_computer_stats(tx: Sender<Vec<u8>>, connected: bool) -> Result<(),
         let systeminfo: SystemInformation = get_sysinfo().await?;
         sleep(Duration::from_secs_f32(0.4)).await;
         info!("websockets -> {systeminfo:?}");
-        tx.send(serialize_system_info(&systeminfo))?;
+        tx.try_send(serialize_system_info(&systeminfo))?;
     }
     #[allow(unreachable_code)]
     Ok(())

@@ -89,6 +89,16 @@ impl ResourceMonitor {
     pub fn set_sysinfo(&mut self, sysinfo: SystemInformation) {
         match self.state {
             ResourceMonitorState::Stop => {},
+            ResourceMonitorState::RequestingData => {
+                self.cpu_usage_chart.data.clear();
+                self.cpu_clock_chart.data.clear();
+                self.ram_usage_chart.data.clear();
+                self.gpu_temp_chart.data.clear();
+                self.gpu_mem_chart.data.clear();
+                self.component_temp_plot.data.clear();
+                self.disk_usage_plot.data.clear();
+                self.network_interface_plot.data.clear();
+            }
             _ => {
                 let wrapped_time = self.start_time.elapsed().as_secs_f32();
 
