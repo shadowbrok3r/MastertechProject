@@ -19,6 +19,19 @@ use tokio::{
     io::{self, AsyncWriteExt},
     process::Command,
 };
+pub mod task_scheduler;
+pub mod taskbar;
+pub mod startup;
+pub mod processes;
+pub mod programs;
+pub mod antivirus;
+pub use task_scheduler::*;
+pub use taskbar::*;
+pub use startup::*;
+pub use processes::*;
+pub use programs::*;
+pub use antivirus::*;
+
 
 #[derive(Embed)]
 #[folder = "src/assets/superanti/"]
