@@ -12,7 +12,7 @@ pub struct Machine {
     nvml: Arc<Nvml>,
     pub sysinfo: Arc<Mutex<System>>,
     // Cache for static fields
-    cache: Arc<std::sync::Mutex<CachedSystemInformation>>,
+    _cache: Arc<std::sync::Mutex<CachedSystemInformation>>,
 }
 
 
@@ -26,23 +26,22 @@ impl Machine {
     pub async fn new(nvml: Arc<Nvml>, sysinfo: Arc<Mutex<System>>) -> Self {
         let sysclone = sysinfo.clone();
         let sys = sysclone.lock().await;
-        let cache = Arc::new(std::sync::Mutex::new(
+        let _cache = Arc::new(std::sync::Mutex::new(
             CachedSystemInformation::new(&sys)
         ));
         
         Machine {
             nvml,
             sysinfo,
-            cache,
+            _cache,
         }
     }
     
-    /// Retrieves full information about the computer
+    /// Retrieves basic GraphicsCard information
     /// Example
     /// ```
-    /// use machine_info::Machine;
-    /// let m = Machine::new();
-    /// println!("{:?}", m.system_info())
+    /// let m = machine_info::Machine::new();
+    /// println!("{:?}", m.gpu_info())
     /// ```
     pub fn gpu_info(&self) -> anyhow::Result<Vec<GraphicsCard>, anyhow::Error> {
         let mut cards = Vec::new();
@@ -81,8 +80,7 @@ impl Machine {
     /// The current usage of all graphic cards (if any)
     /// Example
     /// ```
-    /// use machine_info::Machine;
-    /// let m = Machine::new();
+    /// let m = machine_info::Machine::new();
     /// println!("{:?}", m.graphics_status())
     /// ```
     pub fn graphics_status(&self) -> anyhow::Result<Vec<GraphicsUsage>, anyhow::Error> {
@@ -153,140 +151,3 @@ impl CachedSystemInformation {
         }
     }
 }
-
-// #[async_trait]
-// pub trait SysInf {
-//     fn init_machine(&mut self);
-//     fn get_cpu(&mut self);
-//     fn get_gpu(&mut self);
-//     fn get_memory(&mut self);
-//     fn get_disks(&mut self);
-//     fn get_processes(&mut self);
-//     fn get_components(&mut self);
-//     fn get_static_info(&mut self);
-//     fn get_network_interfaces(&mut self);
-// }
-
-// pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
-//     // let mut sys = System::new_all();
-
-//     // // First we update all information of our `System` struct.
-//     // sys.refresh_all();
-
-//     let mut machine = Machine::new().await;
-//     let card = machine.gpu_info()?;
-//     let usage = machine.graphics_status();
-
-//     let gpu_info = Gpu {
-//         card,
-//         usage
-//     };
-    
-//     let mut sys = machine.sysinfo;
-//     info!("GPU: {gpu_info:?}");
-//     sys.refresh_all();
-//     let mut cpu_percentage = f32::default();
-//     let mut cpu_clock = f32::default();
-//     let mut disks = String::new();
-//     let disk_list = Disks::new_with_refreshed_list();
-//     let mut network_interfaces: Vec<NetworkInterface> = Vec::new();
-//     let mut component_temps: HashMap<String, f32> = HashMap::new();
-//     let mut processes: Vec<SysProcess> = Vec::new();
-//     // Components temperature:
-//     let components = Components::new_with_refreshed_list();
-//     // Network interfaces name, total data received and total data transmitted:
-//     let networks = Networks::new_with_refreshed_list();
-//     // RAM and swap information:
-//     let total_memory = sys.total_memory() as f32 / (1024.0 * 1024.0);
-//     let used_memory = sys.used_memory() as f32 / (1024.0 * 1024.0);
-
-//     // Display system information:
-//     let name = System::name().context("Could not retrieve system name")?;
-//     let kernel_version = System::kernel_version().context("Could not retrieve kernel_version")?;
-//     let os_version = System::os_version().context("Could not retrieve os_version")?;
-//     let hostname = System::host_name().context("Could not retrieve hostname")?;
-
-//     // Number of CPUs:
-//     let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
-    
-//     // Display processes ID, name na disk usage:
-//     // for (pid, process) in sys.processes() {println!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
-//     for (pid, process) in sys.processes().iter() {
-//         let id = pid.as_u32();
-//         let name = process.name().to_string_lossy().to_string();
-//         let cmd = format!("{:?}", process.cmd());
-//         let user_id = process.user_id().map(|id| id.to_string());
-        
-//         let memory = (process.memory() as f32 / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-
-//         let cpu_usage = process.cpu_usage();
-//         let read_bytes = (process.disk_usage().read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-//         let total_read_bytes = (process.disk_usage().total_read_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-//         let total_written_bytes = (process.disk_usage().total_written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-//         let written_bytes = (process.disk_usage().written_bytes as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0;
-
-//         processes.push(SysProcess {
-//             id,
-//             name,
-//             cmd,
-//             user_id,
-//             memory,
-//             cpu_usage,
-//             process_disk_usage: ProcessDiskUsage {
-//                 read_bytes,
-//                 total_read_bytes,
-//                 total_written_bytes,
-//                 written_bytes,
-//             },
-//         });
-//     }
-
-//     for disk in &disk_list {
-//         disks += format!("{disk:?}").as_str();
-//     }
-
-//     for (interface_name, data) in &networks {
-//         if data.total_received() > 1 {
-//             let interface_name = interface_name.to_string();
-//             network_interfaces.push(
-//                 NetworkInterface { 
-//                     interface_name,
-//                     total_received: (data.total_received() as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0,
-//                     total_transmitted: (data.total_transmitted() as f32  / (1024.0 * 1024.0) * 100.0).round() / 100.0
-//                 }
-//             );
-//         }
-//     }
-
-//     for component in &components {
-//         component_temps.insert(component.label().to_string(), component.temperature().unwrap_or_default());
-//         // comps += format!("{component:#?} \n", component.).as_str();
-//     }
-
-//     let mut s = System::new_with_specifics(RefreshKind::everything());
-
-//     tokio::time::sleep(Duration::from_millis(200)).await;
-
-//     s.refresh_cpu_all(); // Refreshing CPU information.
-//     for cpu in s.cpus() {
-//         cpu_percentage = cpu.cpu_usage();
-//         cpu_clock = cpu.frequency() as f32;
-//     }
-
-//     Ok(SystemInformation {
-//         cpu_percentage,
-//         cpu_clock,
-//         component_temps,
-//         disks,
-//         total_memory,
-//         used_memory,
-//         name,
-//         kernel_version,
-//         os_version,
-//         hostname,
-//         number_of_cpus,
-//         network_interfaces,
-//         processes,
-//         gpu_info,
-//     })
-// }

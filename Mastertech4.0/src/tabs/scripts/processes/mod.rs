@@ -1,6 +1,5 @@
 use powershell_script::PsScriptBuilder;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Represents a process creation event.
 #[derive(Debug, Serialize, Deserialize)]

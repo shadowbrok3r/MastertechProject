@@ -92,7 +92,7 @@ impl LinePlot {
         .show_background(false);
 
         plot.show(ui, |plot_ui| {
-            plot_ui.set_plot_bounds(PlotBounds::NOTHING.make_x_symmetrical());
+            // plot_ui.set_plot_bounds(PlotBounds::NOTHING.make_x_symmetrical());
             for line in self.lines(colors) {
                 plot_ui.line(line);
             }
