@@ -1,30 +1,27 @@
+use eframe::egui::{Align, Button, Color32, Grid, Layout, ProgressBar, RichText, Ui, Widget};
 use crate::{app_state::MastertechContext, tabs::tur_sheet::get_ticket::SendRequest};
-use async_trait::async_trait;
-use crossbeam::channel::{Receiver, Sender};
-use database::schema::GetKeysResponse;
 use displays::channel_manager::ChannelManager;
-use eframe::egui::{
-    Align, Button, Color32, Grid, Layout, ProgressBar, RichText, Stroke, Ui, Widget,
-};
-use futures::StreamExt;
-use log::info;
-use reqwest::Client;
-use rust_embed::Embed;
-use serde::{Deserialize, Serialize};
-use sha2::Digest;
+use crossbeam::channel::{Receiver, Sender};
 use std::{collections::HashMap, sync::Arc};
+use database::schema::GetKeysResponse;
+use serde::{Deserialize, Serialize};
+use async_trait::async_trait;
+use futures::StreamExt;
+use rust_embed::Embed;
+use reqwest::Client;
+use sha2::Digest;
+use log::info;
+
 #[allow(unused_imports)]
-use tokio::{
-    fs,
-    io::{self, AsyncWriteExt},
-    process::Command,
-};
+use tokio::{fs, io::{self, AsyncWriteExt}, process::Command};
+
 pub mod task_scheduler;
 pub mod taskbar;
 pub mod startup;
 pub mod processes;
 pub mod programs;
 pub mod antivirus;
+
 pub use task_scheduler::*;
 pub use taskbar::*;
 pub use startup::*;
@@ -45,7 +42,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[async_trait]
 pub trait ScriptAction {
-    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>>;
+    async fn execute(&self, scripts: &Scripts) -> anyhow::Result<(), anyhow::Error>;
 }
 
 #[derive(Clone)]
@@ -69,29 +66,12 @@ pub struct QueryAntivirus;
 
 impl MastertechContext {
     pub fn scripts(&mut self, ui: &mut Ui) {
-        ui.style_mut().visuals.selection.stroke.color = Color32::BLACK;
-        ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(120, 10, 120);
-        ui.style_mut().visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-        ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(20, 20, 25);
-        ui.style_mut().visuals.widgets.inactive.bg_stroke =
-            Stroke::new(1.0, Color32::from_rgb(80, 80, 80));
-        ui.style_mut().visuals.widgets.open.bg_fill = Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.open.weak_bg_fill = Color32::from_black_alpha(50);
-        ui.style_mut().visuals.widgets.active.weak_bg_fill = Color32::from_rgb(30, 30, 30);
-        ui.style_mut().visuals.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
-        ui.style_mut().visuals.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 12);
-        ui.style_mut().visuals.widgets.hovered.bg_stroke =
-            Stroke::new(1.0, Color32::from_rgb(200, 20, 200));
-
         ui.style_mut().spacing.button_padding = (4.0, 6.0).into();
         ui.shrink_width_to_current();
         ui.shrink_height_to_current();
-        ui.vertical(|ui| {
-            ui.add_space(6.0);
-        });
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
-        });
+        ui.vertical(|ui| ui.add_space(6.0));
+        ui.horizontal(|ui| ui.add_space(8.0));
+        
         if self.ticket_data.service_number.len() > 0 {
             self.scripts = Scripts::new(self.ticket_data.service_number.to_string());
         }
@@ -205,6 +185,7 @@ impl Scripts {
             query_antivirus: "Query Antivirus".to_string(),
         }
     }
+    
     pub fn get_scripts(&self) -> HashMap<&'static str, Arc<dyn ScriptAction + Send + Sync>> {
         let mut m = HashMap::new();
         let install_webroot: Arc<dyn ScriptAction + Send + Sync> = Arc::new(InstallWebroot {});
@@ -214,12 +195,13 @@ impl Scripts {
 
         m.insert("Install Webroot", install_webroot);
         m.insert("Install SAS", install_sas);
+        m.insert("View installed ", install_sas);
         // m.insert("Check Driver Issues", check_drivers);
         // m.insert("Running Tasks", running_tasks);
         m
     }
 
-    pub async fn install_webroot(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn install_webroot(&self) -> anyhow::Result<(), anyhow::Error> {
         info!("running install_webroot!");
 
         if let Some(service_number) = &self.service_number {
@@ -279,7 +261,7 @@ impl Scripts {
         Ok(())
     }
 
-    pub async fn install_sas(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn install_sas(&self) -> anyhow::Result<(), anyhow::Error> {
         if let Some(service_number) = &self.service_number {
             let response = self
                 .client
@@ -338,12 +320,12 @@ impl Scripts {
         Ok(())
     }
 
-    pub async fn check_driver_issues(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn check_driver_issues(&self) -> anyhow::Result<(), anyhow::Error> {
         info!("running check_driver_issues!");
         Ok(())
     }
 
-    pub async fn running_tasks(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn running_tasks(&self) -> anyhow::Result<(), anyhow::Error> {
         info!("running running_tasks!");
         Ok(())
     }
@@ -351,39 +333,31 @@ impl Scripts {
 
 #[async_trait]
 impl ScriptAction for InstallWebroot {
-    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+    async fn execute(&self, scripts: &Scripts) -> anyhow::Result<(), anyhow::Error> {
         Scripts::install_webroot(scripts).await
     }
 }
 
 #[async_trait]
 impl ScriptAction for InstallSAS {
-    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+    async fn execute(&self, scripts: &Scripts) -> anyhow::Result<(), anyhow::Error> {
         Scripts::install_sas(scripts).await
     }
 }
 
 #[async_trait]
 impl ScriptAction for CheckDriverIssues {
-    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+    async fn execute(&self, scripts: &Scripts) -> anyhow::Result<(), anyhow::Error> {
         Scripts::check_driver_issues(scripts).await
     }
 }
 
 #[async_trait]
 impl ScriptAction for RunningTasks {
-    async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
+    async fn execute(&self, scripts: &Scripts) -> anyhow::Result<(), anyhow::Error> {
         Scripts::running_tasks(scripts).await
     }
 }
-
-// #[cfg(target_os="windows")]
-// #[async_trait]
-// impl ScriptAction for QueryAntivirus {
-//     async fn execute(&self, scripts: &Scripts) -> Result<(), Box<dyn std::error::Error>> {
-//         Scripts::query_antivirus(scripts).await
-//     }
-// }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Antivirus {
