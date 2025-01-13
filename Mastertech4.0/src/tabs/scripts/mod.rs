@@ -195,7 +195,7 @@ impl Scripts {
 
         m.insert("Install Webroot", install_webroot);
         m.insert("Install SAS", install_sas);
-        m.insert("View installed ", install_sas);
+        // m.insert("View installed ", install_sas);
         // m.insert("Check Driver Issues", check_drivers);
         // m.insert("Running Tasks", running_tasks);
         m

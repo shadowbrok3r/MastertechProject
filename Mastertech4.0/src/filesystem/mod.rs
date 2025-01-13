@@ -3,9 +3,6 @@ pub mod machine;
 
 // Wrap the Nvml instance in lazy_static
 lazy_static::lazy_static! {
-    static ref NVML_INSTANCE: std::sync::Arc<nvml_wrapper::Nvml> = std::sync::Arc::new(
-        nvml_wrapper::Nvml::init().expect("Failed to initialize NVML")
-    );
     static ref SYSINFO: std::sync::Arc<tokio::sync::Mutex<sysinfo::System>> = std::sync::Arc::new(
         tokio::sync::Mutex::new(sysinfo::System::new_all())
     );
@@ -13,13 +10,18 @@ lazy_static::lazy_static! {
 
 static MACHINE_INSTANCE: std::sync::OnceLock<std::sync::Arc<machine::Machine>> = std::sync::OnceLock::new();
 
-pub async fn get_machine_instance() -> &'static std::sync::Arc<machine::Machine> {
+pub async fn get_machine_instance() -> Result<&'static std::sync::Arc<machine::Machine>, nvml_wrapper::error::NvmlError> {
+    // Initialize NVML_INSTANCE inside the function to handle potential errors
+    let nvml_instance = nvml_wrapper::Nvml::init().map(std::sync::Arc::new)?;
+
+    // Use SYSINFO and NVML_INSTANCE to create the machine instance
     let machine = machine::Machine::new(
-        std::sync::Arc::clone(&NVML_INSTANCE),
+        nvml_instance,
         std::sync::Arc::clone(&SYSINFO),
     ).await;
-    
-    MACHINE_INSTANCE.get_or_init(|| {
+
+    // Get or initialize the machine instance
+    Ok(MACHINE_INSTANCE.get_or_init(|| {
         std::sync::Arc::new(machine)
-    })
+    }))
 }

@@ -27,4 +27,5 @@ output.log
 .rust-analyzer/*
 .VSCodeCounter/*
 .VSCodeCounter
-Cargo.lock
+./Cargo.lock
+

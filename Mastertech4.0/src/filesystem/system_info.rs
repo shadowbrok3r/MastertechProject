@@ -62,7 +62,7 @@ pub trait ComputerInfo {
 impl ComputerInfo for ComputerData {
     async fn get_computer_data(&mut self) -> anyhow::Result<Self, anyhow::Error> {
         info!("Filesystem -> get_computer_data -> Getting sysinfo");
-        let machine = get_machine_instance().await.clone();
+        let machine = get_machine_instance().await?.clone();
         let card = machine.gpu_info()?;
         let usage = machine.graphics_status()?;
     
@@ -268,7 +268,7 @@ pub trait SysInf {
 }
 
 pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
-    let machine = get_machine_instance().await.clone();
+    let machine = get_machine_instance().await?.clone();
     let card = machine.gpu_info()?;
     let usage = machine.graphics_status()?;
 
