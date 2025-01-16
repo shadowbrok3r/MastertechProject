@@ -45,7 +45,7 @@ impl MtechServer {
         //             if button.clicked() {
         //                 // CONNECT
         //                 let _url = format!(
-        //                     "wss://sock.master-tech.app/websocket?role=master&room_id={}",
+        //                     "{WS_MASTER_URL}&role=master&room_id={}",
         //                     client.connection_string.clone()
         //                 );
         //                 cloned_client.connected = false;
@@ -116,7 +116,7 @@ impl MtechServer {
 
         //             if button.clicked() {
         //                 let url = format!(
-        //                     "wss://sock.master-tech.app/websocket?role=master&room_id={}",
+        //                     "{WS_MASTER_URL}&role=master&room_id={}",
         //                     // "ws://localhost:8081/websocket?role=master&room_id={}",
         //                     cli_clone.connection_string.clone()
         //                 );

@@ -64,7 +64,7 @@ impl ChatServer {
                     self.handle_message(ChatMessage::Send {
                         from: session_id.clone(),
                         room_id: room_id.clone(),
-                        text,
+                        text: text.to_string(),
                         bin: None,
                     })
                     .await;
@@ -75,7 +75,7 @@ impl ChatServer {
                         from: session_id.clone(),
                         room_id: room_id.clone(),
                         text: String::new(),
-                        bin: Some(bin),
+                        bin: Some(bin.to_vec()),
                     })
                     .await;
                 }
@@ -125,10 +125,10 @@ impl ChatServer {
                         let mut session = session.lock().await;
                         if let Some(bin) = bin {
                             info!("Relaying binary message");
-                            let _ = session.send(Message::Binary(bin)).await;
+                            let _ = session.send(Message::Binary(bin.into())).await;
                         } else {
                             info!("Relaying text message");
-                            let _ = session.send(Message::Text(text)).await;
+                            let _ = session.send(Message::Text(text.into())).await;
                         }
                     } else {
                         info!(

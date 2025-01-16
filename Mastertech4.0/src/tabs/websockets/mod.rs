@@ -131,6 +131,7 @@ impl MastertechContext{
             Ok((mut ws_sender, ws_receiver)) => {
                 info!("websockets -> Connected to websocket server");
                 ws_sender.send(ewebsock::WsMessage::Text("Client Connected!".to_string()));
+                
                 if self.frontend.is_none() {
                     self.frontend = Some(WebConsoleFrontend::new(ws_sender, ws_receiver));
                 }

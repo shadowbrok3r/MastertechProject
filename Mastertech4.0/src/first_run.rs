@@ -4,7 +4,7 @@ use super::utilities::crypto::pass_hash::load_encrypted_user_data;
 use super::app_state::{AppState, MasterTechApp};
 use crate::{filesystem::system_info::generate_client_id, tabs::tur_sheet::scaffold::AsanaResponse};
 use super::filesystem::system_info::ComputerInfo;
-use database::{schema::{ComputerData, CONNECTED_CLIENT_TABLE}, Database};
+use database::{schema::{ComputerData, CONNECTED_CLIENT_TABLE}, Database, WS_CLIENT_URL};
 use eframe::egui::{Context, ViewportCommand};
 use database::schema::GetKeysResponse;
 use std::sync::{Arc, Condvar, Mutex};
@@ -73,7 +73,7 @@ impl MasterTechApp {
 
         self.context.url = Some(
             format!(
-                "wss://sock.master-tech.app/websocket?room_id={}&role=client",
+                "{WS_CLIENT_URL}&room_id={}",
                 url_string.clone()
             )
         );

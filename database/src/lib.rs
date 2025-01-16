@@ -17,6 +17,12 @@ use surrealdb::{
 pub mod live_data;
 pub mod schema;
 
+// pub const WS_CLIENT_URL: &str = "wss://sock.master-tech.app/websocket?role=client";
+// pub const WS_MASTER_URL: &str = "wss://sock.master-tech.app/websocket?role=master";
+
+pub const WS_CLIENT_URL: &str = "ws://localhost:8081/websocket?role=client";
+pub const WS_MASTER_URL: &str = "ws://localhost:8081/websocket?role=master";
+
 #[derive(Clone, Debug, Default)]
 pub struct Database {
     // pub database: Surreal<WsClient>,
