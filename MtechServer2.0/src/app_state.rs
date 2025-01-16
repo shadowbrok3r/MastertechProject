@@ -1,6 +1,6 @@
 use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::{github_issue::GithubIssue, web_console::{websockets::WebSocketClient, WebConsoleLayout}}};
 use displays::{app_state::SharedContext, channel_manager::ChannelManager};
-use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database};
+use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database, WS_MASTER_URL};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -186,7 +186,7 @@ impl MtechServer {
             seb_email: String::new(),
             github_issue: GithubIssue::new(),
             github_releases: Vec::new(),
-            url: "wss://sock.master-tech.app/websocket?room_id=0&role=master".to_string(),
+            url: format!("{WS_MASTER_URL}&room_id=0"),
             ws_clients: HashMap::new(),
             undock_client: HashMap::new(),
             wants_to_undock: false,

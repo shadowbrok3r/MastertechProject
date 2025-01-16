@@ -1,6 +1,6 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, FontFamily, FontId, Frame, Id, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
 use displays::{channel_manager::ChannelManager, code_editor::{CodeEditor, ColorTheme, Syntax}, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, SortDirection};
-use database::schema::{ConnectedClient, utilities::get_connected_clients};
+use database::{WS_MASTER_URL, schema::{ConnectedClient, utilities::get_connected_clients}};
 use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
 use std::collections::{BTreeMap, HashMap};
@@ -126,7 +126,7 @@ impl WebConsoleLayout {
                 ClientUiAction::DeleteClient(mut client) => {
                     // CONNECT
                     let _url = format!(
-                        "wss://sock.master-tech.app/websocket?role=master&room_id={}",
+                        "{WS_MASTER_URL}&room_id={}",
                         client.connection_string.clone()
                     );
                     client.connected = false;
@@ -139,7 +139,7 @@ impl WebConsoleLayout {
                 },
                 ClientUiAction::ConnectClient(mut client) => {
                     let url = format!(
-                        "wss://sock.master-tech.app/websocket?role=master&room_id={}",
+                        "{WS_MASTER_URL}&room_id={}",
                         client.connection_string.clone()
                     );
                     match ewebsock::connect(&url, Default::default()) {
