@@ -7,10 +7,10 @@ use axum::{
     routing::get,
     serve, Router,
 };
-use futures::StreamExt;
+use futures::{stream::SplitSink, SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::timeout};
 use tracing::info;
 use uuid::Uuid;
 
@@ -29,83 +29,97 @@ enum ChatMessage {
 
 #[derive(Clone, Debug, Default)]
 struct Room {
-    master: Option<Arc<Mutex<WebSocket>>>,
-    client: Option<Arc<Mutex<WebSocket>>>,
+    master: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>, // Store write half
+    client: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>, // Store write half
 }
+
 
 #[derive(Clone)]
 struct ChatServer {
     rooms: Arc<Mutex<HashMap<RoomID, Room>>>, // Use Arc<Mutex<...>> to match type expectations
-    session_map: Arc<Mutex<HashMap<SessionID, Arc<Mutex<WebSocket>>>>>, // Map to track sessions by their IDs
+    session_map: Arc<Mutex<HashMap<SessionID, Arc<Mutex<SplitSink<WebSocket, Message>>>>>>, // Map to track sessions by their IDs
 }
 
 impl ChatServer {
     async fn handle_ws(
-        self: Arc<Self>, // Changed to Arc<Self> to handle ownership and cloning
+        self: Arc<Self>,
         ws: WebSocket,
         session_id: SessionID,
         room_id: RoomID,
         role: String,
     ) {
-        let ws = Arc::new(Mutex::new(ws)); // Wrap WebSocket in Arc<Mutex<>> to share ownership
-
-        info!("Registering session");
+        let (mut ws_tx, mut ws_rx) = ws.split(); // Split the WebSocket into separate read/write handles
+        let ws_tx = Arc::new(Mutex::new(ws_tx)); // Arc<Mutex<WebSocket WriteHalf>> for shared sending
+    
+        info!("Registering session for role: {role}");
+    
         // Register the session with its ID
         self.session_map
             .lock()
             .await
-            .insert(session_id.clone(), ws.clone());
-
-        info!("Creating room");
-
+            .insert(session_id.clone(), ws_tx.clone());
+    
         let mut rooms = self.rooms.lock().await;
-
-        let room = match role.as_str() {
-            "master" => rooms.insert(room_id.clone(), Room { master: Some(ws.clone()), client: None }),
-            "client" => rooms.insert(room_id.clone(), Room { master: None, client: Some(ws.clone()) }),
-            _ => Some(Room { master: None, client: None })
+        let entry = rooms.entry(room_id.clone()).or_insert_with(Room::default);
+    
+        match role.as_str() {
+            "master" => entry.master = Some(ws_tx.clone()),
+            "client" => entry.client = Some(ws_tx.clone()),
+            _ => {}
         };
-
-        let _ = rooms.entry(room_id.clone()).or_insert_with(|| room.unwrap_or_default());
-
-        info!("All Rooms: {:?}", rooms);
-
-        // Process messages
-        while let Some(Ok(message)) = ws.lock().await.next().await {
-            match message {
-                Message::Text(text) => {
-                    info!("Received text message: {}", text);
-                    self.handle_message(ChatMessage::Send {
-                        from: session_id.clone(),
-                        room_id: room_id.clone(),
-                        text: text.to_string(),
-                        bin: None,
-                    })
-                    .await;
+    
+        info!("Updated room: {:?}", entry);
+        info!("Processing messages");
+    
+        // Clone `Arc<Self>` and `session_id` for the read loop
+        let server_clone = Arc::clone(&self);
+        let session_id_clone = session_id.clone();
+        let room_id_clone = room_id.clone();
+    
+        // Spawn task to handle incoming messages
+        tokio::spawn(async move {
+            while let Some(Ok(message)) = ws_rx.next().await {
+                match message {
+                    Message::Text(text) => {
+                        info!("Received text message: {}", text);
+                        server_clone
+                            .handle_message(ChatMessage::Send {
+                                from: session_id_clone.clone(),
+                                room_id: room_id_clone.clone(),
+                                text: text.to_string(),
+                                bin: None,
+                            })
+                            .await;
+                    }
+                    Message::Binary(bin) => {
+                        info!("Received binary message");
+                        server_clone
+                            .handle_message(ChatMessage::Send {
+                                from: session_id_clone.clone(),
+                                room_id: room_id_clone.clone(),
+                                text: String::new(),
+                                bin: Some(bin.to_vec()),
+                            })
+                            .await;
+                    }
+                    Message::Close(close_frame) => {
+                        if let Some(frame) = close_frame {
+                            info!("WebSocket closed: {:?} {:?}", frame.reason, frame.code);
+                        }
+                        break;
+                    }
+                    _ => {}
                 }
-                Message::Binary(bin) => {
-                    info!("Received binary message");
-                    self.handle_message(ChatMessage::Send {
-                        from: session_id.clone(),
-                        room_id: room_id.clone(),
-                        text: String::new(),
-                        bin: Some(bin.to_vec()),
-                    })
-                    .await;
-                }
-                Message::Close(_) => {
-                    info!("WebSocket closed");
-                    break;
-                }
-                _ => {}
             }
-        }
-
-        // Cleanup session when disconnected
-        self.cleanup_session(&room_id, &session_id, &role).await;
+    
+            server_clone
+                .cleanup_session(&room_id_clone, &session_id_clone, &role)
+                .await;
+        });
     }
-
+    
     async fn handle_message(&self, call: ChatMessage) {
+        info!("Handling Message");
         match call {
             ChatMessage::Send {
                 from,
@@ -117,38 +131,48 @@ impl ChatServer {
                     "Handling message from session {} in room {}: {}",
                     from, room_id, text
                 );
-
+    
                 let rooms = self.rooms.lock().await;
                 if let Some(room) = rooms.get(&room_id) {
-                    let target_session = async {
-                        if let Some(master) = &room.master {
+                    let target_session = match (room.master.as_ref(), room.client.as_ref()) {
+                        (Some(master), Some(client)) => {
                             if self.is_session_match(master, &from).await {
-                                return room.client.as_ref();
+                                Some(client.clone())
+                            } else {
+                                Some(master.clone())
                             }
                         }
-                        if let Some(client) = &room.client {
+                        (Some(master), None) => {
+                            if self.is_session_match(master, &from).await {
+                                None
+                            } else {
+                                Some(master.clone())
+                            }
+                        }
+                        (None, Some(client)) => {
                             if self.is_session_match(client, &from).await {
-                                return room.master.as_ref();
+                                None
+                            } else {
+                                Some(client.clone())
                             }
                         }
-                        None
-                    }
-                    .await;
-
+                        (None, None) => None,
+                    };
+    
                     if let Some(session) = target_session {
-                        let mut session = session.lock().await;
-                        if let Some(bin) = bin {
-                            info!("Relaying binary message");
-                            let _ = session.send(Message::Binary(bin.into())).await;
-                        } else {
-                            info!("Relaying text message");
-                            let _ = session.send(Message::Text(text.into())).await;
-                        }
-                    } else {
-                        info!(
-                            "No target session found for session {} in room {}",
-                            from, room_id
-                        );
+                        info!("Relaying message to target session in room {}", room_id);
+    
+                        let ws_clone = session.clone();
+                        tokio::spawn(async move {
+                            let mut session = ws_clone.lock().await;
+                            let send_result = session.send(Message::Text(text.into())).await;
+    
+                            if let Err(e) = send_result {
+                                info!("Failed to send message: {:?}", e);
+                            } else {
+                                info!("Message successfully sent to target session");
+                            }
+                        });
                     }
                 } else {
                     info!("Room {} not found", room_id);
@@ -156,6 +180,8 @@ impl ChatServer {
             }
         }
     }
+    
+    
 
     async fn cleanup_session(&self, room_id: &RoomID, session_id: &SessionID, role: &str) {
         let mut rooms = self.rooms.lock().await;
@@ -196,18 +222,20 @@ impl ChatServer {
     // Complete is_session_match function
     async fn is_session_match(
         &self,
-        session: &Arc<Mutex<WebSocket>>,
+        session: &Arc<Mutex<SplitSink<WebSocket, Message>>>, // Expect write half
         session_id: &SessionID,
     ) -> bool {
         let session_map = self.session_map.lock().await;
-
-        // Check if the session ID maps to the given WebSocket session
+    
+        // Get stored session
         if let Some(stored_session) = session_map.get(session_id) {
-            Arc::ptr_eq(stored_session, session) // Compares if both Arcs point to the same WebSocket
+            // Compare if both are pointing to the same underlying write stream
+            Arc::ptr_eq(stored_session, session)
         } else {
             false
         }
     }
+    
 }
 
 #[tokio::main]
@@ -243,7 +271,7 @@ async fn websocket_handler(
         .cloned()
         .unwrap_or_else(|| "client".to_string());
 
-    info!("Client connected: {:?}-{:?}", role, room_id);
+    info!("Client connected.\nRole: {:?}\nRoom: {:?}\nSession: {:?}", role, room_id, session_id);
     ws.on_upgrade(move |socket| {
         chat_server
             .clone()
