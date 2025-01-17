@@ -3,7 +3,6 @@ use axum::{
         ws::{Message, WebSocket},
         Extension, Query, WebSocketUpgrade,
     },
-    handler::Handler,
     response::IntoResponse,
     routing::get,
     serve, Router,
@@ -28,7 +27,7 @@ enum ChatMessage {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 struct Room {
     master: Option<Arc<Mutex<WebSocket>>>,
     client: Option<Arc<Mutex<WebSocket>>>,
@@ -50,11 +49,26 @@ impl ChatServer {
     ) {
         let ws = Arc::new(Mutex::new(ws)); // Wrap WebSocket in Arc<Mutex<>> to share ownership
 
+        info!("Registering session");
         // Register the session with its ID
         self.session_map
             .lock()
             .await
             .insert(session_id.clone(), ws.clone());
+
+        info!("Creating room");
+
+        let mut rooms = self.rooms.lock().await;
+
+        let room = match role.as_str() {
+            "master" => rooms.insert(room_id.clone(), Room { master: Some(ws.clone()), client: None }),
+            "client" => rooms.insert(room_id.clone(), Room { master: None, client: Some(ws.clone()) }),
+            _ => Some(Room { master: None, client: None })
+        };
+
+        let _ = rooms.entry(room_id.clone()).or_insert_with(|| room.unwrap_or_default());
+
+        info!("All Rooms: {:?}", rooms);
 
         // Process messages
         while let Some(Ok(message)) = ws.lock().await.next().await {
@@ -207,8 +221,8 @@ async fn main() {
 
     let app = Router::new().route(
         "/websocket",
-        get(websocket_handler.layer(Extension(chat_server))),
-    );
+        get(websocket_handler),
+    ).layer(Extension(Arc::new(chat_server)));
 
     let address = SocketAddr::from(([0, 0, 0, 0], 8081));
     let listener = tokio::net::TcpListener::bind(address).await.unwrap();
