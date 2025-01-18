@@ -118,12 +118,12 @@ impl Machine {
 }
 
 pub struct CachedSystemInformation {
-    pub name: String,
-    pub os_version: String,
-    pub kernel_version: String,
-    pub hostname: String,
-    pub disks: String,
-    pub total_memory: f32,
+    pub _name: String,
+    pub _os_version: String,
+    pub _kernel_version: String,
+    pub _hostname: String,
+    pub _disks: String,
+    pub _total_memory: f32,
 }
 
 impl CachedSystemInformation {
@@ -142,12 +142,12 @@ impl CachedSystemInformation {
         let total_memory = sys.total_memory() as f32 / (1024.0 * 1024.0);
         
         CachedSystemInformation {
-            name,
-            os_version,
-            kernel_version,
-            hostname,
-            disks,
-            total_memory,
+            _name: name,
+            _os_version: os_version,
+            _kernel_version: kernel_version,
+            _hostname: hostname,
+            _disks: disks,
+            _total_memory: total_memory,
         }
     }
 }

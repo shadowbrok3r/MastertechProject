@@ -5,3 +5,4 @@ pub mod receive_task;
 pub mod receive_ticket;
 pub mod receive_ui_action;
 pub mod receive_inventory;
+pub mod receive_client;

@@ -1,8 +1,8 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, webconsole_admin::WebConsoleLayout}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 use surrealdb::{Action, RecordId};
 use serde::Serialize;
 use anyhow::Error;
@@ -174,7 +174,9 @@ pub struct SharedContext {
     #[serde(skip)]
     pub filesystem: FileSystem,
     #[serde(skip)]
-    pub resource_mon: ResourceMonitor
+    pub resource_mon: ResourceMonitor,
+    #[serde(skip)]
+    pub web_console_layout: WebConsoleLayout
 }
 
 impl SharedContext {
@@ -213,7 +215,10 @@ impl SharedContext {
 
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
-        
+        let mut web_console_layout = WebConsoleLayout::new(BTreeMap::new());
+        let filesystem = FileSystem::new();
+        web_console_layout.set_filesystem(filesystem.clone());
+
         Self {
             current_user: None,
             tasks: Vec::new(),
@@ -289,7 +294,8 @@ impl SharedContext {
             switching_store: false,
             refresh: false,
             timer: None,
-            filesystem: FileSystem::new()
+            filesystem,
+            web_console_layout,
         }
     }
 

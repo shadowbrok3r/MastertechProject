@@ -1,8 +1,8 @@
-use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::{github_issue::GithubIssue, web_console::{websockets::WebSocketClient, WebConsoleLayout}}};
-use displays::{app_state::SharedContext, channel_manager::ChannelManager};
+use crate::{pages::{account_settings_page::AccountMod, downloads_page::GithubRelease, login_page::Login, signup_page::Signup}, tabs::github_issue::GithubIssue};
+use displays::{app_state::SharedContext, channel_manager::ChannelManager, tabs::webconsole_admin::websockets::WebSocketClient};
 use database::{schema::{prestashop_schema::PrestashopPayload, TaskPayload, UserSettings}, Database, WS_MASTER_URL};
 use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use crossbeam::channel::{self, Receiver, Sender};
 use eframe::CreationContext;
 use serde_json::Value;
@@ -133,10 +133,10 @@ pub struct MtechServerContext {
     /// The actual communication bridge to / from our dummy worker
     #[serde(skip)]
     pub bridge: gloo_worker::WorkerBridge<crate::webworker::WebWorker>,
-
+    #[serde(skip)]
+    pub admin_console_data_helper: AdminConsoleDataHelper,
     /// Do we need to refresh the UI?
     pub refresh: bool,
-    pub web_console_layout: WebConsoleLayout
 }
 
 impl MtechServer {
@@ -162,15 +162,14 @@ impl MtechServer {
             .spawn("./webworker.js");
 
         let shared_ctx = SharedContext::new(cc);
-        let file_system = shared_ctx.filesystem.clone();
-        let mut web_console_layout = WebConsoleLayout::new(BTreeMap::new());
-        web_console_layout.set_filesystem(file_system.clone());
+        let admin_console_data_helper = AdminConsoleDataHelper::new();
         
         let context = MtechServerContext {
             shared_ctx,
             first_run: true,
             bridge,
             data_update,
+
             // CHANNEL SENDERS / RECEIVERS
             db_tx,
             db_rx,
@@ -206,7 +205,7 @@ impl MtechServer {
             get_settings: true,
 
             refresh: false,
-            web_console_layout,
+            admin_console_data_helper,
         };
 
         Self {
@@ -241,6 +240,36 @@ impl MtechServer {
         }
     }
 }
+
+pub struct AdminConsoleDataHelper {
+    pub deser_data_update: std::rc::Rc<std::cell::Cell<Option<Vec<u8>>>>,
+    /// The actual communication bridge to / from our dummy worker
+    pub deser_bridge: gloo_worker::WorkerBridge<crate::deser_worker::DeserWorker>,
+}
+
+impl AdminConsoleDataHelper {
+    pub fn new() -> Self {
+        let deser_data_update = std::rc::Rc::new(std::cell::Cell::new(None));
+        let deser_sender = deser_data_update.clone();
+        let deser_bridge = <crate::deser_worker::DeserWorker as gloo_worker::Spawnable>::spawner()
+        .callback(move |response| {
+            deser_sender.set(Some(response.0));
+        })
+        .spawn("./deser_worker.js");
+
+        Self {
+            deser_data_update,
+            deser_bridge,
+        }
+    }
+}
+
+// impl BinMsgHandler for AdminConsoleDataHelper {
+//     fn handle_binary_message(&mut self, bin: &Vec<u8>) -> Vec<u8> {
+//         self.deser_bridge.send(crate::deser_worker::Input(bin.clone()));
+//         bin.to_vec()
+//     }
+// }
 
 pub fn default_tree() -> (DockState<String>, HashSet<String>) {
     let mut open_tabs = HashSet::new();

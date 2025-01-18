@@ -1,4 +1,4 @@
-use egui_plot::{Corner, Legend, Line, Plot, PlotBounds, PlotPoints};
+use egui_plot::{Corner, Legend, Line, Plot, PlotPoints};
 use eframe::egui::{Color32, Response, TextStyle, Ui};
 use std::collections::{HashMap, VecDeque};
 

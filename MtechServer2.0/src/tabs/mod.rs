@@ -3,7 +3,6 @@ pub mod query_builder;
 pub mod quote_fulfilled_tasks;
 pub mod seb_lookup;
 pub mod user_chat;
-pub mod web_console;
 // pub mod terminal;
 
 use database::schema::{utilities::{get_completed_tasks_for_store, get_store_users, get_tasks_for_store}, Store};
@@ -24,7 +23,7 @@ impl TabViewer for MtechServerContext {
             "Store Tasks" => self.shared_ctx.store_tasks(ui),
             "My Tasks" => self.shared_ctx.my_tasks(ui),
             "Ai" => self.shared_ctx.ai_playground(ui),
-            "Web Console" => self.web_console(ui),
+            "Admin Console" => self.shared_ctx.admin_console(ui),
             "Completed Tasks" => self.shared_ctx.completed_tasks(ui),
             "Bug Report" => self.github(ui),
             "Logs" => logger_ui().show(ui),
@@ -75,7 +74,7 @@ impl TabViewer for MtechServerContext {
             &"Bug Report".to_string(),
             &"Terminal".to_string(),
             &"My Tools".to_string(),
-            &"Web Console".to_string(),
+            &"Admin Console".to_string(),
             &"Store Tasks".to_string(),
             &"My Tasks".to_string(),
             &"Ai".to_string(),
