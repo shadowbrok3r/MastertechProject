@@ -10,7 +10,7 @@ use axum::{
 use futures::{stream::SplitSink, SinkExt, StreamExt};
 use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
-use tokio::{sync::Mutex, time::timeout};
+use tokio::sync::Mutex;
 use tracing::info;
 use uuid::Uuid;
 
@@ -48,7 +48,7 @@ impl ChatServer {
         room_id: RoomID,
         role: String,
     ) {
-        let (mut ws_tx, mut ws_rx) = ws.split(); // Split the WebSocket into separate read/write handles
+        let (ws_tx, mut ws_rx) = ws.split(); // Split the WebSocket into separate read/write handles
         let ws_tx = Arc::new(Mutex::new(ws_tx)); // Arc<Mutex<WebSocket WriteHalf>> for shared sending
     
         info!("Registering session for role: {role}");
@@ -92,7 +92,7 @@ impl ChatServer {
                             .await;
                     }
                     Message::Binary(bin) => {
-                        info!("Received binary message");
+                        info!("Received binary message: {:?}", String::from_utf8(bin.to_vec()).unwrap_or_default());
                         server_clone
                             .handle_message(ChatMessage::Send {
                                 from: session_id_clone.clone(),
@@ -165,7 +165,11 @@ impl ChatServer {
                         let ws_clone = session.clone();
                         tokio::spawn(async move {
                             let mut session = ws_clone.lock().await;
-                            let send_result = session.send(Message::Text(text.into())).await;
+                            let send_result = if let Some(bin) = bin {
+                                session.send(Message::Binary(bin.into())).await
+                            } else {
+                                session.send(Message::Text(text.into())).await
+                            };
     
                             if let Err(e) = send_result {
                                 info!("Failed to send message: {:?}", e);

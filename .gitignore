@@ -22,10 +22,13 @@ Mastertech4.0/.env
 Mastertech4.0/Cargo.lock
 Mastertech4.0/output.log
 Mastertech4.0/data.enc
+Mastertech4.0/snapd
 Mastertech4.0/git-MasterTech.exe
 output.log
 .rust-analyzer/*
 .VSCodeCounter/*
 .VSCodeCounter
 ./Cargo.lock
-
+websocket_server2/.env
+Cargo.lock
+data.enc

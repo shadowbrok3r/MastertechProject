@@ -8,6 +8,7 @@ use log::info;
 
 impl SharedContext {
     pub fn load_data(&mut self, ctx: &Context) -> bool {
+        self.refresh_client_list();
         self.timer = Some(web_time::Instant::now());
         // get all of our channel Senders from crossbeam to get user/store/completed tasks,
         // as well as store users and live task notifications

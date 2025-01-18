@@ -89,6 +89,7 @@ impl TabViewer for MastertechContext {
             "Logs" => logger_ui().show(ui),
             "Resource Monitor" => self.show_resource_monitor(ui),
             "Company Stock" => self.shared_ctx.stock_quantities_viewer(ui),
+            "Admin Console" => self.shared_ctx.admin_console(ui),
             _ => {}
         }
     }

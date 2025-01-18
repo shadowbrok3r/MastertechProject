@@ -32,6 +32,7 @@ impl MasterTechApp {
                             &"Completed Tasks".to_string(),
                             &"Bug Tracker".to_string(),
                             &"Websockets".to_string(),
+                            &"Admin Console".to_string(),
                             &"My Tools".to_string(),
                             &"Store Stock".to_string(),
                             &"Company Stock".to_string(),

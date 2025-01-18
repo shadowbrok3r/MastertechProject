@@ -11,3 +11,4 @@ pub mod json_viewer;
 pub mod ai_playground;
 pub mod customer;
 pub mod resource_monitor;
+pub mod webconsole_admin;

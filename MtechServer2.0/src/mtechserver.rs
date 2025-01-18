@@ -1,8 +1,6 @@
-use crate::{app_state::{AppState, MainPages, MtechServer}, tabs::web_console::WebConsoleLayout};
-use displays::ui_tools::theme_config::set_custom_style;
-use eframe::egui::{
-    Color32, Context, Frame, Margin, Rounding, Stroke, Vec2, Window
-};
+use displays::{tabs::webconsole_admin::WebConsoleLayout, ui_tools::theme_config::set_custom_style};
+use eframe::egui::{Color32, Context, Frame, Margin, Rounding, Stroke, Vec2, Window};
+use crate::app_state::{AppState, MainPages, MtechServer};
 use egui_dock::DockState;
 use log::info;
 
@@ -67,11 +65,18 @@ impl eframe::App for MtechServer {
             });
         }
 
+        // if let Some(decompressed_data) = self.context.admin_console_data_helper.deser_data_update.take() {
+        //     if let Some(sysinfo) = deserializer::<SystemInformation>(&decompressed_data){
+        //         info!("Got sysinfo from admin console");
+        //         self.context.shared_ctx. resource_mon.set_sysinfo(sysinfo);
+        //     }
+        // }
+
         // do some initial setting up
         if self.context.first_run { self.first_run(frame); }
 
-        if self.context.web_console_layout.wants_to_undock {
-            let layout = &mut self.context.web_console_layout;
+        if self.context.shared_ctx.web_console_layout.wants_to_undock {
+            let layout = &mut self.context.shared_ctx.web_console_layout;
             let undock_client = layout.undock_client.clone();
             for client in self.context.shared_ctx.clients.clone() {
                 let should_we_undock = if let Some(undock) = undock_client.get(&client.connection_string)
@@ -126,7 +131,7 @@ impl eframe::App for MtechServer {
         self.receive();
         self.context.shared_ctx.receive(frame, ctx);
         self.receive_database(frame, ctx);
-        self.context.receive_client();
+        self.context.shared_ctx.receive_client();
         self.context.shared_ctx.receive_inventory();
         self.context.shared_ctx.receive_ui_action();
         self.context.shared_ctx.receive_prestashop();

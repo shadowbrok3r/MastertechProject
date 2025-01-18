@@ -23,7 +23,7 @@ impl MtechServer {
                                 &"Store Tasks".to_string(),
                                 &"My Tasks".to_string(),
                                 &"Terminal".to_string(),
-                                &"Web Console".to_string(),
+                                &"Admin Console".to_string(),
                                 &"Completed Tasks".to_string(),
                                 &"Bug Report".to_string(),
                                 &"Ai".to_string(),
@@ -221,7 +221,7 @@ impl MtechServer {
                             ui.set_width(300.0);
                             ui.set_height(600.0);
                             ui.vertical_centered_justified(|ui| {
-                                if ui.add(Button::new("Web Console")).clicked() {
+                                if ui.add(Button::new("Admin Console")).clicked() {
                                     self.state = AppState::Authenticated(MainPages::WebConsole);
                                     let live_clients_tx = self.context.shared_ctx.live_clients_tx.clone();
                                     let tx = self.context.shared_ctx.connected_clients_tx.clone();

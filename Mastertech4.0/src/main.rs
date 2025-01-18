@@ -72,6 +72,7 @@ impl eframe::App for MasterTechApp {
         self.context.shared_ctx.receive_notes();
         self.context.shared_ctx.receive_notification();
         self.context.shared_ctx.receive_inventory();
+        self.context.shared_ctx.receive_client();
         self.context.shared_ctx.handle_modals(ctx);
         self.context.shared_ctx.toasts.show(ctx);
         self.context.shared_ctx.receive(frame, ctx);
