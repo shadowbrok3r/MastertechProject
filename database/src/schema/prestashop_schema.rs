@@ -480,7 +480,7 @@ impl<'a> Prestashop<'a> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct PrestashopPayload {
     pub customer: CustomerData,
     pub order: Order,
@@ -491,7 +491,7 @@ pub struct PrestashopPayload {
     pub customer_messages: Vec<CustomerMessage>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct Address {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -506,7 +506,7 @@ pub struct Address {
     pub phone_mobile: String, // ❌     isPhoneNumber
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct Employee {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -517,7 +517,7 @@ pub struct Employee {
     pub initials: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct Order {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -569,7 +569,7 @@ pub struct Order {
     pub associations: Associations,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct Associations {
     #[serde(default = "new_vec")]
     pub order_rows: Vec<OrderRow>,
@@ -585,7 +585,7 @@ fn new_svc_vec() -> Vec<ServiceOrder> {
     Vec::new()
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct OrderRow {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -596,14 +596,14 @@ pub struct OrderRow {
     pub product_price: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct Customer {
     pub lastname: String,
     pub firstname: String,
     pub email: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct CustomerMessage {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -615,7 +615,7 @@ pub struct CustomerMessage {
     pub date_add: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct CustomerThread {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -626,17 +626,17 @@ pub struct CustomerThread {
     pub associations: CustMessageAssociation,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct CustMessageAssociation {
     pub customer_messages: Vec<CustMessage>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct CustMessage {
     pub id: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct OrderDetails {
     #[serde(deserialize_with = "deserialize_to_string")]
     pub id: String,
@@ -644,7 +644,7 @@ pub struct OrderDetails {
     pub id_order: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct ServiceOrder {
     // pub id: String,
     #[serde(deserialize_with = "deserialize_to_string")]
@@ -675,7 +675,7 @@ pub struct ServiceOrder {
     // pub id_employee_qc_signoff: String,
 }
 
-#[derive(Serialize, Debug, Default)]
+#[derive(Serialize, Debug, Default, PartialEq)]
 pub struct Resources {
     /// 	The Customer, Manufacturer and Customer addresses
     pub addresses: Address,
