@@ -53,6 +53,58 @@ impl ChatServer {
     
         info!("Registering session for role: {role}");
     
+        // let mut x: i32 = 1; // `x` is a mutable i32
+        // let b;
+        // {
+        //     let a = &mut x;  // `a` is a mutable reference to `x`
+        //     b = &mut *a;     // `b` is another mutable reference to `x`
+        // }
+        // *b = 0;             // Modifying `x` via `b`
+        
+        // x = 1;              // Modifying `x` directly
+
+        // info!("{x}");
+
+
+        // let mut x = 1;
+        // let b;
+        // {
+        //     let a = &mut x;
+        //     b = &mut *a;
+        // } // `a` goes out of scope
+        // *b = 0; // ERROR: `b` is invalid now
+
+        /*
+            The original reference (a) is no longer used after the reborrow.
+            The reborrowed reference (b) follows the same lifetime rules.
+         */
+
+        // let mut x: i32 = 1;
+        // let b;
+        // let a = &mut x; // `a` is a mutable reference to `x`
+        // b = &mut *a;    // `b` reborrows `x` mutably
+
+        // *a = 2; // ERROR: Cannot use `a` while `b` exists
+        // *b = 0; // if `b` is used here, `a` was still alive
+
+        // x = 1; // Now reassigning `x`, but we had multiple mutable borrows
+
+
+        // This should work because a is FULLY DROPPED, before b is created
+        // let mut x: i32 = 1;
+        // let b;
+        // // {
+        //     let a = &mut x;
+        //     // drop(a);
+        //     *a = 1;
+        // // } // `a` is dropped
+        // b = &mut x; // This is fine now
+        
+        // *b = 0;
+        
+
+
+
         // Register the session with its ID
         self.session_map
             .lock()
