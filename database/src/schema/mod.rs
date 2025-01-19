@@ -343,6 +343,10 @@ pub struct ComputerData {
     pub gpu: String,
     pub ram: String,
     pub drives: Vec<DriveData>,
+    pub device_name: String,
+    pub device_mfg: String,
+    pub device_model: String,
+    pub device_serial: String,
 }
 
 
@@ -358,6 +362,10 @@ impl Default for ComputerData {
             gpu: Default::default(),
             ram: Default::default(),
             drives: Default::default(),
+            device_name: Default::default(),
+            device_mfg: Default::default(),
+            device_model: Default::default(),
+            device_serial: Default::default(),
         }
     }
 }

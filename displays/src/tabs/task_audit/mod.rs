@@ -1,5 +1,5 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
-use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextBuffer, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use crate::{app_state::SharedContext, PlatformSpawner};
@@ -24,7 +24,7 @@ pub struct TaskRowViewer {
     filter: String,
     row_protection: bool,
     hotkeys: Vec<(KeyboardShortcut, UiAction)>,
-    pub selected: Option<PrestashopOrderData>,
+    pub selected: Option<PrestashopPayload>,
     order_data: PrestashopPayload,
     open_hotkeys: bool,
     pub chat_view: ChatView,
@@ -58,7 +58,7 @@ pub struct TaskAuditViewer {
     loading: bool,
     index: HashMap<String, i32>,
     time: Option<web_time::Instant>,
-    pub service_map: HashMap<String, DataTable<PrestashopOrderData>>,
+    pub service_map: HashMap<String, DataTable<PrestashopPayload>>,
 }
 
 impl TaskAuditViewer {
@@ -86,7 +86,7 @@ impl TaskAuditViewer {
             let service = self.services_viewer.selected.clone();
 
             let header = if let Some(service) = &service {
-                &format!("{} - {}", service.1, service.0)
+                &format!("{} - {}", service.customer.name, service.order.id)
             } else { "Task Details" };
 
             if let Some(order) = self.services_viewer.selected.clone() {
@@ -94,7 +94,7 @@ impl TaskAuditViewer {
                     let service = self.services_viewer.selected.clone();
 
                     let header = if let Some(service) = &service {
-                        &format!("{} - {}", service.1, service.0)
+                        &format!("{} - {}", service.customer.name, service.order.id)
                     } else { "Task Details" };
                     ui.add_space(5.);
                     ui.heading(header.to_uppercase());
@@ -111,7 +111,7 @@ impl TaskAuditViewer {
                             ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
                                 if ui.button(RichText::new("Create Task").code().color(ui.style().visuals.error_fg_color)).clicked() {
                                     let tx = self.services_viewer.tur_channel.0.clone();
-                                    let order_num = order.0.clone();
+                                    let order_num = order.order.id.clone();
                                     PlatformSpawner::spawn(async move {
                                         let presta_order = TaskRowViewer::get_prestashop_order(order_num).await.unwrap_or_default();
                                         let _ = tx.try_send(presta_order);
@@ -128,24 +128,37 @@ impl TaskAuditViewer {
                         ui.horizontal(|ui| {
                             ui.add_space(10.);
                             ui.label("Status");
+
+                            let status = match order.order.current_state.as_str() {
+                                "30" => "In Repair",
+                                "40" => "Done Shelf",
+                                "4" => "Shipped",
+                                "29" => "Check-in Shelf",
+                                "239" => "Accepted by Odoo",
+                                _ => ""
+                            };
+
                             ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                ui.label(order.3);
+                                ui.label(status);
                                 ui.add_space(10.);
                             });
                         });
                         ui.horizontal(|ui| {
                             ui.add_space(10.);
                             ui.label("Sales Rep");
+                            let sales_rep = order.sales_rep.unwrap_or_default();
                             ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                ui.label(order.4);
+                                ui.label(format!("{} {}", sales_rep.firstname, sales_rep.lastname));
                                 ui.add_space(10.);
                             });
                         });
                         ui.horizontal(|ui| {
                             ui.add_space(10.);
                             ui.label("Split Rep");
+                            let split_rep = order.split_rep.unwrap_or_default();
+
                             ui.with_layout(Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                                ui.label(order.5);
+                                ui.label(format!("{} {}", split_rep.firstname, split_rep.lastname));
                                 ui.add_space(10.);
                             });
                         });
@@ -201,7 +214,7 @@ impl TaskAuditViewer {
                         .clone();
 
                     let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
-                        k.iter().map(|k| k.0.clone()).collect::<Vec<String>>()
+                        k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
                     } else {
                         Vec::new()
                     };
@@ -222,7 +235,7 @@ impl TaskAuditViewer {
                         .clone();
 
                     let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
-                        k.iter().map(|k| k.0.clone()).collect::<Vec<String>>()
+                        k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
                     } else {
                         Vec::new()
                     };
@@ -298,7 +311,7 @@ impl TaskAuditViewer {
                     let selection = selected.clone().as_str();
                     let start_idx = self.index.entry(selection.clone()).or_insert(0).clone();
                     let svcs = if let Some(k) = self.service_map.get_mut(&selection) {
-                        k.iter().map(|k| k.0.clone()).collect::<Vec<String>>()
+                        k.iter().map(|k| k.order.id.clone()).collect::<Vec<String>>()
                     } else {
                         Vec::new()
                     };
@@ -491,7 +504,7 @@ impl TaskAuditViewer {
     }
 
     pub fn receive(&mut self, current_user: User, store_users: Vec<User>, _frame: &mut eframe::Frame) {
-        if let  Ok(order) = self.order_channel.1.try_recv() {
+        if let Ok(order) = self.order_channel.1.try_recv() {
             self.loading = true;
             
             let key = self.audit_selection.clone().as_str();
@@ -528,19 +541,19 @@ impl TaskAuditViewer {
                 _ => ""
             };
 
-            let final_data = PrestashopOrderData(
-                order.order.id.clone(),
-                order.customer.name.clone(),
-                order.order.date_add.clone(),
-                status.to_string(),
-                // order.order.associations.order_rows.iter().find_or_first(
-                //     |f|
-                //     f.product_name ==  f.product_name
-                // ).cloned().unwrap_or_default().product_name,
-                email.0.to_string(),
-                split_rep_email.0.to_string(),
-                "".to_string()
-            );
+            // let final_data = PrestashopPayload(
+            //     order.order.id.clone(),
+            //     order.customer.name.clone(),
+            //     order.order.date_add.clone(),
+            //     status.to_string(),
+            //     // order.order.associations.order_rows.iter().find_or_first(
+            //     //     |f|
+            //     //     f.product_name ==  f.product_name
+            //     // ).cloned().unwrap_or_default().product_name,
+            //     email.0.to_string(),
+            //     split_rep_email.0.to_string(),
+            //     "".to_string()
+            // );
 
             self
                 .service_map
@@ -549,8 +562,8 @@ impl TaskAuditViewer {
 
             
             if let Some(k) = self.service_map.get_mut(&key) {
-                if !k.iter().contains(&final_data) {
-                    k.push(final_data);
+                if !k.iter().contains(&order) {
+                    k.push(order);
                 }
             }
 
@@ -664,12 +677,16 @@ impl TaskRowViewer {
         
         task.due_date = formatted_date;
         services.push(ticket.id.clone());
-        
+        let mut computer_data = ComputerData::default();
         if !service_details.is_empty() {
             if service_details.len() == 1 {
                 let svc = service_details.get(0);
                 if let Some(service) = svc {
                     ticket.checkin_notes = service.check_in_notes.clone();
+                    computer_data.device_name = service.device_name.clone();
+                    computer_data.device_mfg = service.device_mfg.clone();
+                    computer_data.device_model = service.device_model.clone();
+                    computer_data.device_serial = service.device_serial.clone();
                 }
             } else {
                 info!("Theres a couple.... {:?}", service_details);
@@ -687,7 +704,7 @@ impl TaskRowViewer {
         create_full_task_payload(
             ticket.into(), 
             customer, 
-            ComputerData::default(), 
+            computer_data, 
             task.clone().into(), 
             task.clone().task_note, 
             false
@@ -722,35 +739,37 @@ impl TaskAudit {
 }
 
 // Don't need to implement any trait on row data itself.
-#[derive(Default, Serialize, Clone, Deserialize, PartialEq, Debug)]
-pub struct PrestashopOrderData(pub String, pub String, pub String, pub String, pub String, pub String, pub String);
+// #[derive(Default, Serialize, Clone, Deserialize, PartialEq, Debug)]
+// pub struct PrestashopPayload(pub String, pub String, pub String, pub String, pub String, pub String, pub String);
 
-impl RowViewer<PrestashopOrderData> for TaskRowViewer {
-    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<PrestashopOrderData>> {
+impl RowViewer<PrestashopPayload> for TaskRowViewer {
+    fn try_create_codec(&mut self, _: bool) -> Option<impl RowCodec<PrestashopPayload>> {
         Some(Codec)
     }
 
     fn num_columns(&mut self) -> usize {
-        7
+        9
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Needs Call"][column].into()
+        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Needs Call", "Checkin Notes", "Device"][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true, true, true][column]
+        [true, true, true, true, true, true, true, true, true][column]
     }
 
     fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
         &self.filter
     }
 
-    fn filter_row(&mut self, row: &PrestashopOrderData) -> bool {
-        row.0.contains(&self.filter) 
-        || row.1.to_lowercase().contains(&self.filter)
-        || row.4.to_lowercase().contains(&self.filter)
-        || row.5.to_lowercase().contains(&self.filter)
+    fn filter_row(&mut self, row: &PrestashopPayload) -> bool {
+        row.order.id.contains(&self.filter) 
+        || row.customer.name.to_lowercase().contains(&self.filter)
+        || row.sales_rep.clone().unwrap_or_default().firstname.to_lowercase().contains(&self.filter)
+        || row.sales_rep.clone().unwrap_or_default().lastname.to_lowercase().contains(&self.filter)
+        || row.split_rep.clone().unwrap_or_default().firstname.to_lowercase().contains(&self.filter)
+        || row.split_rep.clone().unwrap_or_default().lastname.to_lowercase().contains(&self.filter)
     }
 
     fn hotkeys(&mut self, context: &UiActionContext) -> Vec<(KeyboardShortcut, UiAction)> {
@@ -759,13 +778,13 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
         hotkeys
     }
 
-    fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopOrderData, column: usize) {
+    fn show_cell_view(&mut self, ui: &mut eframe::egui::Ui, row: &PrestashopPayload, column: usize) {
         let _ = match column {
-            0 => ui.horizontal_centered(|ui| ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.0.clone()))).inner,
-            1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.1.clone()))).inner,
+            0 => ui.horizontal_centered(|ui| ui.colored_label(ui.style().visuals.warn_fg_color, format!(" {}", row.order.id.clone()))).inner,
+            1 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.customer.name.clone()))).inner,
             2 => ui.horizontal_centered(|ui| {
                 // Parse the input into a NaiveDateTime
-                let naive_datetime = NaiveDateTime::parse_from_str(&row.2, "%Y-%m-%d %H:%M:%S")
+                let naive_datetime = NaiveDateTime::parse_from_str(&row.order.date_add, "%Y-%m-%d %H:%M:%S")
                     .expect("Failed to parse datetime");
 
                 // Convert to a DateTime with Utc timezone
@@ -781,10 +800,23 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
                     ui.colored_label(ui.style().visuals.warn_fg_color, split2.1)
                 }).inner
             }).inner,
-            3 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.3.clone()))).inner,
-            4 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.4.clone()))).inner,
-            5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.5.clone()))).inner,
+            3 => ui.horizontal_centered(|ui| {
+                let status = match row.order.current_state.as_str() {
+                    "30" => "In Repair",
+                    "40" => "Done Shelf",
+                    "4" => "Shipped",
+                    "29" => "Check-in Shelf",
+                    "239" => "Accepted by Odoo",
+                    _ => ""
+                };
+
+                ui.label(format!(" {status}"))
+            }).inner,
+            4 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.sales_rep.clone().unwrap_or_default().firstname))).inner,
+            5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.split_rep.clone().unwrap_or_default().firstname))).inner,
             6 => ui.vertical_centered(|ui| ui.checkbox(&mut false, "")).inner,
+            7 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()))).inner,
+            8 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg))).inner,
             _ => unreachable!(),
         };
     }
@@ -806,14 +838,14 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
     fn show_cell_editor(
         &mut self,
         ui: &mut eframe::egui::Ui,
-        row: &mut PrestashopOrderData,
+        row: &mut PrestashopPayload,
         column: usize,
     ) -> Option<eframe::egui::Response> {
         match column {
             0 => Some(
                 Hyperlink::from_label_and_url(
-                    format!(" {}", row.0.clone()), 
-                    format!("{BASE_URL}{}", row.0.clone())
+                    format!(" {}", row.order.id.clone()), 
+                    format!("{BASE_URL}{}", row.order.id.clone())
                 )
                 .open_in_new_tab(true)
                 .ui(ui)
@@ -824,17 +856,17 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
 
     fn on_cell_view_response(
         &mut self,
-        row: &PrestashopOrderData,
+        row: &PrestashopPayload,
         column: usize,
         resp: &eframe::egui::Response,
-    ) -> Option<Box<PrestashopOrderData>> {
+    ) -> Option<Box<PrestashopPayload>> {
         match column {
             0 | 1 => {
                 if resp.clicked() {
                     self.chat_view.messages.clear();
                     self.selected = Some(row.clone());
                     let notes_tx = self.notes_channel.0.clone();
-                    let service_number = row.0.clone();
+                    let service_number = row.order.id.clone();
                     PlatformSpawner::spawn(async move {
                         match Self::get_order_notes(service_number).await {
                             Ok(notes) => notes_tx.try_send(notes).unwrap(),
@@ -850,49 +882,64 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
             .clone()
             .on_hover_and_drag_cursor(eframe::egui::CursorIcon::Crosshair)
             .dnd_release_payload::<String>()
-            .map(|_| Box::new(PrestashopOrderData::default()))
+            .map(|_| Box::new(PrestashopPayload::default()))
     }
 
     fn set_cell_value(
         &mut self,
-        src: &PrestashopOrderData,
-        dst: &mut PrestashopOrderData,
+        src: &PrestashopPayload,
+        dst: &mut PrestashopPayload,
         column: usize,
     ) {
         match column {
-            0 => dst.0 = src.0.clone(),
-            1 => dst.1 = src.1.clone(),
-            2 => dst.2 = src.2.clone(),
-            3 => dst.3 = src.3.clone(),
-            4 => dst.4 = src.4.clone(),
-            5 => dst.5 = src.5.clone(),
-            6 => dst.6 = src.6.clone(),
+            0 => dst.order.id = src.order.id.clone(),
+            1 => dst.customer.name = src.customer.name.clone(),
+            2 => dst.order.date_add = src.order.date_add.clone(),
+            3 => dst.order.current_state = src.order.current_state.clone(),
+            4 => dst.sales_rep = src.sales_rep.clone(),
+            5 => dst.split_rep = src.split_rep.clone(),
+            6 => dst.order.associations = src.order.associations.clone(),
+            7 => dst.order.associations = src.order.associations.clone(),
+            8 => dst.sales_rep = src.sales_rep.clone(),
             _ => unreachable!(),
         }
     }
 
     fn compare_cell(
         &self,
-        row_l: &PrestashopOrderData,
-        row_r: &PrestashopOrderData,
+        row_l: &PrestashopPayload,
+        row_r: &PrestashopPayload,
         column: usize,
     ) -> std::cmp::Ordering {
         match column {
-            0 => row_l.0.cmp(&row_r.0),
-            1 => row_l.1.cmp(&row_r.1),
-            2 => row_l.2.cmp(&row_r.2),
-            3 => row_l.3.cmp(&row_r.3),
-            4 => row_l.4.cmp(&row_r.4),
-            5 => row_l.5.cmp(&row_r.5),
-            6 => row_l.6.cmp(&row_r.6),
-            _ => row_l.0.cmp(&row_r.0)
+            0 => row_l.order.id.cmp(&row_r.order.id),
+            1 => row_l.customer.name.cmp(&row_r.customer.name),
+            2 => row_l.order.date_add.cmp(&row_r.order.date_add),
+            3 => row_l.order.current_state.cmp(&row_r.order.current_state),
+            4 => {
+                let emp = row_l.sales_rep.clone().unwrap_or_default();
+                let name = format!("{} {}", emp.firstname, emp.lastname);
+                let emp1 = row_r.sales_rep.clone().unwrap_or_default();
+                let name1 = format!("{} {}", emp1.firstname, emp1.lastname);
+                name.cmp(&name1)
+            },
+            5 => {
+                let emp = row_l.split_rep.clone().unwrap_or_default();
+                let name = format!("{} {}", emp.firstname, emp.lastname);
+                let emp1 = row_r.split_rep.clone().unwrap_or_default();
+                let name1 = format!("{} {}", emp1.firstname, emp1.lastname);
+                name.cmp(&name1)
+            },
+            7 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
+            8 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
+            _ => row_l.sales_rep.clone().unwrap_or_default().lastname.cmp(&row_r.sales_rep.clone().unwrap_or_default().lastname)
         }
     }
 
-    fn new_empty_row(&mut self) -> PrestashopOrderData {
+    fn new_empty_row(&mut self) -> PrestashopPayload {
         // Instead of requiring `Default` trait for row data types, the viewer is
         // responsible of providing default creation method.
-        PrestashopOrderData::default()
+        PrestashopPayload::default()
     }
 }
 
@@ -901,17 +948,17 @@ impl RowViewer<PrestashopOrderData> for TaskRowViewer {
 
 struct Codec;
 
-impl RowCodec<PrestashopOrderData> for Codec {
+impl RowCodec<PrestashopPayload> for Codec {
     type DeserializeError = &'static str;
 
-    fn encode_column(&mut self, src_row: &PrestashopOrderData, column: usize, dst: &mut String) {
+    fn encode_column(&mut self, src_row: &PrestashopPayload, column: usize, dst: &mut String) {
         match column {
-            0 => dst.push_str(&src_row.0),
-            1 => dst.push_str(&src_row.1),
+            0 => dst.push_str(&src_row.order.id),
+            1 => dst.push_str(&src_row.customer.name),
             2 => {
                 // Parse the input into a NaiveDateTime
                 let naive_datetime = NaiveDateTime::parse_from_str(
-                    &src_row.2,
+                    &src_row.order.date_add,
                     "%Y-%m-%d %H:%M:%S"
                 )
                 .expect("Failed to parse datetime");
@@ -921,10 +968,19 @@ impl RowCodec<PrestashopOrderData> for Codec {
                 let formatted_date = datetime.format("%m/%d/%Y").to_string();
                 dst.push_str(&formatted_date);
             },
-            3 => dst.push_str(&src_row.3),
-            4 => dst.push_str(&src_row.4),
-            5 => dst.push_str(&src_row.5),
-            6 => dst.push_str(&src_row.6),
+            3 => dst.push_str(&src_row.order.current_state),
+            4 => {
+                let emp = src_row.sales_rep.clone().unwrap_or_default();
+                let name = format!("{} {}", emp.firstname, emp.lastname);
+                dst.push_str(&name);
+            },
+            5 => {
+                let emp = src_row.split_rep.clone().unwrap_or_default();
+                let name = format!("{} {}", emp.firstname, emp.lastname);
+                dst.push_str(&name);
+            },
+            7 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
+            8 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
             _ => unreachable!(),
         }
     }
@@ -933,23 +989,31 @@ impl RowCodec<PrestashopOrderData> for Codec {
         &mut self,
         src_data: &str,
         column: usize,
-        dst_row: &mut PrestashopOrderData,
+        dst_row: &mut PrestashopPayload,
     ) -> Result<(), DecodeErrorBehavior> {
         match column {
-            0 => dst_row.0.replace_range(.., src_data),
-            1 => dst_row.1 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            2 => dst_row.2 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            3 => dst_row.3 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            4 => dst_row.4 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            5 => dst_row.5 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            6 => dst_row.6 = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            0 => dst_row.order.id.replace_range(.., src_data),
+            1 => dst_row.customer.name = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            2 => dst_row.order.date_add = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            3 => dst_row.order.current_state = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            // 4 => {
+            //     let emp = src_data..sales_rep.clone().unwrap_or_default();
+            //     let name = format!("{} {}", emp.firstname, emp.lastname).as_str();
+            //     name
+            // },
+            // 5 => {
+            //     let emp = dst_row.split_rep.clone().unwrap_or_default();
+            //     let name = format!("{} {}", emp.firstname, emp.lastname).as_str();
+            //     name
+            // },
+            7 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            8 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             _ => unreachable!(),
         }
-
         Ok(())
     }
 
-    fn create_empty_decoded_row(&mut self) -> PrestashopOrderData {
-        PrestashopOrderData::default()
+    fn create_empty_decoded_row(&mut self) -> PrestashopPayload {
+        PrestashopPayload::default()
     }
 }
