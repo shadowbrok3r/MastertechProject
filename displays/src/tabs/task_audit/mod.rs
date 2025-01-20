@@ -831,6 +831,8 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             4 => col_config.resizable(true).at_least(130.).at_most(150.),
             5 => col_config.resizable(true).at_least(130.).at_most(150.),
             6 => col_config.resizable(true).at_least(80.).at_most(80.),
+            7 => col_config.resizable(true).at_least(80.).at_most(80.),
+            8 => col_config.resizable(true).at_least(80.).at_most(80.),
             _ => col_config,
         }
     }
@@ -898,8 +900,8 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             3 => dst.order.current_state = src.order.current_state.clone(),
             4 => dst.sales_rep = src.sales_rep.clone(),
             5 => dst.split_rep = src.split_rep.clone(),
-            6 => dst.order.associations = src.order.associations.clone(),
-            7 => dst.order.associations = src.order.associations.clone(),
+            6 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()
+            7 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().device_mfg.clone()
             8 => dst.sales_rep = src.sales_rep.clone(),
             _ => unreachable!(),
         }
