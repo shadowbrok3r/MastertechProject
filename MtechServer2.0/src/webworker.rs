@@ -46,7 +46,8 @@ impl gloo_worker::Worker for WebWorker {
         log!(format!("received {msg:?}"));
         let scope = scope.clone();
         spawn_local(async move {
-            get_completed_tasks(msg, scope, id).await.unwrap();
+            let res = get_completed_tasks(msg, scope, id).await;
+            gloo_console::info!(format!("Result: {res:?}"));
         });
     }
 }

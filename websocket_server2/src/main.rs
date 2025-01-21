@@ -33,7 +33,6 @@ struct Room {
     client: Option<Arc<Mutex<SplitSink<WebSocket, Message>>>>, // Store write half
 }
 
-
 #[derive(Clone)]
 struct ChatServer {
     rooms: Arc<Mutex<HashMap<RoomID, Room>>>, // Use Arc<Mutex<...>> to match type expectations
@@ -51,75 +50,48 @@ impl ChatServer {
         let (ws_tx, mut ws_rx) = ws.split(); // Split the WebSocket into separate read/write handles
         let ws_tx = Arc::new(Mutex::new(ws_tx)); // Arc<Mutex<WebSocket WriteHalf>> for shared sending
     
-        info!("Registering session for role: {role}");
+        let mut rooms = self.rooms.lock().await;
+        let entry = rooms.entry(room_id.clone()).or_insert_with(Room::default);
     
-        // let mut x: i32 = 1; // `x` is a mutable i32
-        // let b;
-        // {
-        //     let a = &mut x;  // `a` is a mutable reference to `x`
-        //     b = &mut *a;     // `b` is another mutable reference to `x`
-        // }
-        // *b = 0;             // Modifying `x` via `b`
-        
-        // x = 1;              // Modifying `x` directly
+        // Reject new connections if room already has both a master and a client
+        if entry.master.is_some() && entry.client.is_some() {
+            info!(
+                "Room {} already has a master and a client. Rejecting new {} connection.",
+                room_id, role
+            );
+            let _ = ws_tx.lock().await.send(Message::Text("Room is full.".into())).await;
+            return; // Exit the function, preventing further execution
+        }
 
-        // info!("{x}");
+        // Assign session to master or client role
+        match role.as_str() {
+            "master" => {
+                if entry.master.is_some() {
+                    info!("Room {} already has a master. Rejecting duplicate master connection.", room_id);
+                    let _ = ws_tx.lock().await.send(Message::Text("Master already exists.".into())).await;
+                    return;
+                }
+                entry.master = Some(ws_tx.clone());
+            }
+            "client" => {
+                if entry.client.is_some() {
+                    info!("Room {} already has a client. Rejecting duplicate client connection.", room_id);
+                    let _ = ws_tx.lock().await.send(Message::Text("Client already exists.".into())).await;
+                    return;
+                }
+                entry.client = Some(ws_tx.clone());
+            }
+            _ => {}
+        };
 
-
-        // let mut x = 1;
-        // let b;
-        // {
-        //     let a = &mut x;
-        //     b = &mut *a;
-        // } // `a` goes out of scope
-        // *b = 0; // ERROR: `b` is invalid now
-
-        /*
-            The original reference (a) is no longer used after the reborrow.
-            The reborrowed reference (b) follows the same lifetime rules.
-         */
-
-        // let mut x: i32 = 1;
-        // let b;
-        // let a = &mut x; // `a` is a mutable reference to `x`
-        // b = &mut *a;    // `b` reborrows `x` mutably
-
-        // *a = 2; // ERROR: Cannot use `a` while `b` exists
-        // *b = 0; // if `b` is used here, `a` was still alive
-
-        // x = 1; // Now reassigning `x`, but we had multiple mutable borrows
-
-
-        // This should work because a is FULLY DROPPED, before b is created
-        // let mut x: i32 = 1;
-        // let b;
-        // // {
-        //     let a = &mut x;
-        //     // drop(a);
-        //     *a = 1;
-        // // } // `a` is dropped
-        // b = &mut x; // This is fine now
-        
-        // *b = 0;
-        
-
-
+        info!("Registering session for role: {role}");
 
         // Register the session with its ID
         self.session_map
             .lock()
             .await
             .insert(session_id.clone(), ws_tx.clone());
-    
-        let mut rooms = self.rooms.lock().await;
-        let entry = rooms.entry(room_id.clone()).or_insert_with(Room::default);
-    
-        match role.as_str() {
-            "master" => entry.master = Some(ws_tx.clone()),
-            "client" => entry.client = Some(ws_tx.clone()),
-            _ => {}
-        };
-    
+
         info!("Updated room: {:?}", entry);
         info!("Processing messages");
     
@@ -128,6 +100,7 @@ impl ChatServer {
         let session_id_clone = session_id.clone();
         let room_id_clone = room_id.clone();
     
+        let role1 = role.clone();
         // Spawn task to handle incoming messages
         tokio::spawn(async move {
             while let Some(Ok(message)) = ws_rx.next().await {
@@ -157,16 +130,40 @@ impl ChatServer {
                     Message::Close(close_frame) => {
                         if let Some(frame) = close_frame {
                             info!("WebSocket closed: {:?} {:?}", frame.reason, frame.code);
+                            server_clone
+                                .cleanup_session(&room_id_clone, &session_id_clone, &role1)
+                                .await;
                         }
                         break;
                     }
-                    _ => {}
+                    Message::Ping(bytes) => info!("Ping: {:?}", bytes),
+                    Message::Pong(bytes) => info!("Pong: {:?}", bytes),
                 }
             }
     
             server_clone
-                .cleanup_session(&room_id_clone, &session_id_clone, &role)
+                .cleanup_session(&room_id_clone, &session_id_clone, &role1)
                 .await;
+        });
+
+        let server_clone = Arc::clone(&self);
+        let role2 = role.clone();
+
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        
+                let mut sender = ws_tx.lock().await;
+                let b = axum::body::Bytes::new();
+                if let Err(e) = sender.send(Message::Ping(b)).await {
+                    info!("WebSocket {session_id} appears disconnected. Removing from session: {e:?}");
+                    drop(sender);
+                    server_clone
+                        .cleanup_session(&room_id, &session_id, &role2)
+                        .await;
+                    break;
+                }
+            }
         });
     }
     
@@ -237,8 +234,6 @@ impl ChatServer {
         }
     }
     
-    
-
     async fn cleanup_session(&self, room_id: &RoomID, session_id: &SessionID, role: &str) {
         let mut rooms = self.rooms.lock().await;
         let mut session_map = self.session_map.lock().await;

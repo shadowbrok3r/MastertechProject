@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use surrealdb::Response;
 use bincode::serialize;
 use web_time::Instant;
-use regex::Regex;
+// use regex::Regex;
 use core::f32;
 use log::info;
 
@@ -104,9 +104,9 @@ pub struct History {
     timestamp: String
 }
 
-lazy_static::lazy_static! {
-    static ref TRON_COMPLETE_REGEX: Regex = Regex::new("Tron.*complete").unwrap();
-}
+// lazy_static::lazy_static! {
+//     static ref TRON_COMPLETE_REGEX: Regex = Regex::new("Tron.*complete").unwrap();
+// }
 
 impl WebSocketClient {
     pub fn new(ws_sender: WsSender, ws_receiver: WsReceiver, client: ConnectedClient, toolbox: FileSystem) -> Self {
@@ -165,12 +165,12 @@ impl WebSocketClient {
                             if let Some(cmd) = deserializer::<Cmd>(bin){
                                 let _ = self.receive_cmd_tx.try_send(cmd);
                             } else { 
-                                if self.interactive {
-                                    let msg = String::from_utf8_lossy(&bin).to_string();
-                                    if TRON_COMPLETE_REGEX.is_match(&msg) {
-                                        self.interactive = false;
-                                    }
-                                }
+                                // if self.interactive {
+                                //     let msg = String::from_utf8_lossy(&bin).to_string();
+                                //     if TRON_COMPLETE_REGEX.is_match(&msg) {
+                                //         self.interactive = false;
+                                //     }
+                                // }
                     
                                 if bin.len() > 0 {
                                     self.loading = false;
@@ -201,6 +201,9 @@ impl WebSocketClient {
                             }
                         },
                         WsMessage::Text(txt) => {
+                            if txt.eq("Closed") {
+                                self.ws_sender.close();
+                            }
                             self.loading = false;
                             info!("Text data: {txt:#?}");
                         
@@ -477,7 +480,6 @@ impl WebSocketClient {
             ui.visuals_mut().code_bg_color = Color32::BLACK;
             ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             
-            let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
             let style = ui.style_mut();
             let default_rounding = Rounding::same(2.0);
             style.visuals.widgets.inactive.rounding = default_rounding;
@@ -485,8 +487,13 @@ impl WebSocketClient {
             style.visuals.widgets.hovered.rounding = default_rounding;
             
             let mut layouter = |ui: &Ui, string: &str, _: f32| {
-                let mut layout_job =
-                    highlight(ui.ctx(), &ui.style(), &theme, string, "bash".into()); // || "zsh".into()
+                let mut layout_job: eframe::egui::text::LayoutJob = highlight(
+                    ui.ctx(), 
+                    &ui.style(), 
+                    &CodeTheme::dark(12.), 
+                    string, 
+                    "bash".into()
+                );
                 layout_job.wrap.max_width = ui.available_width()/1.1;
                 ui.fonts(|f| f.layout_job(layout_job))
             };
@@ -599,7 +606,6 @@ impl WebSocketClient {
                 ui.set_width(ui.available_width());
                 let max_msg_width = ui.available_width() / 1.2;
                 let fixed_height = 50.0;
-                let mut count = 0;
 
                 // Start with the history as the base for combined messages
                 let mut combined_messages = self.history.clone(); // Clone history only once
@@ -629,7 +635,6 @@ impl WebSocketClient {
 
                 // Render combined messages
                 for item in &combined_messages {
-                    count += 1;
                     let is_message_from_myself = if item.from.eq("You"){ true } else { false };
     
                     // Messages from the user are right-aligned.
@@ -742,22 +747,16 @@ impl WebSocketClient {
                                         });
                                     }
                                     note_frame.show(ui, |ui| {
-                                            ui.set_width(ui.available_width());
-                                            let style = ui.style_mut();
-                                            style.visuals.widgets.inactive.rounding = Rounding::same(2.0);
-                                            let mut layouter = |ui: &Ui, string: &str, _: f32| {
-                                                let mut layout_job: eframe::egui::text::LayoutJob =
-                                                    highlight(ui.ctx(), ui.style(), &CodeTheme::dark(12.), string, "bash".into()); // || "zsh".into()
-                                                layout_job.wrap.max_width = ui.available_width()/1.1;
-                                                ui.fonts(|f| f.layout_job(layout_job))
-                                            };
-
-                                            TextEdit::singleline(&mut txt.text())
-                                                .id_salt(format!("TextEdit-{:?}-{:?}-{:?}", self.client.client_hash, count, item.message.clone()))
-                                                .frame(false)
-                                                .layouter(&mut layouter)
-                                                .min_size(Vec2::new(ui.available_width(), 30.))
-                                                .ui(ui);
+                                        ui.set_width(ui.available_width());
+                                        let style = ui.style_mut();
+                                        style.visuals.widgets.inactive.rounding = Rounding::same(2.0);
+                                        ui.label(txt);
+                                        // egui_extras::syntax_highlighting::code_view_ui(
+                                        //     ui, 
+                                        //     &CodeTheme::dark(12.), 
+                                        //     txt.text(), 
+                                        //     "bash"
+                                        // );
                                     });
                             });
                         })

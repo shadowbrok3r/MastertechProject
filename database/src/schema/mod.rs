@@ -343,10 +343,10 @@ pub struct ComputerData {
     pub gpu: String,
     pub ram: String,
     pub drives: Vec<DriveData>,
-    pub device_name: String,
-    pub device_mfg: String,
-    pub device_model: String,
-    pub device_serial: String,
+    pub device_name: Option<String>,
+    pub device_mfg: Option<String>,
+    pub device_model: Option<String>,
+    pub device_serial: Option<String>,
 }
 
 

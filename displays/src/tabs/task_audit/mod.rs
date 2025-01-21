@@ -1,10 +1,10 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
-use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextBuffer, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use crate::{app_state::SharedContext, PlatformSpawner};
 use crossbeam::channel::{Receiver, Sender};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use itertools::Itertools;
 use egui_extras::Column;
@@ -104,7 +104,6 @@ impl TaskAuditViewer {
 
                     ScrollArea::vertical()
                     .auto_shrink(true)
-                    // .max_height(f32::INFINITY)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.add_space(10.);
@@ -506,54 +505,7 @@ impl TaskAuditViewer {
     pub fn receive(&mut self, current_user: User, store_users: Vec<User>, _frame: &mut eframe::Frame) {
         if let Ok(order) = self.order_channel.1.try_recv() {
             self.loading = true;
-            
             let key = self.audit_selection.clone().as_str();
-            let sales_rep = order
-                .sales_rep
-                .clone()
-                .unwrap_or_default()
-                .clone();
-
-            let email = sales_rep
-                .email
-                .split_once('@')
-                .unwrap_or_default()
-                .clone();
-
-            let split_rep = order
-                .split_rep
-                .clone()
-                .unwrap_or_default()
-                .clone();
-
-            let split_rep_email = split_rep
-                .email
-                .split_once('@')
-                .unwrap_or_default()
-                .clone();
-            
-            let status = match order.order.current_state.as_str() {
-                "30" => "In Repair",
-                "40" => "Done Shelf",
-                "4" => "Shipped",
-                "29" => "Check-in Shelf",
-                "239" => "Accepted by Odoo",
-                _ => ""
-            };
-
-            // let final_data = PrestashopPayload(
-            //     order.order.id.clone(),
-            //     order.customer.name.clone(),
-            //     order.order.date_add.clone(),
-            //     status.to_string(),
-            //     // order.order.associations.order_rows.iter().find_or_first(
-            //     //     |f|
-            //     //     f.product_name ==  f.product_name
-            //     // ).cloned().unwrap_or_default().product_name,
-            //     email.0.to_string(),
-            //     split_rep_email.0.to_string(),
-            //     "".to_string()
-            // );
 
             self
                 .service_map
@@ -563,12 +515,13 @@ impl TaskAuditViewer {
             
             if let Some(k) = self.service_map.get_mut(&key) {
                 if !k.iter().contains(&order) {
+                    info!("Order: {order:?}");
                     k.push(order);
                 }
             }
 
 
-            // if let Sself.time.el {
+            // if let self.time.el {
                 // self.loading = false;
                 // if let Some(storage) = frame.storage_mut() {
                 //     match serde_json::to_string(&self.service_map) {
@@ -683,10 +636,10 @@ impl TaskRowViewer {
                 let svc = service_details.get(0);
                 if let Some(service) = svc {
                     ticket.checkin_notes = service.check_in_notes.clone();
-                    computer_data.device_name = service.device_name.clone();
-                    computer_data.device_mfg = service.device_mfg.clone();
-                    computer_data.device_model = service.device_model.clone();
-                    computer_data.device_serial = service.device_serial.clone();
+                    computer_data.device_name = Some(service.device_name.clone());
+                    computer_data.device_mfg = Some(service.device_mfg.clone());
+                    computer_data.device_model = Some(service.device_model.clone());
+                    computer_data.device_serial = Some(service.device_serial.clone());
                 }
             } else {
                 info!("Theres a couple.... {:?}", service_details);
@@ -998,16 +951,14 @@ impl RowCodec<PrestashopPayload> for Codec {
             1 => dst_row.customer.name = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             2 => dst_row.order.date_add = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             3 => dst_row.order.current_state = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            // 4 => {
-            //     let emp = src_data..sales_rep.clone().unwrap_or_default();
-            //     let name = format!("{} {}", emp.firstname, emp.lastname).as_str();
-            //     name
-            // },
-            // 5 => {
-            //     let emp = dst_row.split_rep.clone().unwrap_or_default();
-            //     let name = format!("{} {}", emp.firstname, emp.lastname).as_str();
-            //     name
-            // },
+            4 => {
+                let dst = &mut dst_row.sales_rep.clone().unwrap_or_default().firstname;
+                *dst = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?
+            },
+            5 => {
+                let dst = &mut dst_row.split_rep.clone().unwrap_or_default().firstname;
+                *dst = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?
+            },
             7 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             8 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
             _ => unreachable!(),
