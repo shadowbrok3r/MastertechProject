@@ -17,12 +17,6 @@ use surrealdb::{
 pub mod live_data;
 pub mod schema;
 
-// pub const WS_CLIENT_URL: &str = "wss://sock.master-tech.app/websocket?role=client";
-// pub const WS_MASTER_URL: &str = "wss://sock.master-tech.app/websocket?role=master";
-
-pub const WS_CLIENT_URL: &str = "ws://localhost:8081/websocket?role=client";
-pub const WS_MASTER_URL: &str = "ws://localhost:8081/websocket?role=master";
-
 #[derive(Clone, Debug, Default)]
 pub struct Database {
     // pub database: Surreal<WsClient>,
@@ -70,8 +64,10 @@ pub const DB_URL: &str = "surrealdb.master-tech.app"; // "";
 pub const DB_URL_DEV: &str = "surrealdb-dev.master-tech.app";
 pub const DB_URL_LOCAL: &str = "localhost:8000";
 pub static DATABASE: Lazy<Surreal<WsClient>> = Lazy::new(Surreal::init);
-// pub const DB_PATH: &str = "./surrealkv";
-// pub static DATABASE: Lazy<Surreal<Db>> = Lazy::new(Surreal::init);
+pub const WS_CLIENT_URL: &str = "ws://localhost:8081/websocket?role=client";
+pub const WS_MASTER_URL: &str = "ws://localhost:8081/websocket?role=master";
+// pub const WS_CLIENT_URL: &str = "wss://sock.master-tech.app/websocket?role=client";
+// pub const WS_MASTER_URL: &str = "wss://sock.master-tech.app/websocket?role=master";
 
 pub fn set_db_selection(selection: DatabaseSelection) {
     let mut db_selection = DB_SELECTION.write().unwrap();
