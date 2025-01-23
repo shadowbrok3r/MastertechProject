@@ -1,5 +1,5 @@
-use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, FontFamily, FontId, Frame, Id, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
-use crate::{channel_manager::ChannelManager, code_editor::{CodeEditor, ColorTheme, Syntax}, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
+use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
+use crate::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
 use database::{WS_MASTER_URL, schema::{ConnectedClient, utilities::get_connected_clients}};
 use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
@@ -12,6 +12,8 @@ use std::borrow::BorrowMut;
 use serde::Serialize;
 use std::sync::Arc;
 use log::info;
+
+use super::script_editor::ScriptEditor;
 
 pub mod websockets;
 
@@ -54,9 +56,7 @@ pub struct WebConsoleLayout {
     #[serde(skip)]
     pub ws_clients: HashMap<String, WebSocketClient>,
     pub error: String,
-    pub code: String,
-    pub script_name: String,
-    pub open_save_modal: bool,
+    script_editor: ScriptEditor
 }
 
 impl WebConsoleLayout {
@@ -91,9 +91,7 @@ impl WebConsoleLayout {
             ui_actions_channel,
             error: Default::default(),
             state: Default::default(),
-            code: Default::default(),
-            script_name: Default::default(),
-            open_save_modal: false,
+            script_editor: ScriptEditor::new()
         }
     }
 
@@ -252,82 +250,7 @@ impl WebConsoleLayout {
                     });
                 });
             },
-            WebConsolePageState::ScriptEditor => {
-                SidePanel::right(Id::new("Script editor sidebar"))
-                .default_width(125.)
-                .show_inside(ui, |ui| {
-                    ui.vertical_centered_justified(|ui| {
-                        let button_size = Vec2::new(50.0, 15.0);
-                        if Button::new("Save Script")
-                            .min_size(button_size)
-                            .ui(ui)
-                            .clicked() 
-                        {
-                            self.open_save_modal = true;
-                        }
-                        ui.add_space(5.);
-                        if Button::new("New +")
-                            .min_size(button_size)
-                            .ui(ui)
-                            .clicked() {
-                            
-                        }
-
-                        if self.open_save_modal {
-                            eframe::egui::Modal::new(Id::new("Upload Script"))
-                            .show(ui.ctx(), |ui| {
-                                ui.vertical_centered(|ui| {
-                                    ui.label("Script Name");
-                                    
-                                    let res = TextEdit::singleline(&mut self.script_name).ui(ui);
-                                    if res.lost_focus() && self.script_name.len() > 0 {
-                                        self.filesystem.upload_script(
-                                            self.script_name.clone(), 
-                                            self.code.clone()
-                                        );
-                                        self.open_save_modal = false;
-                                    }
-                                });
-                            });
-                        }
-                    });
-                });
-
-                CentralPanel::default()
-                    .show_inside(ui, |ui| 
-                {
-                    CodeEditor::default()
-                        .id_source("Script Editor")
-                        .with_rows(48)
-                        .vscroll(true)
-                        .auto_shrink(false)
-                        .with_fontsize(14.0)
-                        .with_theme(ColorTheme::TOKYO_DARK)
-                        .with_syntax(Syntax::powershell())
-                        .with_numlines(true)
-                        .show(ui, &mut self.code);
-                    // let theme = CodeTheme::from_memory(ui.ctx(), ui.style());
-                    // let mut layouter = |ui: &Ui, string: &str, _: f32| {
-                    //     let mut layout_job = egui_extras::syntax_highlighting::highlight(
-                    //         ui.ctx(), 
-                    //         &ui.style(), 
-                    //         &theme, 
-                    //         string, 
-                    //         "powershell".into()
-                    //     ); 
-                    //     layout_job.wrap.max_width = ui.available_width()/1.1;
-                    //     ui.fonts(|f| f.layout_job(layout_job))
-                    // };
-        
-                    // let text_edit = TextEdit::multiline(&mut self.code)
-                    //     .code_editor()
-                    //     .margin(Margin::symmetric(10., 4.))
-                    //     .desired_width(ui.available_width())
-                    //     .desired_rows(48)
-                    //     .layouter(&mut layouter)
-                    //     .ui(ui);
-                });
-            },
+            WebConsolePageState::ScriptEditor => self.script_editor.ui(ui),
             WebConsolePageState::AllClients => {
                 let column_width = Size::exact(ui.available_width()/2.0);
                 let x: f32 = ui.available_height() / 1.1;
@@ -772,6 +695,15 @@ impl SharedContext {
                     self.refresh_client_list();
                 }
             });
+        });
+
+        SidePanel::left("Client_Side_panel")
+            .frame(top_panel_frame)
+            .show_separator_line(false)
+            .exact_width(35.)
+            .show_inside(ui, |ui |
+        {
+
         });
 
         CentralPanel::default().show_inside(ui, |ui| {
