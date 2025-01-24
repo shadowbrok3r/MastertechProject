@@ -110,7 +110,7 @@ impl eframe::App for MtechServer {
                                 
                                 let tx = layout.ui_actions_channel.0.clone();
                                 
-                                ui.horizontal(|ui| WebConsoleLayout::client_headers(ui, tx, &client.clone(), undock_client.clone()));
+                                ui.horizontal(|ui| WebConsoleLayout::client_header(ui, tx, &client.clone(), undock_client.clone()));
                                 if let Some(ws_client) =
                                     layout.ws_clients.get_mut(&client.connection_string)
                                 {

@@ -72,9 +72,9 @@ impl SharedContext {
             let connected = self.clients.iter().filter(|c| c.connected).cloned().collect::<Vec<ConnectedClient>>();
             let disconnected = self.clients.iter().filter(|c| c.connected == false).cloned().collect::<Vec<ConnectedClient>>();
 
-            client_map.insert("Connected".to_string(), connected);
+            client_map.insert("Connected".to_string(), connected.clone());
             client_map.insert("Disconnected".to_string(), disconnected);
-
+            self.web_console_layout.clients = connected;
             self.web_console_layout.client_map = client_map;
             // for client in self.clients.iter() {
             //     self.web_console_layout.ws_clients
