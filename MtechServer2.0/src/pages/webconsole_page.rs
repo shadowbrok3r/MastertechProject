@@ -317,7 +317,7 @@ impl MtechServer {
         //                                                 ui.set_min_size(Vec2::new(400., 400.));
         //                                                 ui.vertical_centered_justified(|ui| {
         //                                                     // ui.horizontal(|ui| {
-        //                                                     //     self.context.client_headers(ui, client)
+        //                                                     //     self.context.client_header(ui, client)
         //                                                     // });
         //                                                     if let Some(ws_client) = self
         //                                                         .context

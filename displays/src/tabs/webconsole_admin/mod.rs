@@ -1,8 +1,9 @@
-use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
+use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
 use crate::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
 use database::{WS_MASTER_URL, schema::{ConnectedClient, utilities::get_connected_clients}};
 use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
+use core::f32;
 use std::collections::{BTreeMap, HashMap};
 use crate::app_state::SharedContext;
 use websockets::{WebSocketClient, ClientHandler};
@@ -36,6 +37,7 @@ pub enum WebConsolePageState {
 #[derive(Serialize)]
 pub struct WebConsoleLayout {
     pub client_map: BTreeMap<String, Vec<ConnectedClient>>,
+    pub clients: Vec<ConnectedClient>,
     pub search_inputs: HashMap<String, String>,
     // pub connected_clients: Vec<ConnectedClient>,
     // pub disconnected_clients: Vec<ConnectedClient>,
@@ -60,7 +62,7 @@ pub struct WebConsoleLayout {
 }
 
 impl WebConsoleLayout {
-    pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>) -> Self {
+    pub fn new(client_map: BTreeMap<String, Vec<ConnectedClient>>, clients: Vec<ConnectedClient>) -> Self {
         let ui_actions_channel = ClientUiAction::create_unbounded_channel();
         // let mut connected_clients = Vec::new();
         // let mut disconnected_clients = Vec::new();
@@ -78,6 +80,7 @@ impl WebConsoleLayout {
         Self {  
             // connected_clients,
             // disconnected_clients,
+            clients,
             client_map,
             search_inputs: Default::default(), 
             open_menu: false,
@@ -100,7 +103,7 @@ impl WebConsoleLayout {
         self
     }
 
-    pub fn receive(&mut self) {
+    pub fn receive(&mut self, ctx: &Context) {
         if let Ok(action) = self.ui_actions_channel.1.try_recv() {
             match action {
                 ClientUiAction::UndockClient(connection_string) => {
@@ -130,6 +133,7 @@ impl WebConsoleLayout {
                     self.error = format!("WebConsole -> Client {} Deleted", client.connection_string.clone());
                 },
                 ClientUiAction::ConnectClient(mut client) => {
+                    info!("Received Connection Command");
                     let url = format!(
                         "{WS_MASTER_URL}&room_id={}",
                         client.connection_string.clone()
@@ -164,11 +168,13 @@ impl WebConsoleLayout {
                     }
                 },
             }
+            
+            ctx.request_repaint();
         }
     }
 
     pub fn layout_cols(&mut self, ui: &mut Ui) {
-        self.receive();
+        
         ui.style_mut().visuals.window_rounding = ui.style().visuals.window_rounding;
         let style = ui.style().clone();
         // Extract connected and disconnected clients using pattern matching
@@ -482,7 +488,7 @@ impl WebConsoleLayout {
                                             // ui.set_min_size(Vec2::new(400., 400.));
                                             ui.vertical_centered_justified(|ui| {
                                                 let tx = self.ui_actions_channel.0.clone();
-                                                ui.horizontal(|ui| Self::client_headers(ui, tx, client, self.undock_client.clone()));
+                                                ui.horizontal(|ui| Self::client_header(ui, tx, client, self.undock_client.clone()));
                                                 if let Some(ws_client) = self.ws_clients.get_mut(&connection_string) {
                                                     ws_client.show(ui);
                                                 }
@@ -505,19 +511,22 @@ impl WebConsoleLayout {
         // }
     }
 
-    pub fn client_headers(ui: &mut Ui, tx: Sender<ClientUiAction>, client: &ConnectedClient, undock_client: HashMap<String, bool>) {
-        let header_frame = Frame::default()
+    pub fn client_header(ui: &mut Ui, tx: Sender<ClientUiAction>, client: &ConnectedClient, undock_client: HashMap<String, bool>) {
+        let style = ui.style().clone();
+        let mut header_frame = Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(3.0, 0.0))
-            .rounding(Rounding::same(5.0));
-
-        header_frame.show(ui, |ui| {
+            .rounding(Rounding::same(5.0))
+            .show(ui, |ui| 
+        {
+            // let ui = &mut header_frame.content_ui;
+            ui.set_height(25.);
             ui.horizontal_top(|ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     let button = Button::new(RichText::new("✖").color(Color32::LIGHT_RED))
                         .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30.0, ui.available_height()))
+                        .min_size(Vec2::new(30., 25.))
                         .ui(ui);
 
                     if button.clicked() {
@@ -534,16 +543,14 @@ impl WebConsoleLayout {
 
                     let undock = Button::new(RichText::new(txt).color(Color32::LIGHT_RED))
                         .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30.0, ui.available_height()))
+                        .min_size(Vec2::new(30., 25.))
                         .ui(ui);
 
                     if undock.clicked() {
                         let _ = tx.try_send(ClientUiAction::UndockClient(client.connection_string.clone()));
                     }
-                });
 
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add_space(ui.available_width() / 3.1);
+                    ui.add_space(15.);
                     // Create a new LayoutJob
                     let mut job = LayoutJob::default();
 
@@ -552,7 +559,7 @@ impl WebConsoleLayout {
                             &friendly_name,
                             0.0,
                             TextFormat {
-                                font_id: FontId::new(14.0, FontFamily::Proportional),
+                                font_id: FontId::new(12.0, FontFamily::Proportional),
                                 color: Color32::from_rgb(51, 255, 189), // Set the color for the first part
                                 valign: Align::Min,
                                 ..Default::default()
@@ -567,7 +574,7 @@ impl WebConsoleLayout {
                                 &text,
                                 0.0,
                                 TextFormat {
-                                    font_id: FontId::new(14.0, FontFamily::Proportional),
+                                    font_id: FontId::new(12.0, FontFamily::Proportional),
                                     color: Color32::from_rgb(51, 255, 189), // Set the color for the first part
                                     valign: Align::Min,
                                     ..Default::default()
@@ -577,7 +584,7 @@ impl WebConsoleLayout {
                                 txt.1,
                                 0.0,
                                 TextFormat {
-                                    font_id: FontId::new(14.0, FontFamily::Proportional),
+                                    font_id: FontId::new(12.0, FontFamily::Proportional),
                                     color: Color32::from_rgb(199, 202, 245),
                                     valign: Align::Min,
                                     ..Default::default()
@@ -588,34 +595,6 @@ impl WebConsoleLayout {
 
                     // Convert LayoutJob to WidgetText
                     let formatted_text = WidgetText::from(job);
-
-                    if ui.button(formatted_text).clicked() {};
-                });
-
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let button = Button::new(RichText::new("⮫").color(Color32::LIGHT_RED))
-                        .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30.0, ui.available_height()))
-                        .ui(ui);
-
-                    if button.clicked() {
-                        let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
-                    }
-
-                    ui.add_space(10.0);
-
-                    let export =
-                        Button::new(RichText::new("Export").size(10.0).color(Color32::LIGHT_RED))
-                            .fill(Color32::TRANSPARENT)
-                            .min_size(Vec2::new(30.0, ui.available_height()))
-                            .ui(ui);
-
-                    if export.clicked() {
-                        let _ = tx.try_send(ClientUiAction::ExportHistory(client.clone()));
-                    }
-
-                    ui.add_space(10.);
-                    
                     let parsed_date = DateTime::parse_from_rfc3339(
                         &client.last_update.as_ref().cloned().unwrap_or_default()
                     )
@@ -623,24 +602,77 @@ impl WebConsoleLayout {
                     .with_timezone(&Local);
             
                     let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
-                    ui.label(RichText::new(formatted_date));
-                    ui.add_space(45.0);
+                    let _ = Button::new(formatted_text).ui(ui).on_hover_text(formatted_date);
+                    // if ui.button(formatted_text).clicked() {};
+                });
+
+
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let button = Button::new(RichText::new("⮫").color(Color32::LIGHT_RED))
+                        .fill(Color32::TRANSPARENT)
+                        .min_size(Vec2::new(30.0, 25.))
+                        .ui(ui);
+
+                    if button.clicked() {
+                        info!("Sent Connection Command");
+                        let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
+                    }
+
+                    // ui.add_space(10.0);
+
+                    // let export =
+                    //     Button::new(RichText::new("Export").size(10.0).color(Color32::LIGHT_RED))
+                    //         .fill(Color32::TRANSPARENT)
+                    //         .min_size(Vec2::new(30.0, ui.available_height()))
+                    //         .ui(ui);
+
+                    // if export.clicked() {
+                    //     let _ = tx.try_send(ClientUiAction::ExportHistory(client.clone()));
+                    // }
                     
                 });
             });
         });
+
+        // let response = header_frame.allocate_space(ui);
+        // if response.hovered() {
+        //     header_frame.frame.stroke = style.visuals.widgets.hovered.fg_stroke;
+        //     header_frame.frame.shadow = style.visuals.window_shadow;
+        // } else {
+        //     header_frame.frame.stroke = style.visuals.widgets.open.bg_stroke;
+        // }
+        // header_frame.
+        // header_frame.paint(ui);
+
+    }
+
+    fn ui(&mut self, ui: &mut Ui) {
+        match self.state {
+            WebConsolePageState::ConnectedClients => todo!(),
+            WebConsolePageState::DisconnectedClients => todo!(),
+            WebConsolePageState::ScriptEditor => self.script_editor.ui(ui),
+            WebConsolePageState::AllClients => todo!(),
+        }
     }
 }
 
 
 impl SharedContext {
     pub fn admin_console(&mut self, ui: &mut Ui){
-        ui.ctx().request_repaint();
+        self.web_console_layout.receive(ui.ctx());
 
         let top_panel_frame = Frame::default()
             .inner_margin(Margin::same(3.0))
             .outer_margin(Margin::same(0.0))
             .fill(Color32::from_rgb(17,17,19))
+            .stroke(Stroke::new(0.7, Color32::from_additive_luminance(150)))
+            .rounding(Rounding::same(5.0)) ;
+
+        let side_panel_frame = Frame::default()
+            .inner_margin(Margin::same(3.0))
+            .outer_margin(Margin::same(0.0))
+            .fill(ui.style().visuals.extreme_bg_color)
+            .stroke(Stroke::new(0.7, Color32::from_additive_luminance(150)))
             .rounding(Rounding::same(5.0)) ;
 
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 4.0);
@@ -651,7 +683,9 @@ impl SharedContext {
             .exact_height(35.)
             .show_inside(ui, |ui |
         {
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui | {
+            ui.with_layout(Layout::left_to_right(Align::Center),|ui | { 
+                ui.set_height(15.);
+                ui.add_space(ui.available_width()/3.1);
                 let button_size = Vec2::new(50.0, 15.0);
                 if Button::new("All Clients")
                     .min_size(button_size)
@@ -687,38 +721,76 @@ impl SharedContext {
                 {
                     self.web_console_layout.state = WebConsolePageState::ScriptEditor;
                 }
-                ui.add_space(ui.available_width()/1.1);
-                if Button::new("Refresh")
-                    .min_size(button_size)
-                    .ui(ui)
-                    .clicked() {
-                    self.refresh_client_list();
-                }
             });
         });
 
         SidePanel::left("Client_Side_panel")
-            .frame(top_panel_frame)
+            .frame(side_panel_frame)
             .show_separator_line(false)
-            .exact_width(35.)
+            .min_width(400.)
+            .max_width(500.)
             .show_inside(ui, |ui |
         {
+            // ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            //     if Button::new("Refresh")
+            //         .min_size(Vec2::new(50.0, 15.0))
+            //         .ui(ui)
+            //         .clicked() 
+            //     {
+            //             self.refresh_client_list();
+            //     }
+            // });
+            ui.vertical_centered(|ui| {
 
+                let ws_client = &mut self.web_console_layout;
+                let clients = &mut ws_client.clients;
+                let sort_by = ws_client.sort_by.entry("Connected".to_string()).or_default();
+                let direction = &sort_by.direction;
+                match sort_by.field {
+                    SortField::Default => clients.default_sort(direction.clone()),
+                    SortField::Date => clients.sort_by_date(direction.clone()),
+                    SortField::Name => clients.sort_by_name(direction.clone()),
+                };
+                // let text_style = eframe::egui::TextStyle::Body;
+                // let row_height = ui.text_style_height(&text_style);
+                let row_height = ui.spacing().interact_size.y; // if you are adding buttons instead of labels.
+                let total_rows = clients.len();
+                ScrollArea::vertical()
+                    .max_height(f32::INFINITY)
+                    .max_width(f32::INFINITY)
+                    .show_rows(ui, row_height, total_rows, |ui, row_range| 
+                {
+                    for index in row_range {
+                        ui.add_space(8.);
+                        if let Some(client) = clients.get(index) {
+                            WebConsoleLayout::client_header(ui, ws_client.ui_actions_channel.0.clone(), client, ws_client.undock_client.clone());
+                        }
+                    }
+                });
+            });
         });
 
         CentralPanel::default().show_inside(ui, |ui| {
-            if !self.web_console_layout.error.is_empty() {
+            let ws_layout = &mut self.web_console_layout;
+            // let connection_string = ws_layout.c
+            if !ws_layout.error.is_empty() {
                 let options = ToastOptions::default();
                 options.duration(Some(web_time::Duration::from_secs(3)));
 
                 self.toasts.add(Toast {
                     kind: crate::ui_tools::toasts::ToastKind::Error,
-                    text: self.web_console_layout.error.clone().into(),
+                    text: ws_layout.error.clone().into(),
                     options,
                 });
-                self.web_console_layout.error.clear();
+                ws_layout.error.clear();
             }
-            self.web_console_layout.layout_cols(ui);
+
+            for client in ws_layout.clients.iter() {
+                if let Some(ws_client) = ws_layout.ws_clients.get_mut(&client.connection_string) {
+                    ws_client.show(ui);
+                }
+            }
+            // self.web_console_layout.layout_cols(ui);
         });
     }
 
