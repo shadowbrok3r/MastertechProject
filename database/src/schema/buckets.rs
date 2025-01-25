@@ -228,8 +228,6 @@ impl Node {
         Some(current)
     }
     
-    
-
     /// Finds an immutable reference to a folder node with the given prefix.
     ///
     /// - **prefix**: The full prefix path to the folder (e.g., "folder/subfolder/").
@@ -260,9 +258,7 @@ impl Node {
     
         Some(current)
     }
-    
-    
-    
+  
 }
 
 pub fn normalize_prefix(path: &str) -> String {

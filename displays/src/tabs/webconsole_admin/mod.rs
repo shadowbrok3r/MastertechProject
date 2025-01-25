@@ -1,6 +1,6 @@
 use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
 use crate::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
-use database::{WS_MASTER_URL, schema::{ConnectedClient, utilities::get_connected_clients}};
+use database::{schema::{utilities::get_connected_clients, ConnectedClient}, WS_MASTER_URL};
 use egui_extras::{Size, Strip, StripBuilder};
 use crossbeam::channel::{Receiver, Sender};
 use core::f32;
@@ -76,14 +76,14 @@ impl WebConsoleLayout {
         //         }
         //     }
         // });
-        
+
         Self {  
             // connected_clients,
             // disconnected_clients,
             clients,
             client_map,
             search_inputs: Default::default(), 
-            open_menu: false,
+            open_menu: true,
             sort_by: Default::default(),
             last_sort_field: Default::default(),
             loading: false,
@@ -99,11 +99,13 @@ impl WebConsoleLayout {
     }
 
     pub fn set_filesystem(&mut self, filesystem: FileSystem) -> &mut Self {
-        self.filesystem = filesystem;
+        self.filesystem = filesystem.clone();
+        self.script_editor.set_filesystem(filesystem);
         self
     }
 
     pub fn receive(&mut self, ctx: &Context) {
+        self.filesystem.receive(ctx);
         if let Ok(action) = self.ui_actions_channel.1.try_recv() {
             match action {
                 ClientUiAction::UndockClient(connection_string) => {
@@ -513,44 +515,18 @@ impl WebConsoleLayout {
 
     pub fn client_header(ui: &mut Ui, tx: Sender<ClientUiAction>, client: &ConnectedClient, undock_client: HashMap<String, bool>) {
         let style = ui.style().clone();
-        let mut header_frame = Frame::default()
+        Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(3.0, 0.0))
             .rounding(Rounding::same(5.0))
+            .stroke(style.visuals.window_stroke)
             .show(ui, |ui| 
         {
             // let ui = &mut header_frame.content_ui;
             ui.set_height(25.);
             ui.horizontal_top(|ui| {
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    let button = Button::new(RichText::new("✖").color(Color32::LIGHT_RED))
-                        .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30., 25.))
-                        .ui(ui);
-
-                    if button.clicked() {
-                        let _ = tx.try_send(ClientUiAction::DeleteClient(client.clone()));
-                    }
-
-                    let txt = if let Some(docked) =
-                        undock_client.get(client.connection_string.as_str())
-                    {
-                        if !*docked { "🔓" } 
-                        else { "🔒" }
-                    } 
-                    else { "🔒" };
-
-                    let undock = Button::new(RichText::new(txt).color(Color32::LIGHT_RED))
-                        .fill(Color32::TRANSPARENT)
-                        .min_size(Vec2::new(30., 25.))
-                        .ui(ui);
-
-                    if undock.clicked() {
-                        let _ = tx.try_send(ClientUiAction::UndockClient(client.connection_string.clone()));
-                    }
-
-                    ui.add_space(15.);
                     // Create a new LayoutJob
                     let mut job = LayoutJob::default();
 
@@ -618,6 +594,31 @@ impl WebConsoleLayout {
                         let _ = tx.try_send(ClientUiAction::ConnectClient(client.clone()));
                     }
 
+                    let txt = if let Some(docked) =
+                        undock_client.get(client.connection_string.as_str())
+                    {
+                        if !*docked { "🔓" } 
+                        else { "🔒" }
+                    } 
+                    else { "🔒" };
+
+                    let undock = Button::new(RichText::new(txt).color(Color32::LIGHT_RED))
+                        .fill(Color32::TRANSPARENT)
+                        .min_size(Vec2::new(30., 25.))
+                        .ui(ui);
+
+                    if undock.clicked() {
+                        let _ = tx.try_send(ClientUiAction::UndockClient(client.connection_string.clone()));
+                    }
+
+                    let button = Button::new(RichText::new("✖").color(Color32::LIGHT_RED))
+                        .fill(Color32::TRANSPARENT)
+                        .min_size(Vec2::new(30., 25.))
+                        .ui(ui);
+
+                    if button.clicked() {
+                        let _ = tx.try_send(ClientUiAction::DeleteClient(client.clone()));
+                    }
                     // ui.add_space(10.0);
 
                     // let export =
@@ -648,10 +649,14 @@ impl WebConsoleLayout {
 
     fn ui(&mut self, ui: &mut Ui) {
         match self.state {
-            WebConsolePageState::ConnectedClients => todo!(),
-            WebConsolePageState::DisconnectedClients => todo!(),
             WebConsolePageState::ScriptEditor => self.script_editor.ui(ui),
-            WebConsolePageState::AllClients => todo!(),
+            _ => {
+                for client in self.clients.iter() {
+                    if let Some(ws_client) = self.ws_clients.get_mut(&client.connection_string) {
+                        ws_client.show(ui);
+                    }
+                }
+            }
         }
     }
 }
@@ -685,6 +690,16 @@ impl SharedContext {
         {
             ui.with_layout(Layout::left_to_right(Align::Center),|ui | { 
                 ui.set_height(15.);
+
+                let txt = match self.web_console_layout.open_menu {
+                    false => "Show Clients ->",
+                    true => "<- Hide Clients",
+                };
+
+                if ui.button(txt).clicked() {
+                    self.web_console_layout.open_menu = !self.web_console_layout.open_menu;
+                }
+
                 ui.add_space(ui.available_width()/3.1);
                 let button_size = Vec2::new(50.0, 15.0);
                 if Button::new("All Clients")
@@ -729,7 +744,7 @@ impl SharedContext {
             .show_separator_line(false)
             .min_width(400.)
             .max_width(500.)
-            .show_inside(ui, |ui |
+            .show_animated_inside(ui, self.web_console_layout.open_menu, |ui |
         {
             // ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             //     if Button::new("Refresh")
@@ -761,7 +776,7 @@ impl SharedContext {
                     .show_rows(ui, row_height, total_rows, |ui, row_range| 
                 {
                     for index in row_range {
-                        ui.add_space(8.);
+                        ui.add_space(4.);
                         if let Some(client) = clients.get(index) {
                             WebConsoleLayout::client_header(ui, ws_client.ui_actions_channel.0.clone(), client, ws_client.undock_client.clone());
                         }
@@ -784,13 +799,7 @@ impl SharedContext {
                 });
                 ws_layout.error.clear();
             }
-
-            for client in ws_layout.clients.iter() {
-                if let Some(ws_client) = ws_layout.ws_clients.get_mut(&client.connection_string) {
-                    ws_client.show(ui);
-                }
-            }
-            // self.web_console_layout.layout_cols(ui);
+            ws_layout.ui(ui);
         });
     }
 

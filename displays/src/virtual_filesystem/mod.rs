@@ -212,6 +212,7 @@ impl FileSystem {
 
     pub fn receive(&mut self, ctx: &Context) {
         if let Ok(new_node) = self.paths_channel.1.try_recv() {
+            info!("Filesystem received a new node");
             let _ = self.insert_node(new_node);
         }
 

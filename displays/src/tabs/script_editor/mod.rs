@@ -1,4 +1,7 @@
+use database::schema::User;
+// use database::schema::Node;
 use eframe::egui::{Button, CentralPanel, Id, SidePanel, TextEdit, Ui, Vec2, Widget};
+use log::info;
 use serde::Serialize;
 
 use crate::{code_editor::{CodeEditor, ColorTheme, Syntax}, virtual_filesystem::FileSystem};
@@ -11,7 +14,8 @@ pub struct ScriptEditor {
     script_name: String,
     open_save_modal: bool,
     #[serde(skip)]
-    filesystem: FileSystem
+    filesystem: FileSystem,
+    first_run: bool
 }
 
 
@@ -21,8 +25,18 @@ impl ScriptEditor {
             code: Default::default(),
             script_name: Default::default(),
             open_save_modal: false,
-            filesystem: FileSystem::new()
+            filesystem: FileSystem::new(),
+            first_run: true,
          }
+    }
+
+    pub fn set_filesystem(&mut self, mut filesystem: FileSystem) -> &mut Self {
+        // filesystem.set_user(user);
+        info!("{:?}", filesystem.request_contents(""));
+        // filesystem.navigate_to("Scripts".to_string());
+        info!("ROOT FOR SCRIPT EDITOR: {:?}", self.filesystem.root);
+        self.filesystem = filesystem;
+        self
     }
 
     pub fn ui(&mut self, ui: &mut Ui) {
@@ -38,7 +52,27 @@ impl ScriptEditor {
                 {
                     self.open_save_modal = true;
                 }
+
                 ui.add_space(5.);
+                
+                if let Some(node) = self.filesystem.get_current_folder() {
+                    info!("NODE: {node:?}");
+                } else {
+                    info!("ROOT FOR SCRIPT EDITOR: {:?}", self.filesystem.root);
+                    self.filesystem.display(ui);
+                }
+
+                if self.first_run {
+                    self.first_run = false;
+                    if self.filesystem.user != User::default() {
+                        info!("We have a user, requesting contents");
+                        info!("request: {:?}", self.filesystem.request_contents(""));
+                        info!("Contents: {:?}", self.filesystem.root);
+                    } else {
+                        info!("We need a user");
+                    }
+                }
+
                 if Button::new("New +")
                     .min_size(button_size)
                     .ui(ui)
