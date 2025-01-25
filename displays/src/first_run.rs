@@ -25,6 +25,11 @@ impl SharedContext {
                 self.filesystem.set_user(user.clone());
                 let _ = self.filesystem.request_contents("");
             }
+            if self.web_console_layout.filesystem.paths.is_empty() {
+                self.web_console_layout.filesystem.set_user(user.clone());
+                let _ = self.web_console_layout.filesystem.request_contents("");
+                self.web_console_layout.set_filesystem(self.filesystem.clone());
+            }
 
             if self.tasks.is_empty() || self.store_users.is_empty() {
                 let initial_tasks_tx = self.initial_tasks_tx.clone();

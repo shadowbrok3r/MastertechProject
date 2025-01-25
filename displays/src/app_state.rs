@@ -215,9 +215,8 @@ impl SharedContext {
 
         let theme_config = ThemeConfig::default();
         let theme = set_custom_style(&theme_config);
-        let mut web_console_layout = WebConsoleLayout::new(BTreeMap::new(), Vec::new());
+        let web_console_layout = WebConsoleLayout::new(BTreeMap::new(), Vec::new());
         let filesystem = FileSystem::new();
-        web_console_layout.set_filesystem(filesystem.clone());
 
         Self {
             current_user: None,
