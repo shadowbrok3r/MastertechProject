@@ -1,6 +1,6 @@
 use crate::{channel_manager::ChannelManager, chats::ChatView, egui_data_table::{viewer::{default_hotkeys, DecodeErrorBehavior, RowCodec, UiActionContext}, DataTable, Renderer, RowViewer, UiAction}, Spawner};
-use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
-use database::schema::{helper_traits::{parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
+use eframe::egui::{Button, CentralPanel, CollapsingHeader, Color32, ComboBox, Hyperlink, Id, KeyboardShortcut, Label, Layout, RichText, ScrollArea, Separator, SidePanel, Spinner, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use database::schema::{helper_traits::{convert_date_string, parse_email_user, EmployeeHelper, TaskNotePayloadHelper}, prestashop_schema::{self, Employee, PrestashopPayload}, utilities::{create_full_task_payload, get_prestashop_payload, get_task_notes_from_db_with_service_number}, ComputerData, CustomerData, TaskNotePayload, TaskPayload, TicketPayload, User, TASK_NOTE_TABLE, TASK_TABLE, TICKET_TABLE};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use crate::{app_state::SharedContext, PlatformSpawner};
 use crossbeam::channel::{Receiver, Sender};
@@ -357,7 +357,7 @@ impl TaskAuditViewer {
                 PlatformSpawner::spawn(async move {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("29", start_idx, start_idx+10)
+                        .get_services_by_status("29", start_idx, start_idx+30)
                         .await;
 
                     // Handle the fetched services
@@ -405,7 +405,7 @@ impl TaskAuditViewer {
                 PlatformSpawner::spawn(async move {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("30", start_idx, start_idx+20)
+                        .get_services_by_status("30", start_idx, start_idx+30)
                         .await;
 
                     // Handle the fetched services
@@ -429,7 +429,7 @@ impl TaskAuditViewer {
                 PlatformSpawner::spawn(async move {
                     // Fetch services within the range
                     let orders = employee
-                        .get_services_by_status("40", start_idx, start_idx+10)
+                        .get_services_by_status("40", start_idx, start_idx+30)
                         .await;
 
                     // Handle the fetched services
@@ -701,15 +701,15 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
     }
 
     fn num_columns(&mut self) -> usize {
-        9
+        10
     }
 
     fn column_name(&mut self, column: usize) -> std::borrow::Cow<'static, str> {
-        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Needs Call", "Checkin Notes", "Device"][column].into()
+        ["Order #", "Customer Name", "Date", "Status", "Sales Rep", "Split Rep", "Checkin Notes", "Device", "Model", "Needs Call"][column].into()
     }
 
     fn is_sortable_column(&mut self, column: usize) -> bool {
-        [true, true, true, true, true, true, true, true, true][column]
+        [true, true, true, true, true, true, true, true, true, true][column]
     }
 
     fn row_filter_hash(&mut self) -> &impl std::hash::Hash {
@@ -765,11 +765,26 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
 
                 ui.label(format!(" {status}"))
             }).inner,
-            4 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.sales_rep.clone().unwrap_or_default().firstname))).inner,
-            5 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.split_rep.clone().unwrap_or_default().firstname))).inner,
-            6 => ui.vertical_centered(|ui| ui.checkbox(&mut false, "")).inner,
-            7 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()))).inner,
-            8 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg))).inner,
+            4 => ui.horizontal_centered(|ui| {
+                let emp = row.sales_rep.clone().unwrap_or_default();
+                let split = parse_email_user(&emp.email);
+                ui.label(format!(" {split}"))
+            }).inner,
+            5 => ui.horizontal_centered(|ui| {
+                let emp = row.split_rep.clone().unwrap_or_default();
+                let split = parse_email_user(&emp.email);
+                ui.label(format!(" {split}"))
+            }).inner,
+            6 => ui.horizontal_centered(|ui| Label::new(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone())).wrap().ui(ui)).inner,
+            7 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg))).inner,
+            8 => ui.horizontal_centered(|ui| ui.label(format!(" {}", row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model))).inner,
+            9 => ui.vertical_centered(|ui| {
+                ui.checkbox(&mut false, "")
+                // row.customer_messages.iter().map(|c| {
+                //     let date = convert_date_string(&c.date_add);
+                    
+                // })
+            }).inner,
             _ => unreachable!(),
         };
     }
@@ -781,11 +796,12 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             1 => col_config.resizable(true).at_least(180.).at_most(225.),
             2 => col_config.resizable(true).at_least(90.).at_most(100.),
             3 => col_config.resizable(true).at_least(130.).at_most(130.),
-            4 => col_config.resizable(true).at_least(130.).at_most(150.),
-            5 => col_config.resizable(true).at_least(130.).at_most(150.),
-            6 => col_config.resizable(true).at_least(80.).at_most(80.),
-            7 => col_config.resizable(true).at_least(80.).at_most(80.),
-            8 => col_config.resizable(true).at_least(80.).at_most(80.),
+            4 => col_config.resizable(true).at_least(100.).at_most(150.),
+            5 => col_config.resizable(true).at_least(100.).at_most(150.),
+            6 => col_config.resizable(true).at_least(80.),
+            7 => col_config.resizable(true).at_least(100.).at_most(150.),
+            8 => col_config.resizable(true).at_least(100.).at_most(150.),
+            9 => col_config.resizable(false).at_least(80.).at_most(80.),
             _ => col_config,
         }
     }
@@ -856,6 +872,7 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
             6 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().check_in_notes.clone()
             7 => dst.order.associations = src.order.associations.clone(), // order_service.get(0).cloned().unwrap_or_default().device_mfg.clone()
             8 => dst.sales_rep = src.sales_rep.clone(),
+            9 => dst.sales_rep = src.sales_rep.clone(),
             _ => unreachable!(),
         }
     }
@@ -885,8 +902,9 @@ impl RowViewer<PrestashopPayload> for TaskRowViewer {
                 let name1 = format!("{} {}", emp1.firstname, emp1.lastname);
                 name.cmp(&name1)
             },
-            7 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
-            8 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
+            6 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
+            7 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
+            8 => row_l.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model.cmp(&row_r.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model),
             _ => row_l.sales_rep.clone().unwrap_or_default().lastname.cmp(&row_r.sales_rep.clone().unwrap_or_default().lastname)
         }
     }
@@ -926,16 +944,20 @@ impl RowCodec<PrestashopPayload> for Codec {
             3 => dst.push_str(&src_row.order.current_state),
             4 => {
                 let emp = src_row.sales_rep.clone().unwrap_or_default();
+                info!("Employee: {emp:?}");
                 let name = format!("{} {}", emp.firstname, emp.lastname);
                 dst.push_str(&name);
             },
             5 => {
                 let emp = src_row.split_rep.clone().unwrap_or_default();
+                info!("Employee: {emp:?}");
                 let name = format!("{} {}", emp.firstname, emp.lastname);
                 dst.push_str(&name);
             },
-            7 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
-            8 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
+            6 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes),
+            7 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg),
+            8 => dst.push_str(&src_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model),
+            9 => dst.push_str("False"),
             _ => unreachable!(),
         }
     }
@@ -959,8 +981,10 @@ impl RowCodec<PrestashopPayload> for Codec {
                 let dst = &mut dst_row.split_rep.clone().unwrap_or_default().firstname;
                 *dst = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?
             },
-            7 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
-            8 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            6 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().check_in_notes = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            7 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_mfg = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            8 => dst_row.order.associations.order_service.get(0).cloned().unwrap_or_default().device_model = src_data.parse().map_err(|_| DecodeErrorBehavior::SkipRow)?,
+            9 => {},
             _ => unreachable!(),
         }
         Ok(())
