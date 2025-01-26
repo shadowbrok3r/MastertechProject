@@ -1118,8 +1118,29 @@ impl EmployeeHelper for Employee {
         info!("helper_traits -> Pulling order {service_number}");
         query.insert("filter[id]", service_number);
         query.insert("output_format", "JSON");
-        api_call.display = "[id,id_address_invoice,id_customer,current_state,date_add,id_employee_sales_rep,id_employee_split_rep,id_store]";
-
+        // api_call.display = "[id,id_address_invoice,id_customer,current_state,date_add,id_employee_sales_rep,id_employee_split_rep,id_store,associations]";
+    
+        // let customer_threads: Vec<prestashop_schema::CustomerThread> = api_call
+        //     .request_resources_wasm("customer_threads", query.clone())
+        //     .await?;
+    
+        // let mut customer_messages: Vec<prestashop_schema::CustomerMessage> = Vec::new();
+    
+        // if !customer_threads.is_empty() {
+        //     for thread in customer_threads.iter() {
+        //         for msg in thread.associations.customer_messages.iter() {
+        //             let msg =  api_call
+        //                 .request_subresources_by_id_wasm(
+        //                     "customer_messages",
+        //                     "customer_message",
+        //                     msg.id.as_str(),
+        //                 )
+        //                 .await?;
+        //             customer_messages.push(msg)
+        //         }
+        //     }
+        // }
+    
 
         let order: prestashop_schema::Order = api_call
             .find_resource_wasm("orders", query.clone())
@@ -1207,6 +1228,8 @@ impl EmployeeHelper for Employee {
                 order,
                 sales_rep,
                 split_rep,
+                // customer_threads,
+                // customer_messages,
                 ..Default::default()
             }
         )
