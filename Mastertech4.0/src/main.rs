@@ -1,24 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use app_state::{AppState, MainPages, MasterTechApp};
 use displays::ui_tools::theme_config::set_custom_style;
-
-use eframe::egui::{
-    Context, IconData, ViewportBuilder, Window,
-};
-
+use eframe::{egui::{Context, IconData, ViewportBuilder, Window}, egui_glow::ShaderVersion};
+use terminal_mode::run_terminal_mode;
 use egui_dock::DockState;
 use log::{error, info};
-// use tabs::logger::logging::builder;
-
-// use simplelog::{Config, WriteLogger};
 
 #[cfg(target_os = "windows")]
 extern crate winapi;
 
-#[cfg(feature = "term")]
-use terminal_mode::run_terminal_mode;
 
-#[cfg(feature = "term")]
+
 mod terminal_mode;
 
 pub mod app_state;
@@ -140,42 +132,39 @@ async fn main() -> eframe::Result<()> {
         log_file
     ).unwrap();
 
-    #[cfg(feature = "gui")]
+    // Windo
     let eframe_app = eframe::run_native(
         format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
         eframe::NativeOptions {
             viewport: ViewportBuilder::default()
                 .with_inner_size([945.0, 750.0])
                 .with_drag_and_drop(true)
-                .with_icon(load_icon()),
+                .with_icon(load_icon())
+                .with_always_on_top(),
+            shader_version: Some(ShaderVersion::Es100),
             ..Default::default()
         },
-        Box::new(|cc| Ok(Box::new(MasterTechApp::new(cc)))),
+        Box::new(|cc| {
+            let ver = ShaderVersion::get(&cc.gl.as_ref().unwrap());
+            println!("Ver: {ver:?}");
+            Ok(
+                Box::new(
+                    MasterTechApp::new(cc)
+                )
+            )
+        }),
     );
 
     if let Err(e) = eframe_app {
         error!("Error running eframe_native: {e:?} \nswitching to secondary application");
-        #[cfg(feature = "term")]
-        {
-            let res = run_terminal_mode();
-            if let Err(e) = res {
-                error!("Error running terminal app: {e:?}");
-            }
+        let res = run_terminal_mode();
+        if let Err(e) = res {
+            error!("Error running terminal app: {e:?}");
         }
     }
 
     Ok(())
 }
-
-// #[cfg(feature = "term")]
-// #[tokio::main]
-// async fn main() -> eframe::Result<()> {
-//     let res = run_terminal_mode();
-//     if let Err(e) = res {
-//         error!("Error running terminal app: {e:?}");
-//     }
-//     Ok(())
-// }
 
 pub(crate) fn load_icon() -> IconData {
     let (icon_rgba, icon_width, icon_height) = {

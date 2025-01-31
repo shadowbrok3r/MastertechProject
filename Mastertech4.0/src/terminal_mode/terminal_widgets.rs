@@ -1,10 +1,7 @@
-#[cfg(feature="term")]
-use {
-    super::{colors::{Theme, BLUE}, State},
-    ratatui::{
-        style::{Color, Style},
-        buffer::Buffer, layout::Rect, text::{Line, Span}, widgets::Widget
-    }
+use super::{colors::{Theme, BLUE}, State};
+use ratatui::{
+    style::{Color, Style},
+    buffer::Buffer, layout::Rect, text::Line, widgets::Widget
 };
 
 #[derive(Debug, Clone)]

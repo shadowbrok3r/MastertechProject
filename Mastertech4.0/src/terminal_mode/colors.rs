@@ -1,4 +1,3 @@
-#[cfg(feature="term")]
 use ratatui::style::Color;
 
 #[derive(Debug, Clone, Copy)]
@@ -9,12 +8,12 @@ pub struct Theme {
     pub shadow: Color,
 }
 
-pub const DEFAULT_THEME: Theme = Theme {
-    text: Color::Cyan,
-    background: Color::Black,
-    highlight: Color::Magenta,
-    shadow: Color::DarkGray,
-};
+// pub const DEFAULT_THEME: Theme = Theme {
+//     text: Color::Cyan,
+//     background: Color::Black,
+//     highlight: Color::Magenta,
+//     shadow: Color::DarkGray,
+// };
 
 pub const BLUE: Theme = Theme {
     text: Color::Rgb(16, 24, 48),

@@ -123,7 +123,7 @@ impl InstalledProgram {
 
             // try this for inno setups
             let script = format!(r#"& {command} /verysilent /suppressmsgboxes /norestart"#);
-            println!("Uninstalling program: {display_name}\nUninstall String: {command}\n{script}");
+            log::info!("Uninstalling program: {display_name}\nUninstall String: {command}\n{script}");
             let ps = powershell_script::PsScriptBuilder::new()
                 .no_profile(true)
                 .non_interactive(true)
@@ -134,7 +134,7 @@ impl InstalledProgram {
             let output = ps.run(&script)?;
 
             if output.success() {
-                println!("Successfully uninstalled: {}", display_name);
+                log::info!("Successfully uninstalled: {}", display_name);
                 Ok(())
             } else {
                 Err(anyhow::anyhow!(format!(

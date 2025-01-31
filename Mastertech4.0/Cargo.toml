@@ -6,21 +6,22 @@ description = "Mastertech"
 build = "build.rs"
 
 [features]
-default = [ "gui", "inline" ] # "term"
-gui = [ "dep:eframe" ]
-term = ["dep:tui-input", "dep:tui-textarea", "dep:ratatui"]
+default = [ "inline" ] # "term", "gui"
+# gui = [ "dep:eframe" ]
+# term = ["dep:tui-input", "dep:tui-textarea", "dep:ratatui"]
 inline = []
 # default=["winit"]   # , "cpu_fix", "compat_mode"
 # winit = ["dep:egui-winit"]
 # compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"] cpu_fix = []
 
 [dependencies]
-eframe = { version="0.30", features=["persistence", "serde",  "default_fonts", "glow", "x11"], default-features=false, optional = true}
+eframe = { version="0.30", features=["persistence", "serde",  "default_fonts", "glow"], default-features=false}
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
-ratatui = { version = "0.29.0", features = ["crossterm"], optional = true }
-tui-input = { version = "0.11", features = ["crossterm"], optional = true}
-tui-textarea = { version = "0.7", optional = true}
+ratatui = { version = "0.29.0", features = ["crossterm"]}
+tui-input = { version = "0.11", features = ["crossterm"]}
+yeehaw = "0.1.0"
+tui-textarea = { version = "0.7"}
 sysinfo = "0.33"
 console-subscriber = "0.4"
 futures-util = "0.3"
@@ -52,7 +53,7 @@ semver = "1.0.23"
 nvml-wrapper = { version = "0.10.0", features = ["serde"] }
 lazy_static = "1.5.0"
 planif = "1"
-yeehaw = "0.1.0"
+
 
 database = { workspace=true }
 surrealdb = { workspace=true }
@@ -82,6 +83,11 @@ brotli = { workspace=true }
 base64 = { workspace=true }
 egui_plot = { workspace = true }
 powershell_script = "1.1.0"
+
+[dependencies.egui]
+version = "0.30"
+default-features = false
+features = ["rayon", "bytemuck", "log"]
 
 # gfx-hal = { version = "0.9.0", features = ["serde"] }
 

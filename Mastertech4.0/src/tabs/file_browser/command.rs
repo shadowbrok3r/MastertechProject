@@ -57,7 +57,7 @@ impl FileBrowser{
                         self.refresh_contents();
                         self.select(path);
                     }
-                    Err(err) => println!("Error while creating directory: {err}"),
+                    Err(err) => log::info!("Error while creating directory: {err}"),
                 }
             },
 
@@ -101,7 +101,7 @@ impl FileBrowser{
             },
 
             Command::Move(source, destination) => {
-                println!("Command::Move");
+                log::info!("Command::Move");
                 if let Err(err) = fs::rename(&source, &destination).await {
                     debug!("error: {err:?}");
                     //let _ = response_sender.try_send(Response::Error(FileBrowserError::Io(err)));
@@ -112,7 +112,7 @@ impl FileBrowser{
             },
 
             Command::Delete(path) => {
-                println!("Command::Delete");
+                log::info!("Command::Delete");
                 if let Err(_err) = fs::remove_dir_all(&path).await {
                     //let _ = response_sender.try_send(Response::Error(FileBrowserError::Io(err)));
                 } else {
@@ -126,7 +126,7 @@ impl FileBrowser{
                         self.refresh_contents();
                         self.select(to);
                     }
-                    Err(err) => println!("Error while renaming: {err}"),
+                    Err(err) => log::info!("Error while renaming: {err}"),
                 }
             },
 
@@ -164,7 +164,7 @@ impl FileBrowser{
                     result = read_metadata_task => {
                         match result {
                             Ok(path_size) => { // Send the result through the channel.
-                                if sender.try_send(path_size).is_err() { println!("Error sending metadata");}
+                                if sender.try_send(path_size).is_err() { log::info!("Error sending metadata");}
                                 
                                 if path.is_dir() { // Insert the metadata into the appropriate HashMap.
                                     self.folder_metadata.borrow_mut().insert(clone_path1.clone(),
@@ -174,7 +174,7 @@ impl FileBrowser{
                                         MetaData { path_size });
                                 }
                             },
-                            Err(e) => println!("Error reading metadata: {:?}", e),
+                            Err(e) => log::info!("Error reading metadata: {:?}", e),
                         }
                     }
                 }

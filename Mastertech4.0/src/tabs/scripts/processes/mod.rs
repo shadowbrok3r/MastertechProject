@@ -50,7 +50,7 @@ impl ProcessCreationEvent {
             .print_commands(true)
             .build();
 
-        println!("Starting process monitoring...");
+        log::info!("Starting process monitoring...");
 
         let output = ps.run(ps_script)?;
 

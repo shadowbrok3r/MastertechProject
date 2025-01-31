@@ -113,7 +113,7 @@ impl MastertechContext {
                                 //         Ok(Event::Start(ref e)) => {
                                 //             let name = e.name();
                                 //             let name = reader.decoder().decode(name.as_ref()).unwrap();
-                                //             println!("read start event {:?}", name.as_ref());
+                                //             log::info!("read start event {:?}", name.as_ref());
                                 //             count += 1;
                                 //         }
                                 //         Ok(Event::Eof) => break, // exits the loop when reaching end of file
@@ -121,8 +121,8 @@ impl MastertechContext {
                                 //         _ => (), // There are several other `Event`s we do not consider here
                                 //     }
                                 // }
-                                // println!("txt: {:?}", txt);
-                                // println!("{:?}", reader.read_event());
+                                // log::info!("txt: {:?}", txt);
+                                // log::info!("{:?}", reader.read_event());
 
                                 let action_clone = action.clone();
                                 let so_num = Arc::new(self.ticket_data.service_number.clone());

@@ -1,24 +1,22 @@
-#[cfg(feature="term")]
-use {
-    ratatui::{
-        backend::{Backend, CrosstermBackend},
-        layout::{Constraint, Direction, Layout},
-        style::{Color, Style},
-        widgets::{Block, Borders, Paragraph},
-        buffer::Buffer, crossterm::event::KeyModifiers, layout::{Position, Rect, Size}, style::Stylize, text::{Line, Span}, widgets::{BorderType, Widget}, 
-        Frame,
-        Terminal,
-        crossterm::{
-            event::{self, DisableMouseCapture, KeyEvent, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton, MouseEvent, MouseEventKind},
-            execute,
-            terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-        }
-    },
-    tui_textarea::{Input, Key, TextArea},
-    database::schema::{CustomerData, TicketData}, 
-    std::{io, ops::ControlFlow, rc::Rc, time::Duration}
+use ratatui::{
+    backend::{Backend, CrosstermBackend},
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    widgets::{Block, Borders},
+    crossterm::event::KeyModifiers, layout::Rect,
+    Frame,
+    Terminal,
+    crossterm::{
+        event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseButton, MouseEvent, MouseEventKind},
+        execute,
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    }
 };
-use {colors::{BLUE, GREEN, RED}, terminal_widgets::Button};
+use tui_textarea::TextArea;
+use database::schema::{CustomerData, TicketData};
+use std::{io, ops::ControlFlow, rc::Rc, time::Duration};
+use colors::{BLUE, GREEN, RED};
+use terminal_widgets::Button;
 
 pub mod colors;
 pub mod terminal_widgets;
