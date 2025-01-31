@@ -41,7 +41,7 @@ impl Machine {
     /// Example
     /// ```
     /// let m = machine_info::Machine::new();
-    /// println!("{:?}", m.gpu_info())
+    /// log::info!("{:?}", m.gpu_info())
     /// ```
     pub fn gpu_info(&self) -> anyhow::Result<Vec<GraphicsCard>, anyhow::Error> {
         let mut cards = Vec::new();
@@ -81,7 +81,7 @@ impl Machine {
     /// Example
     /// ```
     /// let m = machine_info::Machine::new();
-    /// println!("{:?}", m.graphics_status())
+    /// log::info!("{:?}", m.graphics_status())
     /// ```
     pub fn graphics_status(&self) -> anyhow::Result<Vec<GraphicsUsage>, anyhow::Error> {
         let mut cards = Vec::new();

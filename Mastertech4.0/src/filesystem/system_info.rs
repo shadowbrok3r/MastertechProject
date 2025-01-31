@@ -305,7 +305,7 @@ pub async fn get_sysinfo() -> anyhow::Result<SystemInformation, anyhow::Error> {
     let number_of_cpus = format!("NB CPUs: {} \n", sys.cpus().len());
     
     // Display processes ID, name na disk usage:
-    // for (pid, process) in sys.processes() {println!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
+    // for (pid, process) in sys.processes() {log::info!("[{pid}] {:?} {:?}", process.name(), process.disk_usage());}
     for (pid, process) in sys.processes().iter() {
         let id = pid.as_u32();
         let name = process.name().to_string_lossy().to_string();

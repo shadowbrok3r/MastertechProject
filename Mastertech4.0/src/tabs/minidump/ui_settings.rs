@@ -46,7 +46,7 @@ impl MiniDumpApp {
                 }
             });
             let reprocessable = matches!(&self.minidump, Some(Ok(_)));
-            // println!("reprocessable? {reprocessable}");
+            // log::info!("reprocessable? {reprocessable}");
             ui.add_enabled_ui(reprocessable, |ui| {
                 if ui.button("💫 reprocess").clicked() {
                     self.process_dump(self.minidump.as_ref().unwrap().as_ref().unwrap().clone());
