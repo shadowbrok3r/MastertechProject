@@ -232,7 +232,7 @@ impl<'a> Prestashop<'a> {
         url_params: HashMap<&str, &str>,
     ) -> anyhow::Result<Vec<T>, anyhow::Error>
     where
-        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send,
+        T: for<'de> Deserialize<'de> + std::fmt::Debug + Send + Default,
     {
         info!(
             "resource_name: {resource_name:#?}, {url_params:#?}\nURL: {:#?}",
@@ -248,10 +248,16 @@ impl<'a> Prestashop<'a> {
             .await?;
 
         // info!("prestashop_schema -> response: {:#?}", response);
-        let x: Vec<T> = from_value(response[resource_name].clone())?;
+        let x: anyhow::Result<Vec<T>, serde_json::Error> = from_value(response[resource_name].clone());
         // info!("prestashop_schema -> x: {x:#?}");
+        if let Err(e) = x {
+            log::info!("Error: {e:?}");
+            let mut new = Vec::new();
+            new.push(T::default());
+            return Ok(new)
+        }
 
-        Ok(x)
+        Ok(x?)
     }
 
     pub async fn find_resource_wasm<T>(

@@ -132,10 +132,7 @@ async fn main() -> eframe::Result<()> {
         log_file
     ).unwrap();
 
-    // let mut wgpu_options = WgpuConfiguration::default();
-    // // wgpu_options.wgpu_setup = WgpuSetup::Existing { instance: (), adapter: (), device: (), queue: () }
-    // egui_wgpu::RenderState::
-    let eframe_app = eframe::run_native(
+    /* let eframe_app = eframe::run_native(
         format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
         eframe::NativeOptions {
             viewport: ViewportBuilder::default()
@@ -143,13 +140,9 @@ async fn main() -> eframe::Result<()> {
                 .with_drag_and_drop(true)
                 .with_icon(load_icon())
                 .with_always_on_top(),
-            // shader_version: Some(ShaderVersion::Es100),
-            // wgpu_options
             ..Default::default()
         },
         Box::new(|cc| {
-            // let ver = ShaderVersion::get(&cc.gl.as_ref().unwrap());
-            // println!("Ver: {ver:?}");
             Ok(
                 Box::new(
                     MasterTechApp::new(cc)
@@ -158,13 +151,13 @@ async fn main() -> eframe::Result<()> {
         }),
     );
 
-    if let Err(e) = eframe_app {
-        error!("Error running eframe_native: {e:?} \nswitching to secondary application");
-        let res = terminal_mode::yeehaw::run_terminal_mode().await;
+    if let Err(e) = eframe_app { */
+        // error!("Error running eframe_native: {e:?} \nswitching to secondary application");
+        let res = terminal_mode::run_terminal_mode();
         if let Err(e) = res {
             error!("Error running terminal app: {e:?}");
         }
-    }
+    // }
 
     Ok(())
 }
