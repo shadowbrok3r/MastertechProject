@@ -20,6 +20,7 @@ use terminal_widgets::Button;
 
 pub mod colors;
 pub mod terminal_widgets;
+pub mod yeehaw;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
