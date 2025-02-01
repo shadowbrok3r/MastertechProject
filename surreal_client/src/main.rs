@@ -8,9 +8,7 @@ use num_format::{Locale, ToFormattedString};
 use surrealdb::RecordId;
 use sysinfo::{Disks, System};
 use regex::Regex;
-// use MasterTech::filesystem::*;
 
-// #[derive(Default)]
 struct App {
     first_run: bool
 }
@@ -62,7 +60,6 @@ impl App {
             while comp_data.cpu.is_empty() {
                 comp_data = cvar.wait(comp_data).unwrap();
             }
-
             
             let client_hash = generate_client_id(
                 comp_data.hostname.clone(), 
@@ -90,8 +87,6 @@ impl App {
 
             
         }
-
-
 
         Ok(())
     }

@@ -15,7 +15,7 @@ inline = []
 # compat_mode = ["dep:egui_skia", "dep:egui-winit", "dep:softbuffer", "dep:skia-safe"] cpu_fix = []
 
 [dependencies]
-eframe = { version="0.30", features=["persistence", "serde",  "default_fonts", "wgpu"], default-features=false}
+eframe = { version="0.30", features=["persistence", "serde",  "default_fonts", "wgpu", "x11"], default-features=false}
 displays = { path="../displays", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json", "stream", "cookies", "brotli"] }
 ratatui = { version = "0.29.0", features = ["crossterm"]}
@@ -117,7 +117,7 @@ minidump = { version = "0.22" }
 minidump-common = { version = "0.22" }
 minidump-processor = { version = "0.22", features = ["http"] }
 minidump-unwind = "0.22"
-wmi = "0.14.0"
+wmi = "0.15.0"
 evtx = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
