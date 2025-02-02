@@ -16,6 +16,9 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, List, ListItem, Paragraph, Widget},
 };
+use serde::Serialize;
+use tui_tree_widget::TreeItem;
+use std::fmt::Debug;
 use std::{error::Error, io};
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
@@ -132,6 +135,7 @@ struct App {
     /// Ticket information
     ticket_data: TicketData,
 
+    tree: Vec<TreeItem<'static, &'static str>>,
     prestashop_api_tx: Sender<prestashop_schema::PrestashopPayload>,
     prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>
 }
@@ -147,11 +151,16 @@ impl App {
             ticket_data: Default::default(),
             prestashop_api_tx,
             prestashop_api_rx,
+            tree: Vec::new()
         }
     }
 
     fn log_message(&mut self, message: &str) {
         self.logs.push(message.to_string());
+    }
+
+    fn log_json<T: Serialize + Clone + Debug>(&mut self, message: T) {
+
     }
     
     fn get_ticket(&self, service_number: &str) {
@@ -364,6 +373,7 @@ fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
         })
         .collect();
 
+    
     let logs_list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
