@@ -168,11 +168,13 @@ impl App {
         }
     }
 
-    fn receive_ticket(&mut self) {
+    fn receive_ticket(&mut self) -> anyhow::Result<(), anyhow::Error> {
         if let Ok(data) = self.prestashop_api_rx.try_recv() {
-            let out = serde_json::to_string_pretty(&data).unwrap();
-            self.log_message(&format!("{out}"));
-            log::info!("{out}");
+            // let out = serde_json::to_string_pretty(&data).unwrap();
+            let output = serde_json::to_string(&data)?;
+            self.log_message(&output);
+            
+            log::info!("{output}");
             // self.ticket_data = TicketData {
             //     id: todo!(),
             //     created_at: todo!(),
@@ -191,6 +193,7 @@ impl App {
             //     hardware_test_results: todo!(),
             // }
         }
+        Ok(())
     }
 }
 
