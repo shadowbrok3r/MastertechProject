@@ -86,7 +86,7 @@ impl Aesthetix for CarlDark {
 
 
 use eframe::egui::style::{Interaction, ScrollStyle, Selection, Spacing, WidgetVisuals, Widgets};
-use eframe::egui::{FontFamily, FontId, Margin, Rounding, Stroke, Style, TextStyle, Vec2, Visuals};
+use eframe::egui::{FontFamily, FontId, Margin, CornerRadius, Stroke, Style, TextStyle, Vec2, Visuals};
 use eframe::epaint;
 
 /// Every custom egui theme that wishes to use the egui aesthetix crate must implement this trait.
@@ -253,7 +253,7 @@ pub trait Aesthetix {
                 width: 1.0,
                 color: self.bg_auxiliary_color_visuals(),
             },
-            rounding: Rounding {
+            rounding: eframe::egui::CornerRadius {
                 nw: self.rounding_visuals(),
                 ne: self.rounding_visuals(),
                 sw: self.rounding_visuals(),
@@ -276,7 +276,7 @@ pub trait Aesthetix {
                 width: 0.0,
                 color: Color32::from_rgba_premultiplied(0, 0, 0, 0),
             },
-            rounding: Rounding {
+            rounding: eframe::egui::CornerRadius {
                 nw: self.rounding_visuals(),
                 ne: self.rounding_visuals(),
                 sw: self.rounding_visuals(),
@@ -299,7 +299,7 @@ pub trait Aesthetix {
                 width: 1.0,
                 color: self.bg_triage_color_visuals(),
             },
-            rounding: Rounding {
+            rounding: eframe::egui::CornerRadius {
                 nw: self.rounding_visuals(),
                 ne: self.rounding_visuals(),
                 sw: self.rounding_visuals(),
@@ -322,7 +322,7 @@ pub trait Aesthetix {
                 width: 1.0,
                 color: self.bg_primary_color_visuals(),
             },
-            rounding: Rounding {
+            rounding: eframe::egui::CornerRadius {
                 nw: self.rounding_visuals(),
                 ne: self.rounding_visuals(),
                 sw: self.rounding_visuals(),
@@ -345,7 +345,7 @@ pub trait Aesthetix {
                 width: 1.0,
                 color: self.bg_triage_color_visuals(),
             },
-            rounding: Rounding {
+            rounding: eframe::egui::CornerRadius {
                 nw: self.rounding_visuals(),
                 ne: self.rounding_visuals(),
                 sw: self.rounding_visuals(),
@@ -424,7 +424,7 @@ pub trait Aesthetix {
                 code_bg_color: self.bg_auxiliary_color_visuals(),
                 warn_fg_color: self.fg_warn_text_color_visuals(),
                 error_fg_color: self.fg_error_text_color_visuals(),
-                window_rounding: Rounding {
+                window_rounding: eframe::egui::CornerRadius {
                     nw: self.rounding_visuals(),
                     ne: self.rounding_visuals(),
                     sw: self.rounding_visuals(),
@@ -440,7 +440,7 @@ pub trait Aesthetix {
                     width: 1.0,
                     color: self.bg_contrast_color_visuals(),
                 },
-                menu_rounding: Rounding {
+                menu_rounding: eframe::egui::CornerRadius {
                     nw: self.rounding_visuals(),
                     ne: self.rounding_visuals(),
                     sw: self.rounding_visuals(),

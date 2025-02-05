@@ -1,4 +1,4 @@
-use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
+use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, CornerRadius, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use database::{schema::{utilities::{compress_data, query_id}, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
@@ -508,15 +508,15 @@ impl WebConsoleFrontend {
                     let margin = 8.0;
                     
                     // ui.set_min_width(min_width);
-                    let rnding = Rounding {
+                    let rnding = eframe::egui::CornerRadius {
                         ne: if is_message_from_myself { 0.0 } else { rounding },
                         nw: if is_message_from_myself { rounding } else { 0.0 },
                         se: rounding,
                         sw: rounding,
                     };
 
-                    let response = Frame::none()
-                        .rounding(rnding)
+                    let response = Frame::new()
+                        .corner_radius(rnding)
                         .inner_margin(margin)
                         .outer_margin(margin)
                         .fill(msg_color)
@@ -533,9 +533,9 @@ impl WebConsoleFrontend {
                                 shadow.color = Color32::from_rgb(40,36,40);
                                 let color = Color32::from_rgb(10,10,12);
 
-                                let note_frame = Frame::none().fill(color)
+                                let note_frame = Frame::new().fill(color)
                                     .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke)
-                                    .inner_margin(Margin::same(0.)).rounding(rnding);
+                                    .inner_margin(Margin::same(0.)).corner_radius(rnding);
 
                                 let (from, txt) = if item.contains("Cmd"){
                                     let text: (&str, &str) = item.split_once(":").unwrap_or(("Command", ""));

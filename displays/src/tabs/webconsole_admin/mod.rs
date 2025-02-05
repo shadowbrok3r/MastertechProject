@@ -1,4 +1,4 @@
-use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
+use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, CornerRadius, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
 use crate::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
 use database::{schema::{utilities::get_connected_clients, ConnectedClient}, WS_MASTER_URL};
 use egui_extras::{Size, Strip, StripBuilder};
@@ -299,7 +299,7 @@ impl WebConsoleLayout {
             .fill(style.visuals.window_fill) // (Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(8.0, 1.0))
-            .rounding(style.visuals.window_rounding)
+            .corner_radius(style.visuals.window_rounding)
             .stroke(style.visuals.window_stroke);
 
         let mut idx = 0;
@@ -329,7 +329,7 @@ impl WebConsoleLayout {
                                     .size(13.0).monospace()
                                 )
                                 .fill(style.visuals.noninteractive().bg_fill)
-                                .rounding(Rounding::same(2.))
+                                .corner_radius(eframe::egui::CornerRadius::same(2.))
                                 .min_size(Vec2::new(60.0, 15.0))
                                 .ui(ui);
 
@@ -428,7 +428,7 @@ impl WebConsoleLayout {
         let column_frame = Frame::default()
             .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(6.0))
-            .rounding(style.visuals.menu_rounding)
+            .corner_radius(style.visuals.menu_rounding)
             .stroke(style.visuals.window_stroke);
 
         let mut inputs = BTreeSet::new();
@@ -479,7 +479,7 @@ impl WebConsoleLayout {
                             
                                     let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 14))
                                         .inner_margin(Margin::same(4.0)).outer_margin(Margin::symmetric(5.0, 3.0))
-                                        .rounding(Rounding::same(10.0)).stroke(Stroke::new(0.5, color));
+                                        .corner_radius(eframe::egui::CornerRadius::same(10.0)).stroke(Stroke::new(0.5, color));
                             
                                     let undock = if let Some(undock) = self.undock_client.get(&connection_string){
                                         undock
@@ -519,7 +519,7 @@ impl WebConsoleLayout {
             .fill(Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(3.0, 0.0))
-            .rounding(Rounding::same(5.0))
+            .corner_radius(eframe::egui::CornerRadius::same(5.0))
             .stroke(style.visuals.window_stroke)
             .show(ui, |ui| 
         {
@@ -671,14 +671,14 @@ impl SharedContext {
             .outer_margin(Margin::same(0.0))
             .fill(Color32::from_rgb(17,17,19))
             .stroke(Stroke::new(0.7, Color32::from_additive_luminance(150)))
-            .rounding(Rounding::same(5.0)) ;
+            .corner_radius(eframe::egui::CornerRadius::same(5.0)) ;
 
         let side_panel_frame = Frame::default()
             .inner_margin(Margin::same(3.0))
             .outer_margin(Margin::same(0.0))
             .fill(ui.style().visuals.extreme_bg_color)
             .stroke(Stroke::new(0.7, Color32::from_additive_luminance(150)))
-            .rounding(Rounding::same(5.0)) ;
+            .corner_radius(eframe::egui::CornerRadius::same(5.0)) ;
 
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 4.0);
 

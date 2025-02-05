@@ -1,5 +1,5 @@
 use database::{live_data::listen_data, schema::{helper_traits::UserHelper, utilities::{get_connected_clients, get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store, CONNECTED_CLIENT_TABLE}, DATABASE};
-use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, Rounding, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
+use eframe::egui::{menu, Align, ComboBox, Context, Frame, Key, Margin, ProgressBar, CornerRadius, ScrollArea, Separator, TextEdit, Button, Color32, FontId, Layout, RichText, Stroke, TopBottomPanel, Widget};
 use crate::app_state::{default_tree, AppState, MainPages, MtechServer};
 use displays::ui_tools::autocomplete::AutoCompleteTextEdit;
 use crate::pages::downloads_page::get_github_releases;
@@ -179,7 +179,7 @@ impl MtechServer {
             
                     ui.label("Show tasks in: ");
                     ui.add_space(5.);
-                    Frame::default().stroke(ui.style().visuals.window_stroke).rounding(Rounding::same(5.0)).show(ui, |ui| {
+                    Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5.0)).show(ui, |ui| {
                         ComboBox::new("Store_Selection", "")                    
                         .width(60.)
                         .selected_text(selected_text)
@@ -375,9 +375,9 @@ impl MtechServer {
                                         };
 
                                     if let Some(notification) = notifications.get_mut(row) {
-                                        eframe::egui::Frame::none()
+                                        eframe::egui::Frame::new()
                                             .fill(ui.style().visuals.extreme_bg_color)
-                                            .rounding(Rounding::same(12.0))
+                                            .corner_radius(eframe::egui::CornerRadius::same(12.0))
                                             .inner_margin(Margin::same(10.0))
                                             .outer_margin(Margin::same(5.0))
                                             .stroke(Stroke::new(
@@ -608,9 +608,9 @@ fn show_notification(
             let after = &notification_description[pos + task_name.len()..];
 
             // Display the text parts with different formatting
-            eframe::egui::Frame::none()
+            eframe::egui::Frame::new()
                 .fill(ui.style().visuals.window_fill)
-                .rounding(Rounding::same(12.0))
+                .corner_radius(eframe::egui::CornerRadius::same(12.0))
                 .inner_margin(Margin::same(15.0))
                 .outer_margin(Margin::same(5.0))
                 .show(ui, |ui| {

@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, CornerRadius, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use crate::{channel_manager::ChannelManager, tabs::resource_monitor::ResourceMonitor, virtual_filesystem::{FileSysHelper, FileSystem}, Cmd, FileSystemAction, PlatformSpawner, Spawner};
 use database::{schema::{ConnectedClient, Node, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
@@ -481,7 +481,7 @@ impl WebSocketClient {
             ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             
             let style = ui.style_mut();
-            let default_rounding = Rounding::same(2.0);
+            let default_rounding = eframe::egui::CornerRadius::same(2.0);
             style.visuals.widgets.inactive.rounding = default_rounding;
             style.visuals.widgets.active.rounding = default_rounding;
             style.visuals.widgets.hovered.rounding = default_rounding;
@@ -583,7 +583,7 @@ impl WebSocketClient {
         
         });
 
-        let central_panel_frame = Frame::none().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
+        let central_panel_frame = Frame::new().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
             .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
             .inner_margin(Margin::same(6.0));
 
@@ -657,15 +657,15 @@ impl WebSocketClient {
                         let margin = 8.0;
                         
                         // ui.set_min_width(min_width);
-                        let rnding = Rounding {
+                        let rnding = eframe::egui::CornerRadius {
                             ne: if is_message_from_myself { 0.0 } else { rounding },
                             nw: if is_message_from_myself { rounding } else { 0.0 },
                             se: rounding,
                             sw: rounding,
                         };
     
-                        let response = Frame::none()
-                            .rounding(rnding)
+                        let response = Frame::new()
+                            .corner_radius(rnding)
                             .inner_margin(margin)
                             .outer_margin(margin)
                             .fill(msg_color)
@@ -686,9 +686,9 @@ impl WebSocketClient {
     
                                     let color = Color32::from_rgb(10,10,12);
     
-                                    let note_frame = Frame::none().fill(color)
+                                    let note_frame = Frame::new().fill(color)
                                         .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-                                        .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
+                                        .inner_margin(Margin::symmetric(6.0, 10.0)).corner_radius(rnding);
     
                                     let (from, txt) = if item.from.eq("You"){
                                         (
@@ -718,7 +718,7 @@ impl WebSocketClient {
                                             ui.add_space(max_msg_width / 1.1);
 
                                             let copy_btn = Button::new(RichText::new("🗐").weak().color(Color32::LIGHT_RED))
-                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
+                                                .corner_radius(eframe::egui::CornerRadius::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
                                                 .on_hover_text(RichText::new("Copy Command"));
 
                                             if copy_btn.clicked(){
@@ -739,7 +739,7 @@ impl WebSocketClient {
 
                                             ui.add_space(max_msg_width / 1.1);
                                             let btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
-                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                                .corner_radius(eframe::egui::CornerRadius::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
 
                                             if btn.clicked(){
                                                 ui.ctx().copy_text(item.message.clone());
@@ -749,7 +749,7 @@ impl WebSocketClient {
                                     note_frame.show(ui, |ui| {
                                         ui.set_width(ui.available_width());
                                         let style = ui.style_mut();
-                                        style.visuals.widgets.inactive.rounding = Rounding::same(2.0);
+                                        style.visuals.widgets.inactive.rounding = eframe::egui::CornerRadius::same(2.0);
                                         ui.label(txt);
                                         // egui_extras::syntax_highlighting::code_view_ui(
                                         //     ui, 

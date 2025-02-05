@@ -73,7 +73,7 @@ use eframe::egui::{CentralPanel, WidgetText};
 use eframe::egui::epaint::RectShape;
 use eframe::egui::{
     Align2, Area, Color32, Context, Direction, Frame, Id, Order, Pos2, Response, RichText,
-    Rounding, Shape, Stroke, Ui,
+    eframe::egui::CornerRadius, Shape, Stroke, Ui,
 };
 
 pub const INFO_COLOR: Color32 = Color32::from_rgb(0, 155, 255);
@@ -275,7 +275,7 @@ fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
 }
 
 fn progress_bar(ui: &mut Ui, response: &Response, toast: &Toast) {
-    let rounding = Rounding {
+    let rounding = eframe::egui::CornerRadius {
         nw: 0.0,
         ne: 0.0,
         ..ui.visuals().window_rounding

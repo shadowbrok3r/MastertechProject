@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use database::schema::TaskPayload;
-use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, Rounding, TextFormat, Ui, Widget};
+use eframe::egui::{text::LayoutJob, Button, Color32, FontId, Margin, RichText, CornerRadius, TextFormat, Ui, Widget};
 use log::info;
 use regex::Regex;
 
@@ -63,9 +63,9 @@ pub fn show_notification(
             let after = &notification_description[pos + task_name.len()..];
 
             // Display the text parts with different formatting
-            eframe::egui::Frame::none()
+            eframe::egui::Frame::new()
                 .fill(ui.style().visuals.window_fill)
-                .rounding(Rounding::same(12.0))
+                .corner_radius(eframe::egui::CornerRadius::same(12.0))
                 .inner_margin(Margin::same(15.0))
                 .outer_margin(Margin::same(5.0))
                 .show(ui, |ui| {

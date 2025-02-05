@@ -12,7 +12,7 @@ use crate::app_state::MtechServer;
 // use displays::{ui_tools::toasts::{Toast, ToastKind, ToastOptions}, FilterClients};
 // use eframe::egui::{
 //     text::LayoutJob, Align, Button, CentralPanel, CollapsingHeader, Color32, Context, FontFamily,
-//     FontId, Frame, Layout, Margin, RichText, Rounding, ScrollArea, Stroke, TextEdit, TextFormat,
+//     FontId, Frame, Layout, Margin, RichText, CornerRadius, ScrollArea, Stroke, TextEdit, TextFormat,
 //     TopBottomPanel, Ui, Vec2, Widget, WidgetText,
 // };
 // use log::info;
@@ -29,7 +29,7 @@ impl MtechServer {
         //     .fill(Color32::from_rgb(13, 13, 15))
         //     .inner_margin(Margin::same(4.0))
         //     .outer_margin(Margin::symmetric(3.0, 0.0))
-        //     .rounding(Rounding::same(5.0))
+        //     .corner_radius(eframe::egui::CornerRadius::same(5.0))
         //     .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
 
         // let mut client = client.clone();
@@ -186,7 +186,7 @@ impl MtechServer {
         //     .inner_margin(Margin::same(6.0))
         //     .outer_margin(Margin::same(6.0))
         //     .fill(Color32::from_rgb(17, 17, 19))
-        //     .rounding(Rounding::same(5.0));
+        //     .corner_radius(eframe::egui::CornerRadius::same(5.0));
 
         // let central_panel_frame = Frame::default()
         //     .inner_margin(Margin::same(20.0))
@@ -242,7 +242,7 @@ impl MtechServer {
         //     });
         // }
 
-        // // ui.style_mut().visuals.window_rounding = Rounding::same(10.);
+        // // ui.style_mut().visuals.window_rounding = eframe::egui::CornerRadius::same(10.);
         // CentralPanel::default()
         //     .frame(central_panel_frame)
         //     .show(ctx, |ui| {
@@ -289,7 +289,7 @@ impl MtechServer {
         //                     .fill(Color32::from_rgb(12, 12, 14))
         //                     .inner_margin(Margin::same(4.0))
         //                     .outer_margin(Margin::symmetric(5.0, 3.0))
-        //                     .rounding(Rounding::same(10.0))
+        //                     .corner_radius(eframe::egui::CornerRadius::same(10.0))
         //                     .stroke(Stroke::new(1.0, connected_color));
 
         //                 let undock = if let Some(undock) =

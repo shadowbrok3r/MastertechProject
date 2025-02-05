@@ -1,5 +1,5 @@
 
-use eframe::egui::{Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, RichText, Rounding, Shadow, Ui, Widget, Window};
+use eframe::egui::{Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, RichText, CornerRadius, Shadow, Ui, Widget, Window};
 use crate::{chats::ChatView, DisplayModal};
 use task_modal::{ModalAction, TaskModal};
 use create_task_modal::CreateTaskModal;
@@ -55,7 +55,7 @@ impl ModalWindow for ModalType {
                 .inner_margin(Margin::symmetric(4., 4.))
                 .stroke(style.window_stroke)
                 .fill(style.window_fill)
-                .rounding(style.menu_rounding)
+                .corner_radius(style.menu_rounding)
                 .shadow(shadow)
             )
             .pivot(Align2::CENTER_TOP)
@@ -110,7 +110,7 @@ pub trait ModalWindow {
         let t: RichText = RichText::new(title).heading().strong();
         Frame::default()
             .fill(Color32::from_rgb(20, 20, 25))
-            .rounding(Rounding{nw: 15.0,ne: 15.0,sw: 0.0,se: 0.0})
+            .corner_radius(eframe::egui::CornerRadius{nw: 15.0,ne: 15.0,sw: 0.0,se: 0.0})
             .inner_margin(Margin::same(0.0))
             .outer_margin(Margin::same(0.0))
             .show(ui, |ui| 
@@ -119,7 +119,7 @@ pub trait ModalWindow {
             .with_layout(
                 Layout::top_down(Align::Max), 
             |ui|{
-                if Button::new(" X ").rounding(Rounding::same(10.0))
+                if Button::new(" X ").corner_radius(eframe::egui::CornerRadius::same(10.0))
                 .fill(Color32::BLACK)
                     .ui(ui)
                     .clicked(){
