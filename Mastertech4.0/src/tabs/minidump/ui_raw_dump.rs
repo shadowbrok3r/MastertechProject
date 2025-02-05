@@ -28,7 +28,7 @@ impl MiniDumpApp {
 
     fn ui_raw_dump_good(&mut self, ui: &mut Ui, dump: &Minidump<Mmap>) {
         egui::SidePanel::left("streams")
-            .frame(Frame::none())
+            .frame(Frame::new())
             .show_inside(ui, |ui| {
                 self.ui_raw_dump_streams(ui, dump);
             });

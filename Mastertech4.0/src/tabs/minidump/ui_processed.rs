@@ -70,12 +70,12 @@ impl MiniDumpApp {
         egui::TopBottomPanel::top("info")
             .resizable(true)
             .default_height((ui.available_height() / 2.0).round())
-            .frame(Frame::none())
+            .frame(Frame::new())
             .show_inside(ui, |ui| {
                 self.ui_processed_data(ui, ctx, state);
             });
         egui::TopBottomPanel::bottom("progress")
-            .frame(Frame::none())
+            .frame(Frame::new())
             .show_inside(ui, |ui| {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
@@ -110,7 +110,7 @@ impl MiniDumpApp {
                 });
             });
         egui::CentralPanel::default()
-            .frame(Frame::none())
+            .frame(Frame::new())
             .show_inside(ui, |ui| {
                 ui.separator();
 
@@ -128,7 +128,7 @@ impl MiniDumpApp {
             .unwrap_or_default();
         egui::SidePanel::left("overall info")
             .default_width((ui.available_width() / 2.0).round())
-            .frame(Frame::none())
+            .frame(Frame::new())
             .show_inside(ui, |ui| {
                 ScrollArea::vertical().show(ui, |ui| {
                     ui.heading("Process");
@@ -181,7 +181,7 @@ impl MiniDumpApp {
                 });
             });
         egui::CentralPanel::default()
-            .frame(Frame::none())
+            .frame(Frame::new())
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("Thread ");

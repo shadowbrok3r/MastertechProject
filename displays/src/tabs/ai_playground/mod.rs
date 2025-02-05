@@ -1,5 +1,5 @@
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, Rounding, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, CornerRadius, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
 };
 use crate::{ai::{oa_client::new_oa_client, tool_call::{assistant_call_with_response_ai_tools, get_or_retrieve_thread}}, app_state::SharedContext, markdown_editor::viewer, openai::Threads, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{code_view_ui, CodeTheme};
@@ -177,7 +177,7 @@ impl SharedContext {
 
                     ui.add_space(10.);
                     let new_chat = Button::new("New ➕")
-                        .rounding(Rounding::same(25.0))
+                        .corner_radius(eframe::egui::CornerRadius::same(25.0))
                         .min_size(Vec2::new(120., 24.))
                         .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
                         .ui(ui);
@@ -267,7 +267,7 @@ impl AiPlayground {
             ui.horizontal_centered(|ui| {
 
                 let add_media = Button::new(RichText::new("🖻").heading())
-                    .rounding(Rounding::same(25.0))
+                    .corner_radius(eframe::egui::CornerRadius::same(25.0))
                     .min_size(Vec2::new(60., ui.available_height()/1.5))
                     .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
                     .ui(ui);
@@ -299,7 +299,7 @@ impl AiPlayground {
                 ui.add_space(10.);
 
                 let submit = Button::new(RichText::new("⮫").heading())
-                    .rounding(Rounding::same(25.0))
+                    .corner_radius(eframe::egui::CornerRadius::same(25.0))
                     .min_size(Vec2::new(60., ui.available_height()/1.5))
                     .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
                     .ui(ui)
@@ -419,7 +419,7 @@ impl AiPlayground {
             let margin = 8.0;
 
             // ui.set_min_width(min_width);
-            let rnding = Rounding {
+            let rnding = eframe::egui::CornerRadius {
                 ne: if is_message_from_myself {
                     0.0
                 } else {
@@ -434,8 +434,8 @@ impl AiPlayground {
                 sw: rounding,
             };
 
-            let response = Frame::none()
-                .rounding(rnding)
+            let response = Frame::new()
+                .corner_radius(rnding)
                 .inner_margin(margin)
                 .outer_margin(margin)
                 .fill(msg_color)
@@ -454,7 +454,7 @@ impl AiPlayground {
 
                         let color = Color32::from_rgb(10, 10, 12);
 
-                        let note_frame = Frame::none()
+                        let note_frame = Frame::new()
                             .fill(color)
                             .shadow(shadow)
                             .stroke(
@@ -462,7 +462,7 @@ impl AiPlayground {
                             )
                             .outer_margin(b_panel_marg)
                             .inner_margin(Margin::symmetric(6.0, 10.0))
-                            .rounding(rnding);
+                            .corner_radius(rnding);
 
                         let from = match item.from {
                             SentFrom::Me => {
@@ -500,7 +500,7 @@ impl AiPlayground {
                                             .weak()
                                             .color(Color32::LIGHT_RED),
                                     )
-                                    .rounding(Rounding::same(f32::INFINITY))
+                                    .corner_radius(eframe::egui::CornerRadius::same(f32::INFINITY))
                                     .small()
                                     .min_size(Vec2::new(30.0, 14.0))
                                     .ui(ui);
@@ -536,7 +536,7 @@ impl AiPlayground {
                                             .weak()
                                             .color(Color32::LIGHT_RED),
                                     )
-                                    .rounding(Rounding::same(f32::INFINITY))
+                                    .corner_radius(eframe::egui::CornerRadius::same(f32::INFINITY))
                                     .small()
                                     .min_size(Vec2::new(30.0, 14.0))
                                     .ui(ui);

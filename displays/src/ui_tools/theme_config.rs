@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 use database::DATABASE;
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, CursorIcon, DragValue, FontFamily, FontId, Layout, Rounding, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, CursorIcon, DragValue, FontFamily, FontId, Layout, CornerRadius, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::to_vec;
@@ -75,7 +75,7 @@ pub struct ThemeConfig {
     /// Window stroke color
     pub window_stroke_color: Color32,
     /// Uniform rounding for visuals
-    pub rounding: Rounding,
+    pub rounding: eframe::egui::CornerRadius,
 }
 
 impl Default for ThemeConfig {
@@ -110,7 +110,7 @@ impl Default for ThemeConfig {
             warn_color: Color32::from_rgb(191, 33, 101),
             link_color: Color32::from_rgb(155, 104, 227),
             window_stroke_color: Color32::from_rgb(42, 195, 222),
-            rounding: Rounding::same(4.0),
+            rounding: eframe::egui::CornerRadius::same(4.0),
         }
     }
 }
@@ -485,9 +485,9 @@ impl ThemeConfig {
             ui.separator();
             ui.add_space(10.);
 
-            // Rounding
+            // eframe::egui::CornerRadius
             ui.vertical_centered(|ui| {
-                ui.heading("Rounding:");
+                ui.heading("eframe::egui::CornerRadius:");
             });
             
             ui.add(DragValue::new(&mut self.rounding.nw).speed(0.1).prefix("NW:"));

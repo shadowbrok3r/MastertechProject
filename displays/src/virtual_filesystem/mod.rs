@@ -1,4 +1,4 @@
-use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, Rounding, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{collapsing_header::CollapsingState, popup_below_widget, Align, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, PopupCloseBehavior::CloseOnClickOutside, ProgressBar, RichText, ScrollArea, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use rusty_s3::{Bucket, Credentials, S3Action, actions::{CompleteMultipartUpload, CreateMultipartUpload, UploadPart, GetObject}};
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use reqwest::{header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG}, Client, Url};
@@ -278,19 +278,19 @@ impl FileSystem {
     pub fn display(&mut self, ui: &mut Ui){
         let size = ui.available_size_before_wrap();
         let mut inner_margin_top = Margin::default();
-        inner_margin_top.bottom = 5.0;
+        inner_margin_top.bottom = 5;
 
         let btm_panel_frame = Frame::default()
             .inner_margin(inner_margin_top)
-            .rounding(Rounding::same(10.0));
+            .corner_radius(eframe::egui::CornerRadius::same(10));
 
         let top_panel_frame = Frame::default()
-            .outer_margin(Margin::symmetric(5., 2.));
+            .outer_margin(Margin::symmetric(5, 2));
 
         let panel_frame = Frame::default()
             .fill(Color32::from_rgb(12, 12, 14))
-            .inner_margin(Margin::same(6.))
-            .rounding(Rounding::same(10.0))
+            .inner_margin(Margin::same(6))
+            .corner_radius(eframe::egui::CornerRadius::same(10))
             .stroke(Stroke::new(1.0, Color32::from_additive_luminance(50)));
         
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 3.0);

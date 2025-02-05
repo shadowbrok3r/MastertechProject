@@ -1,4 +1,4 @@
-use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, PopupCloseBehavior, RichText, Rounding, ScrollArea, Spinner, Style, TextEdit, Ui, Vec2, Widget};
+use eframe::egui::{popup_below_widget, Align, Button, Color32, ComboBox, Frame, Layout, Margin, PopupCloseBehavior, RichText, CornerRadius, ScrollArea, Spinner, Style, TextEdit, Ui, Vec2, Widget};
 use serde::Serialize;
 use crate::{Displayable, FilterTasks, SortDirection, Sortable, TaskUiActions};
 use database::schema::{Record, TaskPayload, User};
@@ -159,7 +159,7 @@ impl TaskLayout {
             .fill(style.visuals.window_fill) // (Color32::from_rgb(13, 13, 15))
             .inner_margin(Margin::same(4.0))
             .outer_margin(Margin::symmetric(8.0, 1.0))
-            .rounding(style.visuals.window_rounding)
+            .corner_radius(style.visuals.window_rounding)
             .stroke(style.visuals.window_stroke);
 
         let mut idx = 0;
@@ -204,7 +204,7 @@ impl TaskLayout {
                                     .size(13.0).monospace()
                                 )
                                 .fill(style.visuals.noninteractive().bg_fill)
-                                .rounding(Rounding::same(2.))
+                                .corner_radius(eframe::egui::CornerRadius::same(2.))
                                 .min_size(Vec2::new(60.0, 15.0))
                                 .ui(ui);
 
@@ -276,7 +276,7 @@ impl TaskLayout {
                                 RichText::new("✚")
                                     .color(style.visuals.warn_fg_color)
                                 )
-                                .rounding(style.visuals.menu_rounding)
+                                .corner_radius(style.visuals.menu_rounding)
                                 .fill(Color32::from_rgb(22,22,22))
                                 .min_size(Vec2::new(30.0, 15.0))
                                 .ui(ui);
@@ -300,7 +300,7 @@ impl TaskLayout {
                                         RichText::new("Create Task")
                                             .color(ui.style().visuals.warn_fg_color)
                                         )
-                                        .rounding(ui.style().visuals.menu_rounding)
+                                        .corner_radius(ui.style().visuals.menu_rounding)
                                         .fill(Color32::from_rgb(22,22,22))
                                         .min_size(Vec2::new(30.0, 15.0))
                                         .ui(ui);
@@ -315,7 +315,7 @@ impl TaskLayout {
                                     //     RichText::new("Create new status")
                                     //         .color(ui.style().visuals.warn_fg_color)
                                     //     )
-                                    //     .rounding(ui.style().visuals.menu_rounding)
+                                    //     .corner_radius(ui.style().visuals.menu_rounding)
                                     //     .fill(Color32::from_rgb(22,22,22))
                                     //     .min_size(Vec2::new(30.0, 15.0))
                                     //     .ui(ui);
@@ -406,7 +406,7 @@ impl TaskLayout {
         let column_frame = Frame::default()
             .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
             .inner_margin(Margin::same(6.0))
-            .rounding(style.visuals.menu_rounding)
+            .corner_radius(style.visuals.menu_rounding)
             .stroke(style.visuals.window_stroke);
 
         let mut inputs = BTreeSet::new();

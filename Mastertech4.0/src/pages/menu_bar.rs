@@ -1,6 +1,6 @@
 
 use database::{schema::{helper_traits::UserHelper, utilities::{get_notifications, get_store_users, get_tasks_for_store, NotificationMod}, Notification, Store}, DATABASE};
-use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, Margin, ProgressBar, RichText, Rounding, ScrollArea, Separator, Stroke, TopBottomPanel, Vec2, Widget};
+use eframe::egui::{Button, Color32, ComboBox, Context, FontId, Frame, Layout, Margin, ProgressBar, RichText, CornerRadius, ScrollArea, Separator, Stroke, TopBottomPanel, Vec2, Widget};
 use crate::{app_state::default_tree, tabs::github::self_updater::run};
 use crate::app_state::{AppState, MasterTechApp};
 use displays::ui_tools::show_notification;
@@ -208,9 +208,9 @@ impl MasterTechApp {
                                         };
                     
                                     if let Some(notification) = notifications.get_mut(row) {
-                                        eframe::egui::Frame::none()
+                                        eframe::egui::Frame::new()
                                             .fill(ui.style().visuals.extreme_bg_color)
-                                            .rounding(Rounding::same(12.0))
+                                            .corner_radius(eframe::egui::CornerRadius::same(12.0))
                                             .inner_margin(Margin::same(10.0))
                                             .outer_margin(Margin::same(5.0))
                                             .stroke(Stroke::new(
@@ -333,7 +333,7 @@ impl MasterTechApp {
                             _ => Store::RIV.as_str(),
                         };
                 
-                        Frame::default().stroke(ui.style().visuals.window_stroke).rounding(Rounding::same(5.0)).show(ui, |ui| {
+                        Frame::default().stroke(ui.style().visuals.window_stroke).corner_radius(eframe::egui::CornerRadius::same(5.0)).show(ui, |ui| {
                             ComboBox::new("Store_Selection", "")                    
                             .width(60.)
                             .selected_text(selected_text)

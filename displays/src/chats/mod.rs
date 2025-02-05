@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, Rounding, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, CornerRadius, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{helper_traits::TaskNotePayloadHelper, TaskNotePayload, User}};
 use surrealdb::RecordId;
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
@@ -99,13 +99,13 @@ impl ChatView {
             }
         }
 
-        let b_panel_marg = Margin::symmetric(5., 10.);
+        let b_panel_marg = Margin::symmetric(5, 10);
 
         let markdown_editor = &mut self.markdown_editor;
         markdown_editor.inputs = self.users.clone();
-        let central_panel_frame = Frame::none().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
+        let central_panel_frame = Frame::new().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
             .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-            .inner_margin(Margin::same(6.0));
+            .inner_margin(Margin::same(6));
 
         let task_id = self.task_id.clone();
 
@@ -187,16 +187,16 @@ impl ChatView {
             ScrollArea::vertical()
                 .animated(true)
                 .max_height(ui.available_height())
-                .max_width(f32::INFINITY)
+                .max_width(255.)
                 .auto_shrink(false)
                 .stick_to_bottom(true)
                 .show(ui, |ui| 
             {
 
                 let max_msg_width = ui.available_width() / 2.5;
-                let fixed_height = 50.0;
-                let min_width = 200.0;
-                let other = min_width - 30.0;
+                let fixed_height = 50.;
+                let min_width = 200.;
+                let other = min_width - 30.;
                 self.messages.sort_by_key(|message| 
                     DateTime::parse_from_rfc3339(&message.created_at.clone())
                         .unwrap_or_default()
@@ -228,19 +228,19 @@ impl ChatView {
                     ui.with_layout(layout, |ui| {
                         ui.set_max_width(max_msg_width);
 
-                        let rounding = 8.0;
-                        let margin = 8.0;
+                        let rounding = 8;
+                        let margin = 8;
                         
                         // ui.set_min_width(min_width);
-                        let rnding = Rounding {
-                            ne: if is_message_from_myself { 0.0 } else { rounding },
-                            nw: if is_message_from_myself { rounding } else { 0.0 },
+                        let rnding = eframe::egui::CornerRadius {
+                            ne: if is_message_from_myself { 0 } else { rounding },
+                            nw: if is_message_from_myself { rounding } else { 0 },
                             se: rounding,
                             sw: rounding,
                         };
 
-                        let response = Frame::none()
-                            .rounding(rnding)
+                        let response = Frame::new()
+                            .corner_radius(rnding)
                             .inner_margin(margin)
                             .outer_margin(margin)
                             .fill(msg_color)
@@ -251,18 +251,18 @@ impl ChatView {
                                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
 
                                     let mut shadow = Shadow::default();
-                                    shadow.blur = 3.0;
-                                    shadow.spread = 3.0;
+                                    shadow.blur = 3;
+                                    shadow.spread = 3;
                                     shadow.color = Color32::from_rgb(40,36,40);
                                     
                                     let mut b_panel_marg = Margin::default();
-                                    b_panel_marg.top = 3.0;
+                                    b_panel_marg.top = 3;
 
                                     let color = Color32::from_rgb(10,10,12);
 
-                                    let note_frame = Frame::none().fill(color)
+                                    let note_frame = Frame::new().fill(color)
                                         .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-                                        .inner_margin(Margin::symmetric(6.0, 10.0)).rounding(rnding);
+                                        .inner_margin(Margin::symmetric(6, 10)).corner_radius(rnding);
 
                                     let from = RichText::new(&item.username).strong().monospace().color(Color32::LIGHT_BLUE);
 
@@ -272,24 +272,24 @@ impl ChatView {
                                             Align::Min,
                                         ), |ui| {
                                             // ui.set_max_width(max_msg_width);
-                                            ui.add_space(8.0);
-                                            Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30.0, 20.0)).sense(Sense::hover()).ui(ui);
+                                            ui.add_space(8.);
+                                            Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30., 20.)).sense(Sense::hover()).ui(ui);
                                             
-                                            ui.add_space(20.0);
+                                            ui.add_space(20.);
                                             let parsed_date = DateTime::parse_from_rfc3339(&item.created_at.clone())
                                                 .unwrap_or_default()
                                                 .with_timezone(&Local);
                                         
                                             let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
                                             ui.label(RichText::new(formatted_date).weak());
-                                            ui.add_space(20.0);
+                                            ui.add_space(20.);
                                             ui.add_space(other);
 
                                             let id = &item.id;
 
                                             if self.allow_edit.contains(&id.to_string()) {
                                                 let save_btn = Button::new(RichText::new("Save").weak().color(Color32::LIGHT_RED))
-                                                    .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
 
                                                 if save_btn.clicked(){
                                                     if self.allow_edit.contains(&id.to_string()) {
@@ -308,14 +308,14 @@ impl ChatView {
                                                     self.allow_edit.remove(&id.to_string());
                                                 }
                                                 let cancel_btn = Button::new(RichText::new("Cancel").weak().color(Color32::LIGHT_RED))
-                                                    .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
 
                                                 if cancel_btn.clicked(){
                                                     self.allow_edit.remove(&id.to_string());
                                                 }
                                             } else {
                                                 let edit_btn = Button::new(RichText::new("🖊").weak().color(Color32::LIGHT_RED))
-                                                    .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
+                                                    .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui)
                                                     .on_hover_text(RichText::new("Edit Task Note\nWARNING: This will modify the note in Prestashop AND Master-tech.app"));
 
                                                 if edit_btn.clicked(){
@@ -324,19 +324,19 @@ impl ChatView {
                                             }
 
                                             let copy_btn = Button::new(RichText::new("🗐").weak().color(Color32::LIGHT_RED))
-                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
+                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui)
                                                 .on_hover_text(RichText::new("Copy Task Note"));
 
                                             if copy_btn.clicked(){
                                                 ui.ctx().copy_text(item.note.clone());
                                             }
 
-                                            ui.add_space(6.0);
+                                            ui.add_space(6.);
 
                                             let btn = Button::new(RichText::new("🗙").weak().color(Color32::LIGHT_RED))
-                                                .rounding(Rounding::same(f32::INFINITY))
+                                                .corner_radius(eframe::egui::CornerRadius::same(255))
                                                 .small()
-                                                .min_size(Vec2::new(30.0, 14.0))
+                                                .min_size(Vec2::new(30., 14.))
                                                 .ui(ui)
                                                 .on_hover_text(
                                                     RichText::new("WARNING, this will delete the note from prestashop AND Master-tech.app\nIf this is what you want, DOUBLE CLICK to delete")
@@ -362,9 +362,9 @@ impl ChatView {
                                             Align::Min,
                                         ), |ui| {
                                             // ui.set_max_width(max_msg_width);
-                                            ui.add_space(8.0);
-                                            Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30.0, 20.0)).sense(Sense::hover()).ui(ui);
-                                            ui.add_space(35.0);
+                                            ui.add_space(8.);
+                                            Button::new(from).fill(Color32::TRANSPARENT).min_size(Vec2::new(30., 20.)).sense(Sense::hover()).ui(ui);
+                                            ui.add_space(35.);
                                             let parsed_date = DateTime::parse_from_rfc3339(&item.created_at.clone())
                                                 .unwrap_or_default()
                                                 .with_timezone(&Local);
@@ -372,9 +372,9 @@ impl ChatView {
                                             let formatted_date = parsed_date.format("%Y/%m/%d @ %I:%M%p").to_string();
                                             ui.label(RichText::new(formatted_date).weak());
                                             
-                                            ui.add_space(10.0);
+                                            ui.add_space(10.);
                                             let copy_btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
-                                                .rounding(Rounding::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30., 14.)).ui(ui);
 
                                             if copy_btn.clicked(){
                                                 ui.ctx().copy_text(item.note.clone());
@@ -391,8 +391,8 @@ impl ChatView {
                                             if self.allow_edit.contains(&item.id.to_string()) {
                                                 if let Some(msg) = self.edit_text.get_mut(&item.id.to_string()){
                                                     TextEdit::multiline(&mut msg.note)
-                                                        .margin(Margin::symmetric(10.0, 3.5))
-                                                        .desired_width(f32::INFINITY)
+                                                        .margin(Margin::symmetric(10, 3))
+                                                        .desired_width(255.)
                                                         .show(ui);
                                                 }
                                             } else {

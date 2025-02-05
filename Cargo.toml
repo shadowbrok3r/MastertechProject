@@ -4,8 +4,8 @@ members = [ "MtechServer2.0", "database" , "displays", "Mastertech4.0", "websock
 
 [workspace.dependencies]
 database = { path = "database" }
-eframe = { version="0.30", features=["persistence", "serde",  "default_fonts", "glow"], default-features=false }
-egui_extras = { version = "0.30", features = ["datepicker", "syntect", "serde", "image" ]}
+eframe = { version="0.31", features=["persistence", "serde",  "default_fonts", "glow"], default-features=false }
+egui_extras = { version = "0.31", features = ["datepicker", "syntect", "serde", "image" ]}
 egui_plot = "0.30"
 image = { version = "0.25.5", features = ["jpeg", "png"] }
 surrealdb = { version = "=2.1.4", features = ["protocol-ws"] } 

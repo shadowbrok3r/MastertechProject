@@ -102,7 +102,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
             .drag_to_scroll(false) // Drag is used for selection;
             .striped(true)
             .max_scroll_height(f32::MAX)
-            .sense(Sense::click_and_drag().tap_mut(|s| s.focusable = true))
+            .sense(Sense::click_and_drag()) // .tap_mut(|s| s.is_focusable() == true)
             .header(20., |mut h| {
                 h.set_selected(s.cci_has_focus);
                 h.col(|ui| {
@@ -159,7 +159,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                         if let Some(p) = &painter {
                             p.rect_filled(
                                 resp.rect,
-                                egui::Rounding::ZERO,
+                                eframe::egui::CornerRadius::ZERO,
                                 visual.selection.bg_fill.gamma_multiply(0.2),
                             );
                         }
@@ -184,7 +184,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                         if let Some(p) = &painter {
                             p.rect_filled(
                                 resp.rect,
-                                egui::Rounding::ZERO,
+                                eframe::egui::CornerRadius::ZERO,
                                 visual.selection.bg_fill.gamma_multiply(0.5),
                             );
                         }
@@ -260,7 +260,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
         let table = &mut *self.table;
         let visual = &style.visuals;
         let visible_cols = s.vis_cols().clone();
-        let no_rounding = egui::Rounding::ZERO;
+        let no_rounding = eframe::egui::CornerRadius::ZERO;
 
         let mut actions = Vec::<UiAction>::new();
         let mut edit_started = false;
@@ -464,6 +464,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                                 width: 1.,
                                 color: visual.text_color(),
                             },
+                            egui::StrokeKind::Outside
                         );
                     }
 
@@ -620,7 +621,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
                     .min_size(editing_cell_rect.size())
                     .max_width(editing_cell_rect.width())
                     .title_bar(false)
-                    .frame(egui::Frame::none().rounding(egui::Rounding::same(3.)))
+                    .frame(egui::Frame::new().corner_radius(eframe::egui::CornerRadius::same(3)))
                     .show(ctx, |ui| {
                         ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
                             if let Some(resp) =
@@ -698,9 +699,7 @@ impl<'a, R, V: RowViewer<R>> Renderer<'a, R, V> {
         for cmd in commands {
             match cmd {
                 Command::CcUpdateSystemClipboard(new_content) => {
-                    ctx.output_mut(|x| {
-                        x.copied_text = new_content;
-                    });
+                    ctx.copy_text(new_content);
                 }
                 cmd => {
                     if matches!(cmd, Command::CcCommitEdit) {
