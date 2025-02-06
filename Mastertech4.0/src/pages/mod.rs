@@ -14,14 +14,14 @@ impl MasterTechApp {
         style.separator.color_hovered = Color32::from_rgba_premultiplied(50,93,80,77);
         style.separator.color_dragged = Color32::from_rgba_premultiplied(189,189,189,130);
         style.buttons.add_tab_align = egui_dock::TabAddAlign::Left;
-        style.main_surface_border_rounding.nw = 15.0;
-        style.main_surface_border_rounding.ne = 15.0;
+        style.main_surface_border_rounding.nw = 15;
+        style.main_surface_border_rounding.ne = 15;
         style.buttons.close_tab_color = Color32::from_rgb(191, 33, 101);
         style.tab_bar.hline_color = Color32::DARK_GRAY;
         style.separator.color_idle = Color32::DARK_GRAY;
         style.main_surface_border_stroke = Stroke::new(0.25, Color32::TRANSPARENT);
         style.tab_bar.height = 20.0;
-        style.tab.tab_body.inner_margin = Margin::same(1.);
+        style.tab.tab_body.inner_margin = Margin::same(1);
         
         DockArea::new(&mut self.tree)
             .style(style)

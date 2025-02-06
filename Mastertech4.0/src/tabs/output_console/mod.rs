@@ -75,7 +75,7 @@ impl MastertechContext {
             TextEdit::multiline(&mut self.output_text.to_string())
                 .font(FontId::proportional(10.0))
                 .hint_text("Output")
-                .margin(Margin::symmetric(10., 6.))
+                .margin(Margin::symmetric(10, 6))
                 .layouter(&mut layouter),
         );
     }

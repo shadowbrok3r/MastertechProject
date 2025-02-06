@@ -1,5 +1,5 @@
 use displays::{tabs::webconsole_admin::WebConsoleLayout, ui_tools::theme_config::set_custom_style};
-use eframe::egui::{Color32, Context, Frame, Margin, CornerRadius, Stroke, Vec2, Window};
+use eframe::egui::{Color32, Context, Frame, Margin, Stroke, Vec2, Window};
 use crate::app_state::{AppState, MainPages, MtechServer};
 use egui_dock::DockState;
 use log::info;
@@ -95,9 +95,9 @@ impl eframe::App for MtechServer {
 
                     let column_frame = Frame::default()
                         .fill(Color32::from_rgb(12, 12, 14))
-                        .inner_margin(Margin::same(4.0))
-                        .outer_margin(Margin::symmetric(5.0, 3.0))
-                        .corner_radius(eframe::egui::CornerRadius::same(10.0))
+                        .inner_margin(Margin::same(4))
+                        .outer_margin(Margin::symmetric(5, 3))
+                        .corner_radius(eframe::egui::CornerRadius::same(10))
                         .stroke(Stroke::new(1.0, color));
 
                     Window::new(&client.connection_string)

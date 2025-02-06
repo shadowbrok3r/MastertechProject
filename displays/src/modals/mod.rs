@@ -1,5 +1,5 @@
 
-use eframe::egui::{Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, RichText, CornerRadius, Shadow, Ui, Widget, Window};
+use eframe::egui::{Align, Align2, Button, Color32, Context, Frame, Key, Layout, Margin, RichText, Shadow, Ui, Widget, Window};
 use crate::{chats::ChatView, DisplayModal};
 use task_modal::{ModalAction, TaskModal};
 use create_task_modal::CreateTaskModal;
@@ -37,8 +37,8 @@ impl ModalWindow for ModalType {
         let mut close_requested = false; // Decoupled flag for modal close
         let style= &ctx.style().visuals;
         let mut shadow = Shadow::default();
-        shadow.blur = 1.0;
-        shadow.spread = 3.0;
+        shadow.blur = 1;
+        shadow.spread = 3;
         shadow.color = style.window_stroke.color;
         let title_color = RichText::new(title.clone()).color(style.warn_fg_color);
 
@@ -52,10 +52,10 @@ impl ModalWindow for ModalType {
         let window = Window::new(title_color)
             .frame(
                 Frame::default()
-                .inner_margin(Margin::symmetric(4., 4.))
+                .inner_margin(Margin::symmetric(4, 4))
                 .stroke(style.window_stroke)
                 .fill(style.window_fill)
-                .corner_radius(style.menu_rounding)
+                .corner_radius(style.menu_corner_radius)
                 .shadow(shadow)
             )
             .pivot(Align2::CENTER_TOP)
@@ -110,16 +110,16 @@ pub trait ModalWindow {
         let t: RichText = RichText::new(title).heading().strong();
         Frame::default()
             .fill(Color32::from_rgb(20, 20, 25))
-            .corner_radius(eframe::egui::CornerRadius{nw: 15.0,ne: 15.0,sw: 0.0,se: 0.0})
-            .inner_margin(Margin::same(0.0))
-            .outer_margin(Margin::same(0.0))
+            .corner_radius(eframe::egui::CornerRadius{nw: 15,ne: 15,sw: 0,se: 0})
+            .inner_margin(Margin::same(0))
+            .outer_margin(Margin::same(0))
             .show(ui, |ui| 
         {
             ui
             .with_layout(
                 Layout::top_down(Align::Max), 
             |ui|{
-                if Button::new(" X ").corner_radius(eframe::egui::CornerRadius::same(10.0))
+                if Button::new(" X ").corner_radius(eframe::egui::CornerRadius::same(10))
                 .fill(Color32::BLACK)
                     .ui(ui)
                     .clicked(){

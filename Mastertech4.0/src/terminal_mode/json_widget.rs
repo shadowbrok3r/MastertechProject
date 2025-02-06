@@ -292,8 +292,8 @@ impl Visit for TextVisitor<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct JsonWidgetState {
-    // anything you might need to track on a per widget basis
-    // (not strictly necessary if you store all states in the App)
-}
+// #[derive(Debug, Clone, Copy)]
+// pub struct JsonWidgetState {
+//     // anything you might need to track on a per widget basis
+//     // (not strictly necessary if you store all states in the App)
+// }

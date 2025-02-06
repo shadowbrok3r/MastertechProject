@@ -1,5 +1,5 @@
 use bincode::Options;
-use eframe::{egui::{ClippedPrimitive, Color32, FontDefinitions, Mesh, PlatformOutput, Pos2, RawInput, Rect, Shape}, emath::History, epaint::{CircleShape, ClippedShape, CubicBezierShape, EllipseShape, Fonts, PathShape, PathStroke, Primitive, QuadraticBezierShape, RectShape, TessellationOptions, Tessellator, TextShape}};
+use eframe::{egui::{ClippedPrimitive, Color32, FontDefinitions, Mesh, PlatformOutput, Pos2, RawInput, Rect, Shape, Stroke}, emath::History, epaint::{CircleShape, ClippedShape, CubicBezierShape, EllipseShape, Fonts, PathShape, Primitive, QuadraticBezierShape, RectShape, TessellationOptions, Tessellator, TextShape}};
 use crossbeam::channel::{Receiver, Sender};
 use ewebsock::{WsEvent, WsMessage, WsReceiver, WsSender};
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ pub enum NetShape {
     /// A line between two points.
     LineSegment {
         points: [Pos2; 2],
-        stroke: PathStroke,
+        stroke: Stroke,
     },
     /// A series of lines between points.
     /// The path can have a stroke and/or fill (if closed).
@@ -310,7 +310,7 @@ fn to_epaint_shape(fonts: &Fonts, net_shape: NetShape) -> Shape {
                 opacity_factor: 1.0,
             })
         }
-        NetShape::Mesh(net_mesh) => Shape::Mesh(Mesh::from(net_mesh)),
+        NetShape::Mesh(net_mesh) => Shape::Mesh(Arc::new(Mesh::from(net_mesh))),
         NetShape::Ellipse(ellipse_shape) => Shape::Ellipse(ellipse_shape),
         NetShape::QuadraticBezier(quadratic_bezier_shape) => Shape::QuadraticBezier(quadratic_bezier_shape),
         NetShape::CubicBezier(cubic_bezier_shape) => Shape::CubicBezier(cubic_bezier_shape),

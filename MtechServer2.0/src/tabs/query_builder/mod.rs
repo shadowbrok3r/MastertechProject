@@ -20,8 +20,8 @@ pub enum Tables {
 impl MtechServerContext {
     pub fn query_builder(&mut self, ui: &mut Ui) {
         let s_frame = Frame::default();
-        let _ = s_frame.inner_margin(Margin::same(20.));
-        let _ = s_frame.outer_margin(Margin::same(10.));
+        let _ = s_frame.inner_margin(Margin::same(20));
+        let _ = s_frame.outer_margin(Margin::same(10));
         SidePanel::left("left-panel-query-builder")
             .frame(s_frame)
             .max_width(130.)
@@ -35,8 +35,8 @@ impl MtechServerContext {
         });
 
         let c_frame = Frame::default();
-        let _ = c_frame.inner_margin(Margin::same(40.));
-        let _ = c_frame.outer_margin(Margin::same(15.));
+        let _ = c_frame.inner_margin(Margin::same(40));
+        let _ = c_frame.outer_margin(Margin::same(15));
 
         CentralPanel::default()
             .frame(c_frame)

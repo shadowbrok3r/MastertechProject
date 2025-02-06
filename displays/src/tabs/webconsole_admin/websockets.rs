@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, CornerRadius, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget};
 use crate::{channel_manager::ChannelManager, tabs::resource_monitor::ResourceMonitor, virtual_filesystem::{FileSysHelper, FileSystem}, Cmd, FileSystemAction, PlatformSpawner, Spawner};
 use database::{schema::{ConnectedClient, Node, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use egui_extras::syntax_highlighting::{highlight, CodeTheme};
@@ -468,7 +468,7 @@ impl WebSocketClient {
     }
 
     fn show_shell(&mut self, ui: &mut Ui) {
-        let b_panel_marg = Margin::symmetric(5., 10.);
+        let b_panel_marg = Margin::symmetric(5, 10);
 
         let id = ui.auto_id_with(format!("Chat {:?}", self.client.client_hash));
 
@@ -481,10 +481,10 @@ impl WebSocketClient {
             ui.style_mut().visuals.widgets.inactive.bg_fill = Color32::BLACK;
             
             let style = ui.style_mut();
-            let default_rounding = eframe::egui::CornerRadius::same(2.0);
-            style.visuals.widgets.inactive.rounding = default_rounding;
-            style.visuals.widgets.active.rounding = default_rounding;
-            style.visuals.widgets.hovered.rounding = default_rounding;
+            let default_rounding = eframe::egui::CornerRadius::same(2);
+            style.visuals.widgets.inactive.corner_radius = default_rounding;
+            style.visuals.widgets.active.corner_radius = default_rounding;
+            style.visuals.widgets.hovered.corner_radius = default_rounding;
             
             let mut layouter = |ui: &Ui, string: &str, _: f32| {
                 let mut layout_job: eframe::egui::text::LayoutJob = highlight(
@@ -502,7 +502,7 @@ impl WebSocketClient {
 
             let text_edit = TextEdit::singleline(&mut self.input)
                 .hint_text("Use Wisely..")
-                .margin(Margin::symmetric(10., 4.))
+                .margin(Margin::symmetric(10, 4))
                 .desired_width(ui.available_width())
                 .desired_rows(4)
                 .layouter(&mut layouter)
@@ -585,7 +585,7 @@ impl WebSocketClient {
 
         let central_panel_frame = Frame::new().fill(ui.style().visuals.widgets.inactive.weak_bg_fill)
             .stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-            .inner_margin(Margin::same(6.0));
+            .inner_margin(Margin::same(6));
 
         // info!("avail_size: {:?}", avail_size);
         CentralPanel::default()
@@ -658,10 +658,10 @@ impl WebSocketClient {
                         
                         // ui.set_min_width(min_width);
                         let rnding = eframe::egui::CornerRadius {
-                            ne: if is_message_from_myself { 0.0 } else { rounding },
-                            nw: if is_message_from_myself { rounding } else { 0.0 },
-                            se: rounding,
-                            sw: rounding,
+                            ne: if is_message_from_myself { 0 } else { rounding  as u8},
+                            nw: if is_message_from_myself { rounding  as u8} else { 0 },
+                            se: rounding as u8,
+                            sw: rounding as u8,
                         };
     
                         let response = Frame::new()
@@ -677,18 +677,18 @@ impl WebSocketClient {
                                 {
     
                                     let mut shadow = Shadow::default();
-                                    shadow.blur = 3.0;
-                                    shadow.spread = 3.0;
+                                    shadow.blur = 3;
+                                    shadow.spread = 3;
                                     shadow.color = Color32::from_rgb(40,36,40);
                                     
                                     let mut b_panel_marg = Margin::default();
-                                    b_panel_marg.top = 3.0;
+                                    b_panel_marg.top = 3;
     
                                     let color = Color32::from_rgb(10,10,12);
     
                                     let note_frame = Frame::new().fill(color)
                                         .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke).outer_margin(b_panel_marg)
-                                        .inner_margin(Margin::symmetric(6.0, 10.0)).corner_radius(rnding);
+                                        .inner_margin(Margin::symmetric(6, 10)).corner_radius(rnding);
     
                                     let (from, txt) = if item.from.eq("You"){
                                         (
@@ -718,7 +718,7 @@ impl WebSocketClient {
                                             ui.add_space(max_msg_width / 1.1);
 
                                             let copy_btn = Button::new(RichText::new("🗐").weak().color(Color32::LIGHT_RED))
-                                                .corner_radius(eframe::egui::CornerRadius::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
+                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui)
                                                 .on_hover_text(RichText::new("Copy Command"));
 
                                             if copy_btn.clicked(){
@@ -739,7 +739,7 @@ impl WebSocketClient {
 
                                             ui.add_space(max_msg_width / 1.1);
                                             let btn = Button::new(RichText::new("🗐").small().weak().color(Color32::LIGHT_RED))
-                                                .corner_radius(eframe::egui::CornerRadius::same(f32::INFINITY)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
+                                                .corner_radius(eframe::egui::CornerRadius::same(255)).small().min_size(Vec2::new(30.0, 14.0)).ui(ui);
 
                                             if btn.clicked(){
                                                 ui.ctx().copy_text(item.message.clone());
@@ -749,7 +749,7 @@ impl WebSocketClient {
                                     note_frame.show(ui, |ui| {
                                         ui.set_width(ui.available_width());
                                         let style = ui.style_mut();
-                                        style.visuals.widgets.inactive.rounding = eframe::egui::CornerRadius::same(2.0);
+                                        style.visuals.widgets.inactive.corner_radius = eframe::egui::CornerRadius::same(2);
                                         ui.label(txt);
                                         // egui_extras::syntax_highlighting::code_view_ui(
                                         //     ui, 

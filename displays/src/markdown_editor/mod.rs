@@ -134,7 +134,7 @@ impl EasyMarkEditor {
             // )
             // }
         } else {
-            ui.add(TextEdit::multiline(message).margin(Margin::symmetric(6.0, 3.5)).desired_rows(ui.available_height() as usize).desired_width(f32::INFINITY))
+            ui.add(TextEdit::multiline(message).margin(Margin::symmetric(6, 3)).desired_rows(ui.available_height() as usize).desired_width(f32::INFINITY))
         };
 
         if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id) {

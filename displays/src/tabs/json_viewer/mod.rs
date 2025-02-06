@@ -1,25 +1,25 @@
 use crate::app_state::SharedContext;
 use anyhow::{Error, Result};
-use core::f32;
+// use core::f32;
 // use database::schema::helper_traits::UserHelper;
 use eframe::egui::{
-    text::{CCursor, CCursorRange},
-    vec2, CentralPanel, Color32, CursorIcon, Frame, Margin, ScrollArea, SidePanel, TextEdit,
-    TextStyle, TopBottomPanel, Ui,
+    // text::{CCursor, CCursorRange},
+    Frame, Margin, SidePanel,
+    TopBottomPanel, Ui,
 };
-use egui_json_tree::{
-    delimiters::ExpandableDelimiter,
-    pointer::JsonPointerSegment,
-    render::{
-        DefaultRender, RenderBaseValueContext, RenderContext, RenderExpandableDelimiterContext,
-        RenderPropertyContext,
-    },
-    DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
-};
+// use egui_json_tree::{
+//     delimiters::ExpandableDelimiter,
+//     pointer::JsonPointerSegment,
+//     render::{
+//         DefaultRender, RenderBaseValueContext, RenderContext, RenderExpandableDelimiterContext,
+//         RenderPropertyContext,
+//     },
+//     DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
+// };
 // use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::str::FromStr;
+// use std::str::FromStr;
 
 #[derive(Default)]
 pub enum JsonEditorState {
@@ -33,22 +33,22 @@ pub enum JsonEditorState {
 impl SharedContext {
     pub fn json_viewer(&mut self, ui: &mut Ui) {
         let s_frame = Frame::default();
-        let _ = s_frame.inner_margin(Margin::same(20.));
-        let _ = s_frame.outer_margin(Margin::same(10.));
+        let _ = s_frame.inner_margin(Margin::same(20));
+        let _ = s_frame.outer_margin(Margin::same(10));
         SidePanel::left("left-panel")
             .frame(s_frame)
             .max_width(130.)
             .resizable(false)
             .show_inside(ui, |ui| {
                 ui.vertical_centered_justified(|ui| {
-                    ui.add_space(5.);
-                    let settings = ui.button("Settings");
-                    ui.add_space(5.);
-                    let task = ui.button("Tasks");
-                    ui.add_space(5.);
-                    let customers = ui.button("Customers");
-                    ui.add_space(5.);
-                    let computers = ui.button("Computers");
+                    // ui.add_space(5.);
+                    // let settings = ui.button("Settings");
+                    // ui.add_space(5.);
+                    // let task = ui.button("Tasks");
+                    // ui.add_space(5.);
+                    // let customers = ui.button("Customers");
+                    // ui.add_space(5.);
+                    // let computers = ui.button("Computers");
 
                     ui.add_space(ui.available_height() - 30.);
                     let submit = ui.button("Submit");
@@ -57,26 +57,26 @@ impl SharedContext {
                     // let computers = &self.data_output.computers;
                     // let services = &self.data_output.tickets;
 
-                    if settings.clicked() {
-                        self.json_editor_state = JsonEditorState::SettingsPage;
-                        // self.json_editor
-                        //     .set_value(self.user_settings.clone())
-                        //     .unwrap();
-                    }
+                    // if settings.clicked() {
+                    //     self.json_editor_state = JsonEditorState::SettingsPage;
+                    //     // self.json_editor
+                    //     //     .set_value(self.user_settings.clone())
+                    //     //     .unwrap();
+                    // }
 
-                    if task.clicked() {
-                        self.json_editor_state = JsonEditorState::TasksPage;
-                        // self.json_editor.set_value(self.).unwrap();
-                    }
+                    // if task.clicked() {
+                    //     self.json_editor_state = JsonEditorState::TasksPage;
+                    //     // self.json_editor.set_value(self.).unwrap();
+                    // }
 
-                    if customers.clicked() {
-                        self.json_editor_state = JsonEditorState::CustomersPage;
-                    }
+                    // if customers.clicked() {
+                    //     self.json_editor_state = JsonEditorState::CustomersPage;
+                    // }
 
-                    if computers.clicked() {
-                        self.json_editor_state = JsonEditorState::ComputersPage;
-                        // self.json_editor.set_value(self.tasks.clone()).unwrap();
-                    }
+                    // if computers.clicked() {
+                    //     self.json_editor_state = JsonEditorState::ComputersPage;
+                    //     // self.json_editor.set_value(self.tasks.clone()).unwrap();
+                    // }
 
                     if submit.clicked() {
                         // self.user_settings = serde_json::from_value(self.json_editor.value.clone())
@@ -105,22 +105,22 @@ impl SharedContext {
         });
 
         let c_frame = Frame::default();
-        let _ = c_frame.inner_margin(Margin::same(10.));
+        let _ = c_frame.inner_margin(Margin::same(10));
 
-        CentralPanel::default()
-            .frame(c_frame)
-            .show_inside(ui, |ui| {
-                let available_height = ui.available_height();
-                let font_id = TextStyle::Body.resolve(ui.style());
-                let row_height = ui.fonts(|f| f.row_height(&font_id)) + ui.spacing().item_spacing.y;
-                let total_rows = (available_height / row_height).floor() as usize;
-                ScrollArea::new([false, true])
-                    .max_width(f32::INFINITY)
-                    .auto_shrink(false)
-                    .show_rows(ui, row_height, total_rows, |ui, _row_range| {
-                        self.json_editor.show(ui);
-                    });
-            });
+        // CentralPanel::default()
+        //     .frame(c_frame)
+        //     .show_inside(ui, |ui| {
+        //         let available_height = ui.available_height();
+        //         let font_id = TextStyle::Body.resolve(ui.style());
+        //         let row_height = ui.fonts(|f| f.row_height(&font_id)) + ui.spacing().item_spacing.y;
+        //         let total_rows = (available_height / row_height).floor() as usize;
+        //         ScrollArea::new([false, true])
+        //             .max_width(f32::INFINITY)
+        //             .auto_shrink(false)
+        //             .show_rows(ui, row_height, total_rows, |ui, _row_range| {
+        //                 self.json_editor.show(ui);
+        //             });
+        //     });
     }
 }
 
@@ -157,7 +157,7 @@ pub struct Editor {
     pub edit_events: Vec<EditEvent>,
     pub state: Option<EditState>,
 }
-
+/* 
 impl Editor {
     fn show(&mut self, ui: &mut Ui, document: &Value, context: RenderContext<'_, '_, Value>) {
         match self.state.as_mut() {
@@ -516,7 +516,7 @@ impl Editor {
         }
     }
 }
-
+ */
 pub enum EditState {
     EditObjectKey(EditObjectKeyState),
     EditValue(EditValueState),
@@ -546,7 +546,7 @@ pub enum EditEvent {
     CloseObjectKeyEdit,
     CloseValueEdit,
 }
-
+/* 
 impl Show for JsonEditor {
     fn title(&self) -> &'static str {
         "JSON Editor"
@@ -577,3 +577,4 @@ impl Show for JsonEditor {
         self.editor.apply_events(&mut self.value);
     }
 }
+ */

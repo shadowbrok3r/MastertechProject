@@ -1,4 +1,4 @@
-use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, CornerRadius, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
+use eframe::egui::{popup_below_widget, text::LayoutJob, Align, Button, CentralPanel, Color32, ComboBox, Context, FontFamily, FontId, Frame, Layout, Margin, PopupCloseBehavior, RichText, ScrollArea, SidePanel, Spinner, Stroke, Style, TextEdit, TextFormat, TopBottomPanel, Ui, Vec2, Widget, WidgetText};
 use crate::{channel_manager::ChannelManager, tasks::task_layout::{SortField, SortOptions}, ui_tools::toasts::{Toast, ToastOptions}, virtual_filesystem::FileSystem, FilterClients, PlatformSpawner, SortDirection, Sortable, Spawner};
 use database::{schema::{utilities::get_connected_clients, ConnectedClient}, WS_MASTER_URL};
 use egui_extras::{Size, Strip, StripBuilder};
@@ -177,7 +177,7 @@ impl WebConsoleLayout {
 
     pub fn layout_cols(&mut self, ui: &mut Ui) {
         
-        ui.style_mut().visuals.window_rounding = ui.style().visuals.window_rounding;
+        ui.style_mut().visuals.window_corner_radius = ui.style().visuals.window_corner_radius;
         let style = ui.style().clone();
         // Extract connected and disconnected clients using pattern matching
         // let connected_clients = client_map.get("Connected").cloned().unwrap_or_default();
@@ -297,9 +297,9 @@ impl WebConsoleLayout {
     fn headers(&mut self, mut s: Strip, style: Arc<Style>){
         let header_frame = Frame::default()
             .fill(style.visuals.window_fill) // (Color32::from_rgb(13, 13, 15))
-            .inner_margin(Margin::same(4.0))
-            .outer_margin(Margin::symmetric(8.0, 1.0))
-            .corner_radius(style.visuals.window_rounding)
+            .inner_margin(Margin::same(4))
+            .outer_margin(Margin::symmetric(8, 1))
+            .corner_radius(style.visuals.window_corner_radius)
             .stroke(style.visuals.window_stroke);
 
         let mut idx = 0;
@@ -317,8 +317,8 @@ impl WebConsoleLayout {
                         {
                             let search_input = self.search_inputs.entry(name.clone()).or_insert_with(String::new);
                             let mut margin = Margin::default();
-                            margin.top = 6.0;
-                            margin.left = 4.0;
+                            margin.top = 6;
+                            margin.left = 4;
                             
                             TextEdit::singleline(search_input).hint_text("Search").desired_width(100.0).margin(margin).ui(ui);
 
@@ -329,7 +329,7 @@ impl WebConsoleLayout {
                                     .size(13.0).monospace()
                                 )
                                 .fill(style.visuals.noninteractive().bg_fill)
-                                .corner_radius(eframe::egui::CornerRadius::same(2.))
+                                .corner_radius(eframe::egui::CornerRadius::same(2))
                                 .min_size(Vec2::new(60.0, 15.0))
                                 .ui(ui);
 
@@ -427,8 +427,8 @@ impl WebConsoleLayout {
     fn columns(&mut self, s: &mut Strip, style: Arc<Style>) {
         let column_frame = Frame::default()
             .fill(style.visuals.window_fill) // (Color32::from_rgb(12, 12, 14))
-            .inner_margin(Margin::same(6.0))
-            .corner_radius(style.visuals.menu_rounding)
+            .inner_margin(Margin::same(6))
+            .corner_radius(style.visuals.menu_corner_radius)
             .stroke(style.visuals.window_stroke);
 
         let mut inputs = BTreeSet::new();
@@ -478,8 +478,8 @@ impl WebConsoleLayout {
                                     let color = if client.connected{ Color32::LIGHT_BLUE } else { Color32::LIGHT_RED };
                             
                                     let column_frame = Frame::default().fill(Color32::from_rgb(12, 12, 14))
-                                        .inner_margin(Margin::same(4.0)).outer_margin(Margin::symmetric(5.0, 3.0))
-                                        .corner_radius(eframe::egui::CornerRadius::same(10.0)).stroke(Stroke::new(0.5, color));
+                                        .inner_margin(Margin::same(4)).outer_margin(Margin::symmetric(5, 3))
+                                        .corner_radius(eframe::egui::CornerRadius::same(10)).stroke(Stroke::new(0.5, color));
                             
                                     let undock = if let Some(undock) = self.undock_client.get(&connection_string){
                                         undock
@@ -517,9 +517,9 @@ impl WebConsoleLayout {
         let style = ui.style().clone();
         Frame::default()
             .fill(Color32::from_rgb(13, 13, 15))
-            .inner_margin(Margin::same(4.0))
-            .outer_margin(Margin::symmetric(3.0, 0.0))
-            .corner_radius(eframe::egui::CornerRadius::same(5.0))
+            .inner_margin(Margin::same(4))
+            .outer_margin(Margin::symmetric(3, 0))
+            .corner_radius(eframe::egui::CornerRadius::same(5))
             .stroke(style.visuals.window_stroke)
             .show(ui, |ui| 
         {
@@ -667,18 +667,18 @@ impl SharedContext {
         self.web_console_layout.receive(ui.ctx());
 
         let top_panel_frame = Frame::default()
-            .inner_margin(Margin::same(3.0))
-            .outer_margin(Margin::same(0.0))
+            .inner_margin(Margin::same(3))
+            .outer_margin(Margin::same(0))
             .fill(Color32::from_rgb(17,17,19))
             .stroke(Stroke::new(0.7, Color32::from_additive_luminance(150)))
-            .corner_radius(eframe::egui::CornerRadius::same(5.0)) ;
+            .corner_radius(eframe::egui::CornerRadius::same(5)) ;
 
         let side_panel_frame = Frame::default()
-            .inner_margin(Margin::same(3.0))
-            .outer_margin(Margin::same(0.0))
+            .inner_margin(Margin::same(3))
+            .outer_margin(Margin::same(0))
             .fill(ui.style().visuals.extreme_bg_color)
             .stroke(Stroke::new(0.7, Color32::from_additive_luminance(150)))
-            .corner_radius(eframe::egui::CornerRadius::same(5.0)) ;
+            .corner_radius(eframe::egui::CornerRadius::same(5)) ;
 
         ui.style_mut().spacing.button_padding = Vec2::new(10.0, 4.0);
 
