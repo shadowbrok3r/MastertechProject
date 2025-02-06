@@ -73,7 +73,7 @@ use eframe::egui::{CentralPanel, WidgetText};
 use eframe::egui::epaint::RectShape;
 use eframe::egui::{
     Align2, Area, Color32, Context, Direction, Frame, Id, Order, Pos2, Response, RichText,
-    eframe::egui::CornerRadius, Shape, Stroke, Ui,
+    Shape, Stroke, Ui,
 };
 
 pub const INFO_COLOR: Color32 = Color32::from_rgb(0, 155, 255);
@@ -266,8 +266,9 @@ fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
     // Draw the frame's stroke last
     let frame_shape = Shape::Rect(RectShape::stroke(
         response.rect,
-        frame.rounding,
+        frame.corner_radius,
         ui.visuals().window_stroke,
+        eframe::egui::StrokeKind::Outside
     ));
     ui.painter().add(frame_shape);
 
@@ -276,9 +277,9 @@ fn default_toast_contents(ui: &mut Ui, toast: &mut Toast) -> Response {
 
 fn progress_bar(ui: &mut Ui, response: &Response, toast: &Toast) {
     let rounding = eframe::egui::CornerRadius {
-        nw: 0.0,
-        ne: 0.0,
-        ..ui.visuals().window_rounding
+        nw: 0,
+        ne: 0,
+        ..ui.visuals().window_corner_radius
     };
     let mut clip_rect = response.rect;
     clip_rect.set_top(clip_rect.bottom() - 2.0);

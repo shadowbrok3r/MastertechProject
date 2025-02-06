@@ -77,17 +77,16 @@ impl MetricPlot {
     pub fn ui(&mut self, ui: &mut Ui, plot_name: &str, color: Color32) -> Response {
         let x_label = RichText::new(&self.x_label).size(14.0).strong();
         let y_label = RichText::new(&self.y_label).size(14.0).strong();
-        let line_chart = self.line(plot_name, color);
 
-        if let Some(time) = self.start_time {
+        if let Some(ref mut time) = self.start_time {
             let t = time.elapsed().as_secs_f32();
             if t > self.reset_interval {
-                self
-                    .data
-                    .clear();
-                self.start_time = Some(Instant::now());
+                self.data.clear();
+                *time = Instant::now();
             }
         }
+        
+        let line_chart = self.line(plot_name, color);
 
         Plot::new(plot_name)
             .legend(

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 use database::DATABASE;
-use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, CursorIcon, DragValue, FontFamily, FontId, Layout, CornerRadius, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
+use eframe::egui::{scroll_area::ScrollBarVisibility, style::{HandleShape, NumericColorSpace, Selection, TextCursorStyle, WidgetVisuals, Widgets}, Align, Button, Color32, CursorIcon, DragValue, FontFamily, FontId, Layout, ScrollArea, Shadow, Stroke, Style, Ui, Vec2, Visuals, Widget};
 use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::to_vec;
@@ -110,7 +110,7 @@ impl Default for ThemeConfig {
             warn_color: Color32::from_rgb(191, 33, 101),
             link_color: Color32::from_rgb(155, 104, 227),
             window_stroke_color: Color32::from_rgb(42, 195, 222),
-            rounding: eframe::egui::CornerRadius::same(4.0),
+            rounding: eframe::egui::CornerRadius::same(4),
         }
     }
 }
@@ -530,7 +530,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 bg_fill: config.widget_bg_fill,
                 weak_bg_fill: config.widget_weak_bg_fill,
                 bg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
-                rounding: config.rounding,
+                corner_radius: config.rounding,
                 fg_stroke: Stroke::new(1.0, config.widget_fg_stroke_color),
                 expansion: 0.0,
             },
@@ -538,7 +538,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 bg_fill: config.widget_bg_fill,
                 weak_bg_fill: Color32::from_rgb(18, 18, 20),
                 bg_stroke: Stroke::new(1.0, Color32::from_rgb(80, 80, 80)),
-                rounding: config.rounding,
+                corner_radius: config.rounding,
                 fg_stroke: Stroke::new(1.0, config.widget_bg_stroke_color),
                 expansion: 0.2,
             },
@@ -546,7 +546,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 bg_fill: config.hovered_bg_fill,
                 weak_bg_fill: config.hovered_weak_bg_fill,
                 bg_stroke: Stroke::new(0.5, config.hovered_bg_stroke_color),
-                rounding: config.rounding,
+                corner_radius: config.rounding,
                 fg_stroke: Stroke::new(1.0, config.hovered_fg_stroke_color),
                 expansion: 0.2,
             },
@@ -554,7 +554,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 bg_fill: config.active_bg_fill,
                 weak_bg_fill: config.active_weak_bg_fill,
                 bg_stroke: Stroke::new(1.0, config.active_bg_stroke_color),
-                rounding: config.rounding,
+                corner_radius: config.rounding,
                 fg_stroke: Stroke::new(1.0, config.active_fg_stroke_color),
                 expansion: 0.2,
             },
@@ -562,7 +562,7 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
                 bg_fill: config.open_bg_fill,
                 weak_bg_fill: config.open_weak_bg_fill,
                 bg_stroke: Stroke::new(1.0, config.open_bg_stroke_color),
-                rounding: config.rounding,
+                corner_radius: config.rounding,
                 fg_stroke: Stroke::new(1.0, config.open_fg_stroke_color),
                 expansion: 0.2,
             },
@@ -579,8 +579,8 @@ pub fn set_custom_style(config: &ThemeConfig) -> Arc<Style> {
         error_fg_color: config.error_color,
         window_fill: config.background_color,
         window_stroke: Stroke::new(1.0, config.window_stroke_color),
-        window_rounding: config.rounding,
-        menu_rounding: config.rounding,
+        window_corner_radius: config.rounding,
+        menu_corner_radius: config.rounding,
         panel_fill: config.background_color,
         popup_shadow: Shadow::default(),
         resize_corner_size: 10.0,

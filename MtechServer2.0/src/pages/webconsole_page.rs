@@ -242,7 +242,7 @@ impl MtechServer {
         //     });
         // }
 
-        // // ui.style_mut().visuals.window_rounding = eframe::egui::CornerRadius::same(10.);
+        // // ui.style_mut().visuals.window_corner_radius = eframe::egui::CornerRadius::same(10.);
         // CentralPanel::default()
         //     .frame(central_panel_frame)
         //     .show(ctx, |ui| {

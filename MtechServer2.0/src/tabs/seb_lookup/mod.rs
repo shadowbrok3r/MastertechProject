@@ -1,5 +1,5 @@
-use database::schema::{ExtendedSeb, LocalSebData};
-use displays::tabs::json_viewer::Show;
+// use database::schema::{ExtendedSeb, LocalSebData};
+// use displays::tabs::json_viewer::Show;
 use eframe::egui::{
     Button, CentralPanel, Frame, Margin, ScrollArea, TextEdit, TextStyle, TopBottomPanel, Ui,
     Widget,
@@ -60,7 +60,7 @@ impl MtechServerContext {
             });
 
         let c_frame = Frame::default();
-        let _ = c_frame.inner_margin(Margin::same(10.));
+        let _ = c_frame.inner_margin(Margin::same(10));
 
         CentralPanel::default()
             .frame(c_frame)
@@ -72,14 +72,14 @@ impl MtechServerContext {
                 ScrollArea::new([false, true])
                     .max_width(f32::INFINITY)
                     .auto_shrink(false)
-                    .show_rows(ui, row_height, total_rows, |ui, _row_range| {
-                        if self.shared_ctx.json_editor.value.is_null() {
-                            let mut local_seb = LocalSebData::default();
-                            local_seb.ExtendedSeb = Some(ExtendedSeb::default());
+                    .show_rows(ui, row_height, total_rows, |_ui, _row_range| {
+                        // if self.shared_ctx.json_editor.value.is_null() {
+                        //     let mut local_seb = LocalSebData::default();
+                        //     local_seb.ExtendedSeb = Some(ExtendedSeb::default());
 
-                            let _ = self.shared_ctx.json_editor.set_value(local_seb);
-                        }
-                        self.shared_ctx.json_editor.show(ui);
+                        //     let _ = self.shared_ctx.json_editor.set_value(local_seb);
+                        // }
+                        // self.shared_ctx.json_editor.show(ui);
                     });
             });
     }

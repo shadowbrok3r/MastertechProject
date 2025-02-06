@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use app_state::{AppState, MainPages, MasterTechApp};
 use displays::ui_tools::theme_config::set_custom_style;
-use eframe::egui::{Context, IconData, ViewportBuilder, Window};
+use eframe::egui::{Context, IconData, Window};
 // use terminal_mode::run_terminal_mode;
 use egui_dock::DockState;
 use log::{error, info};
@@ -132,10 +132,10 @@ async fn main() -> eframe::Result<()> {
         log_file
     ).unwrap();
 
-    /* let eframe_app = eframe::run_native(
+    let eframe_app = eframe::run_native(
         format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
         eframe::NativeOptions {
-            viewport: ViewportBuilder::default()
+            viewport: eframe::egui::ViewportBuilder::default()
                 .with_inner_size([945.0, 750.0])
                 .with_drag_and_drop(true)
                 .with_icon(load_icon())
@@ -151,13 +151,13 @@ async fn main() -> eframe::Result<()> {
         }),
     );
 
-    if let Err(e) = eframe_app { */
+    if let Err(e) = eframe_app { 
         // error!("Error running eframe_native: {e:?} \nswitching to secondary application");
         let res = terminal_mode::run_terminal_mode();
         if let Err(e) = res {
             error!("Error running terminal app: {e:?}");
         }
-    // }
+    }
 
     Ok(())
 }

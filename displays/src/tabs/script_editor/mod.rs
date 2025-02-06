@@ -30,7 +30,7 @@ impl ScriptEditor {
          }
     }
 
-    pub fn set_filesystem(&mut self, mut filesystem: FileSystem) -> &mut Self {
+    pub fn set_filesystem(&mut self, filesystem: FileSystem) -> &mut Self {
         // filesystem.set_user(user);
         info!("{:?}", filesystem.request_contents(""));
         // filesystem.navigate_to("Scripts".to_string());

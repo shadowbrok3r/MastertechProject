@@ -88,7 +88,7 @@ itertools = "0.14.0"
 tui-scrollview = "0.5.1"
 
 [dependencies.egui]
-version = "0.30"
+version = "0.31"
 default-features = false
 features = ["rayon", "bytemuck", "log"]
 

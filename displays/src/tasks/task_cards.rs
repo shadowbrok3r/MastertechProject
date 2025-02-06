@@ -3,7 +3,7 @@ use crossbeam::channel::Sender;
 use database::schema::{TaskPayload, User};
 use eframe::egui::Vec2;
 use eframe::egui::{Align, Button, CollapsingHeader, Direction, Widget};
-use eframe::egui::{Color32, Frame, Layout, Margin, CornerRadius};
+use eframe::egui::{Color32, Frame, Layout, Margin};
 use eframe::egui::{RichText, Ui};
 use egui_extras::{Size, StripBuilder};
 use log::info;
@@ -16,14 +16,14 @@ impl Displayable for TaskPayload {
         
         let mut frame = Frame::default()
             .fill(style.visuals.extreme_bg_color) // (Color32::from_rgb(14, 14, 18))
-            .inner_margin(Margin::same(8.0))
-            .outer_margin(Margin::same(5.0))
-            .corner_radius(eframe::egui::CornerRadius::same(15.0))
+            .inner_margin(Margin::same(8))
+            .outer_margin(Margin::same(5))
+            .corner_radius(eframe::egui::CornerRadius::same(15))
             .begin(ui);
 
         {
             let ui = &mut frame.content_ui;
-            ui.set_max_height(300.0);
+            ui.set_max_height(300.);
             ui.set_min_height(67.0);
             ui.set_width(400.0);
 

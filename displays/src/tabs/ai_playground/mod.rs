@@ -1,5 +1,5 @@
 use eframe::egui::{
-    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, CornerRadius, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
+    epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, FontId, Frame, Id, Image, ImageSource, Key, KeyboardShortcut, Layout, Margin, Modifiers, Rect, RichText, ScrollArea, Sense, Shape, SidePanel, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget
 };
 use crate::{ai::{oa_client::new_oa_client, tool_call::{assistant_call_with_response_ai_tools, get_or_retrieve_thread}}, app_state::SharedContext, markdown_editor::viewer, openai::Threads, PlatformSpawner, Spawner};
 use egui_extras::syntax_highlighting::{code_view_ui, CodeTheme};
@@ -89,7 +89,7 @@ impl Default for AiPlayground {
 impl SharedContext {
     pub fn ai_playground(&mut self, ui: &mut Ui) {
         TopBottomPanel::top("GPT")
-            .frame(Frame::default().inner_margin(Margin::same(8.)))
+            .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_height(50.)
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -119,7 +119,7 @@ impl SharedContext {
                         }
                     } else {
                         let edit = TextEdit::singleline(title)
-                        .margin(Margin::same(5.))
+                        .margin(Margin::same(5))
                         .font(FontId::proportional(12.))
                         .ui(ui);
                         // request keyboard focus somehow..
@@ -141,7 +141,7 @@ impl SharedContext {
             });
 
         SidePanel::left("ChatHistoryPanel")
-            .frame(Frame::default().inner_margin(Margin::same(8.)))
+            .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_width(175.)
             .show_inside(ui, |ui| {
                 ui.vertical_centered(|ui| {
@@ -177,7 +177,7 @@ impl SharedContext {
 
                     ui.add_space(10.);
                     let new_chat = Button::new("New ➕")
-                        .corner_radius(eframe::egui::CornerRadius::same(25.0))
+                        .corner_radius(eframe::egui::CornerRadius::same(25))
                         .min_size(Vec2::new(120., 24.))
                         .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
                         .ui(ui);
@@ -198,7 +198,7 @@ impl SharedContext {
             });
 
         TopBottomPanel::bottom("ChatInputPanel")
-            .frame(Frame::default().inner_margin(Margin::same(8.)))
+            .frame(Frame::default().inner_margin(Margin::same(8)))
             .exact_height(75.)
             .show_inside(ui, |ui| {
                 self.ai_playground.chat(ui);
@@ -267,7 +267,7 @@ impl AiPlayground {
             ui.horizontal_centered(|ui| {
 
                 let add_media = Button::new(RichText::new("🖻").heading())
-                    .corner_radius(eframe::egui::CornerRadius::same(25.0))
+                    .corner_radius(eframe::egui::CornerRadius::same(25))
                     .min_size(Vec2::new(60., ui.available_height()/1.5))
                     .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
                     .ui(ui);
@@ -282,7 +282,7 @@ impl AiPlayground {
                 let text_edit = TextEdit::multiline(&mut thread.input)
                     .desired_width(ui.available_width()/1.1)
                     .hint_text("Ask GPT to summarize a service order")
-                    .margin(Margin::same(8.))
+                    .margin(Margin::same(8))
                     .return_key(Some(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
                     .ui(ui);
 
@@ -299,7 +299,7 @@ impl AiPlayground {
                 ui.add_space(10.);
 
                 let submit = Button::new(RichText::new("⮫").heading())
-                    .corner_radius(eframe::egui::CornerRadius::same(25.0))
+                    .corner_radius(eframe::egui::CornerRadius::same(25))
                     .min_size(Vec2::new(60., ui.available_height()/1.5))
                     .stroke(Stroke::new(0.8, Color32::from_rgb(150, 12, 150)))
                     .ui(ui)
@@ -415,20 +415,20 @@ impl AiPlayground {
         ui.with_layout(layout, |ui| {
             ui.set_max_width(max_msg_width);
 
-            let rounding = 8.0;
-            let margin = 8.0;
+            let rounding = 8;
+            let margin = 8;
 
             // ui.set_min_width(min_width);
             let rnding = eframe::egui::CornerRadius {
                 ne: if is_message_from_myself {
-                    0.0
+                    0
                 } else {
                     rounding
                 },
                 nw: if is_message_from_myself {
                     rounding
                 } else {
-                    0.0
+                    0
                 },
                 se: rounding,
                 sw: rounding,
@@ -445,12 +445,12 @@ impl AiPlayground {
                     // Use a vertical layout to stack the name and message content
                     ui.with_layout(Layout::top_down(Align::Min), |ui| {
                         let mut shadow = Shadow::default();
-                        shadow.blur = 3.0;
-                        shadow.spread = 3.0;
+                        shadow.blur = 3;
+                        shadow.spread = 3;
                         shadow.color = Color32::from_rgb(40, 36, 40);
 
                         let mut b_panel_marg = Margin::default();
-                        b_panel_marg.top = 3.0;
+                        b_panel_marg.top = 3;
 
                         let color = Color32::from_rgb(10, 10, 12);
 
@@ -461,7 +461,7 @@ impl AiPlayground {
                                 ui.style().visuals.widgets.inactive.bg_stroke,
                             )
                             .outer_margin(b_panel_marg)
-                            .inner_margin(Margin::symmetric(6.0, 10.0))
+                            .inner_margin(Margin::symmetric(6, 10))
                             .corner_radius(rnding);
 
                         let from = match item.from {
@@ -500,7 +500,7 @@ impl AiPlayground {
                                             .weak()
                                             .color(Color32::LIGHT_RED),
                                     )
-                                    .corner_radius(eframe::egui::CornerRadius::same(f32::INFINITY))
+                                    .corner_radius(eframe::egui::CornerRadius::same(255))
                                     .small()
                                     .min_size(Vec2::new(30.0, 14.0))
                                     .ui(ui);
@@ -536,7 +536,7 @@ impl AiPlayground {
                                             .weak()
                                             .color(Color32::LIGHT_RED),
                                     )
-                                    .corner_radius(eframe::egui::CornerRadius::same(f32::INFINITY))
+                                    .corner_radius(eframe::egui::CornerRadius::same(255))
                                     .small()
                                     .min_size(Vec2::new(30.0, 14.0))
                                     .ui(ui);
@@ -627,12 +627,15 @@ impl AiPlayground {
                     });
                 })
                 .response;
+            
+            let r = rounding as f32;
 
             let points = if !is_message_from_myself {
-                let top = response.rect.left_top() + Vec2::splat(margin);
+                let top = response.rect.left_top() + Vec2::splat(margin as f32);
+                
                 let arrow_rect = Rect::from_two_pos(
                     top,
-                    top + Vec2::new(-rounding, rounding),
+                    top + Vec2::new(-r, r),
                 );
 
                 vec![
@@ -642,10 +645,10 @@ impl AiPlayground {
                 ]
             } else {
                 let top =
-                    response.rect.right_top() + Vec2::new(-margin, margin);
+                    response.rect.right_top() + Vec2::new(-r, r);
                 let arrow_rect = Rect::from_two_pos(
                     top,
-                    top + Vec2::new(rounding, rounding),
+                    top + Vec2::new(r, r),
                 );
 
                 vec![

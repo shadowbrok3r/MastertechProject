@@ -1,11 +1,10 @@
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
 use crate::app_state::MastertechContext;
 use anyhow::{Error, Result};
-use database::schema::{ExtendedSeb, LocalSebData};
+use database::schema::LocalSebData;
 use eframe::egui::{
-    text::{CCursor, CCursorRange},
-    vec2, Button, CentralPanel, Color32, CursorIcon, Frame, Margin, RichText, ScrollArea, TextEdit,
+    Button, CentralPanel, Frame, Margin, RichText, ScrollArea, TextEdit,
     TextStyle, TopBottomPanel, Ui, Widget,
 };
 use log::info;
@@ -14,15 +13,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::spawn;
 
-use egui_json_tree::{
-    delimiters::ExpandableDelimiter,
-    pointer::JsonPointerSegment,
-    render::{
-        DefaultRender, RenderBaseValueContext, RenderContext, RenderExpandableDelimiterContext,
-        RenderPropertyContext,
-    },
-    DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
-};
+// use egui_json_tree::{
+//     delimiters::ExpandableDelimiter,
+//     pointer::JsonPointerSegment,
+//     render::{
+//         DefaultRender, RenderBaseValueContext, RenderContext, RenderExpandableDelimiterContext,
+//         RenderPropertyContext,
+//     },
+//     DefaultExpand, JsonTree, JsonTreeStyle, JsonTreeVisuals,
+// };
 
 use super::tur_sheet::get_ticket::request_seb_info_from_drive;
 
@@ -143,7 +142,7 @@ impl MastertechContext {
             });
 
         let c_frame = Frame::default();
-        let _ = c_frame.inner_margin(Margin::same(10.));
+        let _ = c_frame.inner_margin(Margin::same(10));
 
         CentralPanel::default()
             .frame(c_frame)
@@ -155,14 +154,14 @@ impl MastertechContext {
                 ScrollArea::new([false, true])
                     .max_width(f32::INFINITY)
                     .auto_shrink(false)
-                    .show_rows(ui, row_height, total_rows, |ui, _row_range| {
-                        if self.json_editor.value.is_null() {
-                            let mut local_seb = LocalSebData::default();
-                            local_seb.ExtendedSeb = Some(ExtendedSeb::default());
+                    .show_rows(ui, row_height, total_rows, |_ui, _row_range| {
+                        // if self.json_editor.value.is_null() {
+                        //     let mut local_seb = LocalSebData::default();
+                        //     local_seb.ExtendedSeb = Some(ExtendedSeb::default());
 
-                            self.json_editor.set_value(local_seb).unwrap();
-                        }
-                        self.json_editor.show(ui);
+                        //     self.json_editor.set_value(local_seb).unwrap();
+                        // }
+                        // self.json_editor.show(ui);
                     });
             });
     }
@@ -201,7 +200,7 @@ pub struct Editor {
     edit_events: Vec<EditEvent>,
     state: Option<EditState>,
 }
-
+/* 
 impl Editor {
     fn show(&mut self, ui: &mut Ui, document: &Value, context: RenderContext<'_, '_, Value>) {
         match self.state.as_mut() {
@@ -576,7 +575,7 @@ impl Editor {
         }
     }
 }
-
+ */
 enum EditState {
     EditObjectKey(EditObjectKeyState),
     EditValue(EditValueState),
@@ -606,7 +605,7 @@ enum EditEvent {
     CloseObjectKeyEdit,
     CloseValueEdit,
 }
-
+/* 
 impl Show for JsonEditor {
     fn title(&self) -> &'static str {
         "JSON Editor"
@@ -635,3 +634,4 @@ impl Show for JsonEditor {
         self.editor.apply_events(&mut self.value);
     }
 }
+ */

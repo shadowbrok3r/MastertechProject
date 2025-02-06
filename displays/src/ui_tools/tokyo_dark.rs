@@ -56,8 +56,8 @@ impl Aesthetix for TokyoNight {
         true
     }
 
-    fn margin_style(&self) -> f32 {
-        12.0
+    fn margin_style(&self) -> i8 {
+        12
     }
 
     fn button_padding(&self) -> eframe::egui::Vec2 {
@@ -72,7 +72,7 @@ impl Aesthetix for TokyoNight {
         14.0
     }
 
-    fn rounding_visuals(&self) -> f32 {
-        6.0
+    fn rounding_visuals(&self) -> u8 {
+        6
     }
 }

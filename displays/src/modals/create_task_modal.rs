@@ -204,7 +204,7 @@ impl CreateTaskModal {
 
                                 let edit = TextEdit::singleline(&mut self.task_name)
                                     .hint_text("Task Name")
-                                    .margin(Margin::symmetric(6.0, 4.0))
+                                    .margin(Margin::symmetric(6, 4))
                                     .desired_width(200.0)
                                     .ui(ui);
 
@@ -279,7 +279,7 @@ impl CreateTaskModal {
                                 ui.vertical_centered(|ui| {
                                     let r = TextEdit::multiline(&mut self.description)
                                         .hint_text("Task Description")
-                                        .margin(Margin::symmetric(6.0, 4.0))
+                                        .margin(Margin::symmetric(6, 4))
                                         .desired_rows(6)
                                         .code_editor()
                                         .desired_width(200.0)

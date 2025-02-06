@@ -1,4 +1,4 @@
-use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, CornerRadius, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
+use eframe::egui::{epaint::Shadow, Align, Button, CentralPanel, Color32, Direction, Frame, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Widget};
 use database::{live_data::handle_live_delete, schema::{helper_traits::TaskNotePayloadHelper, TaskNotePayload, User}};
 use surrealdb::RecordId;
 use super::markdown_editor::{viewer, EasyMarkEditor, SHORTCUT_ENTER};
@@ -228,15 +228,15 @@ impl ChatView {
                     ui.with_layout(layout, |ui| {
                         ui.set_max_width(max_msg_width);
 
-                        let rounding = 8;
-                        let margin = 8;
+                        let rounding = 8.;
+                        let margin = 8.;
                         
                         // ui.set_min_width(min_width);
                         let rnding = eframe::egui::CornerRadius {
-                            ne: if is_message_from_myself { 0 } else { rounding },
-                            nw: if is_message_from_myself { rounding } else { 0 },
-                            se: rounding,
-                            sw: rounding,
+                            ne: if is_message_from_myself { 0 } else { rounding as u8 },
+                            nw: if is_message_from_myself { rounding as u8 } else { 0 },
+                            se: rounding as u8,
+                            sw: rounding as u8,
                         };
 
                         let response = Frame::new()

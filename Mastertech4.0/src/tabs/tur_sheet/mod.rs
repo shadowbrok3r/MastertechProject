@@ -235,7 +235,7 @@ impl MastertechContext {
                                                     .on_hover_text("Click To Copy Webroot Key to Clipboard")
                                                     .clicked(){ 
                                                         let webroot = self.keys.webroot_key.clone();
-                                                        ui.output_mut(|o| o.copied_text = webroot);
+                                                        ui.ctx().copy_text(webroot);
                                                     }
                                                         
                                                     if ui.add(Button::new(RichText::new(format!("{}", self.keys.superanti_key))//.size()
@@ -244,7 +244,7 @@ impl MastertechContext {
                                                     .on_hover_text("Click To Copy SAS Key to Clipboard")
                                                     .clicked(){ 
                                                         let sas = self.keys.superanti_key.clone();
-                                                        ui.output_mut(|o| o.copied_text = sas);
+                                                        ui.ctx().copy_text(sas);
                                                     }
 
                                                     ui.end_row();
@@ -446,7 +446,7 @@ impl MastertechContext {
                                     TextEdit::multiline(&mut self.ticket_data.checkin_notes)
                                     .hint_text(RichText::new("Checkin Notes").weak())
                                     .font(FontId::proportional(15.0))
-                                    .margin(Margin::symmetric(10., 6.))
+                                    .margin(Margin::symmetric(10, 6))
                                     .desired_rows(4)
                                 );
                             });
@@ -463,7 +463,7 @@ impl MastertechContext {
                                     .min_size(vec2(ui.available_width()-4.0, ui.available_height() - 80.0))
                                     .hint_text(RichText::new("Recommendations").weak())
                                     .font(FontId::proportional(15.0))
-                                    .margin(Margin::symmetric(10., 6.))
+                                    .margin(Margin::symmetric(10, 6))
                                     .desired_rows(4).ui(ui);
                             // });
                             // ui.shrink_height_to_current(); 

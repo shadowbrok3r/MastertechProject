@@ -1,4 +1,4 @@
-use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, CornerRadius, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
+use eframe::{egui::{Align, Button, CentralPanel, Color32, Context, Direction, Frame, Id, Key, Layout, Margin, Rect, RichText, ScrollArea, Sense, Shape, Stroke, TextEdit, TopBottomPanel, Ui, Vec2, Widget}, epaint::Shadow};
 use database::{schema::{utilities::{compress_data, query_id}, ConnectedClient, Record, SystemInformation, CONNECTED_CLIENT_TABLE}, DATABASE};
 use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, process::{Child, ChildStdin, Command}, spawn, sync::Mutex, time::sleep};
 use crate::{app_state::MastertechContext, filesystem::system_info::generate_client_id, tabs::file_browser::read_folder};
@@ -45,7 +45,7 @@ impl MastertechContext{
                     ui.add_space(5.);
                     TextEdit::singleline(&mut self.client_friendly_name)
                         .hint_text("Client Name")
-                        .margin(Margin::symmetric(10., 6.))
+                        .margin(Margin::symmetric(10, 6))
                         .ui(ui);
                 });
             });
@@ -509,10 +509,10 @@ impl WebConsoleFrontend {
                     
                     // ui.set_min_width(min_width);
                     let rnding = eframe::egui::CornerRadius {
-                        ne: if is_message_from_myself { 0.0 } else { rounding },
-                        nw: if is_message_from_myself { rounding } else { 0.0 },
-                        se: rounding,
-                        sw: rounding,
+                        ne: if is_message_from_myself { 0 } else { rounding as u8 },
+                        nw: if is_message_from_myself { rounding as u8 } else { 0 },
+                        se: rounding as u8,
+                        sw: rounding as u8,
                     };
 
                     let response = Frame::new()
@@ -528,14 +528,14 @@ impl WebConsoleFrontend {
                             {
 
                                 let mut shadow = Shadow::default();
-                                shadow.blur = 3.0;
-                                shadow.spread = 3.0;
+                                shadow.blur = 3;
+                                shadow.spread = 3;
                                 shadow.color = Color32::from_rgb(40,36,40);
                                 let color = Color32::from_rgb(10,10,12);
 
                                 let note_frame = Frame::new().fill(color)
                                     .shadow(shadow).stroke(ui.style().visuals.widgets.inactive.bg_stroke)
-                                    .inner_margin(Margin::same(0.)).corner_radius(rnding);
+                                    .inner_margin(Margin::same(0)).corner_radius(rnding);
 
                                 let (from, txt) = if item.contains("Cmd"){
                                     let text: (&str, &str) = item.split_once(":").unwrap_or(("Command", ""));

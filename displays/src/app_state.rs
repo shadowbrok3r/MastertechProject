@@ -1,4 +1,4 @@
-use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, json_viewer::{JsonEditor, JsonEditorState}, resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, webconsole_admin::WebConsoleLayout}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
+use crate::{channel_manager::ChannelManager, egui_data_table::DataTable, modals::{create_task_modal::Tur, task_modal::ModalAction, ModalType, ModalWindow}, tabs::{ai_playground::AiPlayground, /* json_viewer::{JsonEditor, JsonEditorState}, */ resource_monitor::ResourceMonitor, stock::{RawStockData, SerialData, SerialsData, SerialsViewer}, stock_quantities::{ExtraInventoryData, StockQuantityData, StockQuantityViewer}, task_audit::TaskAuditViewer, webconsole_admin::WebConsoleLayout}, tasks::task_layout::TaskLayout, ui_tools::{theme_config::{set_custom_style, ThemeConfig}, toasts::Toasts}, viewports::ViewportData, virtual_filesystem::FileSystem, TaskUiActions};
 use database::{schema::{get_data::NewTicketChannel, prestashop_schema::PrestashopPayload, ConnectedClient, LiveTaskPayload, Notification, TaskNotePayload, TaskPayload, User}, Database};
 use eframe::{egui::{Align2, Context, FontData, FontDefinitions, FontFamily, Style}, CreationContext};
 use crossbeam::channel::{self, Receiver, Sender};
@@ -142,10 +142,10 @@ pub struct SharedContext {
     pub tur: Tur,
     pub close_modal: Option<String>,
 
-    #[serde(skip)]
-    pub json_editor: JsonEditor,
-    #[serde(skip)]
-    pub json_editor_state: JsonEditorState,
+    // #[serde(skip)]
+    // pub json_editor: JsonEditor,
+    // #[serde(skip)]
+    // pub json_editor_state: JsonEditorState,
     /// generic data viewer (currently used for inventory tab)
     #[serde(skip)]
     pub serials_viewer: SerialsViewer,
@@ -274,8 +274,8 @@ impl SharedContext {
             // ws_clients: HashMap::new(),
 
             // Other Components
-            json_editor: JsonEditor::default(),
-            json_editor_state: JsonEditorState::SettingsPage,
+            // json_editor: JsonEditor::default(),
+            // json_editor_state: JsonEditorState::SettingsPage,
             serials_table: DataTable::<SerialsData>::default(),
             serials_viewer,
             stock_quantity_viewer: StockQuantityViewer::default(),

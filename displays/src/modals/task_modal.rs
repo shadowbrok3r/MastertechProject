@@ -265,7 +265,7 @@ pub fn display_task_page(ui: &mut Ui, task: &mut TaskPayload) {
     ui.vertical_centered_justified(|ui| {
         ui.label(RichText::new("Task Description:").font(FontId::proportional(15.0)));
         TextEdit::multiline(&mut task.task_description.to_string())
-            .margin(Margin::same(5.0))
+            .margin(Margin::same(5))
             .desired_rows(8)
             .desired_width(ui.available_width() / 1.4)
             .ui(ui);
@@ -392,7 +392,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                                             TextEdit::multiline(
                                                 &mut ticket.checkin_notes.to_string(),
                                             )
-                                            .margin(Margin::symmetric(10., 3.5))
+                                            .margin(Margin::symmetric(10, 3))
                                             .desired_rows(15)
                                             .desired_width(ui.available_width())
                                             .ui(ui);
@@ -408,7 +408,7 @@ pub fn display_ticket_page(ui: &mut Ui, task: &mut TaskPayload, _avail_size: Vec
                                             TextEdit::multiline(
                                                 &mut task.task_description.to_string(),
                                             )
-                                            .margin(Margin::symmetric(10.0, 3.5))
+                                            .margin(Margin::symmetric(10, 3))
                                             .desired_rows(15)
                                             .desired_width(ui.available_width())
                                             .ui(ui);
@@ -782,14 +782,14 @@ impl SpecialPartOrder {
 
                                     TextEdit::singleline(&mut self.manufacturer_model_number)
                                         .hint_text("MFG Model #".to_string())
-                                        .margin(Margin::same(5.0))
+                                        .margin(Margin::same(5))
                                         .ui(ui);
 
                                     ui.add_space(15.0);
 
                                     TextEdit::singleline(&mut self.manufacturer_part_number)
                                         .hint_text("MFG P/N".to_string())
-                                        .margin(Margin::same(5.0))
+                                        .margin(Margin::same(5))
                                         .frame(true)
                                         .ui(ui);
 
@@ -797,14 +797,14 @@ impl SpecialPartOrder {
 
                                     TextEdit::singleline(&mut self.part_description)
                                         .hint_text("Part Description".to_string())
-                                        .margin(Margin::same(5.0))
+                                        .margin(Margin::same(5))
                                         .ui(ui);
 
                                     ui.add_space(15.0);
 
                                     TextEdit::multiline(&mut self.application_comment)
                                         .hint_text("Notes".to_string())
-                                        .margin(Margin::same(5.0))
+                                        .margin(Margin::same(5))
                                         .desired_rows(3)
                                         .ui(ui);
 
