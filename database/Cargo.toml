@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 reqwest = { version = "0.12", features = ["json"] }
+structdiff = {version = "0.7.1", features = ["rustc_hash"]}
 lazy_static = { workspace = true }
 rusty-s3 = { workspace=true }
 regex = { workspace=true }
@@ -14,14 +15,12 @@ serde_json = { workspace=true }
 # dotenv = { workspace=true }
 serde = { workspace=true }
 log = { workspace=true }
-bincode = { workspace=true }
 crossbeam = { workspace=true }
 anyhow = { workspace=true }
 uuid = { workspace=true }
 async-trait = { workspace=true }
 once_cell = { workspace=true }
 futures = { workspace=true }
-structdiff = { workspace=true }
 chrono = {workspace=true}
 bytes = {workspace = true}
 brotli = { workspace=true }

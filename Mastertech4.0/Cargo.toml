@@ -23,17 +23,15 @@ tui-input = { version = "0.11", features = ["crossterm"]}
 yeehaw = "0.1.0"
 tui-textarea = { version = "0.7"}
 sysinfo = "0.33"
-console-subscriber = "0.4"
 futures-util = "0.3"
 walkdir = "2.5"
 pollster = "0.4"
 image = "0.25"
-egui_file = "0.21"
+egui_file = "0.22"
 num-format = "0.4"
 fs_extra = "1.3"
 rayon = "1"
 quick-xml = { version="0.37", features = ["serialize"] }
-serde-xml-rs = "0.6"
 num-traits = "0.2"
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = "0.3"
@@ -43,12 +41,10 @@ dotenv = "0.15"
 shell-words = "1"
 reqwest_cookie_store = "0.8"
 sha2 = { version = "0.10", features = ["std"] }
-quickxml_to_serde = "0.6"
 linked-hash-map = "0.5"
 ewebsock = { version = "0.8", features = [ "tls" ] }
 hex = "0.4.3"
 ring = "0.17.8"
-rust-s3 = "0.35"
 semver = "1.0.23"
 nvml-wrapper = { version = "0.10.0", features = ["serde"] }
 lazy_static = "1.5.0"
@@ -61,15 +57,12 @@ tokio = { workspace=true }
 serde_json = { workspace=true }
 serde = { workspace=true }
 log  = { workspace=true }
-bytes = { workspace=true }
 egui_extras = { workspace=true }
 egui_dock = { workspace=true }
 anyhow = { workspace=true }
-ratframe = { workspace=true }
+# ratframe = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
-structdiff = { workspace=true }
-fuzzy-matcher = { workspace=true }
 uuid = { workspace=true }
 bincode = { workspace=true }
 rfd = { workspace=true }
@@ -77,11 +70,6 @@ regex = { workspace=true }
 chrono = { workspace=true }
 simplelog = { workspace=true }
 async-trait = { workspace=true }
-once_cell = { workspace=true }
-egui_json_tree = { workspace = true }
-brotli = { workspace=true }
-base64 = { workspace=true }
-egui_plot = { workspace = true }
 powershell_script = "1.1.0"
 color-eyre = "0.6.3"
 itertools = "0.14.0"
@@ -92,41 +80,25 @@ version = "0.31"
 default-features = false
 features = ["rayon", "bytemuck", "log"]
 
-# gfx-hal = { version = "0.9.0", features = ["serde"] }
-
-# egui_tracing = "0.2.2"
-
-
 # egui_ratatui = { workspace=true }
-
-
-# egui_skia = { version = "0.4.0", features = ["winit", "cpu_fix"], optional = true}
-# egui-winit = { ver1.0.86 "0.27.2", optional = true, default-features = false }
-# softbuffer = {version = "0.4.2", optional = true}
-# skia-safe = {version = "0.73.0", optional = true}
 # portable-pty = "0.8.1"
 # windows_x86_64_msvc
 # known-folders 
 # robocopyrs 
-
 # tui-term = "0.1.11"
-
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3", features = ["processthreadsapi"] }
 memmap2 = "0.9"
-breakpad-symbols = { version = "0.22" }
 minidump = { version = "0.22" }
 minidump-common = { version = "0.22" }
 minidump-processor = { version = "0.22", features = ["http"] }
 minidump-unwind = "0.22"
 wmi = "0.15.0"
-evtx = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "0.9"
-# libatasmart = "0.3.1"
 
 
 [dev-dependencies]
@@ -135,7 +107,6 @@ criterion = { version = "0.5", features = ["async_tokio"]}
 [[bench]]
 name = "file_copy_benchmark"
 harness = false
-
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 static_vcruntime = "2"

@@ -264,7 +264,7 @@ impl LoggerUi {
             ui.label(format!("Displayed: {}", logs_displayed));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Copy").clicked() {
-                    ui.output_mut(|o| {
+                    ui.output_mut(|_o| {
                         if let Some(txt) = try_get_log(|logs| {
                             let mut out_string = String::new();
                             logs.iter()

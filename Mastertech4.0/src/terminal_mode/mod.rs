@@ -14,8 +14,9 @@ use ratatui::{
     },
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
+    symbols,
     text::Line,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs},
 };
 use serde_json::Value;
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
@@ -26,11 +27,25 @@ use tui_input::Input;
 pub mod json_widget;
 pub mod button;
 
+////////////////////////////////////
+// Add color constants referencing the scheme the user provided
+////////////////////////////////////
+const DEEPPINK: Color = Color::Rgb(255, 20, 147);
+const CYAN: Color = Color::Cyan;
+const SPRINGGREEN: Color = Color::Rgb(0, 255, 127);
+const MEDIUMSLATEBLUE: Color = Color::Rgb(123, 104, 238);
+const DARKORANGE: Color = Color::Rgb(255, 140, 0);
+// etc. You can define more from your color scheme as needed.
+////////////////////////////////////
+// Main App Code
+////////////////////////////////////
 
-
-/// ------------------------------
-/// Main App Code
-/// ------------------------------
+enum Tab {
+    TurSheet,
+    Scripts,
+    SystemInfo,
+    Extra,
+}
 
 struct App {
     input: Input,
@@ -43,10 +58,15 @@ struct App {
     prestashop_api_rx: Receiver<prestashop_schema::PrestashopPayload>,
     /// We'll keep a scroll state for the JSON viewer
     json_scroll_state: ScrollViewState,
+    /// Which tab is currently selected
+    selected_tab: Tab,
+    /// Track the state of any script buttons, etc.
+    tuneup_button_state: State,
+    qc_button_state: State,
 }
 
-impl App {
-    fn new() -> Self {
+impl Default for App {
+    fn default() -> Self {
         let (prestashop_api_tx, prestashop_api_rx) = channel::unbounded();
         Self {
             input: Input::default(),
@@ -58,7 +78,16 @@ impl App {
             prestashop_api_rx,
             json_widget: JsonWidget::default(),
             json_scroll_state: ScrollViewState::default(),
+            selected_tab: Tab::TurSheet,
+            tuneup_button_state: State::Normal,
+            qc_button_state: State::Normal,
         }
+    }
+}
+
+impl App {
+    fn new() -> Self {
+        Self::default()
     }
 
     fn log_message(&mut self, message: &str) {
@@ -133,29 +162,36 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
                 // Send keystroke to input field
                 app.input.handle_event(&Event::Key(key_event));
 
-                // If user presses Enter, treat it like clicking Get Ticket
                 match key_event.code {
                     KeyCode::Enter => {
                         let user_input = app.input.value();
                         app.get_ticket(user_input);
                         app.log_message(&format!("(Enter) 'Get Ticket' with input: {}", user_input));
                     }
-                    // We'll also handle up/down to scroll in the JSON scrollview
-                    KeyCode::Down => {
-                        // Move highlight
-                        app.json_widget.next_edit();
-                        // Or scroll
-                        // app.json_scroll_state.scroll_down(1);
-                    }
-                    KeyCode::Up => {
-                        app.json_widget.prev_edit();
-                        // app.json_scroll_state.scroll_up(1);
-                    }
+
+                    // We'll let left/right arrow change tabs, just as an example
                     KeyCode::Right => {
-                        // could do something else or next edit
-                        app.json_widget.next_edit();
+                        app.selected_tab = match app.selected_tab {
+                            Tab::TurSheet => Tab::Scripts,
+                            Tab::Scripts => Tab::SystemInfo,
+                            Tab::SystemInfo => Tab::Extra,
+                            Tab::Extra => Tab::TurSheet,
+                        };
                     }
                     KeyCode::Left => {
+                        app.selected_tab = match app.selected_tab {
+                            Tab::TurSheet => Tab::Extra,
+                            Tab::Scripts => Tab::TurSheet,
+                            Tab::SystemInfo => Tab::Scripts,
+                            Tab::Extra => Tab::SystemInfo,
+                        };
+                    }
+
+                    KeyCode::Down => {
+                        // Move highlight in JSON widget, etc.
+                        app.json_widget.next_edit();
+                    }
+                    KeyCode::Up => {
                         app.json_widget.prev_edit();
                     }
                     _ => {}
@@ -204,33 +240,89 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> io::Result<(
 }
 
 fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
-    let chunks = Layout::default()
+    // top-level layout has a row for tabs, then main content
+    let outer_chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1)
+            Constraint::Length(3), // for tabs
+            Constraint::Min(1),    // rest of content
         ])
         .split(f.area());
 
-    let input_and_button = Layout::default()
+    // (1) Render Tabs at top
+    let titles = ["TUR Sheet", "Scripts", "System Info", "Extra"];
+    let selected_idx = match app.selected_tab {
+        Tab::TurSheet => 0,
+        Tab::Scripts => 1,
+        Tab::SystemInfo => 2,
+        Tab::Extra => 3,
+    };
+
+    let tabs = Tabs::new(titles)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Tabs")
+                // let's do a block color in mediumslateblue
+                .border_style(Style::default().fg(MEDIUMSLATEBLUE))
+        )
+        // base style for all tabs: white text
+        .style(Style::default().fg(Color::White))
+        // highlight style for the selected tab
+        .highlight_style(Style::default().fg(DEEPPINK))
+        // use an ASCII symbol or a fancy symbol for divider
+        .divider(symbols::DOT)
+        // The new ratatui Tabs take an IntoIterator of &str, so no .padding(...) right now.
+        .select(selected_idx);
+
+    f.render_widget(tabs, outer_chunks[0]);
+
+    // (2) Main content area depends on which tab is selected
+    let main_area = outer_chunks[1];
+
+    match app.selected_tab {
+        Tab::TurSheet => {
+            render_tur_sheet_tab::<B>(f, app, main_area);
+        }
+        Tab::Scripts => {
+            render_scripts_tab::<B>(f, app, main_area);
+        }
+        Tab::SystemInfo => {
+            render_system_info_tab::<B>(f, app, main_area);
+        }
+        Tab::Extra => {
+            render_extra_tab::<B>(f, app, main_area);
+        }
+    }
+}
+
+////////////////////////////////
+// TUR SHEET TAB with Input Field
+////////////////////////////////
+fn render_tur_sheet_tab<B: Backend>(app: &mut App, f: &mut Frame, area: Rect) {
+    // We'll have a vertical layout:
+    //   [ Input + Button ]
+    //   [ Logs (Left) | JSON (Right) ]
+    let vertical_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // For input+button row
+            Constraint::Min(1),    // For logs/json
+        ])
+        .split(area);
+
+    // (A) Input + Button row
+    let input_button_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(80),
-            Constraint::Percentage(20)
+            Constraint::Percentage(20),
         ])
-        .split(chunks[0]);
+        .split(vertical_chunks[0]);
 
-    let json_view = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50)
-        ])
-        .split(chunks[1]);
-
-    // (A) Render Input Box
-    let width = input_and_button[0].width.saturating_sub(2);
+    // The input field
+    let width = input_button_chunks[0].width.saturating_sub(2);
     let scroll_offset = app.input.visual_scroll(width as usize);
 
     let input_widget = Paragraph::new(app.input.value())
@@ -244,22 +336,34 @@ fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
                 .style(Style::default().bg(Color::Rgb(10, 10, 14)))
         );
 
-    f.render_widget(input_widget, input_and_button[0]);
+    f.render_widget(input_widget, input_button_chunks[0]);
 
-    // set cursor
-    let cursor_x = input_and_button[0].x + ((app.input.visual_cursor()).max(scroll_offset) - scroll_offset) as u16 + 1;
-    let cursor_y = input_and_button[0].y + 1;
-    f.set_cursor_position(Position { x: cursor_x, y: cursor_y });
+    // Place cursor in input field
+    let cursor_x = input_button_chunks[0].x
+        + ((app.input.visual_cursor()).max(scroll_offset) - scroll_offset) as u16
+        + 1;
+    let cursor_y = input_button_chunks[0].y + 1;
+    f.set_cursor(cursor_x, cursor_y);
 
-    // (B) Render Button
+    // The "Get Ticket" button
     let get_ticket_button = Button::new(Line::from("Get Ticket"))
         .theme(TURQUOISE)
         .state(app.button_state);
 
-    f.render_widget(get_ticket_button, input_and_button[1]);
-    app.button_area = Some(input_and_button[1]);
+    f.render_widget(get_ticket_button, input_button_chunks[1]);
+    // track this area for mouse clicks
+    app.button_area = Some(input_button_chunks[1]);
 
-    // (C) Left side logs
+    // (B) Logs + JSON viewer below
+    let horizontal_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(vertical_chunks[1]);
+
+    // (B1) Logs on the left
     let items: Vec<ListItem> = app
         .logs
         .iter()
@@ -274,37 +378,74 @@ fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
         Block::default()
             .borders(Borders::ALL)
             .title("Logs")
-            .border_style(Style::default().fg(Color::Rgb(0, 255, 127)))
-            .style(Style::default().bg(Color::Rgb(8, 8, 12)))
+            .border_style(Style::default().fg(SPRINGGREEN))
     );
 
-    f.render_widget(logs_list, json_view[0]);
+    f.render_widget(logs_list, horizontal_chunks[0]);
 
-    // (D) Right side: JSON scrollable area
-    // We'll call 'render_text()' on the widget to get a styled Text object
-
+    // (B2) JSON scrollable area on the right
     let text = app.json_widget.render_text();
     let paragraph = Paragraph::new(text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Json Viewer")
-                .border_style(Style::default().fg(Color::Rgb(250, 8, 182)))
-                .style(Style::default().bg(Color::Rgb(10, 10, 14)))
+                .border_style(Style::default().fg(DEEPPINK))
         );
 
-    // We create a `Size` using the width/height of the allocated area:
     let size = Size {
-        width: json_view[1].width,
-        height: json_view[1].height,
+        width: horizontal_chunks[1].width,
+        height: horizontal_chunks[1].height,
     };
 
-    // Wrap in a ScrollView from tui-scrollview
     let mut scroll_view = ScrollView::new(size)
         .scrollbars_visibility(ScrollbarVisibility::Always);
 
     scroll_view.render_widget(paragraph, scroll_view.area());
+    f.render_stateful_widget(scroll_view, horizontal_chunks[1], &mut app.json_scroll_state);
+}
 
-    f.render_stateful_widget(scroll_view, json_view[1], &mut app.json_scroll_state);
-    // paragraph
+////////////////////////////////
+// SCRIPTS TAB with Buttons
+////////////////////////////////
+fn render_scripts_tab<B: Backend>(app: &mut App, f: &mut Frame, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(area);
+
+    // First button: Tuneup
+    let tuneup_button = Button::new(Line::from("Tuneup"))
+        .theme(TURQUOISE)
+        .state(app.tuneup_button_state);
+
+    f.render_widget(tuneup_button, chunks[0]);
+
+    // Second button: QC
+    let qc_button = Button::new(Line::from("QC"))
+        .theme(TURQUOISE)
+        .state(app.qc_button_state);
+
+    f.render_widget(qc_button, chunks[1]);
+}
+
+fn render_system_info_tab<B: Backend>(app: &mut App, f: &mut Frame, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("System Info")
+        .border_style(Style::default().fg(Color::Yellow));
+
+    f.render_widget(block, area);
+}
+
+fn render_extra_tab<B: Backend>(app: &mut App, f: &mut Frame, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Extra")
+        .border_style(Style::default().fg(DARKORANGE));
+
+    f.render_widget(block, area);
 }

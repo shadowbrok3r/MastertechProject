@@ -2,9 +2,8 @@
 use app_state::{AppState, MainPages, MasterTechApp};
 use displays::ui_tools::theme_config::set_custom_style;
 use eframe::egui::{Context, IconData, Window};
-// use terminal_mode::run_terminal_mode;
 use egui_dock::DockState;
-use log::{error, info};
+use log::info;
 
 #[cfg(target_os = "windows")]
 extern crate winapi;
@@ -132,33 +131,34 @@ async fn main() -> eframe::Result<()> {
         log_file
     ).unwrap();
 
-    // let eframe_app = eframe::run_native(
-    //     format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
-    //     eframe::NativeOptions {
-    //         viewport: eframe::egui::ViewportBuilder::default()
-    //             .with_inner_size([945.0, 750.0])
-    //             .with_drag_and_drop(true)
-    //             .with_icon(load_icon())
-    //             .with_always_on_top(),
-    //         ..Default::default()
-    //     },
-    //     Box::new(|cc| {
-    //         Ok(
-    //             Box::new(
-    //                 MasterTechApp::new(cc)
-    //             )
-    //         )
-    //     }),
-    // );
+    let eframe_app = eframe::run_native(
+        format!("Mastertech-{}", env!("CARGO_PKG_VERSION")).as_str(),
+        eframe::NativeOptions {
+            viewport: eframe::egui::ViewportBuilder::default()
+                .with_inner_size([945.0, 750.0])
+                .with_drag_and_drop(true)
+                .with_icon(load_icon())
+                .with_always_on_top(),
+            ..Default::default()
+        },
+        Box::new(|cc| {
+            Ok(
+                Box::new(
+                    MasterTechApp::new(cc)
+                )
+            )
+        }),
+    );
 
-    // if let Err(e) = eframe_app { 
-    //     // error!("Error running eframe_native: {e:?} \nswitching to secondary application");
-    //     let res = terminal_mode::run_terminal_mode();
-    //     if let Err(e) = res {
-    //         error!("Error running terminal app: {e:?}");
-    //     }
-    // }
-    let res = terminal_mode::run_terminal_mode();
+    if let Err(e) = eframe_app { 
+        info!("Error running eframe_native: {e:?} \nswitching to secondary application");
+        let res = terminal_mode::run_terminal_mode();
+        if let Err(e) = res {
+            info!("Error running terminal app: {e:?}");
+        }
+    }
+    let _res = terminal_mode::run_terminal_mode();
+    
     Ok(())
 }
 
