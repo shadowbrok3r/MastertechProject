@@ -283,16 +283,16 @@ fn ui<B: Backend>(f: &mut Frame, app: &mut App) {
 
     match app.selected_tab {
         Tab::TurSheet => {
-            render_tur_sheet_tab::<B>(f, app, main_area);
+            render_tur_sheet_tab::<B>(app, f, main_area);
         }
         Tab::Scripts => {
-            render_scripts_tab::<B>(f, app, main_area);
+            render_scripts_tab::<B>(app, f, main_area);
         }
         Tab::SystemInfo => {
-            render_system_info_tab::<B>(f, app, main_area);
+            render_system_info_tab::<B>(app, f, main_area);
         }
         Tab::Extra => {
-            render_extra_tab::<B>(f, app, main_area);
+            render_extra_tab::<B>(app, f, main_area);
         }
     }
 }
