@@ -17,7 +17,7 @@ rfd = "0.15"
 tap = "1"
 itertools = "0.14"
 thiserror = "2"
-derive_more = {version = "1", features = ["from"]}
+derive_more = {version = "2", features = ["from"]}
 rpc-router = "0.1"
 schemars = "0.8"
 derivative = "2"

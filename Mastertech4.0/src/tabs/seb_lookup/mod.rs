@@ -167,10 +167,10 @@ impl MastertechContext {
     }
 }
 
-trait Show {
-    fn title(&self) -> &'static str;
-    fn show(&mut self, ui: &mut Ui);
-}
+// trait Show {
+//     fn title(&self) -> &'static str;
+//     fn show(&mut self, ui: &mut Ui);
+// }
 
 #[derive(Default)]
 pub struct JsonEditor {
@@ -197,8 +197,8 @@ impl JsonEditor {
 
 #[derive(Default)]
 pub struct Editor {
-    edit_events: Vec<EditEvent>,
-    state: Option<EditState>,
+    // edit_events: Vec<EditEvent>,
+    // state: Option<EditState>,
 }
 /* 
 impl Editor {
@@ -576,7 +576,7 @@ impl Editor {
     }
 }
  */
-enum EditState {
+/* enum EditState {
     EditObjectKey(EditObjectKeyState),
     EditValue(EditValueState),
 }
@@ -604,7 +604,7 @@ enum EditEvent {
     SaveObjectKeyEdit,
     CloseObjectKeyEdit,
     CloseValueEdit,
-}
+} */
 /* 
 impl Show for JsonEditor {
     fn title(&self) -> &'static str {

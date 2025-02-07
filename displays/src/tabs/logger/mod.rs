@@ -1,8 +1,6 @@
 use eframe::egui::{widgets, Align, Color32, Layout, RichText, ScrollArea, Ui};
-use egui_json_tree::JsonTree;
 use logging::{GlobalLog, LEVELS, LOG};
 use regex::{Regex, RegexBuilder};
-use serde_json::Value;
 use std::sync::Mutex;
 pub mod logging;
 
@@ -267,7 +265,7 @@ impl LoggerUi {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Copy").clicked() {
                     ui.output_mut(|o| {
-                        try_get_log(|logs| {
+                        if let Some(txt) = try_get_log(|logs| {
                             let mut out_string = String::new();
                             logs.iter()
                                 .take(self.max_log_length)
@@ -275,8 +273,10 @@ impl LoggerUi {
                                     out_string.push_str(string);
                                     out_string.push_str(" \n");
                                 });
-                            o.copied_text = out_string;
-                        });
+                            out_string
+                        }) {
+                            ui.ctx().copy_text(txt);
+                        }
                     });
                 }
             });
