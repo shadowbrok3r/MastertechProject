@@ -44,11 +44,11 @@ struct MyApp {
 impl Default for MyApp {
     fn default() -> Self {
         let mut buffers = BTreeMap::default();
-        buffers.insert(
-            "CHANGELOG.md".to_owned(),
-            include_str!("../CHANGELOG.md").to_owned(),
-        );
-        buffers.insert("LICENSE".to_owned(), include_str!("../LICENSE").to_owned());
+        // buffers.insert(
+        //     "CHANGELOG.md".to_owned(),
+        //     include_str!("../CHANGELOG.md").to_owned(),
+        // );
+        // buffers.insert("LICENSE".to_owned(), include_str!("../LICENSE").to_owned());
         buffers.insert(
             "README.md".to_owned(),
             include_str!("../README.md").to_owned(),
