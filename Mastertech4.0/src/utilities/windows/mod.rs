@@ -95,13 +95,13 @@ unsafe fn search_updates(update_searcher: &IUpdateSearcher, selection: i32) -> R
         2 => {
             println!("ServerSelection: Windows Update");
             update_searcher.SetServerSelection(ServerSelection(2))?;
-            update_searcher.Search(&BSTR::from("(IsInstalled=0 and DeploymentAction='Installation' and BrowseOnly=1 or BrowseOnly=0) or IsHidden=1"))?
+            update_searcher.Search(&BSTR::from("(IsInstalled=0 and DeploymentAction='Installation' and BrowseOnly=1 or BrowseOnly=0) or (IsHidden=1 and IsInstalled=0)"))?
         },
         3 => {
             println!("ServerSelection: Microsoft Update");
             update_searcher.SetServerSelection(ServerSelection(3))?;
             update_searcher.SetServiceID(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID))?;
-            update_searcher.Search(&BSTR::from("IsInstalled=0 and IsHidden=0"))?
+            update_searcher.Search(&BSTR::from("IsInstalled=0 and DeploymentAction='Installation'"))?
         },
         _ => return Err(windows::core::Error::from_win32()),
     };
@@ -109,7 +109,54 @@ unsafe fn search_updates(update_searcher: &IUpdateSearcher, selection: i32) -> R
     Ok(result.Updates()?)
 }
 
-fn install_windows_updates() -> Result<()> {
+/// Handles installation of updates from a given update collection
+unsafe fn install_updates(update_session: &IUpdateSession, updates: &IUpdateCollection) -> Result<()> {
+    let update_downloader: IUpdateDownloader = update_session.CreateUpdateDownloader()?;
+    update_downloader.SetUpdates(updates)?;
+    println!("Beginning download of updates...");
+    let download_job: IDownloadJob = update_downloader.BeginDownload(None, None, &VARIANT::default())?;
+
+    while !download_job.IsCompleted()?.as_bool() {
+        let progress = download_job.GetProgress()?;
+        println!("Download Progress: {}%", progress.PercentComplete()?);
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+    download_job.CleanUp()?;
+    println!("Download completed. Installing updates...");
+
+    let installer = update_session.CreateUpdateInstaller()?;
+    installer.SetUpdates(updates)?;
+    let install_result = installer.Install()?;
+    println!("Installation result: {:?}", install_result.ResultCode()?);
+    // update_downloader.EndDownload(value)
+    Ok(())
+}
+
+/// Filters and installs updates separately for Windows Update and Microsoft Update
+unsafe fn process_updates(update_session: &IUpdateSession, update_collection: &IUpdateCollection) -> Result<()> {
+    // let update_collection: IUpdateCollection = update_session.CreateUpdateSearcher()?.Search(&BSTR::from("IsInstalled=0 and DeploymentAction='Installation'"))?.Updates()?;
+    for i in 0..update_collection.Count()? {
+        let update = update_collection.get_Item(i)?;
+        let is_installed = update.IsInstalled()?.as_bool();
+        let is_downloaded = update.IsDownloaded()?.as_bool();
+        if !is_installed && !is_downloaded {
+            println!("Adding update: {}", update.Title()?.to_string());
+            println!("=>  IsInstalled: {:?}", is_installed);
+            println!("=>  IsMandatory: {:?}", update.IsMandatory()?.as_bool());
+            println!("=>  IsHidden: {:?}", update.IsHidden()?.as_bool());
+            println!("=>  AutoSelectOnWebSites: {:?}", update.AutoSelectOnWebSites()?.as_bool());
+            println!("=>  IsDownloaded: {:?}", is_downloaded);
+            println!("=>  Description: {:?}", update.Description()?);
+            // update_collection.Add(&update)?;
+        } else {
+            println!("Skipping update: {}", update.Title()?.to_string());
+            update_collection.RemoveAt(i)?;
+        }
+    }
+    install_updates(update_session, &update_collection)
+}
+
+pub fn install_windows_updates() -> Result<()> {
     unsafe {
         // Enable shutdown privileges for system updates
         enable_privilege(PCWSTR::from_raw(SE_SHUTDOWN_NAME.as_ptr()));
@@ -149,107 +196,126 @@ fn install_windows_updates() -> Result<()> {
             println!("Microsoft update error: {:?}", WindowsUpdateError::from(e.code()))
         )?;
 
-        let update_count = updates_wu.Count()? + updates_mu.Count()?;
-        println!("Search completed. Found {update_count} updates.");
+        let res = process_updates(&update_session, &updates_wu);
+        let res1 = process_updates(&update_session, &updates_mu);
 
-        if update_count == 0 {
-            println!("No updates available.");
-        } else {
-            println!("List of updates:");
-            let mut all_updates: Vec<IUpdate> = Vec::new();
+        println!("Res: {res:?}\nRes1: {res1:?}");
+        // let update_count = updates_wu.Count()? + updates_mu.Count()?;
+        // println!("Search completed. Found {update_count} updates.");
+
+        // if update_count == 0 {
+        //     println!("No updates available.");
+        // } else {
+        //     println!("List of updates:");
+        //     let mut all_updates: Vec<IUpdate> = Vec::new();
             
-            // Add Windows Update results
-            for i in 0..updates_wu.Count()? {
-                let update = updates_wu.get_Item(i)?;
-                all_updates.push(update.clone());
-                println!("- {}", update.Title()?.to_string());
-            }
-            // Add Microsoft Update results
-            for i in 0..updates_mu.Count()? {
-                let update = updates_mu.get_Item(i)?;
-                all_updates.push(update.clone());
-                println!("- {}", update.Title()?.to_string());
-            }
+        //     // Add Windows Update results
+        //     for i in 0..updates_wu.Count()? {
+        //         let update = updates_wu.get_Item(i)?;
+        //         all_updates.push(update.clone());
+        //         println!("- {}", update.Title()?.to_string());
+        //     }
+        //     // Add Microsoft Update results
+        //     for i in 0..updates_mu.Count()? {
+        //         let update = updates_mu.get_Item(i)?;
+        //         all_updates.push(update.clone());
+        //         println!("- {}", update.Title()?.to_string());
+        //     }
             
-            // Accept EULAs if required
-            println!("Checking for EULA requirements...");
-            for update in &all_updates {
-                if !update.EulaAccepted()?.as_bool() {
-                    println!("Accepting EULA for update: {}", update.Title()?.to_string());
-                    update.AcceptEula()?;
-                }
-            }
+        //     // Accept EULAs if required
+        //     println!("Checking for EULA requirements...");
+        //     for update in &all_updates {
+        //         if !update.EulaAccepted()?.as_bool() {
+        //             println!("Accepting EULA for update: {}", update.Title()?.to_string());
+        //             update.AcceptEula()?;
+        //         }
+        //     }
 
-            // Prepare to download updates
-            println!("Preparing to Download Microsoft Updates...");
-            let update_downloader: IUpdateDownloader = update_session.CreateUpdateDownloader()?;
-            let update_collection: IUpdateCollection = update_session.CreateUpdateSearcher()?.Search(&BSTR::from("IsInstalled=0"))?.Updates()?;
-            for i in 0..updates_wu.Count()? {
-                println!("Adding wu updates to collection");
-                let update = updates_wu.get_Item(i)?;
+        //     // Prepare to download WINDOWS updates
+        //     println!("Preparing to Download Microsoft Updates...");
+        //     let update_downloader: IUpdateDownloader = update_session.CreateUpdateDownloader()?;
+        //     let update_collection: IUpdateCollection = update_session.CreateUpdateSearcher()?.Search(&BSTR::from("IsInstalled=0"))?.Updates()?;
 
-                println!(
-                    "Update {:?}\n=> CanRequestUserInput: {:?}\n=> IsDownloaded: {:?}", 
-                    update.Title(),
-                    update.InstallationBehavior()?.CanRequestUserInput()?.as_bool(),
-                    update.IsDownloaded()?.as_bool()
-                );
+        //     for i in 0..updates_wu.Count()? {
+        //         println!("Adding wu updates to collection");
+        //         let update = updates_wu.get_Item(i)?;
+        //         let is_installed = update.IsInstalled()?.as_bool();
+        //         println!("Checking update: {}", update.Title()?.to_string());
+        //         println!("=>  IsInstalled: {:?}", is_installed);
+        //         println!("=>  IsMandatory: {:?}", update.IsMandatory()?.as_bool());
+        //         println!("=>  IsHidden: {:?}", update.IsHidden()?.as_bool());
+        //         println!("=>  AutoSelectOnWebSites: {:?}", update.AutoSelectOnWebSites()?.as_bool());
+        //         println!("=>  IsDownloaded: {:?}", update.IsDownloaded()?.as_bool());
+        //         println!("=>  Description: {:?}", update.Description()?);
+        //         if !is_installed && !update.IsDownloaded()?.as_bool() {
+        //             println!("Adding update: {}", update.Title()?.to_string());
+        //             update_collection.Add(&update).inspect_err(|e| println!("Add Err: {e:?}"))?;
+        //         } else {
+        //             println!("Skipping update: {}", update.Title()?.to_string());
+        //         }
+        //     }
 
-                let _ = update_collection.Add(&update)
-                .inspect_err(|e| 
-                    println!("Add Err: {:?}", WindowsUpdateError::from(e.code()))
-                );
-            }
-            for i in 0..updates_mu.Count()? {
-                println!("Adding mu updates to collection");
-                let update = updates_mu.get_Item(i)?;
+        //     // now install MICROSOFT updates
+        //     for i in 0..updates_mu.Count()? {
+        //         println!("Adding mu updates to collection");
+        //         let update = updates_mu.get_Item(i)?;
+        //         let is_installed = update.IsInstalled()?.as_bool();
+        //         println!("Checking update: {}", update.Title()?.to_string());
+        //         println!("=>  IsInstalled: {:?}", is_installed);
+        //         println!("=>  IsMandatory: {:?}", update.IsMandatory()?.as_bool());
+        //         println!("=>  IsHidden: {:?}", update.IsHidden()?.as_bool());
+        //         println!("=>  AutoSelectOnWebSites: {:?}", update.AutoSelectOnWebSites()?.as_bool());
+        //         println!("=>  IsDownloaded: {:?}", update.IsDownloaded()?.as_bool());
+        //         println!("=>  Description: {:?}", update.Description()?);
+        //         if !is_installed && !update.IsDownloaded()?.as_bool() {
+        //             println!("Adding update: {}", update.Title()?.to_string());
+        //             update_collection.Add(&update).inspect_err(|e| println!("Add Err: {e:?}"))?;
+        //         } else {
+        //             println!("Skipping update: {}", update.Title()?.to_string());
+        //         }
+        //     }
 
-                println!(
-                    "Update {:?}\n=> CanRequestUserInput: {:?}\n=> IsDownloaded: {:?}", 
-                    update.Title(),
-                    update.InstallationBehavior()?.CanRequestUserInput()?.as_bool(),
-                    update.IsDownloaded()?.as_bool()
-                );
+        //     update_downloader.SetIsForced(true.into()).inspect_err(|e| println!("SetIsForced Failed: {e:?}"))?;
+        //     let total_updates = update_downloader
+        //         .Updates()
+        //         .inspect_err(|e| println!("Updates() Failed: {e:?}"))?
+        //         .Count()
+        //         .inspect_err(|e| println!("Count(): {e:?}"))?;
 
-                let _ = update_collection.Add(&update)
-                .inspect_err(|e| 
-                    println!("Add Err: {:?}", WindowsUpdateError::from(e.code()))
-                );
-            }
+        //     println!("Total updates to install: {total_updates:?}");
 
-            println!("Setting updates to be downloaded");
-            update_downloader
-            .SetUpdates(&update_collection)
-            .inspect_err(|e| 
-                println!("SetUpdates Err: {:?}", WindowsUpdateError::from(e.code()))
-            )?;
+        //     update_downloader
+        //     .SetUpdates(&update_collection)
+        //     .inspect_err(|e| 
+        //         println!("SetUpdates Err: {:?}", WindowsUpdateError::from(e.code()))
+        //     )?;
 
-            // Begin downloading updates
-            println!("Beginning Downloads of Microsoft Updates...");
-            let download_job: IDownloadJob = update_downloader.BeginDownload(
-                None, 
-                None, 
-                &VARIANT::default()
-            ).inspect_err(|e| 
-                println!("BeginDownload Err: {:?}", WindowsUpdateError::from(e.code()))
-            )?;
+        //     // Begin downloading updates
+        //     println!("Beginning Downloads of Microsoft Updates...");
+        //     let download_job: IDownloadJob = update_downloader.BeginDownload(
+        //         None, 
+        //         None, 
+        //         &VARIANT::default()
+        //     ).inspect_err(|e| 
+        //         println!("BeginDownload Err: {:?}", WindowsUpdateError::from(e.code()))
+        //     )?;
             
-            println!("Started DownloadJob");
-            // Monitor download progress
-            while download_job.IsCompleted()?.as_bool() == false {
-                let progress = download_job.GetProgress()?;
-                println!("Download Progress: {}%", progress.PercentComplete()?);
-                std::thread::sleep(std::time::Duration::from_secs(5));
-            }
+        //     println!("Started DownloadJob");
+        //     // Monitor download progress
+        //     while download_job.IsCompleted()?.as_bool() == false {
+        //         let progress = download_job.GetProgress()?;
+        //         println!("Download Progress: {}%", progress.PercentComplete()?);
+        //         std::thread::sleep(std::time::Duration::from_secs(5));
+        //     }
             
-            // Print update results
-            for i in 0..all_updates.len() {
-                let result = download_job.GetProgress()?.GetUpdateResult(i as i32)?;
-                let code = result.ResultCode()?;
-                println!("Update {i} result code: {code:?}");
-            }
-            download_job.CleanUp()?;
-        }
+        //     // Print update results
+        //     for i in 0..all_updates.len() {
+        //         let result = download_job.GetProgress()?.GetUpdateResult(i as i32)?;
+        //         let code = result.ResultCode()?;
+        //         println!("Update {i} result code: {code:?}");
+        //     }
+        //     download_job.CleanUp()?;
+        // }
 
         println!("Uninitializing COM...");
         drop(update_searcher);
@@ -259,6 +325,7 @@ fn install_windows_updates() -> Result<()> {
     println!("Process completed.");
     Ok(())
 }
+
 
 
 
