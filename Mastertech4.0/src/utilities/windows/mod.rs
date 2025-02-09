@@ -1,6 +1,6 @@
 use windows::{
     core::{
-        implement, Interface, Ref, Result, BSTR, GUID, HRESULT, PCWSTR
+        implement, Ref, Result, BSTR, GUID, HRESULT, PCWSTR
     },
     Win32::{
         Foundation::HANDLE, 
@@ -9,14 +9,11 @@ use windows::{
             SE_SHUTDOWN_NAME, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY
         }, 
         System::{
-            Com::{
-                CoCreateInstance, CoInitializeEx, 
-                CoUninitialize, CLSCTX_INPROC_SERVER, 
-                COINIT_MULTITHREADED
-            }, 
+            Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED}, 
+            Shutdown::{self, ExitWindowsEx, EWX_FORCE, EWX_REBOOT}, 
             Threading::OpenProcessToken, 
             UpdateAgent::{
-                IDownloadCompletedCallback_Impl, IDownloadJob, IDownloadProgressChangedCallbackArgs, IDownloadProgressChangedCallback_Impl, IUpdateCollection, IUpdateDownloader, IUpdateSearcher, IUpdateServiceManager, IUpdateSession, ServerSelection
+                IDownloadCompletedCallback_Impl, IDownloadJob, IDownloadProgressChangedCallbackArgs, IDownloadProgressChangedCallback_Impl, IUpdateCollection, IUpdateDownloader, IUpdateSearcher, IUpdateServiceManager, IUpdateSession, OperationResultCode, ServerSelection
             }, 
             Variant::VARIANT
         }
@@ -38,9 +35,103 @@ const MICROSOFT_UPDATE_SERVICE_ID: &str = "7971f918-a847-4430-9279-4a52d1efe18d"
 
 use windows_core::*;
 
+/// Our custom struct to hold basic update info
+#[derive(Debug, Default)]
+pub struct UpdateInfo {
+    pub title: String,
+    pub is_installed: bool,
+    pub is_downloaded: bool,
+    pub description: String,
+}
+
+/// A container for multiple updates
+#[derive(Debug, Default)]
+pub struct WindowsUpdates {
+    pub updates: Vec<UpdateInfo>,
+}
+
 #[derive(Default)]
 #[implement(windows::Win32::System::UpdateAgent::IDownloadProgressChangedCallback)]
 pub struct DummyProgressCallback {}
+
+#[derive(Default)]
+#[implement(windows::Win32::System::UpdateAgent::IDownloadCompletedCallback)]
+pub struct DummyCompletedCallback {}
+
+pub fn install_windows_updates() -> Result<WindowsUpdates> {
+    let mut installed_updates = WindowsUpdates::default();
+    unsafe {
+        // Enable shutdown privileges for system updates
+        enable_privilege(PCWSTR::from_raw(SE_SHUTDOWN_NAME.as_ptr()));
+        log::info!("Initializing COM...");
+        CoInitializeEx(Some(std::ptr::null_mut()), COINIT_APARTMENTTHREADED).unwrap();
+
+        log::info!("Ensuring Microsoft Update is enabled...");
+        ensure_microsoft_update_enabled()?;
+        
+        // Create an update session
+        log::info!("Creating Update Session...");
+        let update_session: IUpdateSession = CoCreateInstance(
+            &CLSID_UPDATE_SESSION, 
+            None, 
+            CLSCTX_INPROC_SERVER
+        )?;
+        let update_searcher: IUpdateSearcher = update_session.CreateUpdateSearcher()?;
+        
+        // Perform separate searches for Windows Update and Microsoft Update
+        // Perform separate searches for Windows Update and Microsoft Update
+        //     The ServerSelection enum has the following values:
+        // 0: ssDefault → Uses system-configured update source (WSUS, Windows Update, etc.).
+        // 1: ssManagedServer → Uses a WSUS (Windows Server Update Services) server.
+        // 2: ssWindowsUpdate → Uses Windows Update (default for OS updates).
+        // 3: ssMicrosoftUpdate → Uses Microsoft Update (needed for feature updates, optional updates, and drivers).
+        log::info!("Searching Windows Update...");
+        let updates_wu = search_updates(
+            &update_searcher, 
+            2
+        )
+        .inspect_err(|e| 
+            log::info!("Windows update error: {:?}", WindowsUpdateError::from(e.code()))
+        )?;
+
+        log::info!("Searching Microsoft Update...");
+        let updates_mu = search_updates(
+            &update_searcher, 
+            3
+        )
+        .inspect_err(|e| 
+            log::info!("Microsoft update error: {:?}", WindowsUpdateError::from(e.code()))
+        )?;
+
+        // Build a custom WindowsUpdates struct from the results
+        installed_updates
+            .append_from_collection(&updates_mu)?
+            .append_from_collection(&updates_wu)?;
+
+        log::info!("All updates: {:#?}", installed_updates);
+
+
+        let res = process_updates(
+            &update_session, 
+            &updates_wu
+        );
+
+        let res1 = process_updates(
+            &update_session, 
+            &updates_mu
+        );
+        
+        log::info!("Res: {res:?}\nRes1: {res1:?}");
+        
+        log::info!("Uninitializing COM...");
+        drop(update_searcher);
+        drop(update_session);
+        CoUninitialize();
+    };
+    log::info!("Process completed.");
+
+    Ok(installed_updates)
+}
 
 impl IDownloadProgressChangedCallback_Impl for DummyProgressCallback_Impl {
     fn Invoke(
@@ -48,26 +139,24 @@ impl IDownloadProgressChangedCallback_Impl for DummyProgressCallback_Impl {
         _downloadjob: Ref<'_, IDownloadJob>,
         _callbackargs: Ref<'_, IDownloadProgressChangedCallbackArgs>,
     ) -> Result<()> {
-        println!("Dummy progress callback invoked.");
+        log::info!("Dummy progress callback invoked.");
         Ok(())
     }
 }
-
-#[derive(Default)]
-#[implement(windows::Win32::System::UpdateAgent::IDownloadCompletedCallback)]
-pub struct DummyCompletedCallback {}
 
 impl IDownloadCompletedCallback_Impl for DummyCompletedCallback_Impl {
     fn Invoke(
         &self, 
-        _downloadjob: windows_core::Ref<'_, IDownloadJob>, 
+        downloadjob: windows_core::Ref<'_, IDownloadJob>, 
         _callbackargs: windows_core::Ref<'_, windows::Win32::System::UpdateAgent::IDownloadCompletedCallbackArgs>
     ) -> windows_core::Result<()> {
-        println!("Dummy progress callback invoked.");
+        unsafe {
+            let progress = downloadjob.unwrap().GetProgress()?.PercentComplete()?;
+            log::info!("Dummy progress callback invoked: {progress:?}");
+        }
         Ok(())
     }
 }
-
 
 /// Enum mapping HRESULT error codes to readable descriptions
 #[derive(Debug)]
@@ -80,7 +169,7 @@ enum WindowsUpdateError {
     InvalidOperation,
     DownloadFailed,
     NotApplicable,
-    Other(u32),
+    Other,
 }
 
 impl From<HRESULT> for WindowsUpdateError {
@@ -94,7 +183,7 @@ impl From<HRESULT> for WindowsUpdateError {
             0x80240036 => WindowsUpdateError::InvalidOperation,
             0x80240034 => WindowsUpdateError::DownloadFailed,
             0x80240017 => WindowsUpdateError::NotApplicable,
-            _ => WindowsUpdateError::Other(hr.0 as u32),
+            _ => WindowsUpdateError::Other // WindowsUpdateError::Other(hr.0 as u32),
         }
     }
 }
@@ -118,7 +207,7 @@ unsafe fn enable_privilege(privilege: PCWSTR) -> bool {
 
 /// Checks if Microsoft Update is enabled and enables it if necessary
 unsafe fn ensure_microsoft_update_enabled() -> Result<()> {
-    println!("Checking if Microsoft Update is enabled...");
+    log::info!("Checking if Microsoft Update is enabled...");
     let service_manager: IUpdateServiceManager = CoCreateInstance(&CLSID_UPDATE_SERVICE_MANAGER, None, CLSCTX_INPROC_SERVER)?;
     let services = service_manager.Services()?;
     let count = services.Count()?;
@@ -127,14 +216,14 @@ unsafe fn ensure_microsoft_update_enabled() -> Result<()> {
         let service = services.get_Item(i)?;
         let service_id = service.ServiceID()?;
         if service_id.to_string().eq_ignore_ascii_case(MICROSOFT_UPDATE_SERVICE_ID) {
-            println!("Microsoft Update is already enabled.");
+            log::info!("Microsoft Update is already enabled.");
             return Ok(());
         }
     }
     
-    println!("Microsoft Update is not enabled. Enabling it now...");
+    log::info!("Microsoft Update is not enabled. Enabling it now...");
     service_manager.AddService(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID),  &BSTR::from(""))?;
-    println!("Microsoft Update has been successfully enabled.");
+    log::info!("Microsoft Update has been successfully enabled.");
     Ok(())
 }
 
@@ -142,22 +231,22 @@ unsafe fn ensure_microsoft_update_enabled() -> Result<()> {
 unsafe fn search_updates(update_searcher: &IUpdateSearcher, selection: i32) -> Result<IUpdateCollection> {
     let search_result = match selection {
         2 => {
-            println!("ServerSelection: Windows Update");
+            log::info!("ServerSelection: Windows Update");
             update_searcher.SetServerSelection(ServerSelection(2))?;
             update_searcher.Search(
                 &BSTR::from(
-                    "IsInstalled=0"
+                    "(IsInstalled=0) or (IsHidden=1 and IsInstalled=0)"
                     // "(IsInstalled=0 and DeploymentAction='Installation' and BrowseOnly=1 or BrowseOnly=0) or (IsHidden=1 and IsInstalled=0)"
                 )
             )?
         },
         3 => {
-            println!("ServerSelection: Microsoft Update");
+            log::info!("ServerSelection: Microsoft Update");
             update_searcher.SetServerSelection(ServerSelection(3))?;
             update_searcher.SetServiceID(&BSTR::from(MICROSOFT_UPDATE_SERVICE_ID))?;
             update_searcher.Search(
                 &BSTR::from(
-                    "IsInstalled=0"
+                    "(IsInstalled=0) or (IsHidden=1 and IsInstalled=0)"
                     // "IsInstalled=0 and DeploymentAction='Installation'"
                 )
             )?
@@ -169,9 +258,10 @@ unsafe fn search_updates(update_searcher: &IUpdateSearcher, selection: i32) -> R
     for i in 0..update_result.Count()? {
         let update = update_result.get_Item(i)?;
         if update.IsInstalled()?.as_bool() {
+            log::info!("Update already installed, removing: {:?}", update.Title()?);
             update_result.RemoveAt(i)?;
         } else {
-            println!("Adding update to collection: {update:?}");
+            log::info!("Adding update to collection: {:?}", update.Title()?);
         }
     }
 
@@ -179,40 +269,46 @@ unsafe fn search_updates(update_searcher: &IUpdateSearcher, selection: i32) -> R
 }
 
 /// Handles installation of updates from a given update collection
-unsafe fn install_updates(update_session: &IUpdateSession, updates: &IUpdateCollection) -> Result<()> {
+unsafe fn install_updates(
+    update_session: &IUpdateSession, 
+    updates: &IUpdateCollection,
+    dummy_progress_cb: DummyProgressCallback,
+    dummy_completed_cb: DummyCompletedCallback,
+) -> Result<()> {
     let update_downloader: IUpdateDownloader = update_session.CreateUpdateDownloader()?;
     update_downloader.SetUpdates(updates)?;
-    println!("Beginning download of updates...");
+    log::info!("Beginning download of updates...");
     let async_result = VARIANT::default();
     let download_job: IDownloadJob = update_downloader
         .BeginDownload(
-            Some(&DummyProgressCallback::default().into()), 
-            Some(&DummyCompletedCallback::default().into()), 
+            Some(&dummy_progress_cb.into()), 
+            Some(&dummy_completed_cb.into()), 
             &async_result
         )
         .inspect_err(|e| 
-            println!("BeginDownload Err => {e:?}")
+            log::info!("BeginDownload Err => {e:?}")
         )?;
 
     while !download_job.IsCompleted()?.as_bool() {
         let progress = download_job.GetProgress()?;
-        println!("Download Progress: {}%", progress.PercentComplete()?);
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        log::info!("Download Progress: {}%", progress.PercentComplete()?);
+        // std::thread::sleep(std::time::Duration::from_secs(5));
     }
     download_job.CleanUp()?;
-    println!("Download completed. Installing updates...");
+    log::info!("Download completed. Installing updates...");
 
     let installer = update_session.CreateUpdateInstaller()?;
     installer.SetUpdates(updates)?;
     let install_result = installer.Install()?;
-    println!("--------- Installation result ---------");
+    log::info!("--------- Installation result ---------");
     match install_result.ResultCode()? {
-        0 => println!("orcNotStarted"),
-        1 => println!("orcInProgress"),
-        2 => println!("orcSucceeded"),
-        3 => println!("orcSucceededWithErrors"),
-        4 => println!("orcFailed"),
-        5 => println!("orcAborted")
+        OperationResultCode(0) => log::info!("orcNotStarted"),
+        OperationResultCode(1) => log::info!("orcInProgress"),
+        OperationResultCode(2) => log::info!("orcSucceeded"),
+        OperationResultCode(3) => log::info!("orcSucceededWithErrors"),
+        OperationResultCode(4) => log::info!("orcFailed"),
+        OperationResultCode(5) => log::info!("orcAborted"),
+        _ => {}
     }   
     // update_downloader.EndDownload(value)
     Ok(())
@@ -226,89 +322,71 @@ unsafe fn process_updates(update_session: &IUpdateSession, update_collection: &I
         let is_installed = update.IsInstalled()?.as_bool();
         let is_downloaded = update.IsDownloaded()?.as_bool();
         if !is_installed && !is_downloaded {
-            println!("Adding update: {}", update.Title()?.to_string());
-            println!("=>  IsInstalled: {:?}", is_installed);
-            println!("=>  IsMandatory: {:?}", update.IsMandatory()?.as_bool());
-            println!("=>  IsHidden: {:?}", update.IsHidden()?.as_bool());
-            println!("=>  AutoSelectOnWebSites: {:?}", update.AutoSelectOnWebSites()?.as_bool());
-            println!("=>  IsDownloaded: {:?}", is_downloaded);
-            println!("=>  Description: {:?}", update.Description()?);
+            log::info!("Adding update: {}", update.Title()?.to_string());
+            log::info!("=>  IsInstalled: {:?}", is_installed);
+            log::info!("=>  IsMandatory: {:?}", update.IsMandatory()?.as_bool());
+            log::info!("=>  IsHidden: {:?}", update.IsHidden()?.as_bool());
+            log::info!("=>  AutoSelectOnWebSites: {:?}", update.AutoSelectOnWebSites()?.as_bool());
+            log::info!("=>  IsDownloaded: {:?}", is_downloaded);
+            log::info!("=>  Description: {:?}", update.Description()?);
             // update_collection.Add(&update)?;
         } else {
-            println!("Skipping update: {}", update.Title()?.to_string());
+            log::info!("Skipping update: {}", update.Title()?.to_string());
             update_collection.RemoveAt(i)?;
         }
     }
-    install_updates(update_session, &update_collection)
+    if update_collection.Count()? != 0 {
+        install_updates(
+            update_session, 
+            &update_collection,
+            DummyProgressCallback::default().into(),
+            DummyCompletedCallback::default().into()
+        )
+    } else {
+        Ok(())
+    }
 }
 
-pub fn install_windows_updates() -> Result<()> {
+#[allow(dead_code)]
+pub fn reboot_system() -> Result<()> {
     unsafe {
-        // Enable shutdown privileges for system updates
-        enable_privilege(PCWSTR::from_raw(SE_SHUTDOWN_NAME.as_ptr()));
-        println!("Initializing COM...");
-        CoInitializeEx(Some(std::ptr::null_mut()), COINIT_MULTITHREADED).unwrap();
-
-        println!("Ensuring Microsoft Update is enabled...");
-        ensure_microsoft_update_enabled()?;
-        
-        // Create an update session
-        println!("Creating Update Session...");
-        let update_session: IUpdateSession = CoCreateInstance(
-            &CLSID_UPDATE_SESSION, 
-            None, 
-            CLSCTX_INPROC_SERVER
-        )?;
-        let update_searcher: IUpdateSearcher = update_session.CreateUpdateSearcher()?;
-        
-        // Perform separate searches for Windows Update and Microsoft Update
-        // Perform separate searches for Windows Update and Microsoft Update
-        //     The ServerSelection enum has the following values:
-        // 0: ssDefault → Uses system-configured update source (WSUS, Windows Update, etc.).
-        // 1: ssManagedServer → Uses a WSUS (Windows Server Update Services) server.
-        // 2: ssWindowsUpdate → Uses Windows Update (default for OS updates).
-        // 3: ssMicrosoftUpdate → Uses Microsoft Update (needed for feature updates, optional updates, and drivers).
-        println!("Searching Windows Update...");
-        let updates_wu = search_updates(
-            &update_searcher, 
-            2
-        )
-        .inspect_err(|e| 
-            println!("Windows update error: {:?}", WindowsUpdateError::from(e.code()))
-        )?;
-
-        println!("Searching Microsoft Update...");
-        let updates_mu = search_updates(
-            &update_searcher, 
-            3
-        )
-        .inspect_err(|e| 
-            println!("Microsoft update error: {:?}", WindowsUpdateError::from(e.code()))
-        )?;
-
-        let res = process_updates(
-            &update_session, 
-            &updates_wu
-        );
-
-        let res1 = process_updates(
-            &update_session, 
-            &updates_mu
-        );
-        
-        println!("Res: {res:?}\nRes1: {res1:?}");
-        
-        println!("Uninitializing COM...");
-        drop(update_searcher);
-        drop(update_session);
-        CoUninitialize();
-    };
-    println!("Process completed.");
+        // EWX_REBOOT specifies that the system should reboot.
+        // EWX_FORCE forces all running applications to close.
+        if let Err(e) = ExitWindowsEx(EWX_REBOOT | EWX_FORCE, Shutdown::SHUTDOWN_REASON(0)) {
+            log::info!("{e:?}");
+            return Err(Error::from_win32());
+        }
+    }
     Ok(())
 }
 
+impl WindowsUpdates {
+    /// Create a new `WindowsUpdates` from an existing `IUpdateCollection`
+    pub unsafe fn new(collection: &IUpdateCollection) -> Result<Self> {
+        let mut wu = WindowsUpdates::default();
+        wu.append_from_collection(collection)?;
+        Ok(wu)
+    }
 
+    /// Append updates from an additional `IUpdateCollection` to this object
+    pub unsafe fn append_from_collection(&mut self, collection: &IUpdateCollection) -> Result<&mut Self> {
+        for i in 0..collection.Count()? {
+            let update = collection.get_Item(i)?;
+            let title = update.Title()?.to_string();
+            let is_installed = update.IsInstalled()?.as_bool();
+            let is_downloaded = update.IsDownloaded()?.as_bool();
+            let description = update.Description()?.to_string();
 
+            self.updates.push(UpdateInfo {
+                title,
+                is_installed,
+                is_downloaded,
+                description,
+            });
+        }
+        Ok(self)
+    }
+}
 
 /*** 
  **** ServerSelection enumeration

@@ -48,8 +48,11 @@ ring = "0.17.8"
 semver = "1.0.23"
 nvml-wrapper = { version = "0.10.0", features = ["serde"] }
 lazy_static = "1.5.0"
+powershell_script = "1.1.0"
+color-eyre = "0.6.3"
+itertools = "0.14.0"
+tui-scrollview = "0.5.1"
 # planif = "1"
-
 
 database = { workspace=true }
 surrealdb = { workspace=true }
@@ -60,7 +63,6 @@ log  = { workspace=true }
 egui_extras = { workspace=true }
 egui_dock = { workspace=true }
 anyhow = { workspace=true }
-# ratframe = { workspace=true }
 crossbeam = { workspace=true }
 futures = { workspace=true }
 uuid = { workspace=true }
@@ -70,22 +72,17 @@ regex = { workspace=true }
 chrono = { workspace=true }
 simplelog = { workspace=true }
 async-trait = { workspace=true }
-powershell_script = "1.1.0"
-color-eyre = "0.6.3"
-itertools = "0.14.0"
-tui-scrollview = "0.5.1"
+# ratframe = { workspace=true }
+
 
 [dependencies.egui]
 version = "0.31"
 default-features = false
 features = ["rayon", "bytemuck", "log"]
 
-# egui_ratatui = { workspace=true }
-# portable-pty = "0.8.1"
 # windows_x86_64_msvc
 # known-folders 
 # robocopyrs 
-# tui-term = "0.1.11"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = {version = "0.59.0", features = [
@@ -125,7 +122,6 @@ harness = false
 static_vcruntime = "2"
 embed-resource = "3.0.1"
 winres = "0.1"
-# embed-manifest = "1.4.0"
 
 [package.metadata]
 icon = ["D:/Users/Owner/Documents/GitHub/Mastertech4.0/src/assets/masterlogoV2.ico"]
